@@ -1,7 +1,9 @@
 <div align="center">
 
 # Spicy EX
-Native Spicy Lyrics for Spotify, as an Xposed/LSPosed module.
+Spicy Lyrics for Spotify, as an Xposed/LSPosed module.
+
+<img src="assets/demo.gif" width="320" alt="Spicy EX lyrics demo">
 
 </div>
 
@@ -33,7 +35,7 @@ Spotify enforces Play Integrity during login. Bypass this using the **Downgrade-
 > May conflicts with ReVanced / modified Spotify or old Spotify Plus — use a clean Spotify.
 
 ## Build
-JDK 17+, Android SDK.
+JDK 21, Android SDK.
 
 ```sh
 ./gradlew assembleDebug
@@ -43,3 +45,4 @@ JDK 17+, Android SDK.
 - [LeNerd46/SpotifyPlus](https://github.com/LeNerd46/SpotifyPlus)
 - [Spikerko/Spicy Lyrics](https://github.com/Spikerko/spicy-lyrics)
 - [surfbryce/beautiful-lyrics](https://github.com/surfbryce/beautiful-lyrics)
+</content>
