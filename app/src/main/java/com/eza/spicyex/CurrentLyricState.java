@@ -1,4 +1,5 @@
 package com.eza.spicyex;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 public final class CurrentLyricState {
     public final String trackUri;
@@ -134,7 +135,4 @@ public final class CurrentLyricState {
         return new CurrentLyricState("", "", "", "", "", "", "", "", 0, 0, -1, false, 0, "idle", "");
     }
 
-    private static String safe(String value) {
-        return value == null ? "" : value;
-    }
 }

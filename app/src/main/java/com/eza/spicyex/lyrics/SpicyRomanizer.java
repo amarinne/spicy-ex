@@ -1,6 +1,5 @@
 package com.eza.spicyex.lyrics;
 
-import com.eza.spicyex.SpotifyPlusConfig;
 
 import java.text.Normalizer;
 import java.util.HashMap;
@@ -20,8 +19,12 @@ import java.util.Map;
  * - Chinese jyutping package behavior
  *
  * Current Android-native ports/adapters:
- * - Korean revised romanization data path
+ * - Korean aromanize-compatible table romanizer (RR letter values, no pronunciation rules)
  * - Greek romanization data path
+ *
+ * Cyrillic scope: Russian-oriented BGN/PCGN simplification. Shared Cyrillic glyphs
+ * that differ in Ukrainian (e.g. г→h, и→y) keep Russian values. Hard/soft signs and
+ * ё are simplified for lyric readability (see docs/ROMANIZATION_AUDIT_BACKLOG.md).
  */
 public final class SpicyRomanizer {
     private static final Map<Integer, String> BGN_PCGN = new HashMap<>();
@@ -59,9 +62,9 @@ public final class SpicyRomanizer {
         put("ч", "ch");
         put("ш", "sh");
         put("щ", "shch");
-        put("ъ", "''");
+        put("ъ", "");
         put("ы", "y");
-        put("ь", "'");
+        put("ь", "");
         put("э", "e");
         put("ю", "yu");
         put("я", "ya");
@@ -107,9 +110,9 @@ public final class SpicyRomanizer {
         put("Ч", "Ch");
         put("Ш", "Sh");
         put("Щ", "Shch");
-        put("Ъ", "''");
+        put("Ъ", "");
         put("Ы", "Y");
-        put("Ь", "'");
+        put("Ь", "");
         put("Э", "E");
         put("Ю", "Yu");
         put("Я", "Ya");
@@ -156,8 +159,11 @@ public final class SpicyRomanizer {
     }
 
     public static boolean canRomanizeLocally(String text, String wholeSongText, String language) {
+        return canRomanizeLocally(text, SpicyTextDetection.detectPresentScripts(wholeSongText, language, ""), language);
+    }
+
+    public static boolean canRomanizeLocally(String text, List<SpicyTextDetection.Script> scripts, String language) {
         if (text == null || text.trim().isEmpty()) return false;
-        List<SpicyTextDetection.Script> scripts = SpicyTextDetection.detectPresentScripts(wholeSongText, language, "");
         return (scripts.contains(SpicyTextDetection.Script.JAPANESE) && SpicyJapaneseChineseProcessor.canRomanizeJapanese(text))
                 || (scripts.contains(SpicyTextDetection.Script.CHINESE) && SpicyTextDetection.itemChineseTest(text))
                 || (scripts.contains(SpicyTextDetection.Script.CYRILLIC) && SpicyTextDetection.itemCyrillicTest(text))
@@ -165,14 +171,14 @@ public final class SpicyRomanizer {
                 || (scripts.contains(SpicyTextDetection.Script.GREEK) && SpicyTextDetection.itemGreekTest(text));
     }
 
-    public static String romanizeLine(String text, String wholeSongText, String language) {
-        return romanizeLine(text, wholeSongText, language, SpotifyPlusConfig.CHINESE_MODE_PINYIN);
+    public static String romanizeLine(String text, String wholeSongText, String language, RomanizationOptions opts) {
+        return romanizeLine(text, SpicyTextDetection.detectPresentScripts(wholeSongText, language, ""), language, opts);
     }
 
-    public static String romanizeLine(String text, String wholeSongText, String language, String chineseMode) {
+    public static String romanizeLine(String text, List<SpicyTextDetection.Script> scripts, String language, RomanizationOptions opts) {
         if (text == null || text.trim().isEmpty()) return text;
+        if (opts == null) opts = RomanizationOptions.DEFAULTS;
         String result = Normalizer.normalize(text, Normalizer.Form.NFKC);
-        List<SpicyTextDetection.Script> scripts = SpicyTextDetection.detectPresentScripts(wholeSongText, language, "");
         boolean changed = false;
 
         for (SpicyTextDetection.Script script : scripts) {
@@ -180,13 +186,13 @@ public final class SpicyRomanizer {
                 result = SpicyJapaneseChineseProcessor.romanizeJapaneseLine(result);
                 changed = true;
             } else if (script == SpicyTextDetection.Script.CHINESE && SpicyTextDetection.itemChineseTest(result)) {
-                result = SpicyJapaneseChineseProcessor.romanizeChineseLine(result, chineseMode);
+                result = SpicyJapaneseChineseProcessor.romanizeChineseLine(result, opts.chineseMode, opts.chineseTones);
                 changed = true;
             } else if (script == SpicyTextDetection.Script.CYRILLIC && SpicyTextDetection.itemCyrillicTest(result)) {
-                result = romanizeCyrillic(result);
+                result = romanizeCyrillic(result, opts.cyrillicMode, opts.cyrillicKeepSigns);
                 changed = true;
             } else if (script == SpicyTextDetection.Script.KOREAN && SpicyTextDetection.itemKoreanTest(result)) {
-                result = romanizeKorean(result);
+                result = romanizeKorean(result, koreanFollowSound(opts.koreanMode));
                 changed = true;
             } else if (script == SpicyTextDetection.Script.GREEK && SpicyTextDetection.itemGreekTest(result)) {
                 result = romanizeGreek(result);
@@ -200,28 +206,93 @@ public final class SpicyRomanizer {
     /**
      * Port of Fork/Romanization.ts romanizeCyrillic():
      * transliterPkg.transliter(text, "bgn-pcgn") plus ASCII cleanup.
+     *
+     * {@code е} uses the BGN/PCGN positional ye rule from the previous Cyrillic
+     * source character. Hard/soft signs are dropped at the source so Latin
+     * apostrophes in mixed-script lines are preserved.
      */
+    /** Cyrillic source-language modes (selects per-language letter values + rules). */
+    public static final String CYRILLIC_RUSSIAN = "Russian";
+    public static final String CYRILLIC_UKRAINIAN = "Ukrainian";
+
     public static String romanizeCyrillic(String text) {
+        return romanizeCyrillic(text, CYRILLIC_RUSSIAN, false);
+    }
+
+    public static String romanizeCyrillic(String text, String cyrillicMode, boolean keepSigns) {
         if (text == null) return null;
+        boolean ukrainian = CYRILLIC_UKRAINIAN.equalsIgnoreCase(cyrillicMode);
         StringBuilder out = new StringBuilder();
+        int prevCyrillicCp = -1;
         for (int i = 0; i < text.length(); ) {
             int cp = text.codePointAt(i);
-            String mapped = BGN_PCGN.get(cp);
-            if (mapped == null) out.appendCodePoint(cp);
-            else out.append(mapped);
+            if (isCyrillicSource(cp)) {
+                String mapped = mapCyrillic(cp, prevCyrillicCp, ukrainian, keepSigns);
+                if (mapped != null && !mapped.isEmpty()) out.append(mapped);
+                prevCyrillicCp = cp;
+            } else {
+                if (Character.isWhitespace(cp)) prevCyrillicCp = -1;
+                out.appendCodePoint(cp);
+            }
             i += Character.charCount(cp);
         }
         return postProcessCyrillic(out.toString());
     }
 
+    private static String mapCyrillic(int cp, int prevCyrillicCp, boolean ukrainian, boolean keepSigns) {
+        // Hard/soft signs: drop (default) or keep as BGN/PCGN prime marks.
+        if (cp == 'ъ' || cp == 'Ъ') return keepSigns ? "ʺ" : "";
+        if (cp == 'ь' || cp == 'Ь') return keepSigns ? "ʹ" : "";
+        if (ukrainian) {
+            String u = ukrainianLetter(cp);
+            if (u != null) return u;
+            if (cp == 'е') return "e";   // Ukrainian е is always "e" (ye comes from є)
+            if (cp == 'Е') return "E";
+        } else {
+            if (cp == 'е') return usesYe(prevCyrillicCp) ? "ye" : "e";
+            if (cp == 'Е') return usesYe(prevCyrillicCp) ? "Ye" : "E";
+        }
+        String mapped = BGN_PCGN.get(cp);
+        return mapped == null ? new String(Character.toChars(cp)) : mapped;
+    }
+
+    /** Ukrainian-specific BGN/PCGN values that differ from the shared (Russian) map. */
+    private static String ukrainianLetter(int cp) {
+        switch (cp) {
+            case 'г': return "h";  case 'Г': return "H";   // Russian g
+            case 'ґ': return "g";  case 'Ґ': return "G";   // Ukrainian-only letter
+            case 'и': return "y";  case 'И': return "Y";   // Russian i
+            case 'і': return "i";  case 'І': return "I";
+            case 'ї': return "yi"; case 'Ї': return "Yi";
+            case 'є': return "ye"; case 'Є': return "Ye";
+            default: return null;
+        }
+    }
+
+    private static boolean usesYe(int prevCyrillicCp) {
+        return prevCyrillicCp < 0 || isRussianYeTrigger(prevCyrillicCp);
+    }
+
+    private static boolean isRussianYeTrigger(int cp) {
+        switch (cp) {
+            case 'а': case 'е': case 'ё': case 'и': case 'о': case 'у': case 'ы': case 'э': case 'ю': case 'я':
+            case 'А': case 'Е': case 'Ё': case 'И': case 'О': case 'У': case 'Ы': case 'Э': case 'Ю': case 'Я':
+            case 'й': case 'Й':
+            case 'ъ': case 'Ъ': case 'ь': case 'Ь':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean isCyrillicSource(int cp) {
+        return (cp >= 0x0400 && cp <= 0x04FF) || (cp >= 0x0500 && cp <= 0x052F);
+    }
+
     private static String postProcessCyrillic(String value) {
         return value
-                .replace("Ё", "Yo")
-                .replace("ё", "yo")
                 .replace("Ë", "Yo")
                 .replace("ë", "yo")
-                .replace("'", "")
-                .replace("’", "")
                 .replace("ǵ", "g")
                 .replace("Ǵ", "G")
                 .replace("ḱ", "k")
@@ -232,13 +303,23 @@ public final class SpicyRomanizer {
                 .replace("đ", "dj")
                 .replace("Đ", "Dj")
                 .replace("ć", "c")
-                .replace("Ć", "C")
-                .replace("ž", "zh")
-                .replace("Ž", "Zh");
+                .replace("Ć", "C");
+    }
+
+    /** "Pronunciation" (sound-based) Korean mode value; otherwise letter-by-letter. */
+    public static final String KOREAN_PRONUNCIATION = "Pronunciation";
+
+    public static boolean koreanFollowSound(String koreanMode) {
+        return KOREAN_PRONUNCIATION.equalsIgnoreCase(koreanMode);
     }
 
     public static String romanizeKorean(String text) {
+        return romanizeKorean(text, false);
+    }
+
+    public static String romanizeKorean(String text, boolean followSound) {
         if (text == null) return null;
+        if (followSound) return SpicyKoreanG2P.romanize(text);
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < text.length(); ) {
             int cp = text.codePointAt(i);

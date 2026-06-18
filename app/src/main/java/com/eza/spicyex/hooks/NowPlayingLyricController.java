@@ -5,7 +5,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Choreographer;
 
-import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.AppliedLine;
@@ -13,7 +12,9 @@ import com.eza.spicyex.lyrics.LiveLyricCardView;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
-import com.eza.spicyex.lyrics.LyricsShellSettings;
+import com.eza.spicyex.lyrics.LyricsLineAnimationState;
+import com.eza.spicyex.lyrics.LyricsRenderConfig;
+import com.eza.spicyex.lyrics.RomanizationOptions;
 
 import java.util.List;
 
@@ -32,11 +33,7 @@ final class NowPlayingLyricController {
 
     // Inherited from the same shared Spotify-side prefs the fullscreen screen reads — no separate
     // per-component config. Refreshed on each fetch so panel/chip toggles take effect on next track.
-    private boolean showRomanization;
-    private boolean showTranslation;
-    private boolean interludeNote;
-    private boolean lineGradient;
-    private String chineseMode;
+    private LyricsRenderConfig renderConfig;
 
     private LyricsDocument document;
     private String currentId = "";   // track currently on screen
@@ -70,13 +67,7 @@ final class NowPlayingLyricController {
     }
 
     private void refreshConfig() {
-        showRomanization = config.get(Settings.NATIVE_SPICY_ROMANIZATION);
-        showTranslation = config.get(Settings.NATIVE_SPICY_TRANSLATION);
-        interludeNote = "note".equals(config.get(Settings.INTERLUDE_ICON));
-        lineGradient = config.get(Settings.ENABLE_LINE_GRADIENT);
-        String cn = config.get(Settings.CHINESE_MODE);
-        chineseMode = LyricsShellSettings.normalizeChineseMode(
-                "cycle".equals(cn) ? SpotifyPlusConfig.CHINESE_MODE_PINYIN : cn);
+        renderConfig = LyricsRenderConfig.read(activity, config);
     }
 
     void start() {
@@ -119,6 +110,13 @@ final class NowPlayingLyricController {
         }
         if (document == null || !id.equals(loadedId)) return; // not loaded for THIS track → stay cleared
 
+        // Unsynced lyrics: no line tracks playback, so the live card can't karaoke-follow —
+        // show the interlude indicator (set once) and leave reading to the fullscreen screen.
+        if ("Static".equalsIgnoreCase(document.type)) {
+            if (!placeholderShown) { card.setInterlude(renderConfig.interludeNoteIcon); placeholderShown = true; }
+            return;
+        }
+
         List<AppliedLine> lines = document.appliedLines;
         if (lines == null || lines.isEmpty()) return;
         long pos = hook.readBestMeasuredProgressMs(track, hook.isPlayerActuallyPlaying());
@@ -130,17 +128,13 @@ final class NowPlayingLyricController {
         AppliedLine cur = lines.get(idx);
         if (idx != lastIdx) {
             lastIdx = idx;
-            if (cur.dotLine) card.setInterlude(interludeNote);
+            if (cur.dotLine) card.setInterlude(renderConfig.interludeNoteIcon);
             else card.setLine(cur.text);
         }
         if (!cur.dotLine) {
-            if (lineGradient) {
-                // Per-frame karaoke wash on the current line.
-                float p = NativeLyricsUtils.progress01(pos, cur.startMs, LyricTimeline.fillEndMs(cur));
-                card.setGradient(-20f + 120f * p, 0.22f);
-            } else {
-                card.setGradient(100f, 0f); // gradient disabled — flat bright line
-            }
+            LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
+                    cur, pos, renderConfig.spotlight, renderConfig.lineGradientEnabled);
+            card.setGradient(lineState.gradient, lineState.glowTarget);
         }
     }
 
@@ -156,8 +150,10 @@ final class NowPlayingLyricController {
                     // Pull any cached readings/translation the fullscreen screen already produced for
                     // this track (cheap, cache-only — no network). Must run before applySyncedRows,
                     // which copies romanizedText/translatedText into the planned rows.
-                    LyricsDocumentProcessor.applyProcessedCache(
-                            activity, doc, chineseMode, NativeSpicyLyricsHook.GOOGLE_PROCESSING_VERSION);
+                    LyricsDocumentProcessor.applyProcessedCache(activity, doc,
+                            new RomanizationOptions(renderConfig.defaultChineseMode, renderConfig.koreanMode,
+                                    renderConfig.chineseTones, renderConfig.cyrillicMode, renderConfig.cyrillicKeepSigns),
+                            NativeRuntime.GOOGLE_PROCESSING_VERSION);
                     LyricTimeline.applySyncedRows(doc); // build appliedLines from doc.lines
                     loadingId = "";
                     if (doc.appliedLines == null || doc.appliedLines.isEmpty()) {
@@ -181,13 +177,4 @@ final class NowPlayingLyricController {
         });
     }
 
-    private static boolean isBlank(String s) {
-        return s == null || s.trim().isEmpty();
-    }
-
-    private static String textAt(List<AppliedLine> lines, int i) {
-        if (i < 0 || i >= lines.size()) return "";
-        AppliedLine l = lines.get(i);
-        return l == null || l.dotLine ? "" : l.text;
-    }
 }

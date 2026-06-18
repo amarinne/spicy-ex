@@ -11,6 +11,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import de.robv.android.xposed.XposedBridge;
 import okhttp3.OkHttpClient;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Background romanization/translation processing for loaded lyric documents. */
 public final class LyricsSecondaryProcessor {
@@ -44,7 +46,7 @@ public final class LyricsSecondaryProcessor {
             int generation,
             LyricsDocument snapshot,
             boolean showRomanization,
-            String chineseMode,
+            RomanizationOptions opts,
             String targetLang,
             String effectiveSourceLang,
             CurrentGuard currentGuard,
@@ -59,7 +61,7 @@ public final class LyricsSecondaryProcessor {
         if (snapshot.romanizationPending) {
             for (LyricsLine line : snapshot.lines) {
                 if (line == null || isBlank(line.text) || line.interlude) continue;
-                if (LyricsLocalRomanizer.shouldLocalRomanize(showRomanization, chineseMode, snapshot, line, fullText)) localWork.add(line);
+                if (LyricsLocalRomanizer.shouldLocalRomanize(showRomanization, opts.chineseMode, snapshot, line, fullText)) localWork.add(line);
             }
             for (LyricsLine line : snapshot.lines) {
                 if (line == null || isBlank(line.text) || line.interlude) continue;
@@ -91,10 +93,10 @@ public final class LyricsSecondaryProcessor {
 
             for (LyricsLine line : localWork) {
                 if (currentGuard != null && !currentGuard.isCurrent(id, generation, snapshot)) return;
-                String local = LyricsLocalRomanizer.romanizeLine(chineseMode, snapshot, line, fullText);
+                String local = LyricsLocalRomanizer.romanizeLine(opts, snapshot, line, fullText);
                 if (!isBlank(local) && !local.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
                     line.romanizedText = local;
-                    LyricsLocalRomanizer.populateLocalSegmentRomanization(chineseMode, snapshot, line, fullText);
+                    LyricsLocalRomanizer.populateLocalSegmentRomanization(opts, snapshot, line, fullText);
                     LyricCaches.putProcessingValue(context, processingVersion,
                             LyricCaches.romanizationKey(id, snapshot.language, line.text), local);
                     changed.incrementAndGet();
@@ -122,6 +124,11 @@ public final class LyricsSecondaryProcessor {
                 });
                 return;
             }
+
+            // Network translation is about to run (slow, per-line). Persist the romanization we just
+            // computed so closing the screen before it finishes doesn't lose it — reopening restores
+            // romanization from cache and only re-runs the remaining translation pass.
+            LyricsDocumentProcessor.saveProcessedCache(context, snapshot, opts, processingVersion);
 
             CountDownLatch latch = new CountDownLatch(networkWork.size());
             AtomicInteger done = new AtomicInteger();
@@ -184,7 +191,7 @@ public final class LyricsSecondaryProcessor {
     public void reprocessLocal(
             LyricsDocument snapshot,
             boolean showRomanization,
-            String chineseMode,
+            RomanizationOptions opts,
             String reason,
             CurrentGuard currentGuard,
             LocalCallback callback
@@ -199,15 +206,15 @@ public final class LyricsSecondaryProcessor {
                         if (line == null || isBlank(line.text) || line.interlude) continue;
                         String before = safe(line.romanizedText);
                         LyricsLocalRomanizer.clearSegmentRomanization(line);
-                        String local = LyricsLocalRomanizer.romanizeLine(chineseMode, snapshot, line, fullText);
+                        String local = LyricsLocalRomanizer.romanizeLine(opts, snapshot, line, fullText);
                         if (!isBlank(local) && !local.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
                             line.romanizedText = local;
                             if (!before.equals(local)) changed.incrementAndGet();
                         }
-                        LyricsLocalRomanizer.populateLocalSegmentRomanization(chineseMode, snapshot, line, fullText);
+                        LyricsLocalRomanizer.populateLocalSegmentRomanization(opts, snapshot, line, fullText);
                     }
                 }
-                LyricsDocumentProcessor.saveProcessedCache(context, snapshot, chineseMode, processingVersion);
+                LyricsDocumentProcessor.saveProcessedCache(context, snapshot, opts, processingVersion);
             } catch (Throwable t) {
                 XposedBridge.log(TAG + " local mode reprocess failed: " + t);
             }
@@ -216,14 +223,6 @@ public final class LyricsSecondaryProcessor {
                 callback.complete(reason, changed.get(), current);
             });
         });
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
     }
 
     public interface CurrentGuard {

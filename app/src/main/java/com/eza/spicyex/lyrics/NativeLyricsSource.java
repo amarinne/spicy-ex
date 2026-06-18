@@ -18,6 +18,9 @@ import java.util.List;
 import java.util.Locale;
 
 import de.robv.android.xposed.XposedBridge;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
+import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 
 /** Spotify-native lyrics source backed by captured models and Spotify's local lyrics_db. */
 public final class NativeLyricsSource implements LyricsRepository.NativeLyricsProvider {
@@ -615,27 +618,12 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
         return value;
     }
 
-    private static String trackIdFromUri(String uri) {
-        if (uri == null) return "";
-        String[] parts = uri.split(":");
-        if (parts.length >= 3 && "track".equals(parts[1])) return parts[2];
-        return "";
-    }
-
     private static String firstNonBlank(String... values) {
         if (values == null) return "";
         for (String value : values) {
             if (!isBlank(value)) return value;
         }
         return "";
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
     }
 
     private static void dbg(String function, String message) {

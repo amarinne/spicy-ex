@@ -3,6 +3,7 @@ package com.eza.spicyex.lyrics;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /**
  * Lenient Gson accessors used across the lyric-source parsers: try several key spellings, treat
@@ -84,7 +85,4 @@ public final class Json {
         return "";
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
 }

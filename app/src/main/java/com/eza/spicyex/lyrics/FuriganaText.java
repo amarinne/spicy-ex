@@ -7,6 +7,8 @@ import android.graphics.Typeface;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ReplacementSpan;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /**
  * Builds the furigana (ruby) spannable for a Japanese lyric line: the kana reading drawn in a
@@ -67,14 +69,6 @@ public final class FuriganaText {
             any = true;
         }
         return any ? builder : word;
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
     }
 
     /** Draws a small kana reading centered above the spanned base text. */

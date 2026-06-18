@@ -14,6 +14,7 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Text, font, and chip factory for the native lyrics shell. */
 public final class LyricsTextFactory {
@@ -27,27 +28,61 @@ public final class LyricsTextFactory {
     }
 
     public Typeface resolveTypeface(boolean bold) {
-        // Weight-driven so the "Bold lyrics" toggle has a real, visible effect: both bundled faces
-        // are single-weight (spotifymix = medium, sf-pro-display = bold), so the old code returned a
-        // bold face for BOTH states and toggling did nothing. Map bold -> heavy face, regular ->
-        // medium face. (LYRICS_FONT family selection needs per-weight assets to honor again — TODO.)
+        // Inherit SPOTIFY'S OWN font (we run inside Spotify): SpotifyMixUI title-extrabold for the
+        // thick bold lyric, regular for non-bold — Spotify's real Circular-family weights, far
+        // heavier/cleaner than the bundled SF-Pro/medium mismatch. Falls back to bundled if the host
+        // font resource can't be resolved.
         String key = bold ? "|bold" : "|regular";
         Typeface cached = typefaceCache.get(key);
         if (cached != null) return cached;
-        Typeface resolved;
-        try {
-            resolved = Typeface.createFromAsset(activity.getAssets(),
-                    bold ? "fonts/sf-pro-display-bold.ttf" : "fonts/spotifymix-medium.ttf");
-        } catch (Throwable t) {
-            resolved = bold ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT;
+        Typeface resolved = loadSpotifyFont(bold ? "spotify_mix_ui_title_extrabold" : "spotify_mix_ui_regular");
+        if (resolved == null) {
+            try {
+                resolved = Typeface.createFromAsset(activity.getAssets(),
+                        bold ? "fonts/sf-pro-display-bold.ttf" : "fonts/spotifymix-medium.ttf");
+            } catch (Throwable t) {
+                resolved = bold ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT;
+            }
         }
         typefaceCache.put(key, resolved);
         return resolved;
     }
 
+    /** Lyric typeface for a user weight choice: Regular / Medium (Spotify bold) / Bold (extrabold). */
+    public Typeface resolveLyricTypeface(String weight) {
+        String font = "Regular".equals(weight) ? "spotify_mix_ui_regular"
+                : "Bold".equals(weight) ? "spotify_mix_ui_title_extrabold"
+                : "spotify_mix_ui_bold"; // Medium — Spotify's bold reads as a clean medium next to extrabold
+        String key = "lyric|" + safe(weight);
+        Typeface cached = typefaceCache.get(key);
+        if (cached != null) return cached;
+        Typeface resolved = loadSpotifyFont(font);
+        if (resolved == null) {
+            try {
+                resolved = Typeface.createFromAsset(activity.getAssets(),
+                        "Regular".equals(weight) ? "fonts/spotifymix-medium.ttf" : "fonts/sf-pro-display-bold.ttf");
+            } catch (Throwable t) {
+                resolved = "Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
+            }
+        }
+        typefaceCache.put(key, resolved);
+        return resolved;
+    }
+
+    /** Load a font resource from the host (Spotify) package by name, e.g. "spotify_mix_ui_bold". */
+    private Typeface loadSpotifyFont(String name) {
+        try {
+            android.content.res.Resources res = activity.getResources();
+            int id = res.getIdentifier(name, "font", activity.getPackageName());
+            if (id != 0) return res.getFont(id);
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
     public void emphasizePrimaryLyric(TextView view) {
         if (view == null) return;
-        view.getPaint().setFakeBoldText(true);
+        // Real extrabold face now carries the weight — no synthetic fake-bold (which muddied glyphs).
     }
 
     public TextView createChip(Context context, String value) {
@@ -89,7 +124,7 @@ public final class LyricsTextFactory {
         view.setTextColor(color);
         view.setTypeface(typeface);
         view.setIncludeFontPadding(true);
-        view.setLineSpacing(0f, 1.04f);
+        view.setLineSpacing(0f, 1.18f); // Spicy lyric line-height parity (Mixed.css 1.1818)
         return view;
     }
 
@@ -109,7 +144,4 @@ public final class LyricsTextFactory {
         return Math.round(value * density);
     }
 
-    private static String safe(String value) {
-        return value == null ? "" : value;
-    }
 }

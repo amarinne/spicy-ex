@@ -130,6 +130,16 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void providerFuriganaDrivesRomaji() {
+        ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> provider = new ArrayList<>();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "こうよう"));
+        assertEquals("kouyou", SpicyJapaneseChineseProcessor.romanizeJapaneseLineFromFurigana("紅葉", provider));
+        provider.clear();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "もみじ"));
+        assertEquals("momiji", SpicyJapaneseChineseProcessor.romanizeJapaneseLineFromFurigana("紅葉", provider));
+    }
+
+    @Test
     public void syllableRomanizationUsesFullLineContext() {
         List<String> parts = SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(
                 "本当の声を響かせてよ",

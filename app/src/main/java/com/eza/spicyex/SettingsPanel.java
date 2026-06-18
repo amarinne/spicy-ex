@@ -172,7 +172,7 @@ public final class SettingsPanel {
 
     private void selectorRow(LinearLayout content, Settings.StringSetting setting) {
         LinearLayout row = newRow(content);
-        TextView value = titleColumn(row, setting.label, displayLabel(store.get(setting)));
+        TextView value = titleColumn(row, setting.label, labelFor(setting, store.get(setting)));
         value.setTextColor(COL_ACCENT);
         row.addView(text("›", 22, COL_SECTION, false));
         row.setOnClickListener(v -> showSelectorDialog(setting, value));
@@ -208,7 +208,7 @@ public final class SettingsPanel {
             TextView dot = text(selected ? "●" : "○", 15, selected ? COL_ACCENT : COL_SECTION, false);
             dot.setPadding(0, 0, dp(16), 0);
             optRow.addView(dot);
-            TextView label = text(displayLabel(val), 16, selected ? COL_ACCENT : COL_TITLE, false);
+            TextView label = text(labelFor(setting, val), 16, selected ? COL_ACCENT : COL_TITLE, false);
             optRow.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
             String preview = optionPreview(setting, val);
@@ -219,7 +219,7 @@ public final class SettingsPanel {
             }
             optRow.setOnClickListener(v -> {
                 store.put(setting, val);
-                valueView.setText(displayLabel(val));
+                valueView.setText(labelFor(setting, val));
                 dialog.dismiss();
             });
             box.addView(optRow);
@@ -273,6 +273,37 @@ public final class SettingsPanel {
             if ("note".equals(value)) return "♪";
         }
         return "";
+    }
+
+    /** Option label with the actual multiplier appended for the magnitude-based selectors. */
+    private static String labelFor(Settings.StringSetting setting, String value) {
+        String base = displayLabel(value);
+        String mult = multiplierFor(setting.key, value);
+        return mult == null ? base : base + "  (" + mult + ")";
+    }
+
+    // Mirror of LyricsShellSettings.lineSpacingMultiplier() / lyricsTextSizeMultiplier() — display only.
+    private static String multiplierFor(String key, String value) {
+        if ("line_spacing".equals(key)) {
+            switch (value) {
+                case "compact": return "0.8";
+                case "default": return "1.1";
+                case "spacious": return "1.45";
+                case "more": return "1.9";
+                case "max": return "2.5";
+                default: return null;
+            }
+        }
+        if ("lyrics_text_size".equals(key) || "lyrics_live_card_text_size".equals(key)) {
+            switch (value) {
+                case "small": return "0.88";
+                case "normal": return "1.0";
+                case "large": return "1.2";
+                case "xlarge": return "1.45";
+                default: return null;
+            }
+        }
+        return null;
     }
 
     private static String displayLabel(String value) {

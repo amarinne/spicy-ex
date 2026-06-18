@@ -4,6 +4,8 @@ import android.graphics.Color;
 
 import java.util.ArrayList;
 import java.util.List;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Display-only helpers for native Spicy lyric rows and backgrounds. */
 public final class LyricVisuals {
@@ -81,11 +83,4 @@ public final class LyricVisuals {
         return out;
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
-    }
 }

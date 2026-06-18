@@ -18,7 +18,12 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class AnimatedBackgroundView extends View {
+public class AnimatedBackgroundView extends View implements AmbientBackgroundLayer {
+    @Override
+    public View asView() {
+        return this;
+    }
+
     private static final int BLUR_RADIUS = 20;
     private static final int BLUR_PASSES = 1;
 

@@ -3,6 +3,7 @@ package com.eza.spicyex.lyrics;
 import android.os.SystemClock;
 
 import com.eza.spicyex.SpotifyTrack;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Smooths Spotify's coarse playback progress samples for lyrics animation. */
 public final class LyricsPlaybackClock {
@@ -112,10 +113,6 @@ public final class LyricsPlaybackClock {
         long duration = track == null ? 0 : Math.max(0, track.duration);
         if (duration > 0) clamped = Math.min(clamped, duration);
         return clamped;
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
     }
 
     public interface Measurer {

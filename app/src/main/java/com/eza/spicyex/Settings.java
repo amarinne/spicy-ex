@@ -21,6 +21,23 @@ public final class Settings {
 
     // ===================== USER-FACING =====================
 
+    // NOTE: panel section order = order sections first appear here (SettingsPanel.renderSections
+    // groups by declaration order in ALL). Keep each section's settings contiguous.
+
+    // --- Translation --- (shown first)
+    public static final Setting<Boolean> TRANSLATION_ENABLED = boolSetting(
+            "lyrics_translation_enabled", TRANSLATION, "Translate lyrics", true
+    );
+
+    public static final Setting<String> TRANSLATION_TARGET = enumSetting(
+            "lyrics_translation_target", TRANSLATION, "Target language",
+            "en",
+            "en", "es", "fr", "de", "it", "pt", "nl", "sv", "no", "da",
+            "fi", "pl", "cs", "sk", "hu", "ro", "el", "tr", "uk", "ru",
+            "ja", "ko", "zh", "zh-TW", "th", "vi", "id", "ms", "hi", "bn",
+            "ta", "ar", "he", "fa"
+    );
+
     // --- Lyrics ---
     public static final Setting<String> TAP_SEEK_MODE = enumSetting(
             "lyric_tap_seek_mode", LYRICS, "Tap lyric to seek",
@@ -28,7 +45,19 @@ public final class Settings {
             "Off", "Single tap", "Double tap"
     );
 
+    // When on, the lyric screen stays open across track changes (Spotify's implicit finish() on
+    // song change is suppressed) and reloads for the new track; explicit back/header-close still exits.
+    public static final Setting<Boolean> STAY_IN_LYRICS = boolSetting(
+            "lyric_stay_on_track_change", LYRICS, "Stay in lyric screen on song change", true
+    );
+
     // --- Romanization (transliteration controls) ---
+    // Global romanization layout — aligned under each word (great for language learners comparing
+    // word-by-word) vs a single line. Applies to every romanizable script, not just one language.
+    public static final Setting<Boolean> ALIGNED_PER_WORD_ROMAJI = boolSetting(
+            "lyric_aligned_per_word_romaji", ROMANIZATION, "Attach transliteration under each word", true
+    );
+
     // "cycle" = the in-screen chip cycles the modes on tap; a fixed value locks to that mode.
     public static final Setting<String> JAPANESE_READING_MODE = enumSetting(
             "lyrics_japanese_reading_mode", ROMANIZATION, "Japanese reading",
@@ -42,24 +71,31 @@ public final class Settings {
             "pinyin", "jyutping", "cycle"
     );
 
-    // Global romanization layout — aligned under each word (great for language learners comparing
-    // word-by-word) vs a single line. Applies to every romanizable script, not just one language.
-    public static final Setting<Boolean> ALIGNED_PER_WORD_ROMAJI = boolSetting(
-            "lyric_aligned_per_word_romaji", ROMANIZATION, "Attach transliteration under each word", true
+    // "Letter-by-letter" = literal per-syllable table (aromanize-compatible, default).
+    // "Pronunciation" = jamo-aware pronunciation pass (liaison/nasalization/etc., see SpicyKoreanG2P).
+    public static final Setting<String> KOREAN_ROMANIZATION = enumSetting(
+            "lyrics_korean_romanization", ROMANIZATION, "Korean romanization",
+            "Letter-by-letter",
+            "Letter-by-letter", "Pronunciation"
     );
 
-    // --- Translation ---
-    public static final Setting<Boolean> TRANSLATION_ENABLED = boolSetting(
-            "lyrics_translation_enabled", TRANSLATION, "Translate lyrics", true
+    // On = Mandarin pinyin tone marks (zhōng guó) + Cantonese jyutping tone numbers (nei5).
+    // Off (default) = no tone marks / no jyutping tone numbers — cleaner lyric display.
+    public static final Setting<Boolean> CHINESE_TONES = boolSetting(
+            "lyrics_chinese_tones", ROMANIZATION, "Show Chinese tones", false
     );
 
-    public static final Setting<String> TRANSLATION_TARGET = enumSetting(
-            "lyrics_translation_target", TRANSLATION, "Target language",
-            "en",
-            "en", "es", "fr", "de", "it", "pt", "nl", "sv", "no", "da",
-            "fi", "pl", "cs", "sk", "hu", "ro", "el", "tr", "uk", "ru",
-            "ja", "ko", "zh", "zh-TW", "th", "vi", "id", "ms", "hi", "bn",
-            "ta", "ar", "he", "fa"
+    // Cyrillic source language — shared glyphs differ (Russian г→g, и→i vs Ukrainian г→h, и→y),
+    // so one global map can't serve both (see SpicyRomanizer / ROMANIZATION_AUDIT_BACKLOG CY-4).
+    public static final Setting<String> CYRILLIC_MODE = enumSetting(
+            "lyrics_cyrillic_mode", ROMANIZATION, "Cyrillic language",
+            "Russian",
+            "Russian", "Ukrainian"
+    );
+
+    // Off (default) = drop ь/ъ for readability; On = keep them as BGN/PCGN prime marks (ʹ/ʺ).
+    public static final Setting<Boolean> CYRILLIC_KEEP_SIGNS = boolSetting(
+            "lyrics_cyrillic_keep_signs", ROMANIZATION, "Keep Cyrillic soft/hard signs", false
     );
 
     // --- Display ---
@@ -77,12 +113,23 @@ public final class Settings {
             "compact", "default", "spacious", "more", "max"
     );
 
-    public static final Setting<Boolean> LYRICS_BOLD = boolSetting(
-            "lyrics_bold", DISPLAY, "Bold lyrics", true
+    // Lyric font weight (Spotify's own faces): "Medium" (default) = spotify_mix_ui_bold,
+    // "Bold" = the heavy title-extrabold (was the old default — too thick for some), "Regular".
+    public static final Setting<String> LYRICS_WEIGHT = enumSetting(
+            "lyrics_weight", DISPLAY, "Lyric weight",
+            "Medium",
+            "Regular", "Medium", "Bold"
     );
 
     public static final Setting<String> LYRICS_TEXT_SIZE = enumSetting(
-            "lyrics_text_size", DISPLAY, "Lyric text size",
+            "lyrics_text_size", DISPLAY, "Lyric text size (fullscreen)",
+            "normal",
+            "small", "normal", "large", "xlarge"
+    );
+
+    // Independent size for the now-playing in-player live card (separate from fullscreen).
+    public static final Setting<String> LIVE_CARD_TEXT_SIZE = enumSetting(
+            "lyrics_live_card_text_size", DISPLAY, "Now-playing lyric size",
             "normal",
             "small", "normal", "large", "xlarge"
     );
@@ -90,6 +137,22 @@ public final class Settings {
     public static final Setting<String> INTERLUDE_ICON = enumSetting(
             "lyric_interlude_icon", DISPLAY, "Interlude indicator", "dots",
             "dots", "note"
+    );
+
+    // "Gradient wash" = the karaoke fill sweeps each line (classic Spicy look).
+    // "Spotlight" = no fill; the active line/word zooms + glows instead (gradient direction ignored).
+    public static final Setting<String> ANIMATION_STYLE = enumSetting(
+            "lyric_animation_style", DISPLAY, "Animation style",
+            "Gradient wash",
+            "Gradient wash", "Spotlight"
+    );
+
+    // Direction the karaoke gradient fills each line as it plays: down the line ("Top to bottom")
+    // or word-by-word ("Left to right"). Applies under "Gradient wash" only.
+    public static final Setting<String> LINE_SYNC_FILL = enumSetting(
+            "lyric_line_sync_fill", DISPLAY, "Lyric fill direction",
+            "Top to bottom",
+            "Top to bottom", "Left to right"
     );
 
     // ===================== INTERNAL (fixed defaults, not shown) =====================
@@ -147,12 +210,6 @@ public final class Settings {
 
     public static final Setting<Boolean> ENABLE_LINE_GRADIENT = internalBoolSetting(
             "lyric_enable_line_gradient", "Line gradient/glow", true
-    );
-
-    public static final Setting<String> LINE_SYNC_FILL = internalEnumSetting(
-            "lyric_line_sync_fill", "Line sync fill direction",
-            "Top to bottom",
-            "Top to bottom", "Left to right"
     );
 
     public static final Setting<Boolean> ENABLE_LINE_BLUR = internalBoolSetting(

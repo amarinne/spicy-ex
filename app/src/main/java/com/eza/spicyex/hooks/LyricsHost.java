@@ -24,6 +24,11 @@ interface LyricsHost {
 
     void markExplicitLyricsExit(Activity activity);
 
+    // Re-arm the "keep lyrics activity open across track changes" window. The shell calls this
+    // periodically while mounted so the suppression window never lapses mid-session; it auto-
+    // expires shortly after the shell stops calling (teardown), which re-enables normal finish().
+    void markLyricsKeepAlive(Activity activity);
+
     void fetchLyrics(Activity activity, SpotifyTrack track, int generation,
                      NativeSpicyLyricsHook.LyricsResultCallback callback);
 }

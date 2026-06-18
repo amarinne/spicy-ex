@@ -16,6 +16,7 @@ import com.google.android.flexbox.JustifyContent;
 
 import java.util.ArrayList;
 import java.util.List;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /** Builds mounted Android views for applied lyric rows. */
 public final class LyricsRowViewFactory {
@@ -48,11 +49,11 @@ public final class LyricsRowViewFactory {
             boolean note = options != null && options.interludeNoteIcon;
             int glyphCount = note ? 1 : 3;
             for (int i = 0; i < glyphCount; i++) {
-                SpicyAnimatedTextView dot = textFactory.createSecondaryAnimatedText(activity, note ? "♪" : "•", note ? 27 : 31, textFactory.resolveTypeface(true));
+                SpicyAnimatedTextView dot = textFactory.createSecondaryAnimatedText(activity, note ? "♪" : "•", note ? 38 : 44, textFactory.resolveTypeface(true));
                 dot.setGravity(Gravity.CENTER);
                 dot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-                LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(note ? 28 : 22), ViewGroup.LayoutParams.WRAP_CONTENT);
-                if (i > 0) dlp.leftMargin = dp(3);
+                LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(note ? 40 : 30), ViewGroup.LayoutParams.WRAP_CONTENT);
+                if (i > 0) dlp.leftMargin = dp(5);
                 dots.addView(dot, dlp);
                 line.dotViews.add(dot);
                 if (line.words != null && i < line.words.size()) line.words.get(i).view = dot;
@@ -72,7 +73,7 @@ public final class LyricsRowViewFactory {
 
         float sizeMultiplier = options == null ? 1f : options.textSizeMultiplier;
         line.baseTextSp = Math.max(1, Math.round(LyricVisuals.lyricTextSizeSp(line.text) * sizeMultiplier));
-        boolean bold = options == null || options.boldLyrics;
+        String weight = options == null ? "Medium" : options.lyricWeight;
         line.mainView = null;
         boolean useSyllableWords = line.words != null && !line.words.isEmpty();
         boolean showAlignedRomaji = useSyllableWords
@@ -83,13 +84,14 @@ public final class LyricsRowViewFactory {
         if (useSyllableWords) {
             buildSyllableWords(row, line, options, romanizedWordProvider, showJapaneseFurigana, showAlignedRomaji);
         } else {
-            buildLineLevelMain(row, line, showJapaneseFurigana, lineLevelFillTopDown, bold);
+            buildLineLevelMain(row, line, showJapaneseFurigana, lineLevelFillTopDown, weight);
         }
 
         if (!line.bgLine && !showAlignedRomaji && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)) {
             SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, line.romanizedText, LyricVisuals.secondaryTextSizeSp(line.baseTextSp), textFactory.resolveTypeface(false));
             roman.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
             roman.setMaxLines(3);
+            roman.setSelfGlow(true);
             roman.setVerticalGradient(lineLevelFillTopDown);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.topMargin = dp(2);
@@ -120,7 +122,7 @@ public final class LyricsRowViewFactory {
             boolean showJapaneseFurigana,
             boolean showAlignedRomaji
     ) {
-        FlexboxLayout words = new FlexboxLayout(activity);
+        FlexboxLayout words = new GlowFlexbox(activity); // draws the line-level continuous glow
         words.setFlexDirection(FlexDirection.ROW);
         words.setFlexWrap(FlexWrap.WRAP);
         words.setJustifyContent(line.oppositeAligned ? JustifyContent.FLEX_END : JustifyContent.FLEX_START);
@@ -133,7 +135,7 @@ public final class LyricsRowViewFactory {
             if (furiganaOffset > 0 && !seg.partOfWord) furiganaOffset++;
             int wordStart = furiganaOffset;
             furiganaOffset += seg.text.length();
-            View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart, options == null || options.boldLyrics);
+            View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart, options == null ? "Medium" : options.lyricWeight);
             String romanizedWordText = showAlignedRomaji && romanizedWordProvider != null
                     ? romanizedWordProvider.romanizedText(line, seg, options.documentText)
                     : "";
@@ -150,7 +152,7 @@ public final class LyricsRowViewFactory {
         row.addView(words, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
-    private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, boolean bold) {
+    private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
         if (!showJapaneseFurigana && LyricVisuals.shouldUseLetterAnimator(seg)) {
             LinearLayout letters = new LinearLayout(activity);
@@ -166,8 +168,7 @@ public final class LyricsRowViewFactory {
                 letterView.setText(text);
                 letterView.setTextSize(line.baseTextSp);
                 letterView.setTextColor(color);
-                letterView.setTypeface(textFactory.resolveTypeface(bold));
-                if (bold) textFactory.emphasizePrimaryLyric(letterView);
+                letterView.setTypeface(textFactory.resolveLyricTypeface(weight));
                 letterView.setIncludeFontPadding(true);
                 letterView.setMaxLines(1);
                 letterView.setGradientPosition(-20f, 0f);
@@ -188,8 +189,7 @@ public final class LyricsRowViewFactory {
         word.setText(showJapaneseFurigana ? FuriganaText.buildWord(line, seg.text, wordStart) : seg.text);
         word.setTextSize(line.baseTextSp);
         word.setTextColor(color);
-        word.setTypeface(textFactory.resolveTypeface(bold));
-        if (bold) textFactory.emphasizePrimaryLyric(word);
+        word.setTypeface(textFactory.resolveLyricTypeface(weight));
         word.setIncludeFontPadding(true);
         word.setMaxLines(1);
         seg.letters.clear();
@@ -216,14 +216,14 @@ public final class LyricsRowViewFactory {
         return stack;
     }
 
-    private void buildLineLevelMain(LinearLayout row, AppliedLine line, boolean showJapaneseFurigana, boolean lineLevelFillTopDown, boolean bold) {
+    private void buildLineLevelMain(LinearLayout row, AppliedLine line, boolean showJapaneseFurigana, boolean lineLevelFillTopDown, String weight) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
         SpicyAnimatedTextView main = new SpicyAnimatedTextView(activity);
         main.setText(showJapaneseFurigana ? FuriganaText.build(line) : line.text);
         main.setTextSize(line.baseTextSp);
         main.setTextColor(color);
-        main.setTypeface(textFactory.resolveTypeface(bold));
-        if (bold) textFactory.emphasizePrimaryLyric(main);
+        main.setTypeface(textFactory.resolveLyricTypeface(weight));
+        main.setSelfGlow(true); // line-level row: no GlowFlexbox parent, draw its own halo
         main.setIncludeFontPadding(true);
         main.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
         main.setMaxLines(4);
@@ -253,10 +253,6 @@ public final class LyricsRowViewFactory {
         return Math.round(value * density);
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
     public interface RomanizedWordProvider {
         String romanizedText(AppliedLine line, SyllableSegment seg, String fullText);
     }
@@ -274,7 +270,7 @@ public final class LyricsRowViewFactory {
         public boolean attachTransliterationToWords;
         public boolean lineLevelFillTopDown;
         public boolean interludeNoteIcon;
-        public boolean boldLyrics = true;
+        public String lyricWeight = "Medium";
         public float textSizeMultiplier = 1f;
         public String documentText = "";
     }

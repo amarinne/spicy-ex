@@ -13,6 +13,7 @@ import java.io.IOException;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /** Google Translate-backed romanization and translation enhancer. */
 public final class GoogleEnhancer {
@@ -148,10 +149,6 @@ public final class GoogleEnhancer {
             if (!isBlank(value)) return value;
         }
         return "";
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
     }
 
     public static final class Enhancement {

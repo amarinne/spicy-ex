@@ -32,6 +32,7 @@ import java.util.Map;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 public final class LyricsTranslator {
     private static final String PREFS_CACHE = "SpotifyPlusTranslationCache";
@@ -188,10 +189,6 @@ public final class LyricsTranslator {
             }
         }
         return out.toString().trim();
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
     }
 
     private static String sha256(String value) {

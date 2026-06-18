@@ -31,7 +31,7 @@ public final class GlyphIconDrawable extends Drawable {
 
     /** Update the glyph; returns true if it changed (so callers can skip redundant work). */
     public boolean setGlyph(String value) {
-        String next = value == null ? "" : value;
+        String next = LyricUtils.safe(value);
         if (next.equals(glyph)) return false;
         glyph = next;
         invalidateSelf();

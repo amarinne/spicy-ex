@@ -11,6 +11,7 @@ import java.util.List;
 public class LyricsDocument {
     public String trackId = "";
     public String provider = "Spicy Lyrics";
+    public String songWriters = ""; // "Written by" credits from the lyrics response, if any
     public String type = "Unknown";
     public String language = "";
     public String fetchSource = "unknown";
@@ -24,6 +25,7 @@ public class LyricsDocument {
     public boolean includesRomanization;
     public boolean includesTranslation;
     public boolean detectedChinese;
+    public final List<SpicyTextDetection.Script> detectedScripts = new ArrayList<>();
     public final List<LyricsLine> lines = new ArrayList<>();
     public final List<AppliedLine> appliedLines = new ArrayList<>();
 
@@ -33,6 +35,7 @@ public class LyricsDocument {
         LyricsDocument copy = new LyricsDocument();
         copy.trackId = safe(source.trackId);
         copy.provider = safe(source.provider);
+        copy.songWriters = safe(source.songWriters);
         copy.type = safe(source.type);
         copy.language = safe(source.language);
         copy.fetchSource = safe(source.fetchSource);
@@ -46,11 +49,12 @@ public class LyricsDocument {
         copy.includesRomanization = source.includesRomanization;
         copy.includesTranslation = source.includesTranslation;
         copy.detectedChinese = source.detectedChinese;
+        copy.detectedScripts.addAll(source.detectedScripts);
         for (LyricsLine line : source.lines) copy.lines.add(LyricsLine.copyOf(line));
         return copy;
     }
 
     static String safe(String value) {
-        return value == null ? "" : value;
+        return LyricUtils.safe(value);
     }
 }

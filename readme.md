@@ -45,4 +45,8 @@ JDK 21, Android SDK.
 - [LeNerd46/SpotifyPlus](https://github.com/LeNerd46/SpotifyPlus)
 - [Spikerko/Spicy Lyrics](https://github.com/Spikerko/spicy-lyrics)
 - [surfbryce/beautiful-lyrics](https://github.com/surfbryce/beautiful-lyrics)
-</content>
+- [boidushya/better-lyrics](https://github.com/boidushya/better-lyrics) (+ kawarp background)
+
+## License
+[AGPL-3.0](LICENSE). Portions are derived from the AGPL-3.0 projects above (Spicy Lyrics,
+better-lyrics, kawarp), so the project as a whole is AGPL-3.0. See [NOTICE](NOTICE) for attribution.

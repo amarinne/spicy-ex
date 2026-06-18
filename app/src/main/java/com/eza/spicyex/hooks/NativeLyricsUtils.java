@@ -83,15 +83,15 @@ final class NativeLyricsUtils {
     }
 
     static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
+        return com.eza.spicyex.lyrics.LyricUtils.isBlank(value);
     }
 
     static String safe(String value) {
-        return value == null ? "" : value;
+        return com.eza.spicyex.lyrics.LyricUtils.safe(value);
     }
 
     static String emptyFallback(String value, String fallback) {
-        return value == null || value.trim().isEmpty() ? fallback : value;
+        return isBlank(value) ? fallback : value;
     }
 
     // TextView.setText always rebuilds the layout, even for identical text; these labels are
@@ -103,10 +103,7 @@ final class NativeLyricsUtils {
     }
 
     static String trackIdFromUri(String uri) {
-        if (uri == null) return "";
-        String[] parts = uri.split(":");
-        if (parts.length >= 3 && "track".equals(parts[1])) return parts[2];
-        return "";
+        return com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(uri);
     }
 
     static String shortTrackId(String uri) {

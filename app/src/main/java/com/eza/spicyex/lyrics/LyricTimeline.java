@@ -130,6 +130,14 @@ public final class LyricTimeline {
                 }
             }
         }
+        // End-of-song interlude: a long instrumental tail between the last lyric line and the track
+        // end gets its own dot row (no following line would otherwise trigger one).
+        if (doc.durationMs > 0 && !doc.lines.isEmpty()) {
+            LyricsLine last = doc.lines.get(doc.lines.size() - 1);
+            if (!last.interlude && doc.durationMs - last.endMs >= INTERLUDE_SHOW_THRESHOLD_MS) {
+                doc.appliedLines.add(createAppliedDotRow(last.endMs, doc.durationMs, last.oppositeAligned));
+            }
+        }
     }
 
     /** Extend a vocal row's active end to the next start when the gap is small. */

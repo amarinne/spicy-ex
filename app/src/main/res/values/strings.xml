@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Spicy EX</string>
+    <string name="module_description">Spicy lyrics for Spotify.</string>
 </resources>

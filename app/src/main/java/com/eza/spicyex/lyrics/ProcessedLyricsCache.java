@@ -9,6 +9,8 @@ import com.google.gson.JsonParser;
 import com.eza.spicyex.SpotifyPlusConfig;
 
 import de.robv.android.xposed.XposedBridge;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Serialized cache for post-processed romanization/translation fields. */
 public final class ProcessedLyricsCache {
@@ -17,10 +19,10 @@ public final class ProcessedLyricsCache {
     private ProcessedLyricsCache() {
     }
 
-    public static void apply(Context context, LyricsDocument doc, String chineseMode, int processingVersion) {
+    public static void apply(Context context, LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
         if (context == null || doc == null || doc.lines == null || doc.lines.isEmpty()) return;
         try {
-            String raw = LyricCaches.getProcessedDocument(context, key(doc, chineseMode, processingVersion));
+            String raw = LyricCaches.getProcessedDocument(context, key(doc, opts, processingVersion));
             if (isBlank(raw)) return;
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             if (root == null || Json.optDouble(root, -1, "version") != processingVersion) return;
@@ -46,24 +48,28 @@ public final class ProcessedLyricsCache {
                 SpicyJapaneseChineseProcessor.JapaneseReading reading = LyricsParser.parseJapaneseReading(item);
                 if (reading != null) line.japaneseReading = reading;
             }
-            doc.romanizationPending = false;
-            doc.translationPending = false;
-            doc.processingPending = false;
+            // Clear only the passes the cache actually contains. A partial cache (e.g. romanization
+            // saved before slower network translation finished, or the screen closed mid-translation)
+            // must still let the remaining pass run instead of marking everything done.
+            if (doc.includesRomanization) doc.romanizationPending = false;
+            if (doc.includesTranslation) doc.translationPending = false;
+            doc.processingPending = doc.romanizationPending || doc.translationPending;
             XposedBridge.log(TAG + " applied track=" + doc.trackId + " lines=" + count
-                    + " processingPending=" + doc.processingPending);
+                    + " processingPending=" + doc.processingPending
+                    + " roman=" + doc.includesRomanization + " trans=" + doc.includesTranslation);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " apply failed: " + t);
         }
     }
 
-    public static void save(Context context, LyricsDocument doc, String chineseMode, int processingVersion) {
+    public static void save(Context context, LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
         if (context == null || doc == null || doc.lines == null || doc.lines.isEmpty()) return;
         try {
             JsonObject root = new JsonObject();
             root.addProperty("version", processingVersion);
             root.addProperty("trackId", safe(doc.trackId));
             root.addProperty("language", safe(doc.language));
-            root.addProperty("chineseMode", normalizeChineseMode(chineseMode));
+            root.addProperty("chineseMode", normalizeChineseMode(opts.chineseMode));
             if (doc.includesRomanization) root.addProperty("includesRomanization", true);
             if (doc.includesTranslation) root.addProperty("includesTranslation", true);
             JsonArray lines = new JsonArray();
@@ -77,7 +83,7 @@ public final class ProcessedLyricsCache {
                 lines.add(item);
             }
             root.add("lines", lines);
-            LyricCaches.putProcessedDocument(context, key(doc, chineseMode, processingVersion), root.toString());
+            LyricCaches.putProcessedDocument(context, key(doc, opts, processingVersion), root.toString());
         } catch (Throwable t) {
             XposedBridge.log(TAG + " save failed: " + t);
         }
@@ -102,11 +108,11 @@ public final class ProcessedLyricsCache {
         return object;
     }
 
-    private static String key(LyricsDocument doc, String chineseMode, int processingVersion) {
+    private static String key(LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
         return LyricCaches.processedDocumentKey(processingVersion,
                 doc == null ? "" : doc.trackId,
                 doc == null ? "" : doc.language,
-                normalizeChineseMode(chineseMode));
+                opts);
     }
 
     private static String normalizeChineseMode(String mode) {
@@ -114,11 +120,4 @@ public final class ProcessedLyricsCache {
         return SpotifyPlusConfig.CHINESE_MODE_PINYIN;
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
-    }
 }

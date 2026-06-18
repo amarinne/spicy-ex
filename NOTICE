@@ -1,0 +1,34 @@
+Spicy EX
+Copyright (C) 2026 amarinne
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. See the LICENSE file for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+
+Third-party code and attribution
+=================================
+
+Spicy EX renders Spicy-Lyrics-style animated lyrics inside the Spotify Android
+app. Portions of the lyric rendering, animation, and parsing logic are derived
+from the following AGPL-3.0 projects; the conveyed binary as a whole is therefore
+licensed under AGPL-3.0:
+
+- Spicy Lyrics  — https://github.com/Spikerko/spicy-lyrics  (AGPL-3.0)
+    Animation engine, gradient/karaoke wash, lyric parsing model.
+- Better Lyrics / braccato — https://github.com/boidushya/better-lyrics  (AGPL-3.0)
+    Lyric engine reference.
+- kawarp (@kawarp/core) — https://github.com/better-lyrics/kawarp  (AGPL-3.0)
+    Domain-warp + Kawase-blur animated background; ported to an AGSL RuntimeShader.
+
+Behavior reimplemented from observation, public specifications, or factual data
+(CSS values, spring/falloff math, BGN/PCGN romanization tables, kawarp's
+technique) is independent work, as is the original SpotifyPlus base and Spicy EX's
+own romanization (Korean G2P, Cyrillic Russian/Ukrainian).
+
+The SpotifyPlus-origin files retain their original MIT notices where present.

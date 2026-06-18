@@ -7,6 +7,7 @@ import android.widget.LinearLayout;
 
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /**
  * In-player live-lyric renderer that replaces Spotify's {@code lyrics_element} — a single current
@@ -28,17 +29,16 @@ public final class LiveLyricCardView extends LinearLayout {
         setMinimumHeight(dp(64));
 
         LyricsShellSettings cfg = new LyricsShellSettings(context, SpotifyPlusConfig.from(context));
-        float sizeMult = cfg.lyricsTextSizeMultiplier();
-        boolean bold = SpotifyPlusConfig.from(context).get(Settings.LYRICS_BOLD);
+        float sizeMult = cfg.liveCardTextSizeMultiplier();
+        String weight = cfg.lyricWeight();
 
         current = new SpicyAnimatedTextView(context);
         current.setTextSize(19 * sizeMult);
         current.setMaxLines(3);
         current.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        // Same weight-driven font assets the fullscreen renderer uses (single-weight families).
-        current.setTypeface(lyricTypeface(context, bold));
-        // Match the fullscreen primary line: bold font + synthetic fake-bold (the font alone read thin).
-        if (bold) current.getPaint().setFakeBoldText(true);
+        // Inherit Spotify's own face at the chosen weight, same as the fullscreen renderer.
+        current.setTypeface(lyricTypeface(context, weight));
+        current.setSelfGlow(true);
         current.setTextColor(0xFFFFFFFF);
         current.setIncludeFontPadding(true);
         // Full width + left-aligned text so the line starts exactly at the content margin.
@@ -87,17 +87,26 @@ public final class LiveLyricCardView extends LinearLayout {
         current.setVisibility(GONE);
     }
 
-    private static Typeface lyricTypeface(Context context, boolean bold) {
+    private static Typeface lyricTypeface(Context context, String weight) {
+        String font = "Regular".equals(weight) ? "spotify_mix_ui_regular"
+                : "Bold".equals(weight) ? "spotify_mix_ui_title_extrabold"
+                : "spotify_mix_ui_bold"; // Medium
+        // Inherit Spotify's own font (we run in its process); fall back to bundled.
+        try {
+            android.content.res.Resources res = context.getResources();
+            int id = res.getIdentifier(font, "font", context.getPackageName());
+            if (id != 0) {
+                Typeface tf = res.getFont(id);
+                if (tf != null) return tf;
+            }
+        } catch (Throwable ignored) {
+        }
         try {
             return Typeface.createFromAsset(context.getAssets(),
-                    bold ? "fonts/sf-pro-display-bold.ttf" : "fonts/spotifymix-medium.ttf");
+                    "Regular".equals(weight) ? "fonts/spotifymix-medium.ttf" : "fonts/sf-pro-display-bold.ttf");
         } catch (Throwable t) {
-            return bold ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT;
+            return "Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
         }
-    }
-
-    private static boolean isBlank(String s) {
-        return s == null || s.trim().isEmpty();
     }
 
     private int dp(int v) {

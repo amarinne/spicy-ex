@@ -33,6 +33,7 @@ public class AppliedLine {
     public int measuredHeightPx;
     public Spring opacitySpring;
     public Spring lineScaleSpring;
+    public Spring lineGlowSpring; // eases Spotlight glow in/out instead of snapping
     public View rowView;
     public SpicyAnimatedTextView mainView;
     public SpicyAnimatedTextView romanView;

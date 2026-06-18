@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.LinkedHashSet;
 import java.util.Locale;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Preference-backed caches used by native Spicy lyrics processing. */
 public final class LyricCaches {
@@ -41,11 +43,11 @@ public final class LyricCaches {
         return "translate|" + safe(trackId) + "|" + sourceLanguageForCache(sourceLang) + "|" + safe(targetLang) + "|" + safe(text);
     }
 
-    public static String processedDocumentKey(int processingVersion, String trackId, String language, String chineseMode) {
+    public static String processedDocumentKey(int processingVersion, String trackId, String language, RomanizationOptions opts) {
         return "processed-doc-v" + processingVersion
                 + "|" + safe(trackId)
                 + "|" + sourceLanguageForCache(language)
-                + "|cn=" + safe(chineseMode);
+                + "|" + opts.cacheKey();
     }
 
     public static String getProcessedDocument(Context context, String key) {
@@ -140,11 +142,4 @@ public final class LyricCaches {
         }
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
-    }
 }

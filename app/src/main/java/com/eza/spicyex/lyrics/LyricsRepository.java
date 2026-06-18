@@ -18,6 +18,9 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
+import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 
 /** Fetch/fallback coordinator for native Spicy lyrics. */
 public final class LyricsRepository {
@@ -284,21 +287,6 @@ public final class LyricsRepository {
 
     private static boolean isSyncedType(String type) {
         return "Line".equalsIgnoreCase(type) || "Syllable".equalsIgnoreCase(type);
-    }
-
-    private static String trackIdFromUri(String uri) {
-        if (uri == null) return "";
-        String[] parts = uri.split(":");
-        if (parts.length >= 3 && "track".equals(parts[1])) return parts[2];
-        return "";
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
     }
 
     private static String escapeJson(String value) {

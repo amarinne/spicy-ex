@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.HashMap;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /**
  * Android dependency-backed JP/CN processing.
@@ -79,12 +81,17 @@ public final class SpicyJapaneseChineseProcessor {
     private static volatile Tokenizer tokenizer;
     private static final Map<String, String> KANA = new HashMap<>();
     private static final HanyuPinyinOutputFormat PINYIN_FORMAT = new HanyuPinyinOutputFormat();
+    private static final HanyuPinyinOutputFormat PINYIN_FORMAT_TONED = new HanyuPinyinOutputFormat();
 
     static {
         initKana();
         PINYIN_FORMAT.setCaseType(HanyuPinyinCaseType.LOWERCASE);
         PINYIN_FORMAT.setToneType(HanyuPinyinToneType.WITHOUT_TONE);
         PINYIN_FORMAT.setVCharType(HanyuPinyinVCharType.WITH_V);
+        // Tone-mark variant needs ü as a real unicode char (WITH_V is invalid with tone marks).
+        PINYIN_FORMAT_TONED.setCaseType(HanyuPinyinCaseType.LOWERCASE);
+        PINYIN_FORMAT_TONED.setToneType(HanyuPinyinToneType.WITH_TONE_MARK);
+        PINYIN_FORMAT_TONED.setVCharType(HanyuPinyinVCharType.WITH_U_UNICODE);
     }
 
     private SpicyJapaneseChineseProcessor() {
@@ -118,6 +125,66 @@ public final class SpicyJapaneseChineseProcessor {
         return isBlank(reading.romaji) ? null : reading.romaji;
     }
 
+    /**
+     * Derive romaji from provider-supplied furigana while keeping local token
+     * boundaries, particle rules, and spacing. Used when provider ruby is kept so
+     * romaji cannot disagree with the displayed reading.
+     */
+    public static String romanizeJapaneseLineFromFurigana(String text, List<FuriganaSegment> furigana) {
+        if (isBlank(text) || furigana == null || furigana.isEmpty()) return "";
+        String sourceText = Normalizer.normalize(text, Normalizer.Form.NFKC);
+        if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return "";
+
+        List<Entry> entries = buildEntries(sourceText);
+        if (entries.isEmpty()) return "";
+
+        applyProviderFuriganaOverrides(sourceText, entries, furigana);
+        for (Entry entry : entries) entry.romaji = entryRomaji(entry);
+        applyCrossTokenSokuon(entries);
+        return buildRomaji(entries);
+    }
+
+    private static void applyProviderFuriganaOverrides(String sourceText, List<Entry> entries, List<FuriganaSegment> furigana) {
+        ArrayList<FuriganaSegment> sorted = new ArrayList<>(furigana);
+        sorted.sort((a, b) -> Integer.compare(a.start, b.start));
+
+        for (Entry entry : entries) {
+            String reading = readingFromProviderFurigana(sourceText, entry.start, entry.end, sorted);
+            if (!isBlank(reading)) entry.readingKana = reading;
+        }
+    }
+
+    private static String readingFromProviderFurigana(String sourceText, int start, int end, List<FuriganaSegment> furigana) {
+        StringBuilder reading = new StringBuilder();
+        boolean usedProvider = false;
+        int pos = start;
+        while (pos < end) {
+            int cp = sourceText.codePointAt(pos);
+            int cpLen = Character.charCount(cp);
+            String ch = sourceText.substring(pos, pos + cpLen);
+            FuriganaSegment segment = furiganaSegmentAt(furigana, pos);
+            if (isKanjiChar(ch) && segment != null && segment.start <= pos && segment.end > pos) {
+                if (pos == segment.start) {
+                    reading.append(kataToHira(segment.reading));
+                    usedProvider = true;
+                }
+                pos = Math.min(end, segment.end);
+                continue;
+            }
+            if (isKanaChar(ch)) reading.append(kataToHira(ch));
+            pos += cpLen;
+        }
+        return usedProvider ? reading.toString() : null;
+    }
+
+    private static FuriganaSegment furiganaSegmentAt(List<FuriganaSegment> furigana, int index) {
+        for (FuriganaSegment segment : furigana) {
+            if (segment == null || segment.end <= segment.start) continue;
+            if (index >= segment.start && index < segment.end) return segment;
+        }
+        return null;
+    }
+
     public static List<String> romanizeJapaneseSyllables(String lineText, List<String> syllableTexts) {
         ArrayList<String> out = new ArrayList<>();
         if (syllableTexts == null) return out;
@@ -140,36 +207,21 @@ public final class SpicyJapaneseChineseProcessor {
             syllPos = syllEnd;
 
             StringBuilder romaji = new StringBuilder();
-            int firstIndex = -1;
             int lastIndex = -1;
             for (int ei = 0; ei < entries.size(); ei++) {
                 Entry entry = entries.get(ei);
                 if (isBlank(entry.romaji)) continue;
-                if (entry.start < syllEnd && entry.end > syllStart && (entry.start < syllStart || entry.end > syllEnd)) {
-                    String local = romanizeEntrySlice(entry, syllStart - entry.start, syllEnd - entry.start);
-                    if (!isBlank(local)) {
-                        romaji.setLength(0);
-                        romaji.append(local);
-                    }
-                    firstIndex = ei;
-                    lastIndex = ei;
-                    break;
-                } else if (entry.start >= syllStart && entry.start < syllEnd) {
+                if (entry.end <= syllStart || entry.start >= syllEnd) continue; // no overlap
+                // Emit each token's WHOLE romaji once, at the syllable where the token begins.
+                // Continuation syllables (token started earlier) stay blank. This keeps readings
+                // intact — ちゃった -> "chatta", not the per-char "chi"+"ya" the old slicer produced —
+                // and never drops/garbles a word from positional slicing drift.
+                if (entry.start >= syllStart) {
                     Entry prevEntry = ei > 0 ? entries.get(ei - 1) : null;
                     boolean noSpaceBefore = shouldNoSpaceBefore(entry, prevEntry);
                     if (romaji.length() > 0 && !noSpaceBefore) romaji.append(' ');
                     romaji.append(entry.romaji);
-                    if (firstIndex < 0) firstIndex = ei;
                     lastIndex = ei;
-                }
-            }
-            if (firstIndex >= 0 && si > 0 && firstIndex != prevLastIndex) {
-                Entry prevEntry = firstIndex > 0 ? entries.get(firstIndex - 1) : null;
-                boolean noSpaceBefore = shouldNoSpaceBefore(entries.get(firstIndex), prevEntry);
-                if (!noSpaceBefore && romaji.length() > 0) {
-                    // Keep the same boundary information Spicy exposes as RomajiSpaceBefore by
-                    // preserving it in the rendered segment text.
-                    romaji.insert(0, ' ');
                 }
             }
             if (lastIndex >= 0) prevLastIndex = lastIndex;
@@ -179,10 +231,17 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     public static String romanizeChineseLine(String text, String mode) {
+        return romanizeChineseLine(text, mode, false);
+    }
+
+    public static String romanizeChineseLine(String text, String mode, boolean tones) {
         if ("jyutping".equalsIgnoreCase(mode) || "cantonese".equalsIgnoreCase(mode)) {
-            return JyutpingRomanizer.romanize(text);
+            String jyutping = JyutpingRomanizer.romanize(text);
+            // Strip the trailing tone digit on each jyutping syllable when tones are off
+            // (only digits attached to a romanized letter, so Latin passthrough is safe).
+            return tones ? jyutping : (jyutping == null ? null : jyutping.replaceAll("(?<=[a-zA-Z])[1-6]", ""));
         }
-        return romanizeChinesePinyinLine(text);
+        return romanizeChinesePinyinLine(text, tones);
     }
 
     private static List<Entry> buildEntries(String sourceText) {
@@ -325,7 +384,12 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     public static String romanizeChinesePinyinLine(String text) {
+        return romanizeChinesePinyinLine(text, false);
+    }
+
+    public static String romanizeChinesePinyinLine(String text, boolean tones) {
         if (isBlank(text)) return text;
+        HanyuPinyinOutputFormat format = tones ? PINYIN_FORMAT_TONED : PINYIN_FORMAT;
         StringBuilder out = new StringBuilder();
         boolean lastWasPinyin = false;
         for (int i = 0; i < text.length(); ) {
@@ -333,7 +397,7 @@ public final class SpicyJapaneseChineseProcessor {
             String part = null;
             if (Character.charCount(cp) == 1) {
                 try {
-                    String[] values = PinyinHelper.toHanyuPinyinStringArray((char) cp, PINYIN_FORMAT);
+                    String[] values = PinyinHelper.toHanyuPinyinStringArray((char) cp, format);
                     if (values != null && values.length > 0) part = values[0];
                 } catch (Throwable ignored) {
                 }
@@ -695,11 +759,4 @@ public final class SpicyJapaneseChineseProcessor {
         for (String[] pair : base) putKana(pair[0], pair[1]);
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
-    }
 }

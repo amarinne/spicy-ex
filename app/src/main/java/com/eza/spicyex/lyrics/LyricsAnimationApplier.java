@@ -30,12 +30,32 @@ public final class LyricsAnimationApplier {
         return line.lineScaleSpring.step(frameDelta(deltaSeconds));
     }
 
+    /** Eased line glow — rises gradually when the line activates, decays after it passes. Always
+     *  starts from 0 (never the current target) so a line that mounts mid-play still fades in. */
+    public static float stepLineGlow(AppliedLine line, float targetGlow, float deltaSeconds) {
+        if (line == null) return targetGlow;
+        if (line.lineGlowSpring == null) line.lineGlowSpring = new Spring(0f, 1.2f, 1.0f);
+        line.lineGlowSpring.setGoal(targetGlow);
+        return clamp(line.lineGlowSpring.step(frameDelta(deltaSeconds)), 0f, 1f);
+    }
+
     public static void animateSyllables(
             AppliedLine line,
             long positionMs,
             float deltaSeconds,
             float basePx,
             StyleSink sink
+    ) {
+        animateSyllables(line, positionMs, deltaSeconds, basePx, sink, false);
+    }
+
+    public static void animateSyllables(
+            AppliedLine line,
+            long positionMs,
+            float deltaSeconds,
+            float basePx,
+            StyleSink sink,
+            boolean spotlight
     ) {
         if (line == null || line.words == null || line.words.isEmpty() || sink == null) return;
         for (SyllableSegment seg : line.words) {
@@ -46,8 +66,14 @@ public final class LyricsAnimationApplier {
             boolean sung = positionMs >= seg.endMs;
             float targetScale = active ? LyricAnimations.scaleSpline(progress) : (sung ? 1.0f : 0.95f);
             float targetY = active ? LyricAnimations.yOffsetSpline(progress) : (sung ? 0f : 0.01f);
-            float targetGlow = active ? LyricAnimations.glowSpline(progress) : 0f;
-            float targetGradient = active ? (-20f + 120f * progress) : (sung ? 100f : -20f);
+            // Spotlight: no per-word fill — the active word is lit solid and its glow builds with
+            // the word's progress (gradual, not an instant pop), then the spring decays it.
+            float targetGlow = spotlight
+                    ? (active ? 0.60f * progress : 0f)
+                    : (active ? 0.55f * LyricAnimations.glowSpline(progress) : 0f);
+            float targetGradient = spotlight
+                    ? (active || sung ? 100f : -20f)
+                    : (active ? (-20f + 120f * progress) : (sung ? 100f : -20f));
             seg.scaleSpring.setGoal(targetScale);
             seg.ySpring.setGoal(targetY);
             seg.glowSpring.setGoal(targetGlow);
@@ -66,6 +92,10 @@ public final class LyricsAnimationApplier {
                 seg.textView.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
                 seg.textView.setGradientPosition(targetGradient, glow);
             }
+            if (seg.romanizedTextView != null) {
+                seg.romanizedTextView.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
+                seg.romanizedTextView.setGradientPosition(targetGradient, glow);
+            }
 
             if (seg.letters == null || seg.letters.isEmpty()) continue;
             float timeAlpha = (float) Math.sin(progress * (Math.PI / 2d));
@@ -82,10 +112,13 @@ public final class LyricsAnimationApplier {
                 float glowFalloff = LyricAnimations.letterGlowFalloff(distance);
                 float targetLetterScale = 1f + ((LyricAnimations.letterScaleSpline(letterTimeScale) - 1f) * motionFalloff);
                 float targetLetterY = LyricAnimations.letterYOffsetSpline(letterTimeScale) * motionFalloff;
-                float targetLetterGlow = LyricAnimations.glowSpline(glowTimeScale) * glowFalloff;
+                float targetLetterGlow = spotlight
+                        ? (active ? 0.6f : 0f)
+                        : LyricAnimations.glowSpline(glowTimeScale) * glowFalloff;
                 float letterEnd = letter.start + letter.duration;
                 float letterGradient;
-                if (timeAlpha >= letterEnd) letterGradient = 100f;
+                if (spotlight) letterGradient = active || sung ? 100f : -20f;
+                else if (timeAlpha >= letterEnd) letterGradient = 100f;
                 else if (timeAlpha <= letter.start) letterGradient = -20f;
                 else letterGradient = -20f + 120f * LyricAnimations.easeSinOut(letterTimeScale);
                 letter.scaleSpring.setGoal(targetLetterScale);
@@ -113,6 +146,10 @@ public final class LyricsAnimationApplier {
             if (seg.textView != null) {
                 seg.textView.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
                 seg.textView.setGradientPosition(-20f, 0f);
+            }
+            if (seg.romanizedTextView != null) {
+                seg.romanizedTextView.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
+                seg.romanizedTextView.setGradientPosition(-20f, 0f);
             }
             if (seg.letters == null) continue;
             for (AnimatedLetterState letter : seg.letters) {

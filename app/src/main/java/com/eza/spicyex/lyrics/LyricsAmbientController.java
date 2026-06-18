@@ -11,7 +11,9 @@ import android.widget.FrameLayout;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.beautifullyrics.entities.AmbientBackgroundLayer;
 import com.eza.spicyex.beautifullyrics.entities.AnimatedBackgroundView;
+import com.eza.spicyex.beautifullyrics.entities.KawarpBackgroundView;
 
 import java.io.IOException;
 
@@ -21,6 +23,8 @@ import okhttp3.Callback;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Owns the native lyrics ambient gradient and optional animated album-art background. */
 public final class LyricsAmbientController {
@@ -33,7 +37,9 @@ public final class LyricsAmbientController {
 
     private final android.graphics.drawable.GradientDrawable pageBackground;
     private final ArgbEvaluator argbEvaluator = new ArgbEvaluator();
-    private AnimatedBackgroundView animatedBackground;
+    private AmbientBackgroundLayer animatedBackground;
+    private FrameLayout animatedParent;
+    private boolean animatedForceDark;
     private String lastArtImageId = "";
     private int[] currentPageColors;
     private ValueAnimator pageColorAnimator;
@@ -63,20 +69,55 @@ public final class LyricsAmbientController {
 
     /** Apply the "Animated background" setting live: show+resume or hide+pause the layer. */
     public void applyEnabled(boolean enabled) {
+        applySettings(enabled, config == null || config.get(Settings.FORCE_DARK_BACKGROUND));
+    }
+
+    public void applySettings(boolean enabled, boolean forceDark) {
+        if (animatedParent != null && enabled && animatedBackground == null) {
+            createAnimatedLayer(animatedParent, forceDark);
+        } else if (animatedBackground != null && forceDark != animatedForceDark) {
+            ViewGroup parent = animatedBackground.asView().getParent() instanceof ViewGroup
+                    ? (ViewGroup) animatedBackground.asView().getParent()
+                    : animatedParent;
+            if (parent != null) {
+                animatedBackground.pauseRendering();
+                parent.removeView(animatedBackground.asView());
+                animatedBackground = null;
+                createAnimatedLayer((FrameLayout) parent, forceDark);
+            }
+        }
         if (animatedBackground == null) return; // not attached this session — applies on next open
         if (enabled) {
-            animatedBackground.setVisibility(android.view.View.VISIBLE);
+            animatedBackground.asView().setVisibility(android.view.View.VISIBLE);
             animatedBackground.resumeRendering();
         } else {
             animatedBackground.pauseRendering();
-            animatedBackground.setVisibility(android.view.View.GONE);
+            animatedBackground.asView().setVisibility(android.view.View.GONE);
         }
     }
 
     public void attachAnimatedLayer(FrameLayout parent) {
+        animatedParent = parent;
         if (parent == null || config == null || !config.get(Settings.ENABLE_BACKGROUND)) return;
-        animatedBackground = new AnimatedBackgroundView(activity, null, parent);
-        parent.addView(animatedBackground, new FrameLayout.LayoutParams(
+        createAnimatedLayer(parent, config.get(Settings.FORCE_DARK_BACKGROUND));
+    }
+
+    private void createAnimatedLayer(FrameLayout parent, boolean forceDark) {
+        if (parent == null) return;
+        // kawarp domain-warp shader needs AGSL (Android 13+); fall back to the CPU blob renderer
+        // on older devices or if the RuntimeShader fails to compile.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            try {
+                animatedBackground = new KawarpBackgroundView(activity, forceDark);
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + " kawarp shader unavailable, falling back: " + t);
+                animatedBackground = new AnimatedBackgroundView(activity, null, parent);
+            }
+        } else {
+            animatedBackground = new AnimatedBackgroundView(activity, null, parent);
+        }
+        animatedForceDark = forceDark;
+        parent.addView(animatedBackground.asView(), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
@@ -121,7 +162,7 @@ public final class LyricsAmbientController {
     }
 
     private void updateAnimatedBackgroundArt(SpotifyTrack track, RunningState runningState) {
-        AnimatedBackgroundView background = animatedBackground;
+        AmbientBackgroundLayer background = animatedBackground;
         if (background == null) return;
         String imageId = track == null ? "" : safe(track.imageId);
         if (isBlank(imageId) || imageId.equals(lastArtImageId)) return;
@@ -151,14 +192,6 @@ public final class LyricsAmbientController {
                 }
             }
         });
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
     }
 
     public interface RunningState {

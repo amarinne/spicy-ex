@@ -22,13 +22,28 @@ public class SpicyAnimatedTextView extends TextView {
     private Shader cachedShader;
     private float shaderPos = Float.NaN;
     private float shaderGlow = Float.NaN;
+    private float shaderOffset = Float.NaN;
+    private boolean shaderVertical;
     private int shaderWidth = -1;
 
     // Words/letters use horizontal fill; line-level rows can switch to vertical fill by setting.
     private boolean verticalGradient;
+    private int containerGradientWidth = -1;
+    private float containerGradientOffsetX = 0f;
+    // Word/letter views inside a GlowFlexbox get their continuous halo drawn by the parent (no seam).
+    // Standalone rows (line-level main, secondary romaji/translation, live card) have no such parent,
+    // so they draw their own soft halo here instead — gated by setSelfGlow(true).
+    private boolean selfGlow;
+    private final float density;
 
     public SpicyAnimatedTextView(Context context) {
         super(context);
+        density = context.getResources().getDisplayMetrics().density;
+    }
+
+    /** Enable a self-drawn blur halo (for rows NOT inside a GlowFlexbox). */
+    public void setSelfGlow(boolean enabled) {
+        this.selfGlow = enabled;
     }
 
     public void setVerticalGradient(boolean vertical) {
@@ -37,18 +52,69 @@ public class SpicyAnimatedTextView extends TextView {
         cachedShader = null;
     }
 
+    /** Current glow strength (0..1), read by the parent GlowFlexbox to draw a continuous glow. */
+    public float getGlow() {
+        return glow;
+    }
+
     public void setGradientPosition(float gradientPosition, float glow) {
-        if (Math.abs(this.gradientPosition - gradientPosition) < 0.5f && Math.abs(this.glow - glow) < 0.03f) return;
+        boolean hadContainerGradient = containerGradientWidth > 0;
+        containerGradientWidth = -1;
+        if (!hadContainerGradient
+                && Math.abs(this.gradientPosition - gradientPosition) < 0.5f
+                && Math.abs(this.glow - glow) < 0.03f) {
+            return;
+        }
         this.gradientPosition = gradientPosition;
         this.glow = glow;
+        if (selfGlow) updateSelfGlow();
         if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
         else invalidate();
     }
 
+    /**
+     * Draw a horizontal gradient in an ancestor container's coordinate space. This keeps synthetic
+     * attach-to-word rows visually equivalent to one line-level TextView instead of repeating the
+     * wash independently inside every word view.
+     */
+    public void setContainerGradientPosition(float gradientPosition, float glow, int containerWidth, float offsetX) {
+        int safeWidth = Math.max(1, containerWidth);
+        if (Math.abs(this.gradientPosition - gradientPosition) < 0.5f
+                && Math.abs(this.glow - glow) < 0.03f
+                && this.containerGradientWidth == safeWidth
+                && Math.abs(this.containerGradientOffsetX - offsetX) < 0.5f) {
+            return;
+        }
+        this.gradientPosition = gradientPosition;
+        this.glow = glow;
+        this.containerGradientWidth = safeWidth;
+        this.containerGradientOffsetX = offsetX;
+        if (selfGlow) updateSelfGlow();
+        if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
+        else invalidate();
+    }
+
+    private void updateSelfGlow() {
+        float g = Math.max(0f, Math.min(1f, glow));
+        if (g <= 0.02f) {
+            setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT);
+            return;
+        }
+        // Soft white halo behind the (gradient-filled) text; radius + alpha scale with glow so it
+        // builds gradually with the eased glow value rather than popping on.
+        int alpha = Math.round(255f * Math.min(1f, 1.1f * g));
+        setShadowLayer((6f + 16f * g) * density, 0f, 0f, Color.argb(alpha, 255, 255, 255));
+    }
+
     private Shader resolveShader(int extent) {
-        if (cachedShader != null && extent == shaderWidth
+        boolean containerSpace = !verticalGradient && containerGradientWidth > 0;
+        int shaderExtent = containerSpace ? containerGradientWidth : extent;
+        float offset = containerSpace ? containerGradientOffsetX : 0f;
+        if (cachedShader != null && shaderExtent == shaderWidth
                 && Math.abs(gradientPosition - shaderPos) < 0.5f
-                && Math.abs(glow - shaderGlow) < 0.03f) {
+                && Math.abs(glow - shaderGlow) < 0.03f
+                && Math.abs(offset - shaderOffset) < 0.5f
+                && verticalGradient == shaderVertical) {
             return cachedShader;
         }
         // Spicy CSS parity (Mixed.css): --gradient-alpha 0.85 (sung), --gradient-alpha-end 0.35
@@ -57,8 +123,8 @@ public class SpicyAnimatedTextView extends TextView {
         int endAlpha = Math.round(255f * 0.35f);
         int sungColor = Color.argb(startAlpha, 255, 255, 255);
         int unsungColor = Color.argb(endAlpha, 255, 255, 255);
-        float origin = verticalGradient ? getPaddingTop() : getPaddingLeft();
-        float far = origin + extent;
+        float origin = verticalGradient ? getPaddingTop() : getPaddingLeft() - offset;
+        float far = origin + shaderExtent;
         float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
         if (verticalGradient) { y0 = origin; y1 = far; } else { x0 = origin; x1 = far; }
         if (gradientPosition <= -19.5f) {
@@ -75,7 +141,9 @@ public class SpicyAnimatedTextView extends TextView {
         }
         shaderPos = gradientPosition;
         shaderGlow = glow;
-        shaderWidth = extent;
+        shaderWidth = shaderExtent;
+        shaderOffset = offset;
+        shaderVertical = verticalGradient;
         return cachedShader;
     }
 
@@ -91,6 +159,9 @@ public class SpicyAnimatedTextView extends TextView {
         // paint color to mCurTextColor before drawing the layout, which would silently discard the
         // sung/unsung alpha and render every word uniformly. A shader survives that reset.
         paint.setShader(resolveShader(extent));
+        // NOTE: the blur-glow is NOT drawn here per-word (that clipped to each word's box and showed
+        // seams between words). It's drawn once on the parent GlowFlexbox canvas so adjacent word
+        // glows blend continuously. See GlowFlexbox + getGlow().
         super.onDraw(canvas);
         paint.setShader(oldShader);
         paint.setColor(oldColor);

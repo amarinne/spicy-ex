@@ -5,6 +5,8 @@ import com.github.pemistahl.lingua.api.LanguageDetector;
 import com.github.pemistahl.lingua.api.LanguageDetectorBuilder;
 
 import java.util.Locale;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /**
  * Android port of Spicy fetchLyrics.ts / Fork/Translation.ts processing gates.
@@ -191,11 +193,4 @@ public final class SpicyProcessing {
         }
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
-    }
 }

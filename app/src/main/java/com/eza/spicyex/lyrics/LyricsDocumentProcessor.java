@@ -4,6 +4,7 @@ import android.content.Context;
 
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /** Shared post-parse and post-processing document helpers. */
 public final class LyricsDocumentProcessor {
@@ -29,12 +30,12 @@ public final class LyricsDocumentProcessor {
         return out.toString();
     }
 
-    public static void applyProcessedCache(Context context, LyricsDocument doc, String chineseMode, int processingVersion) {
-        ProcessedLyricsCache.apply(context, doc, chineseMode, processingVersion);
+    public static void applyProcessedCache(Context context, LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
+        ProcessedLyricsCache.apply(context, doc, opts, processingVersion);
     }
 
-    public static void saveProcessedCache(Context context, LyricsDocument doc, String chineseMode, int processingVersion) {
-        ProcessedLyricsCache.save(context, doc, chineseMode, processingVersion);
+    public static void saveProcessedCache(Context context, LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
+        ProcessedLyricsCache.save(context, doc, opts, processingVersion);
     }
 
     private static void applyCachedGoogleEnhancements(Context context, LyricsDocument doc, int processingVersion) {
@@ -69,11 +70,9 @@ public final class LyricsDocumentProcessor {
         doc.processingPending = flags.processingPending;
         doc.romanizationPending = flags.romanizationPending;
         doc.translationPending = translationEnabled && flags.translationPending;
-        doc.detectedChinese = SpicyTextDetection.detectPresentScripts(fullText, doc.language, "")
-                .contains(SpicyTextDetection.Script.CHINESE);
+        doc.detectedScripts.clear();
+        doc.detectedScripts.addAll(SpicyTextDetection.detectPresentScripts(fullText, doc.language, ""));
+        doc.detectedChinese = doc.detectedScripts.contains(SpicyTextDetection.Script.CHINESE);
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
 }

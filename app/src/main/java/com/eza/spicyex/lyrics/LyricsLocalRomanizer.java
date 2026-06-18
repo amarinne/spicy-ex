@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import de.robv.android.xposed.XposedBridge;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Local Japanese/Chinese/generic romanization helpers for lyric documents. */
 public final class LyricsLocalRomanizer {
@@ -16,7 +18,7 @@ public final class LyricsLocalRomanizer {
 
     public static boolean shouldLocalRomanize(boolean showRomanization, String chineseMode, LyricsDocument doc, LyricsLine line, String fullText) {
         if (!showRomanization || line == null || isBlank(line.text)) return false;
-        List<SpicyTextDetection.Script> scripts = SpicyTextDetection.detectPresentScripts(fullText, doc == null ? "" : doc.language, "");
+        List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
         boolean needsJapaneseReading = scripts.contains(SpicyTextDetection.Script.JAPANESE)
                 && SpicyJapaneseChineseProcessor.canRomanizeJapanese(line.text);
         if (needsJapaneseReading) return true;
@@ -25,12 +27,13 @@ public final class LyricsLocalRomanizer {
                 && (isBlank(line.chineseMode) || !normalizeChineseMode(line.chineseMode).equals(normalizeChineseMode(chineseMode)));
         if (needsChineseMode) return true;
         if (!shouldGoogleRomanize(showRomanization, line)) return false;
-        return SpicyRomanizer.canRomanizeLocally(line.text, fullText, doc == null ? "" : doc.language);
+        return SpicyRomanizer.canRomanizeLocally(line.text, scripts, doc == null ? "" : doc.language);
     }
 
-    public static String romanizeLine(String chineseMode, LyricsDocument doc, LyricsLine line, String fullText) {
+    public static String romanizeLine(RomanizationOptions opts, LyricsDocument doc, LyricsLine line, String fullText) {
         try {
-            if (doc != null && SpicyTextDetection.detectPresentScripts(fullText, doc.language, "").contains(SpicyTextDetection.Script.JAPANESE)
+            List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
+            if (doc != null && scripts.contains(SpicyTextDetection.Script.JAPANESE)
                     && SpicyJapaneseChineseProcessor.canRomanizeJapanese(line.text)) {
                 SpicyJapaneseChineseProcessor.JapaneseReading local =
                         SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line.text, null);
@@ -38,25 +41,31 @@ public final class LyricsLocalRomanizer {
                     boolean hasProviderFurigana = line.japaneseReading != null
                             && line.japaneseReading.furigana != null
                             && !line.japaneseReading.furigana.isEmpty();
-                    if (!hasProviderFurigana) line.japaneseReading = local;
+                    if (hasProviderFurigana) {
+                        String romaji = SpicyJapaneseChineseProcessor.romanizeJapaneseLineFromFurigana(
+                                line.text, line.japaneseReading.furigana);
+                        if (!isBlank(romaji)) return romaji;
+                        return "";
+                    }
+                    line.japaneseReading = local;
                     if (!isBlank(local.romaji)) return local.romaji;
                 }
             }
-            if (doc != null && SpicyTextDetection.detectPresentScripts(fullText, doc.language, "").contains(SpicyTextDetection.Script.CHINESE)
+            if (doc != null && scripts.contains(SpicyTextDetection.Script.CHINESE)
                     && SpicyTextDetection.itemChineseTest(line.text)) {
-                line.chineseMode = normalizeChineseMode(chineseMode);
-                return SpicyJapaneseChineseProcessor.romanizeChineseLine(line.text, line.chineseMode);
+                line.chineseMode = normalizeChineseMode(opts.chineseMode);
+                return SpicyJapaneseChineseProcessor.romanizeChineseLine(line.text, line.chineseMode, opts.chineseTones);
             }
-            return SpicyRomanizer.romanizeLine(line.text, fullText, doc == null ? "" : doc.language, chineseMode);
+            return SpicyRomanizer.romanizeLine(line.text, scripts, doc == null ? "" : doc.language, opts);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " local romanization failed: " + t);
             return "";
         }
     }
 
-    public static void populateLocalSegmentRomanization(String chineseMode, LyricsDocument doc, LyricsLine line, String fullText) {
+    public static void populateLocalSegmentRomanization(RomanizationOptions opts, LyricsDocument doc, LyricsLine line, String fullText) {
         if (line == null || line.syllables == null || line.syllables.isEmpty()) return;
-        List<SpicyTextDetection.Script> scripts = SpicyTextDetection.detectPresentScripts(fullText, doc == null ? "" : doc.language, "");
+        List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
         if (scripts.contains(SpicyTextDetection.Script.JAPANESE)
                 && SpicyJapaneseChineseProcessor.canRomanizeJapanese(line.text)) {
             ArrayList<String> syllableTexts = new ArrayList<>();
@@ -76,7 +85,7 @@ public final class LyricsLocalRomanizer {
         for (SyllableSegment seg : line.syllables) {
             if (seg == null || isBlank(seg.text)) continue;
             if (!isBlank(seg.romanizedText)) continue;
-            String local = romanizeText(chineseMode, doc, seg.text, fullText, line.chineseMode);
+            String local = romanizeText(opts, doc, seg.text, fullText, line.chineseMode);
             seg.romanizedText = !isBlank(local) && !local.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(local)
                     ? local : "";
         }
@@ -104,10 +113,10 @@ public final class LyricsLocalRomanizer {
         return SpotifyPlusConfig.CHINESE_MODE_PINYIN;
     }
 
-    public static String romanizeText(String chineseMode, LyricsDocument doc, String text, String fullText, String lineChineseMode) {
+    public static String romanizeText(RomanizationOptions opts, LyricsDocument doc, String text, String fullText, String lineChineseMode) {
         try {
             String language = doc == null ? "" : doc.language;
-            List<SpicyTextDetection.Script> scripts = SpicyTextDetection.detectPresentScripts(fullText, language, "");
+            List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
             if (scripts.contains(SpicyTextDetection.Script.JAPANESE)
                     && SpicyJapaneseChineseProcessor.canRomanizeJapanese(text)) {
                 SpicyJapaneseChineseProcessor.JapaneseReading local =
@@ -116,21 +125,19 @@ public final class LyricsLocalRomanizer {
             }
             if (scripts.contains(SpicyTextDetection.Script.CHINESE)
                     && SpicyTextDetection.itemChineseTest(text)) {
-                String mode = normalizeChineseMode(isBlank(lineChineseMode) ? chineseMode : lineChineseMode);
-                return SpicyJapaneseChineseProcessor.romanizeChineseLine(text, mode);
+                String mode = normalizeChineseMode(isBlank(lineChineseMode) ? opts.chineseMode : lineChineseMode);
+                return SpicyJapaneseChineseProcessor.romanizeChineseLine(text, mode, opts.chineseTones);
             }
-            return SpicyRomanizer.romanizeLine(text, fullText, language, chineseMode);
+            return SpicyRomanizer.romanizeLine(text, scripts, language, opts);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " local segment romanization failed: " + t);
             return "";
         }
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
+    private static List<SpicyTextDetection.Script> scriptsFor(LyricsDocument doc, String fullText) {
+        if (doc != null && !doc.detectedScripts.isEmpty()) return doc.detectedScripts;
+        return SpicyTextDetection.detectPresentScripts(fullText, doc == null ? "" : doc.language, "");
     }
 
-    private static String safe(String value) {
-        return value == null ? "" : value;
-    }
 }

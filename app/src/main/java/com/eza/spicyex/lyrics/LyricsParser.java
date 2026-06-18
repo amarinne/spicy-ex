@@ -15,6 +15,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XposedBridge;
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
+import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 
 /** Source adapters for Spicy API and LRCLIB lyric payloads. */
 public final class LyricsParser implements LyricsRepository.Parser {
@@ -48,6 +51,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
                 Json.optString(data, "source", "Source", "Provider", "provider"),
                 Json.findFirstString(root, "source", "Source", "Provider", "provider")
         ));
+        doc.songWriters = joinSongWriters(Json.optArray(data, "SongWriters", "songWriters", "Writers"));
         JsonArray selectedLines = Json.optArray(data, "Lines", "lines", "Content", "content");
         XposedBridge.log(TAG + " spicy parse selected type=" + type + " candidateLines=" + (selectedLines == null ? 0 : selectedLines.size()));
 
@@ -428,13 +432,6 @@ public final class LyricsParser implements LyricsRepository.Parser {
         return Math.max(0, Math.round(seconds * 1000d));
     }
 
-    private static String trackIdFromUri(String uri) {
-        if (uri == null) return "";
-        String[] parts = uri.split(":");
-        if (parts.length >= 3 && "track".equals(parts[1])) return parts[2];
-        return "";
-    }
-
     private static long parseLongSafe(String value) {
         if (value == null) return 0;
         try {
@@ -452,12 +449,21 @@ public final class LyricsParser implements LyricsRepository.Parser {
         return "";
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value;
+    /** Join a SongWriters string array into a "A, B & C" credit line; "" if none. */
+    private static String joinSongWriters(JsonArray array) {
+        if (array == null || array.size() == 0) return "";
+        java.util.ArrayList<String> names = new java.util.ArrayList<>();
+        for (JsonElement el : array) {
+            try {
+                String name = el == null || el.isJsonNull() ? "" : el.getAsString().trim();
+                if (!isBlank(name) && !names.contains(name)) names.add(name);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (names.isEmpty()) return "";
+        if (names.size() == 1) return names.get(0);
+        String head = String.join(", ", names.subList(0, names.size() - 1));
+        return head + " & " + names.get(names.size() - 1);
     }
 
     public interface Finalizer {

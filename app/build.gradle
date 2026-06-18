@@ -27,8 +27,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 172
-        versionName "1.33.3-colorlyrics-anchor+B172-20260615T0630Z"
+        versionCode 213
+        versionName "1.51.17-translit-session+B213-20260618T2015Z"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
