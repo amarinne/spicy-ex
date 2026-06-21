@@ -40,16 +40,20 @@ public final class LyricsDocumentProcessor {
 
     private static void applyCachedGoogleEnhancements(Context context, LyricsDocument doc, int processingVersion) {
         if (context == null || doc == null || doc.lines == null) return;
+        SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
+        String targetLang = config != null ? config.get(Settings.TRANSLATION_TARGET) : "en";
         for (LyricsLine line : doc.lines) {
-            if (line == null || line.interlude || isBlank(line.text) || !SpicyTextDetection.hasRomanizableScript(line.text)) continue;
-            String cachedRomanized = LyricCaches.getProcessingValue(context, processingVersion,
-                    LyricCaches.romanizationKey(doc.trackId, doc.language, line.text));
-            if (!isBlank(cachedRomanized) && !cachedRomanized.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(cachedRomanized)) {
-                line.romanizedText = cachedRomanized;
+            if (line == null || line.interlude || isBlank(line.text)) continue;
+            if (SpicyTextDetection.hasRomanizableScript(line.text)) {
+                String cachedRomanized = LyricCaches.getProcessingValue(context, processingVersion,
+                        LyricCaches.romanizationKey(doc.trackId, doc.language, line.text));
+                if (!isBlank(cachedRomanized) && !cachedRomanized.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(cachedRomanized)) {
+                    line.romanizedText = cachedRomanized;
+                }
             }
             String cachedTranslated = LyricCaches.getProcessingValue(context, processingVersion,
-                    LyricCaches.translationKey(doc.trackId, doc.language, "en", line.text));
-            if (isBlank(line.translatedText) && !isBlank(cachedTranslated) && !cachedTranslated.equals(line.text)) {
+                    LyricCaches.translationKey(doc.trackId, doc.language, targetLang, line.text));
+            if (isBlank(line.translatedText) && !isBlank(cachedTranslated) && !GoogleEnhancer.sameText(cachedTranslated, line.text)) {
                 line.translatedText = cachedTranslated;
             }
         }

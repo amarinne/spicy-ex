@@ -43,9 +43,49 @@ final class SpicyKoreanG2P {
 
     static String romanize(String text) {
         if (text == null) return null;
+        java.util.List<String> pieces = romanizeReadablePieces(text);
+        StringBuilder out = new StringBuilder();
+        for (String piece : pieces) out.append(piece);
+        return out.toString();
+    }
+
+    static java.util.List<String> romanizeReadablePieces(String text) {
+        java.util.ArrayList<String> pieces = new java.util.ArrayList<>();
+        if (text == null) return pieces;
+        int n = text.length();
+        StringBuilder run = new StringBuilder();
+        for (int i = 0; i < n; ) {
+            int cp = text.codePointAt(i);
+            if (cp >= 0xAC00 && cp <= 0xD7A3) {
+                run.appendCodePoint(cp);
+            } else {
+                flushReadableRun(run, pieces);
+                pieces.add(new String(Character.toChars(cp)));
+            }
+            i += Character.charCount(cp);
+        }
+        flushReadableRun(run, pieces);
+        return pieces;
+    }
+
+    private static void flushReadableRun(StringBuilder run, java.util.List<String> out) {
+        if (run.length() == 0) return;
+        java.util.List<String> chunks = SpicyKoreanSpacing.splitRun(run.toString());
+        boolean first = true;
+        for (String chunk : chunks) {
+            if (chunk == null || chunk.isEmpty()) continue;
+            if (!first) out.add(" ");
+            out.addAll(romanizeSyllablePieces(chunk));
+            first = false;
+        }
+        run.setLength(0);
+    }
+
+    static java.util.List<String> romanizeSyllablePieces(String text) {
+        java.util.ArrayList<String> pieces = new java.util.ArrayList<>();
+        if (text == null) return pieces;
         // Tokenize into syllables; non-Hangul chars break adjacency.
         int n = text.length();
-        StringBuilder out = new StringBuilder();
         // Buffer of consecutive syllables we can apply boundary rules within.
         java.util.ArrayList<int[]> run = new java.util.ArrayList<>();
         for (int i = 0; i < n; ) {
@@ -54,25 +94,27 @@ final class SpicyKoreanG2P {
                 int s = cp - 0xAC00;
                 run.add(new int[]{s / 588, (s % 588) / 28, s % 28});
             } else {
-                flush(run, out);
-                out.appendCodePoint(cp);
+                flush(run, pieces);
+                pieces.add(new String(Character.toChars(cp)));
             }
             i += Character.charCount(cp);
         }
-        flush(run, out);
-        return out.toString();
+        flush(run, pieces);
+        return pieces;
     }
 
-    private static void flush(java.util.ArrayList<int[]> run, StringBuilder out) {
+    private static void flush(java.util.ArrayList<int[]> run, java.util.List<String> out) {
         if (run.isEmpty()) return;
         applyRules(run);
         int prevCoda = CODA_NONE;
         for (int[] syl : run) {
             // A ㄹ onset right after a ㄹ coda is the lateralized ㄹㄹ → write "ll", not "rl".
             String onset = (syl[0] == ON_R && prevCoda == CODA_L) ? "l" : ONSET[syl[0]];
-            out.append(onset).append(VOWEL[syl[1]]);
+            StringBuilder piece = new StringBuilder();
+            piece.append(onset).append(VOWEL[syl[1]]);
             String coda = CODA_ROMAN[syl[2]];
-            out.append(coda == null ? "" : coda);
+            piece.append(coda == null ? "" : coda);
+            out.add(piece.toString());
             prevCoda = syl[2];
         }
         run.clear();

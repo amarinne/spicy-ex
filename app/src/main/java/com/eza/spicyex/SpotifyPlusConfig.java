@@ -51,7 +51,11 @@ public final class SpotifyPlusConfig {
         if (setting instanceof Settings.BooleanSetting) {
             value = hostPrefs.getBoolean(setting.key, (Boolean) setting.defaultValue);
         } else {
-            value = hostPrefs.getString(setting.key, (String) setting.defaultValue);
+            if (setting instanceof Settings.IntegerSetting) {
+                value = hostPrefs.getInt(setting.key, (Integer) setting.defaultValue);
+            } else {
+                value = hostPrefs.getString(setting.key, (String) setting.defaultValue);
+            }
         }
         if (value == null) value = setting.defaultValue;
         return setting.coerce(value);

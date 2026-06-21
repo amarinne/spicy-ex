@@ -186,12 +186,15 @@ public final class SpicyRomanizer {
                 result = SpicyJapaneseChineseProcessor.romanizeJapaneseLine(result);
                 changed = true;
             } else if (script == SpicyTextDetection.Script.CHINESE && SpicyTextDetection.itemChineseTest(result)) {
+                if (opts.chineseMode == null || opts.chineseMode.isEmpty()) continue;
                 result = SpicyJapaneseChineseProcessor.romanizeChineseLine(result, opts.chineseMode, opts.chineseTones);
                 changed = true;
             } else if (script == SpicyTextDetection.Script.CYRILLIC && SpicyTextDetection.itemCyrillicTest(result)) {
+                if ("Off".equals(opts.cyrillicMode)) continue;
                 result = romanizeCyrillic(result, opts.cyrillicMode, opts.cyrillicKeepSigns);
                 changed = true;
             } else if (script == SpicyTextDetection.Script.KOREAN && SpicyTextDetection.itemKoreanTest(result)) {
+                if ("Off".equals(opts.koreanMode)) continue;
                 result = romanizeKorean(result, koreanFollowSound(opts.koreanMode));
                 changed = true;
             } else if (script == SpicyTextDetection.Script.GREEK && SpicyTextDetection.itemGreekTest(result)) {
@@ -320,6 +323,38 @@ public final class SpicyRomanizer {
     public static String romanizeKorean(String text, boolean followSound) {
         if (text == null) return null;
         if (followSound) return SpicyKoreanG2P.romanize(text);
+        return romanizeKoreanReadable(text);
+    }
+
+    private static String romanizeKoreanReadable(String text) {
+        StringBuilder out = new StringBuilder();
+        StringBuilder run = new StringBuilder();
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            if (cp >= 0xAC00 && cp <= 0xD7A3) {
+                run.appendCodePoint(cp);
+            } else {
+                appendKoreanRun(out, run);
+                out.appendCodePoint(cp);
+            }
+            i += Character.charCount(cp);
+        }
+        appendKoreanRun(out, run);
+        return out.toString();
+    }
+
+    private static void appendKoreanRun(StringBuilder out, StringBuilder run) {
+        if (run.length() == 0) return;
+        boolean first = true;
+        for (String chunk : SpicyKoreanSpacing.splitRun(run.toString())) {
+            if (!first) out.append(' ');
+            out.append(romanizeKoreanRaw(chunk));
+            first = false;
+        }
+        run.setLength(0);
+    }
+
+    private static String romanizeKoreanRaw(String text) {
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < text.length(); ) {
             int cp = text.codePointAt(i);

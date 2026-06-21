@@ -21,10 +21,9 @@ final class DeployCacheCleaner {
         if (context == null) return;
         try {
             SharedPreferences prefs = context.getSharedPreferences(PREFS_DEPLOY_STATE, Context.MODE_PRIVATE);
-            // We run inside Spotify's process, so getPackageInfo("com.eza.spicyex") throws
-            // NameNotFoundException and the cache was never cleared on deploy. Use our baked-in build
-            // stamp instead - it changes every build, so each deploy clears stale cached responses.
-            String currentVersion = BuildStamp.FULL;
+            // Network/processing caches should only be invalidated when their semantics change.
+            // UI-only builds keep this epoch stable so they do not burn Google requests on reopen.
+            String currentVersion = BuildStamp.NETWORK_CACHE_EPOCH;
             String lastVersion = prefs.getString(Settings.LAST_CACHE_CLEAR_VERSION.key, "");
             if (currentVersion.equals(lastVersion)) return;
             LyricsResponseCache.clear(context);
@@ -32,7 +31,8 @@ final class DeployCacheCleaner {
             LyricCaches.clearGoogle(context);
             LyricCaches.clearProcessed(context);
             prefs.edit().putString(Settings.LAST_CACHE_CLEAR_VERSION.key, currentVersion).apply();
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " deploy cache clear version=" + currentVersion);
+            XposedBridge.log(NativeSpicyLyricsHook.TAG + " deploy cache clear epoch=" + currentVersion
+                    + " build=" + BuildStamp.FULL);
         } catch (Throwable t) {
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " deploy cache clear failed: " + t);
         }

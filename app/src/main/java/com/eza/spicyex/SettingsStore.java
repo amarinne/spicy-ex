@@ -23,6 +23,8 @@ public final class SettingsStore {
             value = prefs.getBoolean(setting.key, (Boolean) setting.defaultValue);
         } else if (setting instanceof Settings.StringSetting) {
             value = prefs.getString(setting.key, (String) setting.defaultValue);
+        } else if (setting instanceof Settings.IntegerSetting) {
+            value = prefs.getInt(setting.key, (Integer) setting.defaultValue);
         } else {
             value = prefs.getAll().get(setting.key);
         }

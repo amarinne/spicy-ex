@@ -22,6 +22,7 @@ public final class LyricsLocalRomanizer {
         boolean needsJapaneseReading = scripts.contains(SpicyTextDetection.Script.JAPANESE)
                 && SpicyJapaneseChineseProcessor.canRomanizeJapanese(line.text);
         if (needsJapaneseReading) return true;
+        if (scripts.contains(SpicyTextDetection.Script.CHINESE) && isBlank(chineseMode)) return false;
         boolean needsChineseMode = scripts.contains(SpicyTextDetection.Script.CHINESE)
                 && SpicyTextDetection.itemChineseTest(line.text)
                 && (isBlank(line.chineseMode) || !normalizeChineseMode(line.chineseMode).equals(normalizeChineseMode(chineseMode)));
@@ -42,8 +43,11 @@ public final class LyricsLocalRomanizer {
                             && line.japaneseReading.furigana != null
                             && !line.japaneseReading.furigana.isEmpty();
                     if (hasProviderFurigana) {
-                        String romaji = SpicyJapaneseChineseProcessor.romanizeJapaneseLineFromFurigana(
+                        SpicyJapaneseChineseProcessor.JapaneseReading providerAware =
+                                SpicyJapaneseChineseProcessor.analyzeJapaneseLineWithProviderFurigana(
                                 line.text, line.japaneseReading.furigana);
+                        if (providerAware != null) line.japaneseReading = providerAware;
+                        String romaji = providerAware == null ? "" : providerAware.romaji;
                         if (!isBlank(romaji)) return romaji;
                         return "";
                     }
@@ -53,6 +57,7 @@ public final class LyricsLocalRomanizer {
             }
             if (doc != null && scripts.contains(SpicyTextDetection.Script.CHINESE)
                     && SpicyTextDetection.itemChineseTest(line.text)) {
+                if (opts == null || isBlank(opts.chineseMode)) return "";
                 line.chineseMode = normalizeChineseMode(opts.chineseMode);
                 return SpicyJapaneseChineseProcessor.romanizeChineseLine(line.text, line.chineseMode, opts.chineseTones);
             }
@@ -82,6 +87,12 @@ public final class LyricsLocalRomanizer {
                 return;
             }
         }
+        if (opts != null && SpicyRomanizer.koreanFollowSound(opts.koreanMode)
+                && scripts.contains(SpicyTextDetection.Script.KOREAN)
+                && SpicyTextDetection.itemKoreanTest(line.text)
+                && populateKoreanPronunciationSegments(line)) {
+            return;
+        }
         for (SyllableSegment seg : line.syllables) {
             if (seg == null || isBlank(seg.text)) continue;
             if (!isBlank(seg.romanizedText)) continue;
@@ -89,6 +100,32 @@ public final class LyricsLocalRomanizer {
             seg.romanizedText = !isBlank(local) && !local.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(local)
                     ? local : "";
         }
+    }
+
+    private static boolean populateKoreanPronunciationSegments(LyricsLine line) {
+        if (line == null || isBlank(line.text) || line.syllables == null || line.syllables.isEmpty()) return false;
+        List<String> pieces = SpicyKoreanG2P.romanizeSyllablePieces(line.text);
+        if (pieces.isEmpty()) return false;
+        int searchFrom = 0;
+        boolean changed = false;
+        for (SyllableSegment seg : line.syllables) {
+            if (seg == null || isBlank(seg.text) || !isBlank(seg.romanizedText)) continue;
+            int start = line.text.indexOf(seg.text, searchFrom);
+            if (start < 0) start = line.text.indexOf(seg.text);
+            if (start < 0) continue;
+            int pieceStart = line.text.codePointCount(0, start);
+            int pieceCount = seg.text.codePointCount(0, seg.text.length());
+            if (pieceStart < 0 || pieceStart + pieceCount > pieces.size()) continue;
+            StringBuilder local = new StringBuilder();
+            for (int i = pieceStart; i < pieceStart + pieceCount; i++) local.append(pieces.get(i));
+            String value = local.toString();
+            if (!isBlank(value) && !value.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(value)) {
+                seg.romanizedText = value;
+                changed = true;
+            }
+            searchFrom = start + seg.text.length();
+        }
+        return changed;
     }
 
     public static void clearSegmentRomanization(LyricsLine line) {
@@ -125,6 +162,7 @@ public final class LyricsLocalRomanizer {
             }
             if (scripts.contains(SpicyTextDetection.Script.CHINESE)
                     && SpicyTextDetection.itemChineseTest(text)) {
+                if (opts == null || isBlank(opts.chineseMode)) return "";
                 String mode = normalizeChineseMode(isBlank(lineChineseMode) ? opts.chineseMode : lineChineseMode);
                 return SpicyJapaneseChineseProcessor.romanizeChineseLine(text, mode, opts.chineseTones);
             }

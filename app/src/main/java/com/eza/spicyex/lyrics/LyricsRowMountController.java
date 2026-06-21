@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics;
 
+import android.view.View;
 import android.widget.LinearLayout;
 
 import java.util.List;
@@ -41,6 +42,17 @@ public final class LyricsRowMountController {
         return mountedRows.containsIndex(index);
     }
 
+    public View rowViewOrBuild(AppliedLine line, LyricsMountedRowWindow.RowProvider rowProvider) {
+        if (line == null) return null;
+        View row = LyricsLineViewState.rowView(line);
+        if (row != null) return row;
+        return rowProvider == null ? null : rowProvider.rowFor(line);
+    }
+
+    public View attachedRowView(AppliedLine line) {
+        return LyricsLineViewState.attachedRowView(line, mountedRowsHost);
+    }
+
     public void markDirty() {
         mountedRows.markDirty();
     }
@@ -72,7 +84,17 @@ public final class LyricsRowMountController {
                 lines,
                 mountedRowsHost,
                 activeIndex,
-                rowProvider,
+                new LyricsMountedRowWindow.RowAccess() {
+                    @Override
+                    public View rowFor(AppliedLine line) {
+                        return rowViewOrBuild(line, rowProvider);
+                    }
+
+                    @Override
+                    public View attachedRowFor(AppliedLine line) {
+                        return attachedRowView(line);
+                    }
+                },
                 mountedCallback,
                 unmountedCallback,
                 styleCallback);
@@ -84,6 +106,25 @@ public final class LyricsRowMountController {
         if (rowHeightPrefix != null) return rowHeightPrefix;
         rowHeightPrefix = LyricsRowVirtualizer.buildRowHeightPrefix(lines, estimator);
         return rowHeightPrefix;
+    }
+
+    public int rowHeightForIndex(
+            List<AppliedLine> lines,
+            int index,
+            int estimatedBaseHeightPx,
+            int secondaryExtraHeightPx,
+            boolean showRomanization,
+            boolean showTranslation
+    ) {
+        if (lines == null || index < 0 || index >= lines.size()) return 0;
+        AppliedLine line = lines.get(index);
+        if (line == null) return 0;
+        int measuredHeightPx = LyricsLineViewState.measuredHeightPx(line);
+        if (measuredHeightPx > 0) return measuredHeightPx;
+        int estimate = estimatedBaseHeightPx;
+        if (!line.bgLine && showRomanization && !isBlank(line.romanizedText)) estimate += secondaryExtraHeightPx;
+        if (!line.bgLine && showTranslation && !isBlank(line.translatedText)) estimate += secondaryExtraHeightPx;
+        return estimate;
     }
 
     public void invalidateRowHeightPrefix() {
@@ -112,6 +153,16 @@ public final class LyricsRowMountController {
         return changed;
     }
 
+    public boolean remeasureLine(AppliedLine line) {
+        View row = LyricsLineViewState.rowView(line);
+        if (row == null || !row.isAttachedToWindow()) return false;
+        int height = row.getHeight();
+        if (height <= 0 || Math.abs(LyricsLineViewState.measuredHeightPx(line) - height) < 1) return false;
+        LyricsLineViewState.updateMeasuredHeight(line, height);
+        invalidateRowHeightPrefix();
+        return true;
+    }
+
     public boolean shouldRemountWindowForViewport(List<AppliedLine> lines, int anchor) {
         int count = lines == null ? 0 : lines.size();
         return LyricsRowVirtualizer.shouldRemountWindowForViewport(
@@ -127,6 +178,10 @@ public final class LyricsRowMountController {
     private void clearSpacerHeights() {
         topVirtualSpacer.setHeightPx(0);
         bottomVirtualSpacer.setHeightPx(0);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     public interface LineRemeasurer {

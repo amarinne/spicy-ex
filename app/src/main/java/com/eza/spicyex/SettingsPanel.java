@@ -8,6 +8,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -36,6 +37,7 @@ public final class SettingsPanel {
     private final Context context;
     private final SettingsStore store;
     private final Runnable onClose;
+    private LinearLayout sectionsContainer;
 
     public SettingsPanel(Context context, SettingsStore store, Runnable onClose) {
         this.context = context;
@@ -61,7 +63,11 @@ public final class SettingsPanel {
                 ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
         renderHeader(content);
-        renderSections(content);
+        sectionsContainer = new LinearLayout(context);
+        sectionsContainer.setOrientation(LinearLayout.VERTICAL);
+        content.addView(sectionsContainer, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        renderSections(sectionsContainer);
         renderActions(content);
         renderStatus(content);
         return scroll;
@@ -90,18 +96,57 @@ public final class SettingsPanel {
         Settings.Section currentSection = null;
         for (Settings.Setting<?> setting : Settings.ALL) {
             if (setting.section == Settings.INTERNAL) continue;
+            if (!shouldRender(setting)) continue;
             if (setting.section != currentSection) {
                 currentSection = setting.section;
                 sectionLabel(content, currentSection.label);
             }
             if (setting instanceof Settings.BooleanSetting) {
                 switchRow(content, (Settings.BooleanSetting) setting);
+            } else if (setting instanceof Settings.IntegerSetting) {
+                stepperRow(content, (Settings.IntegerSetting) setting);
             } else if (setting instanceof Settings.StringSetting) {
                 Settings.StringSetting s = (Settings.StringSetting) setting;
                 if (s.allowedValues == null || s.allowedValues.isEmpty()) textFieldRow(content, s);
                 else selectorRow(content, s);
             }
         }
+    }
+
+    private void rebuildSections() {
+        if (sectionsContainer == null) return;
+        sectionsContainer.removeAllViews();
+        renderSections(sectionsContainer);
+    }
+
+    private boolean shouldRender(Settings.Setting<?> setting) {
+        if (setting == Settings.TRANSLATION_TARGET || setting == Settings.TRANSLATION_BRIGHTNESS) {
+            return store.get(Settings.TRANSLATION_ENABLED);
+        }
+        if (setting == Settings.ALIGNED_PER_WORD_ROMAJI
+                || setting == Settings.JAPANESE_READING_MODE
+                || setting == Settings.CHINESE_MODE
+                || setting == Settings.KOREAN_ROMANIZATION
+                || setting == Settings.CHINESE_TONES
+                || setting == Settings.CYRILLIC_MODE
+                || setting == Settings.CYRILLIC_KEEP_SIGNS
+                || setting == Settings.LIVE_CARD_SHOW_TRANSLITERATION) {
+            return store.get(Settings.TRANSLITERATION_ENABLED);
+        }
+        if (setting == Settings.FORCE_DARK_BACKGROUND) {
+            return store.get(Settings.ENABLE_BACKGROUND);
+        }
+        if (setting == Settings.LINE_SYNC_FILL) {
+            return "Gradient wash".equals(store.get(Settings.ANIMATION_STYLE));
+        }
+        return true;
+    }
+
+    private boolean shouldRebuildAfterChange(Settings.Setting<?> setting) {
+        return setting == Settings.TRANSLATION_ENABLED
+                || setting == Settings.TRANSLITERATION_ENABLED
+                || setting == Settings.ENABLE_BACKGROUND
+                || setting == Settings.ANIMATION_STYLE;
     }
 
     private void renderActions(LinearLayout content) {
@@ -165,7 +210,10 @@ public final class SettingsPanel {
         GlossyToggle toggle = new GlossyToggle(context);
         toggle.setAccent(COL_ACCENT);
         toggle.setChecked(store.get(setting), false);
-        toggle.setOnChangeListener(() -> store.put(setting, toggle.isChecked()));
+        toggle.setOnChangeListener(() -> {
+            store.put(setting, toggle.isChecked());
+            if (shouldRebuildAfterChange(setting)) rebuildSections();
+        });
         row.addView(toggle);
         row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked(), true));
     }
@@ -176,6 +224,81 @@ public final class SettingsPanel {
         value.setTextColor(COL_ACCENT);
         row.addView(text("›", 22, COL_SECTION, false));
         row.setOnClickListener(v -> showSelectorDialog(setting, value));
+    }
+
+    private void stepperRow(LinearLayout content, Settings.IntegerSetting setting) {
+        LinearLayout row = newRow(content);
+        titleColumn(row, setting.label, null);
+
+        LinearLayout controls = new LinearLayout(context);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView minus = stepButton("-");
+        TextView value = text(formatOffset(store.get(setting)), 15, COL_ACCENT, true);
+        value.setGravity(Gravity.CENTER);
+        TextView plus = stepButton("+");
+
+        controls.addView(minus, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        LinearLayout.LayoutParams valueLp = new LinearLayout.LayoutParams(dp(74), dp(36));
+        valueLp.leftMargin = dp(4);
+        valueLp.rightMargin = dp(4);
+        controls.addView(value, valueLp);
+        controls.addView(plus, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        row.addView(controls);
+
+        attachStepperTouch(minus, setting, value, -setting.stepValue);
+        attachStepperTouch(plus, setting, value, setting.stepValue);
+    }
+
+    private TextView stepButton(String label) {
+        TextView button = text(label, 20, COL_TITLE, true);
+        button.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0x22FFFFFF);
+        bg.setCornerRadius(dp(18));
+        bg.setStroke(dp(1), COL_CARD_BORDER);
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), bg, null));
+        return button;
+    }
+
+    private void adjustStepper(Settings.IntegerSetting setting, TextView valueView, int delta) {
+        int current = store.get(setting);
+        int next = Math.max(setting.minValue, Math.min(setting.maxValue, current + delta));
+        store.put(setting, next);
+        valueView.setText(formatOffset(next));
+    }
+
+    private void attachStepperTouch(TextView button, Settings.IntegerSetting setting, TextView valueView, int delta) {
+        final int[] repeatCount = new int[]{0};
+        final Runnable[] repeat = new Runnable[1];
+        repeat[0] = () -> {
+            adjustStepper(setting, valueView, delta);
+            repeatCount[0]++;
+            long delayMs = Math.max(45L, 130L - repeatCount[0] * 8L);
+            button.postDelayed(repeat[0], delayMs);
+        };
+        button.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    v.setPressed(true);
+                    repeatCount[0] = 0;
+                    adjustStepper(setting, valueView, delta);
+                    v.removeCallbacks(repeat[0]);
+                    v.postDelayed(repeat[0], 360L);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    v.performClick();
+                    // fall through
+                case MotionEvent.ACTION_CANCEL:
+                case MotionEvent.ACTION_OUTSIDE:
+                    v.setPressed(false);
+                    v.removeCallbacks(repeat[0]);
+                    return true;
+                default:
+                    return true;
+            }
+        });
     }
 
     private void showSelectorDialog(Settings.StringSetting setting, TextView valueView) {
@@ -308,11 +431,17 @@ public final class SettingsPanel {
 
     private static String displayLabel(String value) {
         if (value == null || value.isEmpty()) return "";
+        if ("furigana_romaji".equals(value)) return "Furigana + romaji";
         String name = LANGUAGE_NAMES.get(value);
         if (name != null) return name + " (" + value + ")";
         String spaced = value.replace('_', ' ').replace('-', ' ').trim();
         if (spaced.isEmpty()) return value;
         return Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
+    }
+
+    private static String formatOffset(int offsetMs) {
+        if (offsetMs == 0) return "0.0s";
+        return String.format(java.util.Locale.US, "%+.1fs", offsetMs / 1000f);
     }
 
     private static final java.util.Map<String, String> LANGUAGE_NAMES = buildLanguageNames();

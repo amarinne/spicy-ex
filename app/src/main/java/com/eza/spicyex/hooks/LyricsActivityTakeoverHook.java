@@ -293,7 +293,7 @@ final class LyricsActivityTakeoverHook {
         return false;
     }
 
-    private void launchNativeLyricsFullscreen(Activity activity) {
+    void launchNativeLyricsFullscreen(Activity activity) {
         try {
             if (activity == null) return;
             takeoverArmed = true;

@@ -3,18 +3,25 @@ package com.eza.spicyex.hooks;
 import android.app.Activity;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Choreographer;
 
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.AppliedLine;
+import com.eza.spicyex.lyrics.FuriganaText;
 import com.eza.spicyex.lyrics.LiveLyricCardView;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.LyricsDisplayMode;
+import com.eza.spicyex.lyrics.LyricsLine;
+import com.eza.spicyex.lyrics.LyricsLocalRomanizer;
 import com.eza.spicyex.lyrics.LyricsLineAnimationState;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
 import com.eza.spicyex.lyrics.RomanizationOptions;
+import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
+import com.eza.spicyex.lyrics.SpicyTextDetection;
 
 import java.util.List;
 
@@ -44,6 +51,9 @@ final class NowPlayingLyricController {
     private int fetchGen;
     private int lastIdx = Integer.MIN_VALUE;
     private long lastTrackCheckMs;
+    private long lastConfigCheckMs;
+    private long lastProcessedCacheCheckMs;
+    private long lastCardTapMs;
     private boolean running;
 
     private final Choreographer.FrameCallback frame = new Choreographer.FrameCallback() {
@@ -64,10 +74,20 @@ final class NowPlayingLyricController {
         this.card = card;
         this.config = SpotifyPlusConfig.from(activity);
         refreshConfig();
+        this.card.setOnClickListener(v -> handleCardTap());
     }
 
-    private void refreshConfig() {
-        renderConfig = LyricsRenderConfig.read(activity, config);
+    private boolean refreshConfig() {
+        LyricsRenderConfig next = LyricsRenderConfig.read(activity, config);
+        boolean changed = renderConfig == null
+                || renderConfig.liveCardShowTransliteration != next.liveCardShowTransliteration
+                || !renderConfig.liveCardWeight.equals(next.liveCardWeight)
+                || !renderConfig.lyricsFont.equals(next.lyricsFont)
+                || !renderConfig.liveCardTextSizeMode.equals(next.liveCardTextSizeMode)
+                || renderConfig.liveCardMinimalAnimation != next.liveCardMinimalAnimation;
+        renderConfig = next;
+        if (changed) card.applyConfig(renderConfig);
+        return changed;
     }
 
     void start() {
@@ -86,6 +106,11 @@ final class NowPlayingLyricController {
         SpotifyTrack track = hook.getCurrentTrackSafely();
         if (track == null) return;
         String id = NativeLyricsUtils.trackIdFromUri(track.uri);
+
+        if (nowMs - lastConfigCheckMs > 750) {
+            lastConfigCheckMs = nowMs;
+            if (refreshConfig()) lastIdx = Integer.MIN_VALUE;
+        }
 
         // On track change, drop the previous song's line immediately so a no-lyric next song can't
         // show a stale lyric while (or instead of) loading.
@@ -109,6 +134,7 @@ final class NowPlayingLyricController {
             return;
         }
         if (document == null || !id.equals(loadedId)) return; // not loaded for THIS track → stay cleared
+        refreshProcessedSecondaryRows(nowMs);
 
         // Unsynced lyrics: no line tracks playback, so the live card can't karaoke-follow —
         // show the interlude indicator (set once) and leave reading to the fullscreen screen.
@@ -119,7 +145,8 @@ final class NowPlayingLyricController {
 
         List<AppliedLine> lines = document.appliedLines;
         if (lines == null || lines.isEmpty()) return;
-        long pos = hook.readBestMeasuredProgressMs(track, hook.isPlayerActuallyPlaying());
+        long pos = renderConfig.adjustedPositionMs(
+                hook.readBestMeasuredProgressMs(track, hook.isPlayerActuallyPlaying()));
         int idx = LyricTimeline.findPrimaryActiveRow(lines, pos);
         if (idx < 0 || idx >= lines.size()) {
             if (lastIdx != -1) { card.clear(); lastIdx = -1; }
@@ -129,12 +156,36 @@ final class NowPlayingLyricController {
         if (idx != lastIdx) {
             lastIdx = idx;
             if (cur.dotLine) card.setInterlude(renderConfig.interludeNoteIcon);
-            else card.setLine(cur.text);
+            else card.setLine(liveCardMainText(cur), liveCardSecondaryText(cur));
         }
         if (!cur.dotLine) {
             LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
                     cur, pos, renderConfig.spotlight, renderConfig.lineGradientEnabled);
-            card.setGradient(lineState.gradient, lineState.glowTarget);
+            if (renderConfig.liveCardMinimalAnimation) {
+                card.setMinimalAnimation(true);
+            } else {
+                card.setMinimalAnimation(false);
+                float glow = renderConfig.glowBlurEnabled ? lineState.glowTarget : 0f;
+                card.setGradient(lineState.gradient, glow, lineState.brightnessTarget);
+                card.setScaleTarget(lineState.scaleTarget);
+            }
+        }
+    }
+
+    private void handleCardTap() {
+        refreshConfig();
+        String mode = config.get(com.eza.spicyex.Settings.LIVE_CARD_TAP_MODE);
+        if ("Off".equals(mode)) return;
+        long now = SystemClock.uptimeMillis();
+        if ("Single tap".equals(mode)) {
+            hook.launchNativeLyricsFullscreen(activity);
+            return;
+        }
+        if (now - lastCardTapMs <= 340L) {
+            lastCardTapMs = 0L;
+            hook.launchNativeLyricsFullscreen(activity);
+        } else {
+            lastCardTapMs = now;
         }
     }
 
@@ -151,9 +202,9 @@ final class NowPlayingLyricController {
                     // this track (cheap, cache-only — no network). Must run before applySyncedRows,
                     // which copies romanizedText/translatedText into the planned rows.
                     LyricsDocumentProcessor.applyProcessedCache(activity, doc,
-                            new RomanizationOptions(renderConfig.defaultChineseMode, renderConfig.koreanMode,
-                                    renderConfig.chineseTones, renderConfig.cyrillicMode, renderConfig.cyrillicKeepSigns),
+                            romanizationOptions(),
                             NativeRuntime.GOOGLE_PROCESSING_VERSION);
+                    prepareLiveCardRomanization(doc);
                     LyricTimeline.applySyncedRows(doc); // build appliedLines from doc.lines
                     loadingId = "";
                     if (doc.appliedLines == null || doc.appliedLines.isEmpty()) {
@@ -175,6 +226,59 @@ final class NowPlayingLyricController {
                 });
             }
         });
+    }
+
+    private void refreshProcessedSecondaryRows(long nowMs) {
+        if (!renderConfig.liveCardShowTransliteration) return;
+        if (document == null || nowMs - lastProcessedCacheCheckMs < 2500L) return;
+        lastProcessedCacheCheckMs = nowMs;
+        LyricsDocumentProcessor.applyProcessedCache(activity, document, romanizationOptions(),
+                NativeRuntime.GOOGLE_PROCESSING_VERSION);
+        prepareLiveCardRomanization(document);
+        LyricTimeline.applySyncedRows(document);
+    }
+
+    private void prepareLiveCardRomanization(LyricsDocument doc) {
+        if (!renderConfig.liveCardShowTransliteration || doc == null || doc.lines == null) return;
+        String fullText = LyricsDocumentProcessor.collectText(doc);
+        RomanizationOptions opts = romanizationOptions();
+        for (LyricsLine line : doc.lines) {
+            if (line == null || line.interlude || isBlank(line.text)) continue;
+            boolean japanese = SpicyJapaneseChineseProcessor.canRomanizeJapanese(line.text);
+            if (!japanese && !isBlank(line.romanizedText) && !SpicyTextDetection.hasRomanizableScript(line.romanizedText)) continue;
+            String local = LyricsLocalRomanizer.romanizeLine(opts, doc, line, fullText);
+            if (!isBlank(local) && !local.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
+                line.romanizedText = local;
+            }
+        }
+    }
+
+    private CharSequence liveCardMainText(AppliedLine line) {
+        if (line == null) return "";
+        if (showLiveCardJapaneseFurigana(line)) return FuriganaText.build(line);
+        return line.text;
+    }
+
+    private String liveCardSecondaryText(AppliedLine line) {
+        if (line == null || !renderConfig.liveCardShowTransliteration) return "";
+        if (LyricsDisplayMode.isJapaneseLine(line)
+                && !LyricsDisplayMode.showJapaneseRomaji(
+                line, renderConfig.liveCardShowTransliteration, renderConfig.defaultJapaneseReadingMode)) return "";
+        return line.romanizedText;
+    }
+
+    private boolean showLiveCardJapaneseFurigana(AppliedLine line) {
+        return LyricsDisplayMode.showJapaneseFurigana(
+                line, renderConfig.liveCardShowTransliteration, renderConfig.defaultJapaneseReadingMode);
+    }
+
+    private RomanizationOptions romanizationOptions() {
+        return new RomanizationOptions(renderConfig.defaultChineseMode, renderConfig.defaultKoreanMode,
+                renderConfig.chineseTones, renderConfig.defaultCyrillicMode, renderConfig.cyrillicKeepSigns);
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
 }

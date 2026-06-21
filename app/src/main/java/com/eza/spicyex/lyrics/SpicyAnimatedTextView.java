@@ -22,18 +22,21 @@ public class SpicyAnimatedTextView extends TextView {
     private Shader cachedShader;
     private float shaderPos = Float.NaN;
     private float shaderGlow = Float.NaN;
+    private float shaderBrightness = Float.NaN;
     private float shaderOffset = Float.NaN;
     private boolean shaderVertical;
     private int shaderWidth = -1;
 
     // Words/letters use horizontal fill; line-level rows can switch to vertical fill by setting.
     private boolean verticalGradient;
+    private boolean contentGradient;
     private int containerGradientWidth = -1;
     private float containerGradientOffsetX = 0f;
     // Word/letter views inside a GlowFlexbox get their continuous halo drawn by the parent (no seam).
     // Standalone rows (line-level main, secondary romaji/translation, live card) have no such parent,
     // so they draw their own soft halo here instead — gated by setSelfGlow(true).
     private boolean selfGlow;
+    private float brightnessMultiplier = 1f;
     private final float density;
 
     public SpicyAnimatedTextView(Context context) {
@@ -52,9 +55,28 @@ public class SpicyAnimatedTextView extends TextView {
         cachedShader = null;
     }
 
+    public void setContentGradient(boolean enabled) {
+        if (this.contentGradient == enabled) return;
+        this.contentGradient = enabled;
+        cachedShader = null;
+    }
+
     /** Current glow strength (0..1), read by the parent GlowFlexbox to draw a continuous glow. */
     public float getGlow() {
         return glow;
+    }
+
+    /**
+     * Multiplies the shader's sung/unsung alpha ramp. This keeps static states such as translation
+     * dimming inside the same render path as animated lyrics instead of fighting TextView alpha.
+     */
+    public void setBrightnessMultiplier(float multiplier) {
+        float bounded = Math.max(0f, Math.min(1f, multiplier));
+        if (Math.abs(this.brightnessMultiplier - bounded) < 0.01f) return;
+        this.brightnessMultiplier = bounded;
+        cachedShader = null;
+        if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
+        else invalidate();
     }
 
     public void setGradientPosition(float gradientPosition, float glow) {
@@ -108,19 +130,21 @@ public class SpicyAnimatedTextView extends TextView {
 
     private Shader resolveShader(int extent) {
         boolean containerSpace = !verticalGradient && containerGradientWidth > 0;
-        int shaderExtent = containerSpace ? containerGradientWidth : extent;
+        int contentWidth = !containerSpace && !verticalGradient && contentGradient ? contentWidthPx(extent) : extent;
+        int shaderExtent = containerSpace ? containerGradientWidth : contentWidth;
         float offset = containerSpace ? containerGradientOffsetX : 0f;
         if (cachedShader != null && shaderExtent == shaderWidth
                 && Math.abs(gradientPosition - shaderPos) < 0.5f
                 && Math.abs(glow - shaderGlow) < 0.03f
+                && Math.abs(brightnessMultiplier - shaderBrightness) < 0.01f
                 && Math.abs(offset - shaderOffset) < 0.5f
                 && verticalGradient == shaderVertical) {
             return cachedShader;
         }
         // Spicy CSS parity (Mixed.css): --gradient-alpha 0.85 (sung), --gradient-alpha-end 0.35
         // (unsung). glow nudges the sung edge toward full white (desktop does this via text-shadow).
-        int startAlpha = Math.round(255f * (0.85f + 0.15f * Math.max(0f, Math.min(1f, glow))));
-        int endAlpha = Math.round(255f * 0.35f);
+        int startAlpha = Math.round(255f * (0.85f + 0.15f * Math.max(0f, Math.min(1f, glow))) * brightnessMultiplier);
+        int endAlpha = Math.round(255f * 0.35f * brightnessMultiplier);
         int sungColor = Color.argb(startAlpha, 255, 255, 255);
         int unsungColor = Color.argb(endAlpha, 255, 255, 255);
         float origin = verticalGradient ? getPaddingTop() : getPaddingLeft() - offset;
@@ -141,10 +165,21 @@ public class SpicyAnimatedTextView extends TextView {
         }
         shaderPos = gradientPosition;
         shaderGlow = glow;
+        shaderBrightness = brightnessMultiplier;
         shaderWidth = shaderExtent;
         shaderOffset = offset;
         shaderVertical = verticalGradient;
         return cachedShader;
+    }
+
+    private int contentWidthPx(int fallback) {
+        android.text.Layout layout = getLayout();
+        if (layout == null || layout.getLineCount() <= 0) return fallback;
+        float width = 0f;
+        for (int i = 0; i < layout.getLineCount(); i++) {
+            width = Math.max(width, layout.getLineWidth(i));
+        }
+        return Math.max(1, Math.min(fallback, Math.round(width)));
     }
 
     @Override

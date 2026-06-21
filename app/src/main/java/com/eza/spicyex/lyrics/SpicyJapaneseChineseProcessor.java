@@ -131,17 +131,23 @@ public final class SpicyJapaneseChineseProcessor {
      * romaji cannot disagree with the displayed reading.
      */
     public static String romanizeJapaneseLineFromFurigana(String text, List<FuriganaSegment> furigana) {
-        if (isBlank(text) || furigana == null || furigana.isEmpty()) return "";
+        JapaneseReading reading = analyzeJapaneseLineWithProviderFurigana(text, furigana);
+        return reading == null ? "" : reading.romaji;
+    }
+
+    public static JapaneseReading analyzeJapaneseLineWithProviderFurigana(String text, List<FuriganaSegment> furigana) {
+        if (isBlank(text) || furigana == null || furigana.isEmpty()) return null;
         String sourceText = Normalizer.normalize(text, Normalizer.Form.NFKC);
-        if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return "";
+        if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return null;
 
         List<Entry> entries = buildEntries(sourceText);
-        if (entries.isEmpty()) return "";
+        if (entries.isEmpty()) return null;
 
         applyProviderFuriganaOverrides(sourceText, entries, furigana);
+        applyLexicalOverrides(entries);
         for (Entry entry : entries) entry.romaji = entryRomaji(entry);
         applyCrossTokenSokuon(entries);
-        return buildRomaji(entries);
+        return new JapaneseReading(sourceText, buildRomaji(entries), buildFurigana(sourceText, entries));
     }
 
     private static void applyProviderFuriganaOverrides(String sourceText, List<Entry> entries, List<FuriganaSegment> furigana) {
@@ -340,6 +346,13 @@ public final class SpicyJapaneseChineseProcessor {
                 continue;
             }
 
+            // UniDic can tag bare 君 as the honorific suffix reading クン. As an independent
+            // pronoun in lyrics it should read きみ; suffix use remains "kun" in 田中君.
+            if ("君".equals(entry.surface) && "代名詞".equals(token.getPartOfSpeechLevel1())) {
+                entry.readingKana = "きみ";
+                continue;
+            }
+
             // Rendaku: 〜方 as a plural-person suffix directly after a pronoun reads
             // がた (あなた方/君方). kuromoji-unidic 2.1.2 emits unvoiced カタ, tagged
             // 接尾辞 or 名詞 depending on context. Demonstratives (この方) are 連体詞,
@@ -377,10 +390,24 @@ public final class SpicyJapaneseChineseProcessor {
         for (int i = 0; i + 1 < entries.size(); i++) {
             Entry entry = entries.get(i);
             Entry next = entries.get(i + 1);
+            if ("一".equals(entry.surface)
+                    && ("いち".equals(entry.readingKana) || "ichi".equals(entry.romaji))
+                    && startsWithConsonant(next.romaji)
+                    && startsWithKRow(next.readingKana)) {
+                entry.readingKana = "いっ";
+                entry.romaji = "";
+                next.romaji = "i" + next.romaji.charAt(0) + next.romaji;
+                continue;
+            }
             if (entry.readingKana != null && entry.readingKana.endsWith("っ") && startsWithConsonant(next.romaji)) {
                 next.romaji = next.romaji.charAt(0) + next.romaji;
             }
         }
+    }
+
+    private static boolean startsWithKRow(String kana) {
+        return !isBlank(kana)
+                && ("かきくけこカキクケコ".indexOf(kana.charAt(0)) >= 0);
     }
 
     public static String romanizeChinesePinyinLine(String text) {

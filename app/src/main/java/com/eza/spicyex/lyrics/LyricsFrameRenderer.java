@@ -44,15 +44,8 @@ public final class LyricsFrameRenderer {
         for (int i : mountedIndices) {
             if (i < 0 || i >= document.appliedLines.size()) continue;
             AppliedLine line = document.appliedLines.get(i);
-            if (!isMounted(line, mountedRowsHost)) continue;
-            styleBatcher.applyAlphaIfChanged(line.rowView, 1f);
-            styleBatcher.queueBlurIfChanged(line.rowView, 0f, 0.25f);
-            if (line.mainView != null) {
-                styleBatcher.applyScaleIfChanged(line.mainView, 1f, 1f);
-                line.mainView.setGradientPosition(100f, 0f);
-            }
-            if (line.romanView != null) line.romanView.setGradientPosition(100f, 0f);
-            if (line.translationView != null) line.translationView.setGradientPosition(100f, 0f);
+            if (!LyricsLineViewState.isMounted(line, mountedRowsHost)) continue;
+            LyricsLineViewState.applyStaticFrame(line, styleBatcher);
         }
         styleBatcher.flush();
     }
@@ -71,21 +64,22 @@ public final class LyricsFrameRenderer {
         for (int i : mountedIndices) {
             if (i < 0 || i >= document.appliedLines.size()) continue;
             AppliedLine line = document.appliedLines.get(i);
-            if (!isMounted(line, mountedRowsHost)) continue;
+            if (!LyricsLineViewState.isMounted(line, mountedRowsHost)) continue;
 
             LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
                     line, positionMs, config.spotlight, true);
             float opacity = LyricsAnimationApplier.stepLineOpacity(line, lineState.active, lineState.sung, deltaSeconds);
-            styleBatcher.applyAlphaIfChanged(line.rowView, opacity);
-            styleBatcher.queueBlurIfChanged(line.rowView,
-                    mobileLineBlurPx(line, i, activeIndex, userScrollHeld, config), 0.25f);
-            float lineGlow = LyricsAnimationApplier.stepLineGlow(line, lineState.glowTarget, deltaSeconds);
+            LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity,
+                    mobileLineBlurPx(line, i, activeIndex, userScrollHeld, config));
+            float lineGlowTarget = config.glowBlurEnabled ? lineState.glowTarget : 0f;
+            float lineGlow = LyricsAnimationApplier.stepLineGlow(line, lineGlowTarget, deltaSeconds);
 
-            if (line.mainView != null) {
+            if (LyricsLineViewState.hasMainView(line)) {
                 float scale = LyricsAnimationApplier.stepLineScale(line, lineState.scaleTarget, deltaSeconds);
-                updateLineScalePivot(line);
-                styleBatcher.applyScaleIfChanged(line.mainView, scale, scale);
-                applyLineLevelLyricGradient(line, lineState.gradient, lineGlow);
+                LyricsLineViewState.updateMainScalePivot(line);
+                LyricsLineViewState.applyMainScale(line, styleBatcher, scale);
+                LyricsLineViewState.applyLineLevelGradient(
+                        line, lineState.gradient, lineGlow, lineState.brightnessTarget);
             }
             if (line.dotLine) {
                 if (lineState.active) {
@@ -95,55 +89,36 @@ public final class LyricsFrameRenderer {
                 }
             } else {
                 applySecondaryGradient(line, positionMs, lineGlow, config);
-                if (line.syntheticWords) {
-                    animateSyntheticLineWords(line, lineState, lineGlow, deltaSeconds);
+                if (line.words != null && !line.words.isEmpty()
+                        && !config.lineSyncFillWord()
+                        && !config.lineSyncFillSentence()) {
+                    animateContinuousLineWords(line, lineState, lineGlow, deltaSeconds);
                 } else if (lineState.active) {
                     LyricsAnimationApplier.animateSyllables(
                             line,
                             positionMs,
                             deltaSeconds,
-                            spToPx(line.baseTextSp > 0 ? line.baseTextSp : LyricVisuals.lyricTextSizeSp(line.text)),
+                            spToPx(LyricsLineViewState.effectiveBaseTextSp(line)),
                             styleSink,
-                            config.spotlight);
+                            config.spotlight,
+                            config.glowBlurEnabled);
                 } else {
-                    LyricsAnimationApplier.resetSyllables(line, styleSink);
+                    if (config.lineSyncFillWord() || config.lineSyncFillSentence()) {
+                        resetNearbySyllables(line, i, activeIndex, styleSink);
+                    } else {
+                        LyricsAnimationApplier.resetSyllables(line, styleSink);
+                    }
                 }
             }
         }
         styleBatcher.flush();
     }
 
-    private boolean isMounted(AppliedLine line, ViewGroup mountedRowsHost) {
-        return line != null && line.rowView != null && line.rowView.getParent() == mountedRowsHost;
-    }
-
-    private void updateLineScalePivot(AppliedLine line) {
-        if (line == null || line.mainView == null) return;
-        int width = line.mainView.getWidth();
-        int height = line.mainView.getHeight();
-        if (width <= 0 || height <= 0) return;
-        float pivotX = line.oppositeAligned ? width : 0f;
-        float pivotY = height * 0.5f;
-        if (Math.abs(line.mainView.getPivotX() - pivotX) > 0.5f) line.mainView.setPivotX(pivotX);
-        if (Math.abs(line.mainView.getPivotY() - pivotY) > 0.5f) line.mainView.setPivotY(pivotY);
-    }
-
-    private void applyLineLevelLyricGradient(AppliedLine line, float gradient, float glow) {
-        if (line == null) return;
-        if (line.mainView != null) line.mainView.setGradientPosition(gradient, glow);
-        if (line.romanView != null) line.romanView.setGradientPosition(gradient, glow);
-        if (line.translationView != null) line.translationView.setGradientPosition(100f, 0f);
-    }
-
-    private void animateSyntheticLineWords(AppliedLine line, LyricsLineAnimationState lineState,
-                                           float lineGlow, float deltaSeconds) {
+    private void animateContinuousLineWords(AppliedLine line, LyricsLineAnimationState lineState,
+                                            float lineGlow, float deltaSeconds) {
         if (line == null || line.words == null || line.words.isEmpty() || lineState == null) return;
 
-        View container = null;
-        SyllableSegment first = line.words.get(0);
-        if (first != null && first.view != null && first.view.getParent() instanceof View) {
-            container = (View) first.view.getParent();
-        }
+        View container = LyricsSyllableViewState.parentView(line.words.get(0));
         if (container != null) {
             float scale = LyricsAnimationApplier.stepLineScale(line, lineState.scaleTarget, deltaSeconds);
             if (container.getWidth() > 0 && container.getHeight() > 0) {
@@ -156,65 +131,36 @@ public final class LyricsFrameRenderer {
         int containerWidth = container == null ? 0 : container.getWidth();
         for (SyllableSegment seg : line.words) {
             if (seg == null) continue;
-            if (seg.view != null) {
-                seg.view.setScaleX(1f);
-                seg.view.setScaleY(1f);
-                seg.view.setTranslationY(0f);
-            }
-            applySyntheticLineGradient(seg.textView, container, containerWidth, lineState.gradient, lineGlow);
-            applySyntheticLineGradient(seg.romanizedTextView, container, containerWidth, lineState.gradient, lineGlow);
-            if (seg.letters != null) {
-                for (AnimatedLetterState letter : seg.letters) {
-                    if (letter != null && letter.view != null) {
-                        applySyntheticLineGradient(letter.view, container, containerWidth, lineState.gradient, lineGlow);
-                    }
-                }
-            }
+            LyricsSyllableViewState.resetWordTransform(seg);
+            LyricsSyllableViewState.applySyntheticLineGradient(
+                    seg, container, containerWidth, lineState.gradient, lineGlow,
+                    lineState.brightnessTarget);
         }
     }
 
-    private void applySyntheticLineGradient(SpicyAnimatedTextView view, View container,
-                                            int containerWidth, float gradient, float glow) {
-        if (view == null) return;
-        if (container != null && containerWidth > 0 && view.isAttachedToWindow()) {
-            view.setContainerGradientPosition(gradient, glow, containerWidth, offsetWithin(view, container));
-        } else {
-            view.setGradientPosition(gradient, glow);
+    private void resetNearbySyllables(AppliedLine line, int index, int activeIndex,
+                                      LyricsAnimationApplier.StyleSink sink) {
+        if (activeIndex < 0 || Math.abs(index - activeIndex) <= 2) {
+            LyricsAnimationApplier.resetSyllables(line, sink);
         }
-    }
-
-    private float offsetWithin(View child, View ancestor) {
-        float x = 0f;
-        View current = child;
-        while (current != null && current != ancestor) {
-            x += current.getLeft() + current.getTranslationX();
-            Object parent = current.getParent();
-            current = parent instanceof View ? (View) parent : null;
-        }
-        return x;
     }
 
     private void applySecondaryGradient(AppliedLine line, long positionMs, float spotGlow, LyricsRenderConfig config) {
         if (line == null) return;
         if (config.spotlight) {
-            if (line.romanView != null && line.mainView == null) line.romanView.setGradientPosition(100f, spotGlow);
-            if (line.translationView != null) line.translationView.setGradientPosition(100f, 0f);
+            float glow = config.glowBlurEnabled ? spotGlow : 0f;
+            LyricsLineViewState.applySpotlightSecondaryGradient(line, glow);
             if (line.words != null) {
                 for (SyllableSegment seg : line.words) {
-                    if (seg != null && seg.romanizedTextView != null) {
-                        seg.romanizedTextView.setGradientPosition(100f, spotGlow * 0.9f);
-                    }
+                    LyricsSyllableViewState.applyRomanizedGradient(seg, 100f, glow * 0.9f);
                 }
             }
             return;
         }
         boolean animate = config.lineGradientEnabled;
-        if (line.romanView != null && line.mainView == null) {
-            float gradient = animate ? secondaryLineGradientPosition(line, positionMs) : 100f;
-            float glow = animate && positionMs >= line.startMs && positionMs < line.endMs ? 0.10f : 0f;
-            line.romanView.setGradientPosition(gradient, glow);
-        }
-        if (line.translationView != null) line.translationView.setGradientPosition(100f, 0f);
+        float gradient = animate ? secondaryLineGradientPosition(line, positionMs) : 100f;
+        float glow = config.glowBlurEnabled && animate && positionMs >= line.startMs && positionMs < line.endMs ? 0.10f : 0f;
+        LyricsLineViewState.applyLineSecondaryGradient(line, gradient, glow);
     }
 
     private float secondaryLineGradientPosition(AppliedLine line, long positionMs) {

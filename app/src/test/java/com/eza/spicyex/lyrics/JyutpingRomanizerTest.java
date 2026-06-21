@@ -18,4 +18,10 @@ public class JyutpingRomanizerTest {
         assertEquals("hoeng1 gong2", JyutpingRomanizer.romanize("香港"));
         assertEquals("hoeng1 gong2 A", JyutpingRomanizer.romanize("香港A"));
     }
+
+    @Test
+    public void lineWrapperCanStripToneNumbers() {
+        assertEquals("hoeng1 gong2", SpicyJapaneseChineseProcessor.romanizeChineseLine("香港", "jyutping", true));
+        assertEquals("hoeng gong", SpicyJapaneseChineseProcessor.romanizeChineseLine("香港", "jyutping", false));
+    }
 }

@@ -59,10 +59,19 @@ public final class LyricsShellSettings {
 
     public String lyricWeight() {
         String fallback = normalizeWeight(config == null ? "" : config.get(Settings.LYRICS_WEIGHT));
+        return readWeight(Settings.LYRICS_WEIGHT, fallback);
+    }
+
+    public String liveCardWeight() {
+        String fallback = normalizeWeight(config == null ? "" : config.get(Settings.LIVE_CARD_WEIGHT));
+        return readWeight(Settings.LIVE_CARD_WEIGHT, fallback);
+    }
+
+    private String readWeight(Settings.Setting<String> setting, String fallback) {
         try {
             SharedPreferences prefs = prefs();
-            if (prefs != null && prefs.contains(Settings.LYRICS_WEIGHT.key)) {
-                return normalizeWeight(prefs.getString(Settings.LYRICS_WEIGHT.key, fallback));
+            if (prefs != null && prefs.contains(setting.key)) {
+                return normalizeWeight(prefs.getString(setting.key, fallback));
             }
         } catch (Throwable ignored) {
         }
@@ -107,6 +116,18 @@ public final class LyricsShellSettings {
         return textSizeMultiplierFor(liveCardTextSizeMode());
     }
 
+    public boolean liveCardShowTransliteration() {
+        boolean fallback = config != null && config.get(Settings.LIVE_CARD_SHOW_TRANSLITERATION);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_SHOW_TRANSLITERATION.key)) {
+                return prefs.getBoolean(Settings.LIVE_CARD_SHOW_TRANSLITERATION.key, fallback);
+            }
+        } catch (Throwable ignored) {
+        }
+        return fallback;
+    }
+
     private static float textSizeMultiplierFor(String mode) {
         // Dialed back from 0.78/1.45/1.9 — the steps jumped too far for fine tuning.
         switch (mode) {
@@ -132,6 +153,14 @@ public final class LyricsShellSettings {
 
     public boolean lineSyncFillTopDown() {
         return "Top to bottom".equals(lineSyncFillMode());
+    }
+
+    public boolean lineSyncFillWord() {
+        return false;
+    }
+
+    public boolean lineSyncFillSentence() {
+        return "Left to right (sentence)".equals(lineSyncFillMode());
     }
 
     public String lineSyncFillMode() {
@@ -198,7 +227,10 @@ public final class LyricsShellSettings {
 
     private static String normalizeLineSyncFillMode(String mode) {
         String value = safe(mode);
-        if ("Left to right".equals(value)) return "Left to right";
+        if ("Left to right".equals(value)) return "Left to right (block)";
+        if ("Left to right (word)".equals(value)) return "Left to right (sentence)";
+        if ("Left to right (block)".equals(value)
+                || "Left to right (sentence)".equals(value)) return value;
         return "Top to bottom";
     }
 

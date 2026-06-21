@@ -23,6 +23,7 @@ public class CyrillicRomanizerTest {
     @Test
     public void mixedScriptApostrophesPreserved() {
         assertEquals("Privet rock'n'roll", SpicyRomanizer.romanizeCyrillic("Привет rock'n'roll"));
+        assertEquals("Ya lyublyu pop-muzyku", SpicyRomanizer.romanizeCyrillic("Я люблю pop-музыку"));
     }
 
     @Test

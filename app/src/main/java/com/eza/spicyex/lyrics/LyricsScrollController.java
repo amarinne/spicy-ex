@@ -27,9 +27,13 @@ public final class LyricsScrollController {
 
     public int viewportAnchor(int[] rowHeightPrefix, int lineCount) {
         if (scrollView == null || topStaticSpacer == null || lineCount <= 0) return 0;
-        int center = scrollView.getScrollY() + Math.max(1, scrollView.getHeight()) / 2;
+        int center = contentCenterY(scrollView.getScrollY(), scrollView.getHeight(), scrollView.getPaddingTop());
         int offset = Math.max(0, center - topStaticSpacer.getHeight());
         return LyricsRowVirtualizer.findLineIndexForOffset(rowHeightPrefix, offset, lineCount);
+    }
+
+    static int contentCenterY(int scrollY, int viewportHeight, int paddingTop) {
+        return scrollY + Math.max(1, viewportHeight) / 2 - Math.max(0, paddingTop);
     }
 
     public int contentYForTouch(float yInScroll) {

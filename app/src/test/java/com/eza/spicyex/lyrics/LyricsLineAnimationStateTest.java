@@ -20,6 +20,7 @@ public class LyricsLineAnimationStateTest {
         assertEquals(0.5f, state.progress, EPS);
         assertEquals(40f, state.gradient, EPS);
         assertEquals(0.33f, state.glowTarget, EPS);
+        assertEquals(1.0f, state.brightnessTarget, EPS);
         assertEquals(1.0f, state.scaleTarget, EPS);
     }
 
@@ -30,7 +31,8 @@ public class LyricsLineAnimationStateTest {
         LyricsLineAnimationState state = LyricsLineAnimationState.forLine(line, 3_000, true, true);
 
         assertEquals(100f, state.gradient, EPS);
-        assertEquals(0.58f, state.glowTarget, EPS);
+        assertEquals(0.5f, state.glowTarget, EPS);
+        assertEquals(0.71f, state.brightnessTarget, EPS);
         assertEquals(1.04f, state.scaleTarget, EPS);
     }
 
@@ -42,6 +44,7 @@ public class LyricsLineAnimationStateTest {
 
         assertEquals(100f, state.gradient, EPS);
         assertEquals(0f, state.glowTarget, EPS);
+        assertEquals(1f, state.brightnessTarget, EPS);
     }
 
     @Test

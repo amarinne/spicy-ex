@@ -30,6 +30,7 @@ public class ChineseRomanizerTest {
     @Test
     public void latinAndPunctuationPassThrough() {
         assertEquals("Azhong guo", pinyin("A中国"));   // no space inserted between Latin and pinyin
+        assertEquals("zhong guo rock'n'roll", pinyin("中国 rock'n'roll"));
     }
 
     @Test

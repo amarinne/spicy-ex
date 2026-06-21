@@ -19,12 +19,15 @@ public class KoreanRomanizerTest {
 
     @Test
     public void commonLyricPhrases() {
-        assertEquals("annyeonghaseyo", SpicyRomanizer.romanizeKorean("안녕하세요"));
+        assertEquals("annyeong haseyo", SpicyRomanizer.romanizeKorean("안녕하세요"));
+        assertEquals("sarang haeyo", SpicyRomanizer.romanizeKorean("사랑해요"));
+        assertEquals("bogo sipeo", SpicyRomanizer.romanizeKorean("보고싶어"));
         assertEquals("sarang", SpicyRomanizer.romanizeKorean("사랑"));
     }
 
     @Test
     public void latinPassThrough() {
         assertEquals("BTS feat. IU", SpicyRomanizer.romanizeKorean("BTS feat. IU"));
+        assertEquals("sarang rock'n'roll", SpicyRomanizer.romanizeKorean("사랑 rock'n'roll"));
     }
 }

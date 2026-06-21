@@ -2,6 +2,8 @@ package com.eza.spicyex.lyrics;
 
 import static org.junit.Assert.assertEquals;
 
+import java.util.Arrays;
+
 import org.junit.Test;
 
 /**
@@ -49,5 +51,47 @@ public class KoreanPronunciationTest {
     @Test
     public void latinPassThroughBreaksAdjacency() {
         assertEquals("eumak rock", sound("음악 rock"));
+    }
+
+    @Test
+    public void readablePhraseSpacing() {
+        assertEquals("annyeong haseyo", sound("안녕하세요"));
+        assertEquals("sarang haeyo", sound("사랑해요"));
+        assertEquals("bogo sipeo", sound("보고싶어"));
+    }
+
+    @Test
+    public void fullLinePiecesPreserveSplitChunkPronunciation() {
+        assertEquals(Arrays.asList("han", "gu", "geo"), SpicyKoreanG2P.romanizeSyllablePieces("한국어"));
+        assertEquals(Arrays.asList("baeng", "ma"), SpicyKoreanG2P.romanizeSyllablePieces("백마"));
+        assertEquals(Arrays.asList("an", "nyeong", " ", "ha", "se", "yo"), SpicyKoreanG2P.romanizeReadablePieces("안녕하세요"));
+    }
+
+    @Test
+    public void localRomanizerUsesFullLineContextForSyllableChunks() {
+        LyricsDocument doc = new LyricsDocument();
+        doc.language = "ko";
+        doc.detectedScripts.add(SpicyTextDetection.Script.KOREAN);
+        LyricsLine line = new LyricsLine();
+        line.text = "한국어";
+        line.syllables.add(seg("한"));
+        line.syllables.add(seg("국"));
+        line.syllables.add(seg("어"));
+
+        LyricsLocalRomanizer.populateLocalSegmentRomanization(
+                new RomanizationOptions("", "Pronunciation", false, "Russian", false),
+                doc,
+                line,
+                line.text);
+
+        assertEquals("han", line.syllables.get(0).romanizedText);
+        assertEquals("gu", line.syllables.get(1).romanizedText);
+        assertEquals("geo", line.syllables.get(2).romanizedText);
+    }
+
+    private static SyllableSegment seg(String text) {
+        SyllableSegment segment = new SyllableSegment();
+        segment.text = text;
+        return segment;
     }
 }

@@ -66,6 +66,10 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         activityTakeoverHook.markExplicitLyricsExit(activity);
     }
 
+    void launchNativeLyricsFullscreen(Activity activity) {
+        activityTakeoverHook.launchNativeLyricsFullscreen(activity);
+    }
+
     @Override
     public void markLyricsKeepAlive(Activity activity) {
         activityTakeoverHook.markLyricsActivityKeepWindow(activity);

@@ -40,7 +40,11 @@ public final class LyricsAmbientController {
     private AmbientBackgroundLayer animatedBackground;
     private FrameLayout animatedParent;
     private boolean animatedForceDark;
-    private String lastArtImageId = "";
+    private volatile String desiredArtImageId = "";
+    private volatile String appliedArtImageId = "";
+    private volatile String inFlightArtImageId = "";
+    private volatile AmbientBackgroundLayer inFlightArtTarget;
+    private volatile android.graphics.Bitmap lastArtBitmap;
     private int[] currentPageColors;
     private ValueAnimator pageColorAnimator;
 
@@ -76,14 +80,19 @@ public final class LyricsAmbientController {
         if (animatedParent != null && enabled && animatedBackground == null) {
             createAnimatedLayer(animatedParent, forceDark);
         } else if (animatedBackground != null && forceDark != animatedForceDark) {
-            ViewGroup parent = animatedBackground.asView().getParent() instanceof ViewGroup
-                    ? (ViewGroup) animatedBackground.asView().getParent()
-                    : animatedParent;
-            if (parent != null) {
-                animatedBackground.pauseRendering();
-                parent.removeView(animatedBackground.asView());
-                animatedBackground = null;
-                createAnimatedLayer((FrameLayout) parent, forceDark);
+            if (animatedBackground instanceof KawarpBackgroundView) {
+                ((KawarpBackgroundView) animatedBackground).setForceDark(forceDark);
+                animatedForceDark = forceDark;
+            } else {
+                ViewGroup parent = animatedBackground.asView().getParent() instanceof ViewGroup
+                        ? (ViewGroup) animatedBackground.asView().getParent()
+                        : animatedParent;
+                if (parent instanceof FrameLayout) {
+                    animatedBackground.pauseRendering();
+                    parent.removeView(animatedBackground.asView());
+                    animatedBackground = null;
+                    createAnimatedLayer((FrameLayout) parent, forceDark);
+                }
             }
         }
         if (animatedBackground == null) return; // not attached this session — applies on next open
@@ -117,8 +126,19 @@ public final class LyricsAmbientController {
             animatedBackground = new AnimatedBackgroundView(activity, null, parent);
         }
         animatedForceDark = forceDark;
+        appliedArtImageId = "";
+        inFlightArtImageId = "";
+        inFlightArtTarget = null;
         parent.addView(animatedBackground.asView(), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        applyAnimatedPalette(currentPageColors);
+        if (lastArtBitmap != null) {
+            animatedBackground.updateImage(lastArtBitmap);
+            appliedArtImageId = desiredArtImageId;
+        }
+        if (!isBlank(desiredArtImageId)) {
+            updateAnimatedBackgroundArt(desiredArtImageId, null);
+        }
     }
 
     public void updateForTrack(SpotifyTrack track, RunningState runningState) {
@@ -127,6 +147,7 @@ public final class LyricsAmbientController {
         int[] colors = LyricVisuals.spicyColorBackgroundColors(seed, forceDark);
         pageBackground.setOrientation(android.graphics.drawable.GradientDrawable.Orientation.TL_BR);
         animatePageBackgroundColors(colors);
+        applyAnimatedPalette(colors);
         updateAnimatedBackgroundArt(track, runningState);
     }
 
@@ -165,8 +186,17 @@ public final class LyricsAmbientController {
         AmbientBackgroundLayer background = animatedBackground;
         if (background == null) return;
         String imageId = track == null ? "" : safe(track.imageId);
-        if (isBlank(imageId) || imageId.equals(lastArtImageId)) return;
-        lastArtImageId = imageId;
+        desiredArtImageId = imageId;
+        updateAnimatedBackgroundArt(imageId, runningState);
+    }
+
+    private void updateAnimatedBackgroundArt(String imageId, RunningState runningState) {
+        AmbientBackgroundLayer background = animatedBackground;
+        if (background == null) return;
+        if (isBlank(imageId) || imageId.equals(appliedArtImageId)) return;
+        if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) return;
+        inFlightArtImageId = imageId;
+        inFlightArtTarget = background;
         Request request = new Request.Builder()
                 .url("https://i.scdn.co/image/" + Uri.encode(imageId))
                 .get()
@@ -175,6 +205,10 @@ public final class LyricsAmbientController {
             @Override
             public void onFailure(Call call, IOException e) {
                 XposedBridge.log(TAG + " album art fetch failed: " + e.getMessage());
+                if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) {
+                    inFlightArtImageId = "";
+                    inFlightArtTarget = null;
+                }
             }
 
             @Override
@@ -185,13 +219,27 @@ public final class LyricsAmbientController {
                     android.graphics.Bitmap art = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length);
                     if (art == null) return;
                     if (runningState != null && !runningState.isRunning()) return;
-                    if (!imageId.equals(lastArtImageId)) return;
+                    if (background != animatedBackground) return;
+                    if (!imageId.equals(desiredArtImageId)) return;
+                    lastArtBitmap = art;
                     background.updateImage(art);
+                    appliedArtImageId = imageId;
                 } catch (Throwable t) {
                     XposedBridge.log(TAG + " album art decode failed: " + t);
+                } finally {
+                    if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) {
+                        inFlightArtImageId = "";
+                        inFlightArtTarget = null;
+                    }
                 }
             }
         });
+    }
+
+    private void applyAnimatedPalette(int[] colors) {
+        if (animatedBackground instanceof KawarpBackgroundView) {
+            ((KawarpBackgroundView) animatedBackground).setPaletteColors(colors);
+        }
     }
 
     public interface RunningState {

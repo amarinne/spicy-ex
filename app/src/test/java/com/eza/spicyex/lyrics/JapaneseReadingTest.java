@@ -78,10 +78,12 @@ public class JapaneseReadingTest {
     public void oldOverrideLayerRegressionsStayFixed() {
         // The pre-refactor jukujikun map clobbered correct dictionary readings.
         assertEquals("tanaka kun", romaji("田中君"));
+        assertEquals("kimi", romaji("君"));
         assertEquals("kimi no na wa", romaji("君の名は"));
         assertEquals("juu nen go", romaji("十年後"));
         assertEquals("hitori", romaji("一人"));
         assertEquals("futari", romaji("二人"));
+        assertEquals("ikkai", romaji("一回"));
     }
 
     @Test
@@ -140,10 +142,29 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void localPronounCorrectionStillWinsOverProviderFurigana() {
+        ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> provider = new ArrayList<>();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "くん"));
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLineWithProviderFurigana("君", provider);
+        assertNotNull(reading);
+        assertEquals("kimi", reading.romaji);
+        assertEquals(Arrays.asList("君=きみ"), furiganaFrom(reading));
+    }
+
+    @Test
     public void syllableRomanizationUsesFullLineContext() {
         List<String> parts = SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(
                 "本当の声を響かせてよ",
                 Arrays.asList("本当", "の", "声", "を", "響か", "せ", "て", "よ"));
         assertEquals(Arrays.asList("hontou", "no", "koe", "wo", "hibika", "se", "te", "yo"), parts);
+    }
+
+    private static List<String> furiganaFrom(SpicyJapaneseChineseProcessor.JapaneseReading r) {
+        ArrayList<String> out = new ArrayList<>();
+        for (SpicyJapaneseChineseProcessor.FuriganaSegment f : r.furigana) {
+            out.add(r.sourceText.substring(f.start, Math.min(f.end, r.sourceText.length())) + "=" + f.reading);
+        }
+        return out;
     }
 }

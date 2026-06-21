@@ -27,8 +27,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 213
-        versionName "1.51.17-translit-session+B213-20260618T2015Z"
+        versionCode 261
+        versionName "1.56.3-cycle-krspace+B261-20260620T1450Z"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }

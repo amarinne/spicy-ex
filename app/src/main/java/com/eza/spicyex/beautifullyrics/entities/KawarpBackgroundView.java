@@ -5,6 +5,8 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RuntimeShader;
@@ -29,7 +31,7 @@ import androidx.annotation.RequiresApi;
 public final class KawarpBackgroundView extends View implements AmbientBackgroundLayer {
     // kawarp defaults: warpIntensity 1, saturation 1.5, dithering 0.008. blurPasses 8 is emulated by
     // the aggressive downsample below (smaller = softer / more abstract).
-    private static final float WARP_INTENSITY = 1.0f;
+    private static final float WARP_INTENSITY = 1.18f;
     private static final float SATURATION = 1.5f;
     private static final float DITHER = 0.008f;
     private static final int SOFT_COVER_PX = 96; // blur base; box-blurred below for smoothness
@@ -46,6 +48,11 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
             + "uniform float dither;\n"
             + "uniform float3 tintColor;\n"
             + "uniform float tintIntensity;\n"
+            + "uniform float contrast;\n"
+            + "uniform float forceDarkAmount;\n"
+            + "uniform float3 accentColorA;\n"
+            + "uniform float3 accentColorB;\n"
+            + "uniform float accentMix;\n"
             + "float3 mod289_3(float3 x){ return x - floor(x*(1.0/289.0))*289.0; }\n"
             + "float2 mod289_2(float2 x){ return x - floor(x*(1.0/289.0))*289.0; }\n"
             + "float3 permute(float3 x){ return mod289_3(((x*34.0)+1.0)*x); }\n"
@@ -86,6 +93,13 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
             + "  c.rgb *= half(vignette);\n"
             + "  half luma = dot(c.rgb, half3(0.299, 0.587, 0.114));\n"
             + "  c.rgb = clamp(mix(half3(luma), c.rgb, half(saturation)), 0.0, 1.0);\n"
+            + "  c.rgb = clamp((c.rgb - half3(0.5)) * half(contrast) + half3(0.5), 0.0, 1.0);\n"
+            + "  float darkLuma = (float(luma) < 0.22) ? max(float(luma) * 0.96 + 0.018, 0.055) : min(float(luma), min(0.42, 0.07 + 0.34 * (1.0 - exp(-2.55 * float(luma)))));\n"
+            + "  float lumaScale = mix(1.0, darkLuma / max(float(luma), 0.001), forceDarkAmount);\n"
+            + "  c.rgb = clamp(c.rgb * half(lumaScale), 0.0, 1.0);\n"
+            + "  half accentField = half(smoothstep(-0.65, 0.75, n1 * 0.7 + n2 * 0.3));\n"
+            + "  half3 accent = mix(half3(accentColorA), half3(accentColorB), accentField);\n"
+            + "  c.rgb = mix(c.rgb, accent, half(accentMix));\n"
             + "  c.rgb = mix(c.rgb, half3(tintColor), half(tintIntensity));\n"
             + "  half n = half(fract(sin(dot(fragCoord, float2(12.9898, 78.233)) + iTime) * 43758.5453));\n"
             + "  c.rgb += (n - 0.5) * dither;\n"
@@ -94,8 +108,15 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
 
     private final RuntimeShader shader;
     private final Paint paint = new Paint();
+    private final Paint fallbackPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
     private Bitmap softCover;
     private final Matrix coverMatrix = new Matrix();
+    private boolean forceDark;
+    private float lowContrastAccentMix = 0f;
+    private int fallbackColorA = Color.rgb(46, 18, 26);
+    private int fallbackColorB = Color.rgb(16, 26, 46);
+    private int fallbackW = -1;
+    private int fallbackH = -1;
     private boolean rendering = true;
     private long startNanos = 0;
     private long lastFrameNanos = 0;
@@ -117,12 +138,11 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
         super(context);
         shader = new RuntimeShader(AGSL);
         shader.setFloatUniform("warpIntensity", WARP_INTENSITY);
-        // kawarp force-dark variant: lower saturation + tint toward near-black so the wash isn't
-        // too bright behind the lyrics.
-        shader.setFloatUniform("saturation", forceDark ? 0.75f : SATURATION);
         shader.setFloatUniform("dither", DITHER);
         shader.setFloatUniform("tintColor", 0.025f, 0.022f, 0.03f);
-        shader.setFloatUniform("tintIntensity", forceDark ? 0.42f : 0.0f);
+        shader.setFloatUniform("accentColorA", 0.18f, 0.07f, 0.10f);
+        shader.setFloatUniform("accentColorB", 0.06f, 0.10f, 0.18f);
+        setForceDark(forceDark);
         // No explicit hardware layer: we invalidate every frame, so a cached layer would just be
         // re-uploaded each tick (the lag we saw). The window canvas is already HW-accelerated.
     }
@@ -132,16 +152,44 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
         return this;
     }
 
+    public void setForceDark(boolean forceDark) {
+        this.forceDark = forceDark;
+        // In-place uniform update: toggling dark mode must not recreate the view or drop shader
+        // input, which caused blank backgrounds until the screen was reopened.
+        shader.setFloatUniform("saturation", forceDark ? 1.08f : SATURATION);
+        shader.setFloatUniform("tintIntensity", forceDark ? 0.18f : 0.0f);
+        shader.setFloatUniform("contrast", forceDark ? 1.18f : 1.0f);
+        shader.setFloatUniform("forceDarkAmount", forceDark ? 1.0f : 0.0f);
+        applyAccentMix();
+        invalidate();
+    }
+
+    public void setPaletteColors(int[] colors) {
+        if (colors == null || colors.length < 2) return;
+        int colorA = colors[0];
+        int colorB = ensurePaletteSeparation(colors[1], colorA);
+        fallbackColorA = colorA;
+        fallbackColorB = colorB;
+        fallbackW = -1;
+        fallbackH = -1;
+        setFloatColor("accentColorA", colorA);
+        setFloatColor("accentColorB", colorB);
+        applyAccentMix();
+        invalidate();
+    }
+
     @Override
     public void updateImage(Bitmap art) {
         if (art == null) return;
         Bitmap soft = downsampleCover(art);
+        lowContrastAccentMix = coverContrast(soft) < 0.11f ? 0.14f : 0.055f;
         BitmapShader bmp = new BitmapShader(soft, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
         bmp.setFilterMode(BitmapShader.FILTER_MODE_LINEAR);
         post(() -> {
             applyCoverMatrix(bmp, soft);
             softCover = soft;
             shader.setInputShader("image", bmp);
+            applyAccentMix();
             invalidate();
         });
     }
@@ -187,11 +235,19 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
     protected void onDraw(Canvas canvas) {
         int w = getWidth();
         int h = getHeight();
-        if (w <= 0 || h <= 0 || softCover == null) return;
-        shader.setFloatUniform("iResolution", (float) w, (float) h);
-        shader.setFloatUniform("iTime", (startNanos == 0 ? 0f : (lastFrameNanos - startNanos) / 1_000_000_000f));
-        paint.setShader(shader);
-        canvas.drawRect(0, 0, w, h, paint);
+        if (w <= 0 || h <= 0) return;
+        if (softCover == null) {
+            drawFallback(canvas, w, h);
+            return;
+        }
+        try {
+            shader.setFloatUniform("iResolution", (float) w, (float) h);
+            shader.setFloatUniform("iTime", (startNanos == 0 ? 0f : (lastFrameNanos - startNanos) / 1_000_000_000f));
+            paint.setShader(shader);
+            canvas.drawRect(0, 0, w, h, paint);
+        } catch (Throwable ignored) {
+            drawFallback(canvas, w, h);
+        }
     }
 
     /** Scale + center-crop (cover) the tiny softened bitmap to fill the view, in view-pixel space. */
@@ -221,6 +277,63 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
         Bitmap blurred = small.isMutable() ? small : small.copy(Bitmap.Config.ARGB_8888, true);
         boxBlur(blurred, Math.max(1, Math.round(SOFT_COVER_PX * 0.18f)), 3);
         return blurred;
+    }
+
+    private void applyAccentMix() {
+        float mix = lowContrastAccentMix > 0f ? lowContrastAccentMix : 0.07f;
+        shader.setFloatUniform("accentMix", forceDark ? Math.min(0.24f, mix + 0.07f) : mix);
+    }
+
+    private void setFloatColor(String name, int color) {
+        shader.setFloatUniform(name,
+                Color.red(color) / 255f,
+                Color.green(color) / 255f,
+                Color.blue(color) / 255f);
+    }
+
+    private static float coverContrast(Bitmap bmp) {
+        if (bmp == null || bmp.getWidth() <= 0 || bmp.getHeight() <= 0) return 1f;
+        int stepX = Math.max(1, bmp.getWidth() / 12);
+        int stepY = Math.max(1, bmp.getHeight() / 12);
+        float min = 1f;
+        float max = 0f;
+        for (int y = 0; y < bmp.getHeight(); y += stepY) {
+            for (int x = 0; x < bmp.getWidth(); x += stepX) {
+                int c = bmp.getPixel(x, y);
+                float l = (0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)) / 255f;
+                min = Math.min(min, l);
+                max = Math.max(max, l);
+            }
+        }
+        return max - min;
+    }
+
+    private void drawFallback(Canvas canvas, int w, int h) {
+        if (fallbackW != w || fallbackH != h || fallbackPaint.getShader() == null) {
+            fallbackPaint.setShader(new LinearGradient(0, 0, w, h,
+                    fallbackColorA, fallbackColorB, Shader.TileMode.CLAMP));
+            fallbackW = w;
+            fallbackH = h;
+        }
+        canvas.drawRect(0, 0, w, h, fallbackPaint);
+    }
+
+    private static int ensurePaletteSeparation(int color, int reference) {
+        float[] c = new float[3];
+        float[] r = new float[3];
+        Color.colorToHSV(color, c);
+        Color.colorToHSV(reference, r);
+        float hueDelta = Math.abs(c[0] - r[0]);
+        hueDelta = Math.min(hueDelta, 360f - hueDelta);
+        if (hueDelta >= 22f || Math.abs(c[2] - r[2]) >= 0.12f) return color;
+        c[0] = (r[0] + 42f) % 360f;
+        c[1] = Math.min(0.70f, Math.max(c[1], r[1]) + 0.10f);
+        c[2] = Math.max(0.14f, Math.min(0.46f, r[2] + (forceDarkReference(r[2]) ? 0.14f : -0.14f)));
+        return Color.HSVToColor(c);
+    }
+
+    private static boolean forceDarkReference(float value) {
+        return value < 0.32f;
     }
 
     /** Separable box blur done in-place (cheap on the ~96px base, run once per track). */

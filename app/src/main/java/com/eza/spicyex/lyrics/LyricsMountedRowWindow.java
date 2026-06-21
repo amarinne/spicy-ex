@@ -58,7 +58,7 @@ public final class LyricsMountedRowWindow {
             List<AppliedLine> lines,
             LinearLayout host,
             int activeIndex,
-            RowProvider rowProvider,
+            RowAccess rowAccess,
             LineCallback mountedCallback,
             LineCallback unmountedCallback,
             LineStyleCallback styleCallback
@@ -74,8 +74,9 @@ public final class LyricsMountedRowWindow {
         for (int index : stale) {
             if (index < 0 || index >= lines.size()) continue;
             AppliedLine line = lines.get(index);
-            if (line != null && line.rowView != null && line.rowView.getParent() == host) {
-                host.removeView(line.rowView);
+            View row = rowAccess == null ? null : rowAccess.attachedRowFor(line);
+            if (row != null) {
+                host.removeView(row);
                 if (unmountedCallback != null) unmountedCallback.apply(line);
             }
         }
@@ -84,7 +85,7 @@ public final class LyricsMountedRowWindow {
             if (lineIndex < 0 || lineIndex >= lines.size()) continue;
             AppliedLine line = lines.get(lineIndex);
             if (line == null) continue;
-            View row = rowProvider == null ? null : rowProvider.rowFor(line);
+            View row = rowAccess == null ? null : rowAccess.rowFor(line);
             if (row == null) continue;
             if (row.getParent() != host) {
                 if (row.getParent() instanceof ViewGroup) {
@@ -108,11 +109,17 @@ public final class LyricsMountedRowWindow {
         for (int lineIndex = range.start; lineIndex <= range.end; lineIndex++) {
             if (lineIndex < 0 || lineIndex >= lines.size()) continue;
             AppliedLine line = lines.get(lineIndex);
-            if (line != null && line.rowView != null && line.rowView.getParent() == host) {
+            if (rowAccess != null && rowAccess.attachedRowFor(line) != null) {
                 mountedIndices.add(lineIndex);
             }
         }
         dirty = false;
+    }
+
+    public interface RowAccess {
+        View rowFor(AppliedLine line);
+
+        View attachedRowFor(AppliedLine line);
     }
 
     public interface RowProvider {

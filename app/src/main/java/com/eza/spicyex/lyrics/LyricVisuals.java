@@ -32,23 +32,51 @@ public final class LyricVisuals {
         float[] hsv = new float[3];
         Color.colorToHSV(min, hsv);
         if (forceDark) {
-            hsv[1] = Math.min(0.58f, hsv[1] * 1.15f + 0.08f);
-            hsv[2] = Math.min(0.30f, hsv[2] * 1.32f + 0.035f);
+            hsv[1] = Math.min(0.62f, hsv[1] * 1.22f + 0.09f);
+            hsv[2] = Math.min(0.38f, hsv[2] * 1.45f + 0.055f);
         } else {
             hsv[1] = Math.min(0.82f, hsv[1] * 1.18f + 0.10f);
             hsv[2] = Math.min(0.58f, hsv[2] * 0.92f + 0.08f);
         }
         int high = Color.HSVToColor(hsv);
+        if (forceDark) high = ensureColorSeparation(high, min, 28f, 0.11f);
         return new int[]{high, min, forceDark ? Color.rgb(5, 5, 6) : Color.rgb(18, 18, 18)};
     }
 
-    /** Port of Spicy 6 dynamicBackground.forceDarkColor() when force-dark background active. */
+    /** Curve-based force-dark: bright colors compress hard; already-dark colors keep their shape. */
     public static int forceDarkColor(int color) {
         float[] hsv = new float[3];
         Color.colorToHSV(color, hsv);
-        hsv[1] = Math.min(hsv[1] * 0.62f, 0.50f);
-        hsv[2] = Math.min(hsv[2] * 0.58f, 0.24f);
+        float originalV = hsv[2];
+        hsv[1] = Math.min(0.58f, hsv[1] * (originalV > 0.62f ? 0.76f : 0.94f) + 0.055f);
+        hsv[2] = darkValueCurve(originalV);
         return Color.HSVToColor(hsv);
+    }
+
+    private static float darkValueCurve(float value) {
+        float v = clamp01(value);
+        if (v < 0.22f) return Math.min(0.24f, Math.max(0.055f, v * 0.96f + 0.018f));
+        float compressed = 0.07f + 0.34f * (1f - (float) Math.exp(-2.55f * v));
+        return Math.min(v, Math.min(0.42f, compressed));
+    }
+
+    private static int ensureColorSeparation(int color, int reference, float hueShift, float minValueDelta) {
+        float[] c = new float[3];
+        float[] r = new float[3];
+        Color.colorToHSV(color, c);
+        Color.colorToHSV(reference, r);
+        float hueDelta = Math.abs(c[0] - r[0]);
+        hueDelta = Math.min(hueDelta, 360f - hueDelta);
+        if (hueDelta < 18f && Math.abs(c[2] - r[2]) < minValueDelta) {
+            c[0] = (c[0] + hueShift) % 360f;
+            c[1] = Math.min(0.64f, c[1] + 0.08f);
+            c[2] = Math.min(0.40f, Math.max(c[2], r[2] + minValueDelta));
+        }
+        return Color.HSVToColor(c);
+    }
+
+    private static float clamp01(float value) {
+        return Math.max(0f, Math.min(1f, value));
     }
 
     public static int lyricTextSizeSp(String text) {

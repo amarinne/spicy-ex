@@ -50,10 +50,31 @@ public final class LyricsTextFactory {
 
     /** Lyric typeface for a user weight choice: Regular / Medium (Spotify bold) / Bold (extrabold). */
     public Typeface resolveLyricTypeface(String weight) {
+        return resolveLyricTypeface(weight, config == null ? "default" : config.get(Settings.LYRICS_FONT));
+    }
+
+    /** Lyric typeface for a user weight + family choice. */
+    public Typeface resolveLyricTypeface(String weight, String family) {
+        String normalizedFamily = safe(family).toLowerCase(Locale.ROOT);
+        if ("apple".equals(normalizedFamily)) {
+            String key = "lyric|apple|" + safe(weight);
+            Typeface cached = typefaceCache.get(key);
+            if (cached != null) return cached;
+            Typeface resolved;
+            try {
+                resolved = Typeface.createFromAsset(activity.getAssets(),
+                        "Regular".equals(weight) ? "fonts/spotifymix-medium.ttf" : "fonts/sf-pro-display-bold.ttf");
+            } catch (Throwable t) {
+                resolved = "Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
+            }
+            typefaceCache.put(key, resolved);
+            return resolved;
+        }
+
         String font = "Regular".equals(weight) ? "spotify_mix_ui_regular"
                 : "Bold".equals(weight) ? "spotify_mix_ui_title_extrabold"
                 : "spotify_mix_ui_bold"; // Medium — Spotify's bold reads as a clean medium next to extrabold
-        String key = "lyric|" + safe(weight);
+        String key = "lyric|" + normalizedFamily + "|" + safe(weight);
         Typeface cached = typefaceCache.get(key);
         if (cached != null) return cached;
         Typeface resolved = loadSpotifyFont(font);

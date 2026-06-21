@@ -1,7 +1,5 @@
 package com.eza.spicyex.lyrics;
 
-import android.view.View;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,16 +27,4 @@ public class AppliedLine {
     public boolean dotLine;
     public boolean bgLine;
     public boolean oppositeAligned;
-    public int baseTextSp;
-    public int measuredHeightPx;
-    public Spring opacitySpring;
-    public Spring lineScaleSpring;
-    public Spring lineGlowSpring; // eases Spotlight glow in/out instead of snapping
-    public View rowView;
-    public SpicyAnimatedTextView mainView;
-    public SpicyAnimatedTextView romanView;
-    public SpicyAnimatedTextView translationView;
-    public List<SpicyAnimatedTextView> dotViews;
-    public Spring dotMainScaleSpring;
-    public Spring dotMainOpacitySpring;
 }

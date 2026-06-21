@@ -8,6 +8,7 @@ public final class LyricsLineAnimationState {
     public final float progress;
     public final float gradient;
     public final float glowTarget;
+    public final float brightnessTarget;
     public final float scaleTarget;
 
     private LyricsLineAnimationState(
@@ -17,6 +18,7 @@ public final class LyricsLineAnimationState {
             float progress,
             float gradient,
             float glowTarget,
+            float brightnessTarget,
             float scaleTarget
     ) {
         this.active = active;
@@ -25,6 +27,7 @@ public final class LyricsLineAnimationState {
         this.progress = progress;
         this.gradient = gradient;
         this.glowTarget = glowTarget;
+        this.brightnessTarget = brightnessTarget;
         this.scaleTarget = scaleTarget;
     }
 
@@ -51,10 +54,17 @@ public final class LyricsLineAnimationState {
         float glowTarget = 0f;
         if (active && (spotlight || washEnabled)) {
             float glowPeak = spotlight ? 1.0f : 0.5f;
-            glowTarget = 0.16f + (glowPeak - 0.16f) * progress;
+            glowTarget = spotlight
+                    ? glowPeak * LyricAnimations.easeSinOut(progress) * LyricAnimations.easeSinOut(progress)
+                    : 0.16f + (glowPeak - 0.16f) * progress;
+        }
+        float brightnessTarget = 1f;
+        if (spotlight && active) {
+            float eased = LyricAnimations.easeSinOut(progress);
+            brightnessTarget = 0.42f + 0.58f * eased * eased;
         }
         float scaleTarget = active ? (spotlight ? 1.04f : 1.0f) : 0.95f;
-        return new LyricsLineAnimationState(active, sung, spotlight, progress, gradient, glowTarget, scaleTarget);
+        return new LyricsLineAnimationState(active, sung, spotlight, progress, gradient, glowTarget, brightnessTarget, scaleTarget);
     }
 
     private static float progress01(long positionMs, long startMs, long endMs) {
