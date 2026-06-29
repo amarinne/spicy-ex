@@ -79,15 +79,8 @@ public final class LyricsSyllableViewState {
         }
     }
 
-    public static void applyRomanizedGradient(SyllableSegment segment, float gradient, float glow) {
-        applyRomanizedGradient(segment, gradient, glow, 1f);
-    }
-
-    public static void applyRomanizedGradient(SyllableSegment segment, float gradient, float glow, float brightness) {
-        if (segment != null && state(segment).romanizedTextView != null) {
-            state(segment).romanizedTextView.setBrightnessMultiplier(brightness);
-            state(segment).romanizedTextView.setGradientPosition(gradient, glow);
-        }
+    public static View wordView(SyllableSegment segment) {
+        return segment == null ? null : state(segment).view;
     }
 
     public static boolean isWordAttached(SyllableSegment segment) {

@@ -60,7 +60,7 @@ public final class FuriganaText {
         boolean any = false;
         for (SpicyJapaneseChineseProcessor.FuriganaSegment raw : line.japaneseReading.furigana) {
             if (raw == null || isBlank(raw.reading)) continue;
-            if (raw.start < wordStart || raw.end > wordEnd) continue;
+            if (!segmentStartsInWord(raw, wordStart, wordEnd)) continue;
             int start = Math.max(0, Math.min(word.length(), raw.start - wordStart));
             int end = Math.max(start + 1, Math.min(word.length(), raw.end - wordStart));
             if (start < cursor || start >= end) continue;
@@ -69,6 +69,10 @@ public final class FuriganaText {
             any = true;
         }
         return any ? builder : word;
+    }
+
+    static boolean segmentStartsInWord(SpicyJapaneseChineseProcessor.FuriganaSegment segment, int wordStart, int wordEnd) {
+        return segment != null && segment.start >= wordStart && segment.start < wordEnd && segment.end > wordStart;
     }
 
     /** Draws a small kana reading centered above the spanned base text. */

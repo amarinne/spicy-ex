@@ -113,10 +113,20 @@ public class JapaneseReadingTest {
         // Whole-compound (jukugo) ruby — never even-split guesses like 世(せか)界(い).
         assertEquals(Arrays.asList("時計=とけい"), furigana("時計"));
         assertEquals(Arrays.asList("世界=せかい"), furigana("世界"));
+        assertEquals(Arrays.asList("今年=ことし"), furigana("今年"));
+        assertEquals(Arrays.asList("残念=ざんねん"), furigana("残念"));
         // Okurigana anchor the kanji-run reading.
         assertEquals(Arrays.asList("生=い"), furigana("生きて"));
         assertTrue(furigana("感じたままに描く").contains("感=かん"));
         assertTrue(furigana("感じたままに描く").contains("描=えが"));
+    }
+
+    @Test
+    public void wordLevelFuriganaKeepsCompoundReadingAtSegmentStart() {
+        SpicyJapaneseChineseProcessor.FuriganaSegment segment =
+                new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "ことし");
+        assertTrue(FuriganaText.segmentStartsInWord(segment, 0, 1));
+        assertFalse(FuriganaText.segmentStartsInWord(segment, 1, 2));
     }
 
     @Test

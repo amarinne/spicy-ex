@@ -1,6 +1,7 @@
 package com.eza.spicyex.lyrics;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Map;
@@ -21,5 +22,26 @@ public class GoogleEnhancerTest {
     @Test
     public void sameTextIgnoresWhitespaceOnlyDifferences() {
         assertTrue(GoogleEnhancer.sameText(" hello   world ", "hello world"));
+    }
+
+    @Test
+    public void sameTextIgnoresFormattingOnlyDifferences() {
+        assertTrue(GoogleEnhancer.sameText("Teach me how to say good night…", "teach me how to say good night"));
+        assertTrue(GoogleEnhancer.sameText("Hello — world!", "hello world"));
+        assertTrue(GoogleEnhancer.sameText("it’s ok", "it's ok"));
+    }
+
+    @Test
+    public void hidesRomanizationEchoesFromTranslation() {
+        assertFalse(GoogleEnhancer.shouldDisplayTranslation("Алдадыңбы,", "Aldadynby,"));
+        assertFalse(GoogleEnhancer.shouldDisplayTranslation("Чалбадыңбы,", "Chalbadynby,"));
+        assertFalse(GoogleEnhancer.shouldDisplayTranslation("中国", "zhong guo"));
+    }
+
+    @Test
+    public void showsRealTranslations() {
+        assertTrue(GoogleEnhancer.shouldDisplayTranslation("Алдадыңбы,", "did you cheat"));
+        assertTrue(GoogleEnhancer.shouldDisplayTranslation("Больше не радуешь лучами,", "You no longer please with rays,"));
+        assertTrue(GoogleEnhancer.shouldDisplayTranslation("中国", "China"));
     }
 }

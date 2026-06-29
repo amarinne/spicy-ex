@@ -27,8 +27,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 265
-        versionName "1.57.0-lite-full+B265-20260623T0128Z"
+        versionCode 292
+        versionName "1.58.17-safe-defaults+B292-20260629T1334Z"
 
     }
 

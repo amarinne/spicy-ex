@@ -59,12 +59,29 @@ public class LyricsTransliterationSessionTest {
         assertEquals(SpotifyPlusConfig.JP_READING_ROMAJI_ONLY, session.japaneseReadingMode());
     }
 
+    @Test
+    public void chineseCycleRestartsAtPinyinAfterOff() throws Exception {
+        LyricsTransliterationSession session = new LyricsTransliterationSession(
+                false,
+                cycleConfig(),
+                null,
+                SpotifyPlusConfig.CHINESE_MODE_JYUTPING,
+                null,
+                null);
+
+        LyricsTransliterationSession.CycleResult result = session.cycle(false, true, false, false);
+
+        assertTrue(result.showRomanization);
+        assertEquals(SpotifyPlusConfig.CHINESE_MODE_PINYIN, session.chineseMode());
+    }
+
     private static LyricsRenderConfig cycleConfig() throws Exception {
         Constructor<LyricsRenderConfig> ctor = LyricsRenderConfig.class.getDeclaredConstructor(
                 boolean.class, boolean.class, boolean.class, boolean.class, boolean.class, boolean.class, float.class,
                 boolean.class, boolean.class, boolean.class, boolean.class,
                 String.class, float.class, String.class, String.class, String.class, String.class, float.class,
-                String.class, float.class, boolean.class, boolean.class, String.class,
+                String.class, float.class, String.class, boolean.class, boolean.class, boolean.class,
+                String.class, String.class, String.class, String.class, String.class, String.class, String.class,
                 String.class, String.class, String.class, String.class, String.class, String.class, String.class,
                 boolean.class, String.class, String.class, String.class, boolean.class,
                 boolean.class, String.class, boolean.class, int.class);
@@ -73,7 +90,8 @@ public class LyricsTransliterationSessionTest {
                 false, true, true, false, true, true, 1f,
                 false, true, true, true,
                 "more", 1f, "Medium", "Medium", "default", "normal", 1f,
-                "normal", 1f, false, false, "Top to bottom",
+                "normal", 1f, "Main only", false, false, false,
+                "Spotlight word", "Off", "Top to bottom", "Fade up", "Scroll with lyric", "Grouped", "Top to bottom",
                 "cycle", SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI,
                 "cycle", SpotifyPlusConfig.CHINESE_MODE_PINYIN,
                 "cycle", "Letter-by-letter", "Letter-by-letter",

@@ -54,7 +54,6 @@ import com.eza.spicyex.lyrics.FrameStyleBatcher;
 import com.eza.spicyex.lyrics.GlyphIconDrawable;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsAmbientController;
-import com.eza.spicyex.lyrics.LyricsDisplayMode;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.LyricsFrameRenderer;
@@ -73,6 +72,7 @@ import com.eza.spicyex.lyrics.LyricsSecondaryRowUpdater;
 import com.eza.spicyex.lyrics.LyricsShellLifecycle;
 import com.eza.spicyex.lyrics.LyricsShellSettings;
 import com.eza.spicyex.lyrics.LyricsSpaceView;
+import com.eza.spicyex.lyrics.LyricsSurfaceRowPlanner;
 import com.eza.spicyex.lyrics.LyricsTapSeekHandler;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
 import com.eza.spicyex.lyrics.LyricsToggleSpinnerController;
@@ -838,75 +838,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         handler.postDelayed(scrollSettleRunnable, SCROLL_SETTLE_REMEASURE_DELAY_MS);
     }
 
-    // Sentence-synced lines have no word timing. Split space-delimited lines into synthetic words
-    // only when a feature needs word boxes: attached transliteration or sentence-follow fill.
-    // The renderer still decides whether those boxes animate as one continuous sentence or per word.
-    private void ensureAlignedWordsForSentenceSync(AppliedLine line) {
-        boolean attach = renderConfig.attachTransliterationToWords;
-        boolean sentenceFill = renderConfig.lineSyncFillSentence();
-        boolean wordFill = renderConfig.lineSyncFillWord();
-        boolean needsSyntheticWords = (attach && showRomanization()) || sentenceFill || wordFill;
-        if (line == null || line.dotLine || line.bgLine) return;
-        if (line.syntheticWords && !needsSyntheticWords) {
-            line.words.clear();
-            line.syntheticWords = false;
-            return;
-        }
-        if (!needsSyntheticWords) return;
-        if (!line.words.isEmpty()) return;           // real word-level timing — leave it
-        if (isJapaneseLine(line)) return;            // JP furigana path handles per-char readings
-        String text = line.text == null ? "" : line.text.trim();
-        if (text.isEmpty()) return;
-        if (attach && showRomanization() && isBlank(line.romanizedText)) return; // aligned romaji needs text
-        if (!text.contains(" ")) return;             // only space-delimited scripts
-        String[] parts = text.split("\\s+");
-        if (parts.length < 2) return;
-        int totalChars = 0;
-        for (String p : parts) totalChars += Math.max(1, p.length());
-        long span = Math.max(1, line.endMs - line.startMs);
-        long cursor = line.startMs;
-        int acc = 0;
-        for (int i = 0; i < parts.length; i++) {
-            acc += Math.max(1, parts[i].length());
-            long end = (i == parts.length - 1) ? line.endMs : line.startMs + span * acc / totalChars;
-            SyllableSegment seg = new SyllableSegment();
-            seg.text = parts[i];
-            seg.startMs = cursor;
-            seg.endMs = Math.max(cursor + 1, end);
-            seg.totalMs = seg.endMs - seg.startMs;
-            seg.partOfWord = false; // gets the inter-word spacing margin
-            line.words.add(seg);
-            cursor = seg.endMs;
-        }
-        line.syntheticWords = true;
-    }
-
     private LinearLayout buildLyricRow(AppliedLine line) {
-        ensureAlignedWordsForSentenceSync(line);
-        LyricsRowViewFactory.Options options = new LyricsRowViewFactory.Options();
-        options.lineSpacingMultiplier = renderConfig.lineSpacingMultiplier;
-        options.showRomanization = showRomanization();
-        options.showTranslation = showTranslation();
-        options.showJapaneseFurigana = LyricsDisplayMode.showJapaneseFurigana(line, showRomanization(), japaneseReadingMode());
-        options.showJapaneseRomaji = LyricsDisplayMode.showJapaneseRomaji(line, showRomanization(), japaneseReadingMode());
-        options.attachTransliterationToWords = renderConfig.attachTransliterationToWords;
-        options.lineLevelFillTopDown = renderConfig.lineSyncFillTopDown();
-        options.lineLevelFillSentence = renderConfig.lineSyncFillSentence();
-        options.wordLevelFill = renderConfig.lineSyncFillWord();
-        options.interludeNoteIcon = renderConfig.interludeNoteIcon;
-        options.lyricWeight = renderConfig.lyricWeight;
-        options.lyricsFont = renderConfig.lyricsFont;
-        options.textSizeMultiplier = renderConfig.lyricsTextSizeMultiplier;
-        options.translationBright = renderConfig.translationBright;
-        boolean useSyllableWords = line != null && line.words != null && !line.words.isEmpty();
-        boolean showJapaneseFurigana = options.showJapaneseFurigana;
-        boolean showAlignedRomaji = useSyllableWords
-                && !showJapaneseFurigana
-                && options.attachTransliterationToWords
-                && showRomanization()
-                && !isBlank(line.romanizedText);
-        options.documentText = showAlignedRomaji ? LyricsDocumentProcessor.collectText(document) : "";
-        return rowViewFactory.build(line, options, this::segmentRomanizedText, () -> {
+        LyricsSurfaceRowPlanner.RowPlan rowPlan = LyricsSurfaceRowPlanner.plan(
+                line,
+                document,
+                LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(
+                        renderConfig, showRomanization(), showTranslation(), japaneseReadingMode()),
+                this::segmentRomanizedText);
+        return rowViewFactory.build(rowPlan.line, rowPlan.options, rowPlan.romanizedWordProvider, () -> {
             invalidateRowHeightPrefix();
             updateVirtualSpacerHeights();
         });
@@ -1137,8 +1076,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void cycleTransliterationMode(SharedPreferences prefs) {
         if (renderConfig != null && !renderConfig.transliterationEnabled) return;
         LyricsTransliterationSession.CycleResult result =
-                transliterationSession.cycle(documentHasJapanese(), documentHasChinese(),
-                        documentHasKorean(), documentHasCyrillic());
+                transliterationSession.cycle(activeLineHasJapanese(), activeLineHasChinese(),
+                        activeLineHasKorean(), activeLineHasCyrillic());
         prefs.edit()
                 .putBoolean(Settings.NATIVE_SPICY_ROMANIZATION.key, result.showRomanization)
                 .putString(Settings.LAST_JAPANESE_CYCLE_MODE.key, transliterationSession.japaneseReadingMode())
@@ -1200,14 +1139,48 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
+    private boolean activeLineHasJapanese() {
+        AppliedLine line = activeLine();
+        if (line != null) return SpicyTextDetection.hasKana(line.text);
+        return documentHasJapanese();
+    }
+
+    private boolean activeLineHasChinese() {
+        AppliedLine line = activeLine();
+        if (line != null) return SpicyTextDetection.itemChineseTest(line.text) && !SpicyTextDetection.hasKana(line.text);
+        return documentHasChinese();
+    }
+
+    private boolean activeLineHasKorean() {
+        AppliedLine line = activeLine();
+        if (line != null) return SpicyTextDetection.itemKoreanTest(line.text);
+        return documentHasKorean();
+    }
+
+    private boolean activeLineHasCyrillic() {
+        AppliedLine line = activeLine();
+        if (line != null) return SpicyTextDetection.itemCyrillicTest(line.text);
+        return documentHasCyrillic();
+    }
+
+    private AppliedLine activeLine() {
+        if (document == null || document.appliedLines == null) return null;
+        int index = followState.activeIndex();
+        if (index < 0 || index >= document.appliedLines.size()) return null;
+        AppliedLine line = document.appliedLines.get(index);
+        return line == null || line.dotLine || line.bgLine ? null : line;
+    }
+
     private boolean documentHasJapanese() {
-        return document != null && SpicyTextDetection.detectPresentScripts(LyricsDocumentProcessor.collectText(document), document.language, "")
-                .contains(SpicyTextDetection.Script.JAPANESE);
+        return document != null && SpicyTextDetection.hasKana(LyricsDocumentProcessor.collectText(document));
     }
 
     private boolean documentHasChinese() {
-        return document != null && SpicyTextDetection.detectPresentScripts(LyricsDocumentProcessor.collectText(document), document.language, "")
-                .contains(SpicyTextDetection.Script.CHINESE);
+        if (document == null || document.lines == null) return false;
+        for (LyricsLine line : document.lines) {
+            if (line != null && SpicyTextDetection.itemChineseTest(line.text) && !SpicyTextDetection.hasKana(line.text)) return true;
+        }
+        return false;
     }
 
     private boolean documentHasKorean() {

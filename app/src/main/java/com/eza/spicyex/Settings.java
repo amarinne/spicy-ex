@@ -6,21 +6,24 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Single source of truth for all SpotifyPlus settings (keys, types, defaults, allowed values).
+ * Owns the settings schema: keys, types, defaults, sections, and allowed values.
+ * Does not own persistence, normalized runtime reads, or UI row construction.
  * Only non-INTERNAL settings are shown in the in-Spotify panel; INTERNAL ones are fixed defaults.
  */
 public final class Settings {
     public static final List<Setting<?>> ALL = new ArrayList<>();
 
     // --- Sections ---
-    public static final Section LYRICS = new Section("Lyrics", "lyrics");
-    public static final Section TRANSLITERATION = new Section("Transliteration", "transliteration");
+    public static final Section LYRICS = new Section("General", "lyrics");
+    public static final Section TRANSLITERATION = new Section("Reading & Transliteration", "transliteration");
     public static final Section ROMANIZATION = TRANSLITERATION;
     public static final Section TRANSLATION = new Section("Translation", "translation");
-    public static final Section NOW_PLAYING = new Section("Now Playing", "now_playing");
-    public static final Section TEXT = new Section("Text", "text");
-    public static final Section ANIMATION = new Section("Animation", "animation");
-    public static final Section BACKGROUND = new Section("Background", "background");
+    public static final Section NOW_PLAYING = new Section("Now Playing Card", "now_playing");
+    public static final Section LYRICS_SCREEN = new Section("Lyrics Screen", "lyrics_screen");
+    public static final Section TEXT = LYRICS_SCREEN;
+    public static final Section ANIMATION = LYRICS_SCREEN;
+    public static final Section BACKGROUND = LYRICS_SCREEN;
+    public static final Section DEBUG = new Section("Debug & About", "debug");
     public static final Section DISPLAY = TEXT;
     public static final Section INTERNAL = new Section("Internal", "internal");
 
@@ -47,77 +50,6 @@ public final class Settings {
             0, -5000, 5000, 100
     );
 
-    // --- Romanization (transliteration controls) ---
-    public static final Setting<Boolean> TRANSLITERATION_ENABLED = boolSetting(
-            "lyrics_transliteration_enabled", TRANSLITERATION, "Transliterate lyrics", true
-    );
-
-    // Global romanization layout — aligned under each word (great for language learners comparing
-    // word-by-word) vs a single line. Applies to every romanizable script, not just one language.
-    public static final Setting<Boolean> ALIGNED_PER_WORD_ROMAJI = boolSetting(
-            "lyric_aligned_per_word_romaji", TRANSLITERATION, "Attach transliteration under each word", true
-    );
-
-    // "cycle" = the in-screen chip cycles the modes on tap; a fixed value locks to that mode.
-    public static final Setting<String> JAPANESE_READING_MODE = enumSetting(
-            "lyrics_japanese_reading_mode", TRANSLITERATION, "Japanese reading",
-            "cycle",
-            "off", "furigana_only", "furigana_romaji", "romaji_only", "cycle"
-    );
-
-    public static final Setting<String> CHINESE_MODE = enumSetting(
-            "lyrics_chinese_mode", TRANSLITERATION, "Chinese transliteration",
-            "cycle",
-            "off", "pinyin", "jyutping", "cycle"
-    );
-
-    // "Letter-by-letter" = literal per-syllable table (aromanize-compatible, default).
-    // "Pronunciation" = jamo-aware pronunciation pass (liaison/nasalization/etc., see SpicyKoreanG2P).
-    public static final Setting<String> KOREAN_ROMANIZATION = enumSetting(
-            "lyrics_korean_romanization", TRANSLITERATION, "Korean romanization",
-            "Letter-by-letter",
-            "Off", "Letter-by-letter", "Pronunciation", "cycle"
-    );
-
-    // On = Mandarin pinyin tone marks (zhōng guó) + Cantonese jyutping tone numbers (nei5).
-    // Off (default) = no tone marks / no jyutping tone numbers — cleaner lyric display.
-    public static final Setting<Boolean> CHINESE_TONES = boolSetting(
-            "lyrics_chinese_tones", TRANSLITERATION, "Show Chinese tones", false
-    );
-
-    // Cyrillic source language — shared glyphs differ (Russian г→g, и→i vs Ukrainian г→h, и→y),
-    // so one global map can't serve both (see SpicyRomanizer / ROMANIZATION_AUDIT_BACKLOG CY-4).
-    public static final Setting<String> CYRILLIC_MODE = enumSetting(
-            "lyrics_cyrillic_mode", TRANSLITERATION, "Cyrillic language",
-            "Russian",
-            "Off", "Russian", "Ukrainian", "cycle"
-    );
-
-    // Off (default) = drop ь/ъ for readability; On = keep them as BGN/PCGN prime marks (ʹ/ʺ).
-    public static final Setting<Boolean> CYRILLIC_KEEP_SIGNS = boolSetting(
-            "lyrics_cyrillic_keep_signs", TRANSLITERATION, "Keep Cyrillic soft/hard signs", false
-    );
-
-    // --- Translation ---
-    public static final Setting<Boolean> TRANSLATION_ENABLED = boolSetting(
-            "lyrics_translation_enabled", TRANSLATION, "Translate lyrics", true
-    );
-
-    public static final Setting<String> TRANSLATION_TARGET = enumSetting(
-            "lyrics_translation_target", TRANSLATION, "Target language",
-            "en",
-            "en", "es", "fr", "de", "it", "pt", "nl", "sv", "no", "da",
-            "fi", "pl", "cs", "sk", "hu", "ro", "el", "tr", "uk", "ru",
-            "ja", "ko", "zh", "zh-TW", "th", "vi", "id", "ms", "hi", "bn",
-            "ta", "ar", "he", "fa"
-    );
-
-    public static final Setting<String> TRANSLATION_BRIGHTNESS = enumSetting(
-            "lyrics_translation_brightness", TRANSLATION, "Translation line",
-            "Dimmed",
-            "Dimmed", "Bright"
-    );
-
     // --- Now Playing ---
     public static final Setting<String> LIVE_CARD_TAP_MODE = enumSetting(
             "lyrics_live_card_tap_mode", NOW_PLAYING, "Tap now-playing lyric",
@@ -137,20 +69,52 @@ public final class Settings {
             "small", "normal", "large", "xlarge"
     );
 
-    public static final Setting<Boolean> LIVE_CARD_SHOW_TRANSLITERATION = boolSetting(
-            "lyrics_live_card_show_transliteration", NOW_PLAYING, "Now-playing transliteration", false
+    public static final Setting<String> LIVE_CARD_SECONDARY_MODE = enumSetting(
+            "lyrics_live_card_secondary_mode", NOW_PLAYING, "Now-playing extra line",
+            "Main only",
+            "Main only", "Transliteration", "Translation", "Both"
     );
 
     public static final Setting<String> LIVE_CARD_ANIMATION = enumSetting(
             "lyrics_live_card_animation", NOW_PLAYING, "Now-playing animation",
-            "Full",
-            "Full", "Minimal"
+            "Karaoke fill",
+            "Minimal", "Karaoke fill", "Spotlight word"
+    );
+
+    public static final Setting<String> LIVE_CARD_GLOW = enumSetting(
+            "lyrics_live_card_glow", NOW_PLAYING, "Now-playing glow",
+            "Off",
+            "Off", "Word only", "Subtle line"
+    );
+
+    public static final Setting<String> LIVE_CARD_LINE_SYNC_FILL = enumSetting(
+            "lyrics_live_card_line_sync_fill", NOW_PLAYING, "Now-playing fill direction",
+            "Top to bottom",
+            "Top to bottom", "Left to right (sentence)"
+    );
+
+    public static final Setting<String> LIVE_CARD_OVERFLOW = enumSetting(
+            "lyrics_live_card_overflow", NOW_PLAYING, "Now-playing overflow",
+            "Wrap",
+            "Wrap", "Scroll with lyric", "Clip"
+    );
+
+    public static final Setting<String> LIVE_CARD_SCROLL_SCOPE = enumSetting(
+            "lyrics_live_card_scroll_scope", NOW_PLAYING, "Now-playing scroll scope",
+            "Grouped",
+            "Grouped", "Individual lines"
+    );
+
+    public static final Setting<String> LIVE_CARD_TRANSITION = enumSetting(
+            "lyrics_live_card_transition", NOW_PLAYING, "Now-playing transition",
+            "Fade up",
+            "Fade up", "Crossfade", "None"
     );
 
     // --- Text ---
     public static final Setting<String> LINE_SPACING = enumSetting(
             "line_spacing", TEXT, "Line spacing",
-            "more",
+            "spacious",
             "compact", "default", "spacious", "more", "max"
     );
 
@@ -175,7 +139,7 @@ public final class Settings {
     );
 
     public static final Setting<String> INTERLUDE_ICON = enumSetting(
-            "lyric_interlude_icon", TEXT, "Interlude indicator", "dots",
+            "lyric_interlude_icon", TEXT, "Interlude indicator", "note",
             "dots", "note"
     );
 
@@ -189,11 +153,11 @@ public final class Settings {
     );
 
     public static final Setting<Boolean> ENABLE_GLOW_BLUR = boolSetting(
-            "lyric_enable_glow_blur", ANIMATION, "Glow blur", true
+            "lyric_enable_glow_blur", ANIMATION, "Glow blur", false
     );
 
     public static final Setting<Boolean> ENABLE_LINE_BLUR = boolSetting(
-            "lyric_enable_line_blur", ANIMATION, "Distance blur", true
+            "lyric_enable_line_blur", ANIMATION, "Distance blur", false
     );
 
     // Direction the karaoke gradient fills each line as it plays: down the line ("Top to bottom")
@@ -211,6 +175,77 @@ public final class Settings {
 
     public static final Setting<Boolean> FORCE_DARK_BACKGROUND = boolSetting(
             "lyric_force_dark_background", BACKGROUND, "Force dark background", true
+    );
+
+    // --- Romanization (transliteration controls) ---
+    public static final Setting<Boolean> TRANSLITERATION_ENABLED = boolSetting(
+            "lyrics_transliteration_enabled", TRANSLITERATION, "Transliterate lyrics", false
+    );
+
+    // Global romanization layout — aligned under each word (great for language learners comparing
+    // word-by-word) vs a single line. Applies to every romanizable script, not just one language.
+    public static final Setting<Boolean> ALIGNED_PER_WORD_ROMAJI = boolSetting(
+            "lyric_aligned_per_word_romaji", TRANSLITERATION, "Attach transliteration under each word", true
+    );
+
+    // "cycle" = the in-screen chip cycles the modes on tap; a fixed value locks to that mode.
+    public static final Setting<String> JAPANESE_READING_MODE = enumSetting(
+            "lyrics_japanese_reading_mode", TRANSLITERATION, "Japanese reading",
+            "romaji_only",
+            "off", "furigana_only", "furigana_romaji", "romaji_only", "cycle"
+    );
+
+    public static final Setting<String> CHINESE_MODE = enumSetting(
+            "lyrics_chinese_mode", TRANSLITERATION, "Chinese transliteration",
+            "pinyin",
+            "off", "pinyin", "jyutping", "cycle"
+    );
+
+    // "Letter-by-letter" = literal per-syllable table (aromanize-compatible, default).
+    // "Pronunciation" = jamo-aware pronunciation pass (liaison/nasalization/etc., see SpicyKoreanG2P).
+    public static final Setting<String> KOREAN_ROMANIZATION = enumSetting(
+            "lyrics_korean_romanization", TRANSLITERATION, "Korean romanization",
+            "Pronunciation",
+            "Off", "Letter-by-letter", "Pronunciation", "cycle"
+    );
+
+    // On = Mandarin pinyin tone marks (zhōng guó) + Cantonese jyutping tone numbers (nei5).
+    // Off (default) = no tone marks / no jyutping tone numbers — cleaner lyric display.
+    public static final Setting<Boolean> CHINESE_TONES = boolSetting(
+            "lyrics_chinese_tones", TRANSLITERATION, "Show Chinese tones", false
+    );
+
+    // Cyrillic source language — shared glyphs differ (Russian г→g, и→i vs Ukrainian г→h, и→y),
+    // so one global map can't serve both (see SpicyRomanizer / ROMANIZATION_AUDIT_BACKLOG CY-4).
+    public static final Setting<String> CYRILLIC_MODE = enumSetting(
+            "lyrics_cyrillic_mode", TRANSLITERATION, "Cyrillic language",
+            "Russian",
+            "Off", "Russian", "Ukrainian", "cycle"
+    );
+
+    // Off (default) = drop ь/ъ for readability; On = keep them as BGN/PCGN prime marks (ʹ/ʺ).
+    public static final Setting<Boolean> CYRILLIC_KEEP_SIGNS = boolSetting(
+            "lyrics_cyrillic_keep_signs", TRANSLITERATION, "Keep Cyrillic soft/hard signs", false
+    );
+
+    // --- Translation ---
+    public static final Setting<Boolean> TRANSLATION_ENABLED = boolSetting(
+            "lyrics_translation_enabled", TRANSLATION, "Translate lyrics", false
+    );
+
+    public static final Setting<String> TRANSLATION_TARGET = enumSetting(
+            "lyrics_translation_target", TRANSLATION, "Target language",
+            "en",
+            "en", "es", "fr", "de", "it", "pt", "nl", "sv", "no", "da",
+            "fi", "pl", "cs", "sk", "hu", "ro", "el", "tr", "uk", "ru",
+            "ja", "ko", "zh", "zh-TW", "th", "vi", "id", "ms", "hi", "bn",
+            "ta", "ar", "he", "fa"
+    );
+
+    public static final Setting<String> TRANSLATION_BRIGHTNESS = enumSetting(
+            "lyrics_translation_brightness", TRANSLATION, "Translation line",
+            "Dimmed",
+            "Dimmed", "Bright"
     );
 
     // ===================== INTERNAL (fixed defaults, not shown) =====================
@@ -233,16 +268,20 @@ public final class Settings {
     );
 
     public static final Setting<Boolean> NATIVE_SPICY_ROMANIZATION = internalBoolSetting(
-            "native_spicy_romanization", "Enable Spicy romanization", true
+            "native_spicy_romanization", "Enable Spicy romanization", false
     );
 
     public static final Setting<Boolean> NATIVE_SPICY_TRANSLATION = internalBoolSetting(
-            "native_spicy_translation", "Enable Spicy translation", true
+            "native_spicy_translation", "Enable Spicy translation", false
+    );
+
+    public static final Setting<Boolean> LIVE_CARD_SHOW_TRANSLITERATION = internalBoolSetting(
+            "lyrics_live_card_show_transliteration", "Now-playing transliteration", false
     );
 
     public static final Setting<String> LAST_JAPANESE_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_japanese_cycle_mode", "Last Japanese cycle mode",
-            SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI,
+            SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
             SpotifyPlusConfig.JP_READING_FURIGANA_ONLY,
             SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
             SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI
@@ -257,7 +296,7 @@ public final class Settings {
 
     public static final Setting<String> LAST_KOREAN_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_korean_cycle_mode", "Last Korean cycle mode",
-            "Letter-by-letter",
+            "Pronunciation",
             "Letter-by-letter", "Pronunciation"
     );
 

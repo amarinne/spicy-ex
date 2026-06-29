@@ -31,8 +31,16 @@ public final class LyricsRowViewFactory {
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
+        boolean wrapLongLines = options == null || options.wrapLongLines;
+        boolean horizontalSafetyPadding = options == null || options.horizontalSafetyPadding;
         float multiplier = options == null ? 1f : options.lineSpacingMultiplier;
-        row.setPadding(dp(6), (int) (dp(10) * multiplier), dp(6), (int) (dp(13) * multiplier));
+        int leadingPadding = wrapLongLines ? dp(6) : 0;
+        int trailingPadding = wrapLongLines ? dp(6) : 0;
+        if (!wrapLongLines && horizontalSafetyPadding) {
+            if (line.oppositeAligned) leadingPadding = dp(18);
+            else trailingPadding = dp(18);
+        }
+        row.setPadding(leadingPadding, (int) (dp(10) * multiplier), trailingPadding, (int) (dp(13) * multiplier));
         row.setClickable(false);
         row.setClipChildren(false);
         row.setClipToPadding(false);
@@ -57,7 +65,9 @@ public final class LyricsRowViewFactory {
                 LyricsLineViewState.addDotView(line, dot);
                 if (line.words != null && i < line.words.size()) LyricsSyllableViewState.setWordView(line.words.get(i), dot);
             }
-            row.addView(dots, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            row.addView(dots, new LinearLayout.LayoutParams(
+                    wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
             attachHeightListener(row, line, heightListener);
             LyricsLineViewState.setRowView(line, row);
             return row;
@@ -76,28 +86,30 @@ public final class LyricsRowViewFactory {
         String font = options == null ? "default" : options.lyricsFont;
         LyricsLineViewState.clearMainView(line);
         boolean hasSyllableWords = line.words != null && !line.words.isEmpty();
+        boolean hasRealTimedWords = hasSyllableWords && !line.syntheticWords;
         boolean showAlignedRomaji = hasSyllableWords
                 && !showJapaneseFurigana
                 && options.attachTransliterationToWords
                 && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji);
-        boolean useSyllableWords = hasSyllableWords
-                && (options.wordLevelFill || options.lineLevelFillSentence || showJapaneseFurigana || showAlignedRomaji);
+        boolean useSyllableWords = hasRealTimedWords || (hasSyllableWords
+                && (options.wordLevelFill || options.lineLevelFillSentence || showJapaneseFurigana || showAlignedRomaji));
         boolean lineLevelFillTopDown = !useSyllableWords && options.lineLevelFillTopDown;
         if (useSyllableWords) {
             buildSyllableWords(row, line, options, romanizedWordProvider, showJapaneseFurigana, showAlignedRomaji);
         } else {
-            buildLineLevelMain(row, line, showJapaneseFurigana, lineLevelFillTopDown, options.lineLevelFillSentence, weight, font);
+            buildLineLevelMain(row, line, showJapaneseFurigana, lineLevelFillTopDown, options.lineLevelFillSentence, weight, font, wrapLongLines);
         }
 
         if (!line.bgLine && !showAlignedRomaji && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)) {
             SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, line.romanizedText, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)), textFactory.resolveTypeface(false));
             roman.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
-            roman.setMaxLines(3);
+            roman.setMaxLines(wrapLongLines ? 3 : 1);
             roman.setSelfGlow(true);
             roman.setVerticalGradient(lineLevelFillTopDown);
             roman.setContentGradient(options.lineLevelFillSentence);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.topMargin = dp(2);
+            if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
             row.addView(roman, lp);
             LyricsLineViewState.setRomanView(line, roman);
         }
@@ -105,11 +117,12 @@ public final class LyricsRowViewFactory {
         if (!line.bgLine && options.showTranslation && !isBlank(line.translatedText)) {
             SpicyAnimatedTextView translated = textFactory.createSecondaryAnimatedText(activity, line.translatedText, Math.max(13, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 1), Typeface.create(textFactory.resolveTypeface(false), Typeface.ITALIC));
             translated.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
-            translated.setMaxLines(3);
+            translated.setMaxLines(wrapLongLines ? 3 : 1);
             translated.setAlpha(1f);
             translated.setBrightnessMultiplier(options.translationBright ? 1f : 0.42f);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.topMargin = dp(2);
+            if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
             row.addView(translated, lp);
             LyricsLineViewState.setTranslationView(line, translated);
         }
@@ -127,11 +140,19 @@ public final class LyricsRowViewFactory {
             boolean showJapaneseFurigana,
             boolean showAlignedRomaji
     ) {
-        FlexboxLayout words = new GlowFlexbox(activity); // draws the line-level continuous glow
-        words.setFlexDirection(FlexDirection.ROW);
-        words.setFlexWrap(FlexWrap.WRAP);
-        words.setJustifyContent(line.oppositeAligned ? JustifyContent.FLEX_END : JustifyContent.FLEX_START);
-        words.setAlignItems(showJapaneseFurigana ? AlignItems.BASELINE : AlignItems.STRETCH);
+        boolean wrapLongLines = options == null || options.wrapLongLines;
+        ViewGroup words = wrapLongLines ? new GlowFlexbox(activity) : new LinearLayout(activity);
+        if (words instanceof FlexboxLayout) {
+            FlexboxLayout flex = (FlexboxLayout) words;
+            flex.setFlexDirection(FlexDirection.ROW);
+            flex.setFlexWrap(FlexWrap.WRAP);
+            flex.setJustifyContent(line.oppositeAligned ? JustifyContent.FLEX_END : JustifyContent.FLEX_START);
+            flex.setAlignItems(showJapaneseFurigana ? AlignItems.BASELINE : AlignItems.STRETCH);
+        } else if (words instanceof LinearLayout) {
+            LinearLayout linear = (LinearLayout) words;
+            linear.setOrientation(LinearLayout.HORIZONTAL);
+            linear.setGravity(line.oppositeAligned ? Gravity.RIGHT : Gravity.LEFT);
+        }
         words.setClipToPadding(false);
         words.setClipChildren(false);
         if (showJapaneseFurigana) words.setPadding(0, dp(4), 0, 0);
@@ -152,12 +173,16 @@ public final class LyricsRowViewFactory {
             } else {
                 LyricsSyllableViewState.clearRomanizedTextView(seg);
             }
-            FlexboxLayout.LayoutParams wlp = new FlexboxLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            ViewGroup.MarginLayoutParams wlp = words instanceof FlexboxLayout
+                    ? new FlexboxLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             if (!seg.partOfWord) wlp.rightMargin = dp(8);
             words.addView(wordView, wlp);
             LyricsSyllableViewState.setWordView(seg, wordView);
         }
-        row.addView(words, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(words, new LinearLayout.LayoutParams(
+                wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font) {
@@ -227,7 +252,7 @@ public final class LyricsRowViewFactory {
 
     private void buildLineLevelMain(LinearLayout row, AppliedLine line, boolean showJapaneseFurigana,
                                     boolean lineLevelFillTopDown, boolean lineLevelFillSentence,
-                                    String weight, String font) {
+                                    String weight, String font, boolean wrapLongLines) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
         SpicyAnimatedTextView main = new SpicyAnimatedTextView(activity);
         main.setText(showJapaneseFurigana ? FuriganaText.build(line) : line.text);
@@ -238,11 +263,13 @@ public final class LyricsRowViewFactory {
         main.setIncludeFontPadding(true);
         if (showJapaneseFurigana) main.setPadding(0, dp(4), 0, 0);
         main.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
-        main.setMaxLines(4);
+        main.setMaxLines(wrapLongLines || showJapaneseFurigana ? 4 : 1);
         main.setVerticalGradient(lineLevelFillTopDown);
         main.setContentGradient(lineLevelFillSentence);
         main.setGradientPosition(-20f, 0f);
-        row.addView(main, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(main, new LinearLayout.LayoutParams(
+                wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
         LyricsLineViewState.setMainView(line, main);
     }
 
@@ -292,6 +319,8 @@ public final class LyricsRowViewFactory {
         public String lyricsFont = "default";
         public float textSizeMultiplier = 1f;
         public boolean translationBright;
+        public boolean wrapLongLines = true;
+        public boolean horizontalSafetyPadding = true;
         public String documentText = "";
     }
 }

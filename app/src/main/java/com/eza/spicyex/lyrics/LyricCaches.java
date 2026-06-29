@@ -3,6 +3,8 @@ package com.eza.spicyex.lyrics;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.eza.spicyex.Diagnostics;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.LinkedHashSet;
@@ -53,7 +55,8 @@ public final class LyricCaches {
     public static String getProcessedDocument(Context context, String key) {
         try {
             return context.getSharedPreferences(PREFS_PROCESSED_CACHE, Context.MODE_PRIVATE).getString(sha256(key), null);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            Diagnostics.warn("LyricCaches", "getProcessedDocument", t);
             return null;
         }
     }
@@ -62,7 +65,8 @@ public final class LyricCaches {
         if (context == null || isBlank(value)) return;
         try {
             context.getSharedPreferences(PREFS_PROCESSED_CACHE, Context.MODE_PRIVATE).edit().putString(sha256(key), value).apply();
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            Diagnostics.warn("LyricCaches", "putProcessedDocument", t);
         }
     }
 
@@ -87,7 +91,8 @@ public final class LyricCaches {
         if (context == null) return null;
         try {
             return context.getSharedPreferences(PREFS_GOOGLE_CACHE, Context.MODE_PRIVATE).getString(sha256(key), null);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            Diagnostics.warn("LyricCaches", "getGoogleValue", t);
             return null;
         }
     }
@@ -102,32 +107,52 @@ public final class LyricCaches {
                 recordBoundedGoogleCachePut(prefs, editor, hashedKey);
                 editor.apply();
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            Diagnostics.warn("LyricCaches", "putGoogleValue", t);
         }
     }
 
     private static void recordBoundedGoogleCachePut(SharedPreferences prefs, SharedPreferences.Editor editor, String hashedKey) {
+        CacheOrderUpdate update = boundedGoogleCacheOrder(
+                prefs.getString(PREFS_GOOGLE_CACHE_ORDER_KEY, ""),
+                hashedKey,
+                GOOGLE_CACHE_MAX_ENTRIES);
+        for (String evicted : update.evictedKeys) editor.remove(evicted);
+        editor.putString(PREFS_GOOGLE_CACHE_ORDER_KEY, update.nextOrder);
+    }
+
+    static CacheOrderUpdate boundedGoogleCacheOrder(String rawOrder, String hashedKey, int maxEntries) {
         LinkedHashSet<String> order = new LinkedHashSet<>();
-        String raw = prefs.getString(PREFS_GOOGLE_CACHE_ORDER_KEY, "");
-        if (!isBlank(raw)) {
-            String[] entries = raw.split("\n");
+        if (!isBlank(rawOrder)) {
+            String[] entries = rawOrder.split("\n");
             for (String entry : entries) {
                 if (!isBlank(entry) && !PREFS_GOOGLE_CACHE_ORDER_KEY.equals(entry)) order.add(entry);
             }
         }
         order.remove(hashedKey);
         order.add(hashedKey);
-        while (order.size() > GOOGLE_CACHE_MAX_ENTRIES) {
+        LinkedHashSet<String> evicted = new LinkedHashSet<>();
+        while (order.size() > Math.max(0, maxEntries)) {
             String oldest = order.iterator().next();
             order.remove(oldest);
-            editor.remove(oldest);
+            evicted.add(oldest);
         }
         StringBuilder nextOrder = new StringBuilder();
         for (String entry : order) {
             if (nextOrder.length() > 0) nextOrder.append('\n');
             nextOrder.append(entry);
         }
-        editor.putString(PREFS_GOOGLE_CACHE_ORDER_KEY, nextOrder.toString());
+        return new CacheOrderUpdate(nextOrder.toString(), evicted);
+    }
+
+    static final class CacheOrderUpdate {
+        final String nextOrder;
+        final LinkedHashSet<String> evictedKeys;
+
+        CacheOrderUpdate(String nextOrder, LinkedHashSet<String> evictedKeys) {
+            this.nextOrder = nextOrder;
+            this.evictedKeys = evictedKeys;
+        }
     }
 
     private static String sha256(String value) {
@@ -137,7 +162,8 @@ public final class LyricCaches {
             StringBuilder hex = new StringBuilder();
             for (byte b : hash) hex.append(String.format(Locale.ROOT, "%02x", b));
             return hex.toString();
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            Diagnostics.warn("LyricCaches", "sha256", t);
             return String.valueOf(safe(value).hashCode());
         }
     }

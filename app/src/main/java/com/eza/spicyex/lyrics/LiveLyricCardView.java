@@ -1,284 +1,455 @@
 package com.eza.spicyex.lyrics;
 
+import android.app.Activity;
 import android.content.Context;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Shader;
-import android.graphics.Typeface;
-import android.os.Build;
-import android.text.Layout;
-import android.text.TextPaint;
+import android.view.View;
+import android.view.ViewGroup;
 import android.view.Gravity;
+import android.view.View.MeasureSpec;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 
-import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
-import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
 
 /**
- * In-player live-lyric renderer that replaces Spotify's {@code lyrics_element} — a single current
- * line with the Spicy karaoke gradient wash. One line fits Spotify's snippet slot on every
- * now-playing template, so it never clips or fights the album-art layout (multi-line overflow was
- * unreliable across templates). Font size + bold follow the shared lyric config. Driven by
- * {@code NowPlayingLyricController}.
+ * In-player live-lyric renderer.
+ *
+ * This intentionally mounts one normal fullscreen lyric row and drives it through
+ * {@link LyricsFrameRenderer}. The now-playing card has different sizing and host layout, but the
+ * text/word animation path should stay the same as fullscreen instead of carrying a second renderer.
  */
 public final class LiveLyricCardView extends LinearLayout {
-    private final SpicyAnimatedTextView current;
-    private final SpicyAnimatedTextView secondary;
-    private final float density;
-    private boolean minimalAnimation;
-    private String last = "";
-    private String lastSecondary = "";
+    private static final Set<Integer> ACTIVE_ROW = Collections.singleton(0);
+
+    private final OverflowViewport stage;
+    private final FrameStyleBatcher styleBatcher;
+    private final LyricsFrameRenderer frameRenderer;
+    private final LyricsDocument oneRowDocument = new LyricsDocument();
+
+    private LinearLayout rowHost;
+    private AppliedLine mountedSourceLine;
+    private AppliedLine mountedLine;
+    private String mountedConfigKey = "";
+    private String mountedOverflowMode = "Wrap";
 
     public LiveLyricCardView(Context context) {
         super(context);
-        density = context.getResources().getDisplayMetrics().density;
         setOrientation(VERTICAL);
-        // Centre vertically in the gap, but keep the line left-aligned to the content margin
-        // (CENTER also centred it horizontally, pushing it off the title/progress-bar margin).
         setGravity(Gravity.CENTER_VERTICAL);
         setMinimumHeight(dp(64));
         setClipToPadding(false);
-        setWillNotDraw(false);
+        setClipChildren(false);
 
-        LyricsShellSettings cfg = new LyricsShellSettings(context, SpotifyPlusConfig.from(context));
-        float sizeMult = cfg.liveCardTextSizeMultiplier();
-        String weight = cfg.liveCardWeight();
-        String font = SpotifyPlusConfig.from(context).get(Settings.LYRICS_FONT);
+        styleBatcher = new FrameStyleBatcher(context);
+        frameRenderer = new LyricsFrameRenderer(context, styleBatcher);
 
-        current = new SpicyAnimatedTextView(context);
-        current.setTextSize(19 * sizeMult);
-        current.setMaxLines(3);
-        current.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        // Inherit Spotify's own face at the chosen weight, same as the fullscreen renderer.
-        current.setTypeface(lyricTypeface(context, weight, font));
-        current.setTextColor(0xFFFFFFFF);
-        current.setIncludeFontPadding(true);
-        // Full width + left-aligned text so the line starts exactly at the content margin.
-        addView(current, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
-
-        secondary = new SpicyAnimatedTextView(context);
-        secondary.setTextSize(Math.max(12f, 14f * sizeMult));
-        secondary.setMaxLines(2);
-        secondary.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        secondary.setTypeface(lyricTypeface(context, "Regular", font));
-        secondary.setAlpha(0.74f);
-        secondary.setIncludeFontPadding(true);
-        secondary.setGradientPosition(100f, 0f);
-        secondary.setVisibility(GONE);
-        LayoutParams secondaryLp = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
-        secondaryLp.topMargin = dp(-2);
-        addView(secondary, secondaryLp);
+        stage = new OverflowViewport(context);
+        stage.setClipToPadding(false);
+        stage.setClipChildren(false);
+        rowHost = newRowHost(context);
+        stage.addView(rowHost, rowHostLayoutParams(mountedOverflowMode));
+        addView(stage, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
     }
 
     public void applyConfig(LyricsRenderConfig config) {
-        if (config == null) return;
-        current.setTextSize(19 * config.liveCardTextSizeMultiplier);
-        current.setTypeface(lyricTypeface(getContext(), config.liveCardWeight, config.lyricsFont));
-        secondary.setTextSize(Math.max(12f, 14f * config.liveCardTextSizeMultiplier));
-        secondary.setTypeface(lyricTypeface(getContext(), "Regular", config.lyricsFont));
-        setMinimalAnimation(config.liveCardMinimalAnimation);
+        String key = configKey(config);
+        if (!key.equals(mountedConfigKey)) {
+            mountedLine = null;
+            mountedConfigKey = key;
+        }
         requestLayout();
         invalidateForFrame();
     }
 
-    public void setMinimalAnimation(boolean minimal) {
-        if (minimalAnimation == minimal) {
-            if (!minimal) return;
-        }
-        minimalAnimation = minimal;
-        if (minimal) {
-            current.setGradientPosition(100f, 0f);
-            secondary.setGradientPosition(100f, 0f);
-            current.setBrightnessMultiplier(1f);
-            secondary.setBrightnessMultiplier(1f);
-            setSharedScale(1f);
-        }
-        invalidateForFrame();
-    }
-
-    /** Set the current lyric line with a slide-up cross-fade: old line slides up + fades out, the
-     *  new line slides up into place + fades in. */
-    public void setLine(CharSequence text) {
-        setLine(text, "");
-    }
-
-    public void setLine(CharSequence text, String secondaryText) {
-        final CharSequence displayText = text == null ? "" : text;
-        final String s = displayText.toString();
-        final String sub = secondaryText == null ? "" : secondaryText;
-        if (s.equals(last) && sub.equals(lastSecondary)) return;
-        last = s;
-        lastSecondary = sub;
-        animate().cancel();
-        float rise = dp(16);
-        animate().translationY(-rise).alpha(0f).setDuration(130).withEndAction(() -> {
-            current.setText(displayText);
-            current.setVisibility(isBlank(s) ? GONE : VISIBLE);
-            secondary.setText(sub);
-            secondary.setGradientPosition(100f, 0f);
-            current.setBrightnessMultiplier(1f);
-            secondary.setBrightnessMultiplier(1f);
-            secondary.setVisibility(isBlank(sub) ? GONE : VISIBLE);
-            current.setTranslationY(0f);
-            secondary.setTranslationY(0f);
-            current.setAlpha(1f);
-            secondary.setAlpha(isBlank(sub) ? 0f : 0.74f);
-            setTranslationY(rise);
-            setAlpha(0f);
-            animate().translationY(0f).alpha(1f).setDuration(210).start();
-        }).start();
-    }
-
-    /** Karaoke wash — gradientPosition in Spicy's -20..100 space. */
-    public void setGradient(float gradientPosition, float glow) {
-        setGradient(gradientPosition, glow, 1f);
-    }
-
-    /** Karaoke wash plus text brightness. Brightness is separate from blur/glow intensity. */
-    public void setGradient(float gradientPosition, float glow, float brightness) {
-        if (minimalAnimation) {
-            current.setBrightnessMultiplier(1f);
-            secondary.setBrightnessMultiplier(1f);
-            current.setGradientPosition(100f, 0f);
-            secondary.setGradientPosition(100f, 0f);
-        } else {
-            current.setBrightnessMultiplier(brightness);
-            secondary.setBrightnessMultiplier(brightness);
-            current.setGradientPosition(gradientPosition, glow);
-            secondary.setGradientPosition(gradientPosition, glow * 0.85f);
-        }
-        invalidateForFrame();
-    }
-
-    /** Spotlight zoom target shared with the fullscreen line-level renderer. */
-    public void setScaleTarget(float scale) {
-        if (minimalAnimation) {
-            setSharedScale(1f);
-            invalidateForFrame();
+    public void renderLine(Activity activity, AppliedLine line, LyricsRenderConfig config,
+                           long positionMs, float deltaSeconds,
+                           LyricsDocument document,
+                           LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider,
+                           boolean animateMount) {
+        if (activity == null || line == null || config == null) {
+            clear();
             return;
         }
-        float bounded = Math.max(0.95f, Math.min(1.04f, scale));
-        setSharedScale(bounded);
+        LyricsRenderConfig liveConfig = config.forLiveCard();
+        LyricsSurfaceRowPlanner.RowPlan rowPlan = LyricsSurfaceRowPlanner.plan(
+                line, document, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(liveConfig), romanizedWordProvider);
+        String key = configKey(liveConfig)
+                + "|" + rowPlan.options.showJapaneseFurigana
+                + "|" + rowPlan.options.showJapaneseRomaji
+                + "|" + rowPlan.options.attachTransliterationToWords
+                + "|" + rowPlan.options.documentText
+                + "|" + (rowPlan.line != null && rowPlan.line.oppositeAligned);
+        if (mountedSourceLine != line || !key.equals(mountedConfigKey)) {
+            mountLine(activity, line, rowPlan, liveConfig, animateMount);
+            mountedConfigKey = key;
+        }
+        AppliedLine renderLine = mountedLine == null ? rowPlan.line : mountedLine;
+        if (renderLine == null) {
+            clear();
+            return;
+        }
+        oneRowDocument.appliedLines.clear();
+        oneRowDocument.appliedLines.add(renderLine);
+        frameRenderer.applySynced(
+                oneRowDocument,
+                ACTIVE_ROW,
+                rowHost,
+                liveConfig,
+                positionMs,
+                0,
+                deltaSeconds,
+                false);
+        updateOverflowScroll(renderLine, liveConfig, positionMs);
         invalidateForFrame();
     }
 
-    private void setSharedScale(float scale) {
-        current.setPivotX(0f);
-        current.setPivotY(current.getHeight() > 0 ? current.getHeight() * 0.5f : 0f);
-        current.setScaleX(scale);
-        current.setScaleY(scale);
-        secondary.setPivotX(0f);
-        secondary.setPivotY(secondary.getHeight() > 0 ? secondary.getHeight() * 0.5f : 0f);
-        secondary.setScaleX(scale);
-        secondary.setScaleY(scale);
-    }
-
-    /** Instrumental gap: show a bright indicator on the single line. */
     public void setInterlude(boolean note) {
-        setLine(note ? "♪" : "• • •", "");
-        current.setBrightnessMultiplier(1f);
-        current.setGradientPosition(100f, 0.2f);
-        current.setTranslationY(0f);
-        current.setScaleX(1f);
-        current.setScaleY(1f);
-        current.setAlpha(1f);
-        invalidateForFrame();
+        AppliedLine line = new AppliedLine();
+        line.dotLine = true;
+        line.text = note ? "♪" : "• • •";
+        line.startMs = 0;
+        line.endMs = 3000;
+        mountSynthetic(line, note);
     }
 
     public void clear() {
-        last = "";
-        lastSecondary = "";
-        animate().cancel();
-        current.animate().cancel();
-        secondary.animate().cancel();
-        current.setText("");
-        secondary.setText("");
-        setTranslationY(0f);
-        setAlpha(1f);
-        current.setTranslationY(0f);
-        current.setScaleX(1f);
-        current.setScaleY(1f);
-        current.setAlpha(1f);
-        current.setBrightnessMultiplier(1f);
-        secondary.setBrightnessMultiplier(1f);
-        current.setVisibility(GONE);
-        secondary.setVisibility(GONE);
+        rowHost.removeAllViews();
+        stage.removeAllViews();
+        styleBatcher.clearPendingWrites();
+        rowHost = newRowHost(getContext());
+        stage.addView(rowHost, rowHostLayoutParams(mountedOverflowMode));
+        mountedSourceLine = null;
+        mountedLine = null;
+        mountedConfigKey = "";
+        oneRowDocument.appliedLines.clear();
         invalidateForFrame();
     }
 
-    @Override
-    protected void dispatchDraw(Canvas canvas) {
-        if (!minimalAnimation) {
-            drawGlow(canvas, current, 1f);
-            drawGlow(canvas, secondary, 0.85f);
-        }
-        super.dispatchDraw(canvas);
+    private void mountLine(Activity activity, AppliedLine sourceLine, LyricsSurfaceRowPlanner.RowPlan rowPlan,
+                           LyricsRenderConfig config, boolean animateMount) {
+        if (rowPlan == null || rowPlan.line == null) return;
+        mountedOverflowMode = config.liveCardOverflowMode;
+        LinearLayout nextHost = replaceRowHost(animateMount, config.liveCardTransitionMode);
+        clearLineState(rowPlan.line);
+        LyricsTextFactory textFactory = new LyricsTextFactory(activity, SpotifyPlusConfig.from(activity));
+        LyricsRowViewFactory factory = new LyricsRowViewFactory(activity, textFactory);
+        View row = factory.build(rowPlan.line, rowPlan.options, rowPlan.romanizedWordProvider, null);
+        installLineOverflowViewports(row, rowPlan.line, rowPlan.options.wrapLongLines);
+        nextHost.addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        if (animateMount) animateIn(nextHost, config.liveCardTransitionMode);
+        mountedSourceLine = sourceLine;
+        mountedLine = rowPlan.line;
     }
 
-    private void drawGlow(Canvas canvas, SpicyAnimatedTextView view, float strength) {
-        if (view.getVisibility() != VISIBLE || view.getAlpha() <= 0.01f) return;
-        float g = Math.max(0f, Math.min(1f, view.getGlow() * strength));
-        if (g <= 0.02f) return;
-        Layout layout = view.getLayout();
-        if (layout == null) return;
+    private void mountSynthetic(AppliedLine line, boolean note) {
+        Activity activity = getContext() instanceof Activity ? (Activity) getContext() : null;
+        if (activity == null) {
+            clear();
+            return;
+        }
+        LyricsRenderConfig config = LyricsRenderConfig.read(getContext(), null);
+        config = config == null ? LyricsRenderConfig.read(getContext(), null) : config;
+        line.endMs = Math.max(line.startMs + 1, line.endMs);
+        config = config.forLiveCard();
+        mountedOverflowMode = config.liveCardOverflowMode;
+        LinearLayout nextHost = replaceRowHost(false, config.liveCardTransitionMode);
+        clearLineState(line);
+        LyricsSurfaceRowPlanner.RowPlan rowPlan = LyricsSurfaceRowPlanner.plan(
+                line, null, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(config), null);
+        rowPlan.options.interludeNoteIcon = note;
+        LyricsTextFactory textFactory = new LyricsTextFactory(activity, SpotifyPlusConfig.from(activity));
+        LyricsRowViewFactory factory = new LyricsRowViewFactory(activity, textFactory);
+        View row = factory.build(rowPlan.line, rowPlan.options, rowPlan.romanizedWordProvider, null);
+        installLineOverflowViewports(row, rowPlan.line, rowPlan.options.wrapLongLines);
+        nextHost.addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        mountedSourceLine = null;
+        mountedLine = rowPlan.line;
+        oneRowDocument.appliedLines.clear();
+        oneRowDocument.appliedLines.add(rowPlan.line);
+        frameRenderer.applySynced(oneRowDocument, ACTIVE_ROW, rowHost, config, 0, 0, 1f / 60f, false);
+        updateOverflowScroll(rowPlan.line, config, 0);
+        animateIn(nextHost, config.liveCardTransitionMode);
+    }
 
-        TextPaint paint = view.getPaint();
-        int savedColor = paint.getColor();
-        Shader savedShader = paint.getShader();
-        int alpha = Math.round(255f * Math.min(1f, 1.1f * g) * view.getAlpha());
-        int glowColor = Color.argb(alpha, 255, 255, 255);
-        paint.setShader(null);
-        paint.setColor(glowColor);
-        paint.setShadowLayer((6f + 16f * g) * density, 0f, 0f, glowColor);
+    private LinearLayout replaceRowHost(boolean animateExit, String transitionMode) {
+        LinearLayout oldHost = rowHost;
+        LinearLayout nextHost = newRowHost(getContext());
+        rowHost = nextHost;
+        if (animateExit && !"None".equals(transitionMode)
+                && oldHost != null && oldHost.getChildCount() > 0 && oldHost.getParent() == stage) {
+            oldHost.animate().cancel();
+            oldHost.setTranslationY(0f);
+            oldHost.setAlpha(1f);
+            android.view.ViewPropertyAnimator animator = oldHost.animate()
+                    .alpha(0f)
+                    .setDuration(130)
+                    .withEndAction(() -> {
+                        styleBatcher.invalidateRecursive(oldHost);
+                        stage.removeView(oldHost);
+                    });
+            if ("Fade up".equals(transitionMode)) animator.translationY(-dp(14));
+            animator.start();
+            stage.addView(nextHost, rowHostLayoutParams(mountedOverflowMode));
+            return nextHost;
+        }
+        stage.removeAllViews();
+        if (oldHost != null) styleBatcher.invalidateRecursive(oldHost);
+        stage.addView(nextHost, rowHostLayoutParams(mountedOverflowMode));
+        return nextHost;
+    }
 
-        int save = canvas.save();
-        canvas.translate(view.getLeft() + view.getTranslationX() + view.getPivotX(),
-                view.getTop() + view.getTranslationY() + view.getPivotY());
-        canvas.scale(view.getScaleX(), view.getScaleY());
-        canvas.translate(-view.getPivotX() + view.getTotalPaddingLeft(),
-                -view.getPivotY() + view.getTotalPaddingTop());
-        layout.draw(canvas);
-        canvas.restoreToCount(save);
+    private LinearLayout newRowHost(Context context) {
+        LinearLayout host = new LinearLayout(context);
+        host.setOrientation(VERTICAL);
+        host.setGravity(Gravity.CENTER_VERTICAL);
+        host.setClipToPadding(false);
+        host.setClipChildren(false);
+        return host;
+    }
 
-        paint.clearShadowLayer();
-        paint.setColor(savedColor);
-        paint.setShader(savedShader);
+    private void animateIn(View host, String transitionMode) {
+        if (host == null) return;
+        if ("None".equals(transitionMode)) {
+            host.animate().cancel();
+            host.setTranslationY(0f);
+            host.setAlpha(1f);
+            return;
+        }
+        host.animate().cancel();
+        host.setTranslationY("Fade up".equals(transitionMode) ? dp(14) : 0f);
+        host.setAlpha(0f);
+        host.animate().translationY(0f).alpha(1f).setDuration(210).start();
+    }
+
+    private void clearLineState(AppliedLine line) {
+        if (line == null) return;
+        LyricsLineViewState.clearMainView(line);
+        LyricsLineViewState.setRowView(line, null);
+        LyricsLineViewState.setRomanView(line, null);
+        LyricsLineViewState.setTranslationView(line, null);
+        if (line.words == null) return;
+        for (SyllableSegment seg : line.words) {
+            LyricsSyllableViewState.clear(seg);
+        }
+    }
+
+    private FrameLayout.LayoutParams rowHostLayoutParams(String overflowMode) {
+        return new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL);
+    }
+
+    private void updateOverflowScroll(AppliedLine line, LyricsRenderConfig config, long positionMs) {
+        if (line == null || config == null || rowHost == null || stage == null) return;
+        mountedOverflowMode = config.liveCardOverflowMode;
+        boolean wrap = "Wrap".equals(config.liveCardOverflowMode);
+        stage.setWrapMode(wrap);
+        stage.setClipToPadding(!wrap);
+        stage.setClipChildren(!wrap);
+        ViewGroup.LayoutParams lp = rowHost.getLayoutParams();
+        if (lp != null && lp.width != LayoutParams.MATCH_PARENT) {
+            lp.width = LayoutParams.MATCH_PARENT;
+            rowHost.setLayoutParams(lp);
+        }
+        rowHost.setTranslationX(0f);
+        updateLineOverflowViewports(line, config, positionMs, rowHost.getAlpha() < 0.98f);
+    }
+
+    private float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private void installLineOverflowViewports(View row, AppliedLine line, boolean wrapLongLines) {
+        if (wrapLongLines || line == null || line.dotLine || !(row instanceof LinearLayout)) return;
+        LinearLayout group = (LinearLayout) row;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child instanceof LineOverflowViewport) continue;
+            ViewGroup.LayoutParams rawLp = child.getLayoutParams();
+            LinearLayout.LayoutParams oldLp = rawLp instanceof LinearLayout.LayoutParams
+                    ? (LinearLayout.LayoutParams) rawLp
+                    : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            group.removeViewAt(i);
+            LineOverflowViewport viewport = new LineOverflowViewport(getContext(), line.oppositeAligned);
+            LinearLayout.LayoutParams viewportLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            viewportLp.topMargin = oldLp.topMargin;
+            viewportLp.bottomMargin = oldLp.bottomMargin;
+            viewportLp.leftMargin = oldLp.leftMargin;
+            viewportLp.rightMargin = oldLp.rightMargin;
+            FrameLayout.LayoutParams childLp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    line.oppositeAligned ? Gravity.END : Gravity.START);
+            viewport.addView(child, childLp);
+            group.addView(viewport, i, viewportLp);
+        }
+    }
+
+    private void updateLineOverflowViewports(AppliedLine line, LyricsRenderConfig config,
+                                             long positionMs, boolean transitionActive) {
+        List<LineOverflowViewport> viewports = new ArrayList<>();
+        collectLineOverflowViewports(rowHost, viewports);
+        if (viewports.isEmpty()) return;
+        boolean grouped = config != null && "Grouped".equals(config.liveCardScrollScope);
+        float groupTarget = grouped ? groupedScrollTarget(viewports, line, config, positionMs, transitionActive) : 0f;
+        for (LineOverflowViewport viewport : viewports) {
+            viewport.update(line, config, positionMs, transitionActive, grouped, groupTarget);
+        }
+    }
+
+    private void collectLineOverflowViewports(View view, List<LineOverflowViewport> out) {
+        if (view == null || out == null) return;
+        if (view instanceof LineOverflowViewport) out.add((LineOverflowViewport) view);
+        if (!(view instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            collectLineOverflowViewports(group.getChildAt(i), out);
+        }
+    }
+
+    private float groupedScrollTarget(List<LineOverflowViewport> viewports, AppliedLine line,
+                                      LyricsRenderConfig config, long positionMs, boolean transitionActive) {
+        if (!canScroll(line, config, transitionActive)) return 0f;
+        float maxScroll = 0f;
+        for (LineOverflowViewport viewport : viewports) {
+            if (viewport != null) maxScroll = Math.max(maxScroll, viewport.maxScrollPx());
+        }
+        if (maxScroll <= 0f) return 0f;
+        return -maxScroll * scrollProgressAfterTransition(line, config, positionMs);
+    }
+
+    private String configKey(LyricsRenderConfig config) {
+        if (config == null) return "";
+        return config.liveCardTextSizeMode
+                + "|" + config.liveCardWeight
+                + "|" + config.lyricsFont
+                + "|" + config.liveCardSecondaryMode
+                + "|" + config.liveCardShowTransliteration
+                + "|" + config.liveCardShowTranslation
+                + "|" + config.liveCardMinimalAnimation
+                + "|" + config.liveCardAnimationMode
+                + "|" + config.liveCardGlowMode
+                + "|" + config.liveCardLineSyncFillMode
+                + "|" + config.liveCardTransitionMode
+                + "|" + config.liveCardOverflowMode
+                + "|" + config.liveCardScrollScope
+                + "|" + config.spotlight
+                + "|" + config.lineSyncFillMode
+                + "|" + config.glowBlurEnabled
+                + "|" + config.interludeNoteIcon
+                + "|" + config.translationBright;
     }
 
     private void invalidateForFrame() {
-        if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
+        if (android.os.Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
         else invalidate();
     }
 
-    private static Typeface lyricTypeface(Context context, String weight, String family) {
-        if ("apple".equalsIgnoreCase(family)) {
-            try {
-                return Typeface.createFromAsset(context.getAssets(),
-                        "Regular".equals(weight) ? "fonts/spotifymix-medium.ttf" : "fonts/sf-pro-display-bold.ttf");
-            } catch (Throwable ignored) {
-                return "Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
+    private static final class OverflowViewport extends FrameLayout {
+        private boolean wrapMode = true;
+
+        OverflowViewport(Context context) {
+            super(context);
+        }
+
+        void setWrapMode(boolean wrapMode) {
+            if (this.wrapMode == wrapMode) return;
+            this.wrapMode = wrapMode;
+            requestLayout();
+        }
+    }
+
+    private final class LineOverflowViewport extends FrameLayout {
+        private final boolean oppositeAligned;
+
+        LineOverflowViewport(Context context, boolean oppositeAligned) {
+            super(context);
+            this.oppositeAligned = oppositeAligned;
+            setClipToPadding(true);
+            setClipChildren(true);
+        }
+
+        void update(AppliedLine line, LyricsRenderConfig config, long positionMs, boolean transitionActive,
+                    boolean grouped, float groupTarget) {
+            View child = getChildCount() == 0 ? null : getChildAt(0);
+            if (child == null) return;
+            float maxScroll = maxScrollPx();
+            if (!canScroll(line, config, transitionActive) || maxScroll <= 0f) {
+                child.setTranslationX(0f);
+                return;
             }
+            float target = grouped
+                    ? clamp(groupTarget, -maxScroll, 0f)
+                    : -maxScroll * scrollProgressAfterTransition(line, config, positionMs);
+            child.setTranslationX(target);
         }
-        String font = "Regular".equals(weight) ? "spotify_mix_ui_regular"
-                : "Bold".equals(weight) ? "spotify_mix_ui_title_extrabold"
-                : "spotify_mix_ui_bold"; // Medium
-        // Inherit Spotify's own font (we run in its process); fall back to bundled.
-        try {
-            android.content.res.Resources res = context.getResources();
-            int id = res.getIdentifier(font, "font", context.getPackageName());
-            if (id != 0) {
-                Typeface tf = res.getFont(id);
-                if (tf != null) return tf;
+
+        float maxScrollPx() {
+            View child = getChildCount() == 0 ? null : getChildAt(0);
+            if (child == null) return 0f;
+            int viewportWidth = getWidth() - getPaddingLeft() - getPaddingRight();
+            int contentWidth = child.getMeasuredWidth();
+            if (viewportWidth <= 0 || contentWidth <= 0 || contentWidth <= viewportWidth + dp(2)) return 0f;
+            return Math.max(0f, contentWidth - viewportWidth + dp(8));
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            View child = getChildCount() == 0 ? null : getChildAt(0);
+            if (child == null || child.getVisibility() == GONE) {
+                super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+                return;
             }
-        } catch (Throwable ignored) {
+            child.measure(
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+                    getChildMeasureSpec(heightMeasureSpec, 0, child.getLayoutParams().height));
+            int requestedWidth = MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED
+                    ? child.getMeasuredWidth()
+                    : MeasureSpec.getSize(widthMeasureSpec);
+            setMeasuredDimension(resolveSize(requestedWidth, widthMeasureSpec),
+                    resolveSize(child.getMeasuredHeight(), heightMeasureSpec));
         }
-        try {
-            return Typeface.createFromAsset(context.getAssets(),
-                    "Regular".equals(weight) ? "fonts/spotifymix-medium.ttf" : "fonts/sf-pro-display-bold.ttf");
-        } catch (Throwable t) {
-            return "Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
+
+        @Override
+        protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+            View child = getChildCount() == 0 ? null : getChildAt(0);
+            if (child == null || child.getVisibility() == GONE) return;
+            int width = right - left;
+            int childWidth = child.getMeasuredWidth();
+            int childLeft = oppositeAligned ? Math.max(0, width - childWidth) : 0;
+            child.layout(childLeft, 0, childLeft + childWidth, child.getMeasuredHeight());
         }
+    }
+
+    private long lineDurationMs(AppliedLine line) {
+        return Math.max(1L, LyricTimeline.fillEndMs(line) - (line == null ? 0L : line.startMs));
+    }
+
+    private long transitionScrollReserveMs(LyricsRenderConfig config) {
+        return config != null && "None".equals(config.liveCardTransitionMode) ? 0L : 210L;
+    }
+
+    private boolean canScroll(AppliedLine line, LyricsRenderConfig config, boolean transitionActive) {
+        boolean scroll = config != null && "Scroll with lyric".equals(config.liveCardOverflowMode);
+        return scroll
+                && line != null
+                && !line.dotLine
+                && !transitionActive
+                && lineDurationMs(line) > transitionScrollReserveMs(config) + 220L;
+    }
+
+    private float scrollProgressAfterTransition(AppliedLine line, LyricsRenderConfig config, long positionMs) {
+        long start = line == null ? 0L : line.startMs;
+        long end = line == null ? start + 1L : Math.max(start + 1L, LyricTimeline.fillEndMs(line));
+        long reserve = transitionScrollReserveMs(config);
+        if (end - start <= reserve + 220L) return 0f;
+        long scrollStart = start + reserve;
+        return clamp((positionMs - scrollStart) / (float) Math.max(1L, end - scrollStart), 0f, 1f);
     }
 
     private int dp(int v) {

@@ -4,10 +4,14 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.eza.spicyex.Settings;
+import com.eza.spicyex.SettingsValueNormalizer;
 import com.eza.spicyex.SpotifyPlusConfig;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
-/** Settings access and normalization for the native lyrics shell. */
+/**
+ * Owns normalized runtime reads for the fullscreen and now-playing lyrics surfaces.
+ * Does not own schema/default declaration (Settings) or panel writes (SettingsStore).
+ */
 public final class LyricsShellSettings {
     private static final String PREFS_MAIN = "SpotifyPlus";
 
@@ -58,12 +62,12 @@ public final class LyricsShellSettings {
     }
 
     public String lyricWeight() {
-        String fallback = normalizeWeight(config == null ? "" : config.get(Settings.LYRICS_WEIGHT));
+        String fallback = SettingsValueNormalizer.normalizeTextWeight(config == null ? "" : config.get(Settings.LYRICS_WEIGHT));
         return readWeight(Settings.LYRICS_WEIGHT, fallback);
     }
 
     public String liveCardWeight() {
-        String fallback = normalizeWeight(config == null ? "" : config.get(Settings.LIVE_CARD_WEIGHT));
+        String fallback = SettingsValueNormalizer.normalizeTextWeight(config == null ? "" : config.get(Settings.LIVE_CARD_WEIGHT));
         return readWeight(Settings.LIVE_CARD_WEIGHT, fallback);
     }
 
@@ -71,24 +75,19 @@ public final class LyricsShellSettings {
         try {
             SharedPreferences prefs = prefs();
             if (prefs != null && prefs.contains(setting.key)) {
-                return normalizeWeight(prefs.getString(setting.key, fallback));
+                return SettingsValueNormalizer.normalizeTextWeight(prefs.getString(setting.key, fallback));
             }
         } catch (Throwable ignored) {
         }
         return fallback;
     }
 
-    private static String normalizeWeight(String w) {
-        if ("Regular".equals(w) || "Bold".equals(w)) return w;
-        return "Medium";
-    }
-
     public String lyricsTextSizeMode() {
-        String fallback = normalizeTextSizeMode(config == null ? "" : config.get(Settings.LYRICS_TEXT_SIZE));
+        String fallback = SettingsValueNormalizer.normalizeTextSizeMode(config == null ? "" : config.get(Settings.LYRICS_TEXT_SIZE));
         try {
             SharedPreferences prefs = prefs();
             if (prefs != null && prefs.contains(Settings.LYRICS_TEXT_SIZE.key)) {
-                return normalizeTextSizeMode(prefs.getString(Settings.LYRICS_TEXT_SIZE.key, fallback));
+                return SettingsValueNormalizer.normalizeTextSizeMode(prefs.getString(Settings.LYRICS_TEXT_SIZE.key, fallback));
             }
         } catch (Throwable ignored) {
         }
@@ -96,16 +95,16 @@ public final class LyricsShellSettings {
     }
 
     public float lyricsTextSizeMultiplier() {
-        return textSizeMultiplierFor(lyricsTextSizeMode());
+        return SettingsValueNormalizer.textSizeMultiplierFor(lyricsTextSizeMode());
     }
 
     /** Independent size mode for the now-playing live card (Settings.LIVE_CARD_TEXT_SIZE). */
     public String liveCardTextSizeMode() {
-        String fallback = normalizeTextSizeMode(config == null ? "" : config.get(Settings.LIVE_CARD_TEXT_SIZE));
+        String fallback = SettingsValueNormalizer.normalizeTextSizeMode(config == null ? "" : config.get(Settings.LIVE_CARD_TEXT_SIZE));
         try {
             SharedPreferences prefs = prefs();
             if (prefs != null && prefs.contains(Settings.LIVE_CARD_TEXT_SIZE.key)) {
-                return normalizeTextSizeMode(prefs.getString(Settings.LIVE_CARD_TEXT_SIZE.key, fallback));
+                return SettingsValueNormalizer.normalizeTextSizeMode(prefs.getString(Settings.LIVE_CARD_TEXT_SIZE.key, fallback));
             }
         } catch (Throwable ignored) {
         }
@@ -113,29 +112,123 @@ public final class LyricsShellSettings {
     }
 
     public float liveCardTextSizeMultiplier() {
-        return textSizeMultiplierFor(liveCardTextSizeMode());
+        return SettingsValueNormalizer.textSizeMultiplierFor(liveCardTextSizeMode());
     }
 
-    public boolean liveCardShowTransliteration() {
-        boolean fallback = config != null && config.get(Settings.LIVE_CARD_SHOW_TRANSLITERATION);
+    public String liveCardSecondaryMode() {
+        String fallback = config == null ? Settings.LIVE_CARD_SECONDARY_MODE.defaultValue
+                : normalizeLiveCardSecondaryMode(config.get(Settings.LIVE_CARD_SECONDARY_MODE));
         try {
             SharedPreferences prefs = prefs();
-            if (prefs != null && prefs.contains(Settings.LIVE_CARD_SHOW_TRANSLITERATION.key)) {
-                return prefs.getBoolean(Settings.LIVE_CARD_SHOW_TRANSLITERATION.key, fallback);
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_SECONDARY_MODE.key)) {
+                return normalizeLiveCardSecondaryMode(prefs.getString(Settings.LIVE_CARD_SECONDARY_MODE.key, fallback));
+            }
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_SHOW_TRANSLITERATION.key)
+                    && prefs.getBoolean(Settings.LIVE_CARD_SHOW_TRANSLITERATION.key, false)) {
+                return "Transliteration";
             }
         } catch (Throwable ignored) {
         }
         return fallback;
     }
 
-    private static float textSizeMultiplierFor(String mode) {
-        // Dialed back from 0.78/1.45/1.9 — the steps jumped too far for fine tuning.
-        switch (mode) {
-            case "small": return 0.88f;
-            case "large": return 1.2f;
-            case "xlarge": return 1.45f;
-            default: return 1.0f;
+    public boolean liveCardShowTransliteration() {
+        String mode = liveCardSecondaryMode();
+        return "Transliteration".equals(mode) || "Both".equals(mode);
+    }
+
+    public boolean liveCardShowTranslation() {
+        String mode = liveCardSecondaryMode();
+        return "Translation".equals(mode) || "Both".equals(mode);
+    }
+
+    public String liveCardAnimationMode() {
+        String fallback = config == null ? "" : config.get(Settings.LIVE_CARD_ANIMATION);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_ANIMATION.key)) {
+                return normalizeLiveCardAnimationMode(prefs.getString(Settings.LIVE_CARD_ANIMATION.key, fallback));
+            }
+        } catch (Throwable ignored) {
         }
+        return normalizeLiveCardAnimationMode(fallback);
+    }
+
+    public String liveCardGlowMode() {
+        String fallback = config == null ? "" : config.get(Settings.LIVE_CARD_GLOW);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_GLOW.key)) {
+                return normalizeLiveCardGlowMode(prefs.getString(Settings.LIVE_CARD_GLOW.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return normalizeLiveCardGlowMode(fallback);
+    }
+
+    public String liveCardLineSyncFillMode() {
+        String fallback = config == null ? "" : config.get(Settings.LIVE_CARD_LINE_SYNC_FILL);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_LINE_SYNC_FILL.key)) {
+                return normalizeLiveCardLineSyncFillMode(prefs.getString(Settings.LIVE_CARD_LINE_SYNC_FILL.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return normalizeLiveCardLineSyncFillMode(fallback);
+    }
+
+    public String liveCardTransitionMode() {
+        String fallback = config == null ? "" : config.get(Settings.LIVE_CARD_TRANSITION);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_TRANSITION.key)) {
+                return normalizeLiveCardTransitionMode(prefs.getString(Settings.LIVE_CARD_TRANSITION.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return normalizeLiveCardTransitionMode(fallback);
+    }
+
+    public String liveCardOverflowMode() {
+        String fallback = config == null ? "" : config.get(Settings.LIVE_CARD_OVERFLOW);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_OVERFLOW.key)) {
+                return normalizeLiveCardOverflowMode(prefs.getString(Settings.LIVE_CARD_OVERFLOW.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return normalizeLiveCardOverflowMode(fallback);
+    }
+
+    public String liveCardScrollScope() {
+        String fallback = config == null ? "" : config.get(Settings.LIVE_CARD_SCROLL_SCOPE);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LIVE_CARD_SCROLL_SCOPE.key)) {
+                return normalizeLiveCardScrollScope(prefs.getString(Settings.LIVE_CARD_SCROLL_SCOPE.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return normalizeLiveCardScrollScope(fallback);
+    }
+
+    public String defaultChineseMode(String configuredMode) {
+        String configured = safe(configuredMode);
+        if ("off".equals(configured)) return "";
+        if (!"cycle".equals(configured)) return normalizeChineseMode(configured);
+        String fallback = config == null
+                ? Settings.LAST_CHINESE_CYCLE_MODE.defaultValue
+                : config.get(Settings.LAST_CHINESE_CYCLE_MODE);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LAST_CHINESE_CYCLE_MODE.key)) {
+                return normalizeChineseMode(prefs.getString(Settings.LAST_CHINESE_CYCLE_MODE.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return normalizeChineseMode(fallback);
     }
 
     /** "Spotlight" animation style = zoom + glow the active line/word, no gradient fill. */
@@ -208,20 +301,7 @@ public final class LyricsShellSettings {
             case "max":
                 return value;
             default:
-                return "more";
-        }
-    }
-
-    private static String normalizeTextSizeMode(String mode) {
-        String value = safe(mode);
-        switch (value) {
-            case "small":
-            case "normal":
-            case "large":
-            case "xlarge":
-                return value;
-            default:
-                return "normal";
+                return "spacious";
         }
     }
 
@@ -232,6 +312,50 @@ public final class LyricsShellSettings {
         if ("Left to right (block)".equals(value)
                 || "Left to right (sentence)".equals(value)) return value;
         return "Top to bottom";
+    }
+
+    private static String normalizeLiveCardAnimationMode(String mode) {
+        String value = safe(mode);
+        if ("Full".equals(value)) return "Spotlight word";
+        if ("Minimal".equals(value) || "Karaoke fill".equals(value) || "Spotlight word".equals(value)) return value;
+        return "Karaoke fill";
+    }
+
+    private static String normalizeLiveCardSecondaryMode(String mode) {
+        String value = safe(mode);
+        if ("Transliteration".equals(value) || "Translation".equals(value) || "Both".equals(value)) return value;
+        if ("Romanization".equals(value) || "Romanized".equals(value)) return "Transliteration";
+        return "Main only";
+    }
+
+    private static String normalizeLiveCardGlowMode(String mode) {
+        String value = safe(mode);
+        if ("Off".equals(value) || "Word only".equals(value) || "Subtle line".equals(value)) return value;
+        return "Off";
+    }
+
+    private static String normalizeLiveCardLineSyncFillMode(String mode) {
+        String value = safe(mode);
+        if ("Left to right (sentence)".equals(value)) return value;
+        return "Top to bottom";
+    }
+
+    private static String normalizeLiveCardTransitionMode(String mode) {
+        String value = safe(mode);
+        if ("Crossfade".equals(value) || "None".equals(value)) return value;
+        return "Fade up";
+    }
+
+    private static String normalizeLiveCardOverflowMode(String mode) {
+        String value = safe(mode);
+        if ("Wrap".equals(value) || "Clip".equals(value) || "Scroll with lyric".equals(value)) return value;
+        return "Wrap";
+    }
+
+    private static String normalizeLiveCardScrollScope(String scope) {
+        String value = safe(scope);
+        if ("Individual lines".equals(value)) return value;
+        return "Grouped";
     }
 
     private SharedPreferences prefs() {

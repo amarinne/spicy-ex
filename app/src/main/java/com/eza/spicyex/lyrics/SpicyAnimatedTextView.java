@@ -7,6 +7,8 @@ import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Shader;
 import android.os.Build;
+import android.text.Layout;
+import android.text.TextPaint;
 import android.widget.TextView;
 
 /**
@@ -117,15 +119,7 @@ public class SpicyAnimatedTextView extends TextView {
     }
 
     private void updateSelfGlow() {
-        float g = Math.max(0f, Math.min(1f, glow));
-        if (g <= 0.02f) {
-            setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT);
-            return;
-        }
-        // Soft white halo behind the (gradient-filled) text; radius + alpha scale with glow so it
-        // builds gradually with the eased glow value rather than popping on.
-        int alpha = Math.round(255f * Math.min(1f, 1.1f * g));
-        setShadowLayer((6f + 16f * g) * density, 0f, 0f, Color.argb(alpha, 255, 255, 255));
+        setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT);
     }
 
     private Shader resolveShader(int extent) {
@@ -193,12 +187,38 @@ public class SpicyAnimatedTextView extends TextView {
         // Drive ALL states through a shader, never paint.setColor(): TextView.onDraw resets the
         // paint color to mCurTextColor before drawing the layout, which would silently discard the
         // sung/unsung alpha and render every word uniformly. A shader survives that reset.
+        if (selfGlow) drawSelfGlow(canvas);
         paint.setShader(resolveShader(extent));
-        // NOTE: the blur-glow is NOT drawn here per-word (that clipped to each word's box and showed
-        // seams between words). It's drawn once on the parent GlowFlexbox canvas so adjacent word
-        // glows blend continuously. See GlowFlexbox + getGlow().
+        // Word rows usually get their continuous halo from GlowFlexbox. Standalone line/secondary
+        // text draws a glyph-only halo above; avoid TextView.setShadowLayer with shaders because
+        // some Android render paths blur the view rectangle.
         super.onDraw(canvas);
         paint.setShader(oldShader);
         paint.setColor(oldColor);
+    }
+
+    private void drawSelfGlow(Canvas canvas) {
+        float g = Math.max(0f, Math.min(1f, glow));
+        if (g <= 0.02f) return;
+        Layout layout = getLayout();
+        if (layout == null) return;
+        TextPaint paint = getPaint();
+        Shader savedShader = paint.getShader();
+        int savedColor = paint.getColor();
+        int alpha = Math.round(255f * Math.min(0.9f, 0.85f * g));
+        int glowColor = Color.argb(alpha, 255, 255, 255);
+        paint.setShader(null);
+        paint.setColor(glowColor);
+        paint.setShadowLayer((5f + 13f * g) * density, 0f, 0f, glowColor);
+        int save = canvas.save();
+        canvas.translate(getTotalPaddingLeft(), getTotalPaddingTop());
+        try {
+            layout.draw(canvas);
+        } catch (Throwable ignored) {
+        }
+        canvas.restoreToCount(save);
+        paint.clearShadowLayer();
+        paint.setColor(savedColor);
+        paint.setShader(savedShader);
     }
 }

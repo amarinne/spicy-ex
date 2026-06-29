@@ -67,7 +67,7 @@ public final class LyricsFrameRenderer {
             if (!LyricsLineViewState.isMounted(line, mountedRowsHost)) continue;
 
             LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
-                    line, positionMs, config.spotlight, true);
+                    line, positionMs, config.spotlight, config.lineGradientEnabled);
             float opacity = LyricsAnimationApplier.stepLineOpacity(line, lineState.active, lineState.sung, deltaSeconds);
             LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity,
                     mobileLineBlurPx(line, i, activeIndex, userScrollHeld, config));
@@ -89,7 +89,20 @@ public final class LyricsFrameRenderer {
                 }
             } else {
                 applySecondaryGradient(line, positionMs, lineGlow, config);
-                if (line.words != null && !line.words.isEmpty()
+                if (hasRealTimedWords(line)) {
+                    if (lineState.active) {
+                        LyricsAnimationApplier.animateSyllables(
+                                line,
+                                positionMs,
+                                deltaSeconds,
+                                spToPx(LyricsLineViewState.effectiveBaseTextSp(line)),
+                                styleSink,
+                                config.spotlight,
+                                config.glowBlurEnabled);
+                    } else {
+                        LyricsAnimationApplier.resetSyllables(line, styleSink);
+                    }
+                } else if (line.words != null && !line.words.isEmpty()
                         && !config.lineSyncFillWord()
                         && !config.lineSyncFillSentence()) {
                     animateContinuousLineWords(line, lineState, lineGlow, deltaSeconds);
@@ -112,6 +125,10 @@ public final class LyricsFrameRenderer {
             }
         }
         styleBatcher.flush();
+    }
+
+    private boolean hasRealTimedWords(AppliedLine line) {
+        return line != null && !line.syntheticWords && line.words != null && !line.words.isEmpty();
     }
 
     private void animateContinuousLineWords(AppliedLine line, LyricsLineAnimationState lineState,
@@ -149,12 +166,7 @@ public final class LyricsFrameRenderer {
         if (line == null) return;
         if (config.spotlight) {
             float glow = config.glowBlurEnabled ? spotGlow : 0f;
-            LyricsLineViewState.applySpotlightSecondaryGradient(line, glow);
-            if (line.words != null) {
-                for (SyllableSegment seg : line.words) {
-                    LyricsSyllableViewState.applyRomanizedGradient(seg, 100f, glow * 0.9f);
-                }
-            }
+            LyricsLineViewState.applyLineSecondaryGradient(line, secondaryLineGradientPosition(line, positionMs), glow);
             return;
         }
         boolean animate = config.lineGradientEnabled;

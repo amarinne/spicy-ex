@@ -28,8 +28,16 @@ public final class LyricsRenderConfig {
     public final float lyricsTextSizeMultiplier;
     public final String liveCardTextSizeMode;
     public final float liveCardTextSizeMultiplier;
+    public final String liveCardSecondaryMode;
     public final boolean liveCardShowTransliteration;
+    public final boolean liveCardShowTranslation;
     public final boolean liveCardMinimalAnimation;
+    public final String liveCardAnimationMode;
+    public final String liveCardGlowMode;
+    public final String liveCardLineSyncFillMode;
+    public final String liveCardTransitionMode;
+    public final String liveCardOverflowMode;
+    public final String liveCardScrollScope;
     public final String lineSyncFillMode;
     public final String japaneseModeConfig;
     public final String defaultJapaneseReadingMode;
@@ -69,8 +77,16 @@ public final class LyricsRenderConfig {
             float lyricsTextSizeMultiplier,
             String liveCardTextSizeMode,
             float liveCardTextSizeMultiplier,
+            String liveCardSecondaryMode,
             boolean liveCardShowTransliteration,
+            boolean liveCardShowTranslation,
             boolean liveCardMinimalAnimation,
+            String liveCardAnimationMode,
+            String liveCardGlowMode,
+            String liveCardLineSyncFillMode,
+            String liveCardTransitionMode,
+            String liveCardOverflowMode,
+            String liveCardScrollScope,
             String lineSyncFillMode,
             String japaneseModeConfig,
             String defaultJapaneseReadingMode,
@@ -109,8 +125,16 @@ public final class LyricsRenderConfig {
         this.lyricsTextSizeMultiplier = lyricsTextSizeMultiplier;
         this.liveCardTextSizeMode = safe(liveCardTextSizeMode);
         this.liveCardTextSizeMultiplier = liveCardTextSizeMultiplier;
+        this.liveCardSecondaryMode = safe(liveCardSecondaryMode);
         this.liveCardShowTransliteration = liveCardShowTransliteration;
+        this.liveCardShowTranslation = liveCardShowTranslation;
         this.liveCardMinimalAnimation = liveCardMinimalAnimation;
+        this.liveCardAnimationMode = safe(liveCardAnimationMode);
+        this.liveCardGlowMode = safe(liveCardGlowMode);
+        this.liveCardLineSyncFillMode = safe(liveCardLineSyncFillMode);
+        this.liveCardTransitionMode = safe(liveCardTransitionMode);
+        this.liveCardOverflowMode = safe(liveCardOverflowMode);
+        this.liveCardScrollScope = safe(liveCardScrollScope);
         this.lineSyncFillMode = safe(lineSyncFillMode);
         this.japaneseModeConfig = safe(japaneseModeConfig);
         this.defaultJapaneseReadingMode = safe(defaultJapaneseReadingMode);
@@ -139,13 +163,14 @@ public final class LyricsRenderConfig {
         boolean translationAvailable = FeatureAvailability.translationAvailable();
         String jp = transliterationAvailable ? get(cfg, Settings.JAPANESE_READING_MODE) : "off";
         String cn = transliterationAvailable ? get(cfg, Settings.CHINESE_MODE) : "off";
-        String defaultJp = "cycle".equals(jp) ? SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI : jp;
-        String defaultCn = "off".equals(cn) ? "" : LyricsShellSettings.normalizeChineseMode(
-                "cycle".equals(cn) ? SpotifyPlusConfig.CHINESE_MODE_PINYIN : cn);
+        String defaultJp = "cycle".equals(jp) ? SpotifyPlusConfig.JP_READING_ROMAJI_ONLY : jp;
+        String defaultCn = transliterationAvailable ? shell.defaultChineseMode(cn) : "";
         String kr = transliterationAvailable ? get(cfg, Settings.KOREAN_ROMANIZATION) : "Off";
-        String defaultKr = "cycle".equals(kr) ? "Letter-by-letter" : kr;
+        String defaultKr = "cycle".equals(kr) ? SpicyRomanizer.KOREAN_PRONUNCIATION : kr;
         String cy = transliterationAvailable ? get(cfg, Settings.CYRILLIC_MODE) : "Off";
         String defaultCy = "cycle".equals(cy) ? SpicyRomanizer.CYRILLIC_RUSSIAN : cy;
+        boolean transliterationEnabled = transliterationAvailable && get(cfg, Settings.TRANSLITERATION_ENABLED);
+        boolean translationEnabled = translationAvailable && translationEnabled(cfg);
 
         return new LyricsRenderConfig(
                 get(cfg, Settings.ENABLE_BACKGROUND),
@@ -158,7 +183,7 @@ public final class LyricsRenderConfig {
                 "note".equals(get(cfg, Settings.INTERLUDE_ICON)),
                 get(cfg, Settings.TOGGLE_PROGRESS_RING),
                 transliterationAvailable && shell.attachTransliterationToWordsEnabled(),
-                transliterationAvailable && get(cfg, Settings.TRANSLITERATION_ENABLED),
+                transliterationEnabled,
                 shell.lineSpacingMode(),
                 shell.lineSpacingMultiplier(),
                 shell.lyricWeight(),
@@ -168,8 +193,16 @@ public final class LyricsRenderConfig {
                 shell.lyricsTextSizeMultiplier(),
                 shell.liveCardTextSizeMode(),
                 shell.liveCardTextSizeMultiplier(),
-                transliterationAvailable && shell.liveCardShowTransliteration(),
-                "Minimal".equals(get(cfg, Settings.LIVE_CARD_ANIMATION)),
+                shell.liveCardSecondaryMode(),
+                transliterationEnabled && shell.liveCardShowTransliteration(),
+                translationEnabled && shell.liveCardShowTranslation(),
+                "Minimal".equals(shell.liveCardAnimationMode()),
+                shell.liveCardAnimationMode(),
+                shell.liveCardGlowMode(),
+                shell.liveCardLineSyncFillMode(),
+                shell.liveCardTransitionMode(),
+                shell.liveCardOverflowMode(),
+                shell.liveCardScrollScope(),
                 shell.lineSyncFillMode(),
                 jp,
                 defaultJp,
@@ -183,7 +216,7 @@ public final class LyricsRenderConfig {
                 defaultCy,
                 defaultCy,
                 get(cfg, Settings.CYRILLIC_KEEP_SIGNS),
-                translationAvailable && translationEnabled(cfg),
+                translationEnabled,
                 get(cfg, Settings.TRANSLATION_TARGET),
                 "Bright".equals(get(cfg, Settings.TRANSLATION_BRIGHTNESS)),
                 get(cfg, Settings.SYNC_OFFSET_MS)
@@ -208,6 +241,64 @@ public final class LyricsRenderConfig {
 
     public boolean lineSyncFillSentence() {
         return "Left to right (sentence)".equals(lineSyncFillMode);
+    }
+
+    public LyricsRenderConfig forLiveCard() {
+        boolean minimal = "Minimal".equals(liveCardAnimationMode);
+        boolean spotlightCard = "Spotlight word".equals(liveCardAnimationMode);
+        boolean glow = !"Off".equals(liveCardGlowMode) && !spotlightCard;
+        String fillMode = spotlightCard
+                ? "Left to right (word)"
+                : ("Karaoke fill".equals(liveCardAnimationMode) ? liveCardLineSyncFillMode : "Top to bottom");
+        return new LyricsRenderConfig(
+                backgroundEnabled,
+                forceDarkBackground,
+                !minimal,
+                spotlightCard,
+                glow,
+                false,
+                blurQuality,
+                interludeNoteIcon,
+                toggleSpinnerEnabled,
+                attachTransliterationToWords,
+                transliterationEnabled,
+                lineSpacingMode,
+                lineSpacingMultiplier,
+                lyricWeight,
+                liveCardWeight,
+                lyricsFont,
+                lyricsTextSizeMode,
+                lyricsTextSizeMultiplier,
+                liveCardTextSizeMode,
+                liveCardTextSizeMultiplier,
+                liveCardSecondaryMode,
+                liveCardShowTransliteration,
+                liveCardShowTranslation,
+                minimal,
+                liveCardAnimationMode,
+                liveCardGlowMode,
+                fillMode,
+                liveCardTransitionMode,
+                liveCardOverflowMode,
+                liveCardScrollScope,
+                fillMode,
+                japaneseModeConfig,
+                defaultJapaneseReadingMode,
+                chineseModeConfig,
+                defaultChineseMode,
+                koreanModeConfig,
+                defaultKoreanMode,
+                koreanMode,
+                chineseTones,
+                cyrillicModeConfig,
+                defaultCyrillicMode,
+                cyrillicMode,
+                cyrillicKeepSigns,
+                translationEnabled,
+                translationTarget,
+                translationBright,
+                syncOffsetMs
+        );
     }
 
     public Diff diff(LyricsRenderConfig next) {
@@ -284,7 +375,8 @@ public final class LyricsRenderConfig {
                     || changed(oldValue.lineSpacingMultiplier, next.lineSpacingMultiplier);
             boolean fillChanged = changed(oldValue.lineSyncFillMode, next.lineSyncFillMode);
             japaneseModeConfigChanged = changed(oldValue.japaneseModeConfig, next.japaneseModeConfig);
-            chineseModeConfigChanged = changed(oldValue.chineseModeConfig, next.chineseModeConfig);
+            chineseModeConfigChanged = changed(oldValue.chineseModeConfig, next.chineseModeConfig)
+                    || changed(oldValue.defaultChineseMode, next.defaultChineseMode);
             koreanModeConfigChanged = changed(oldValue.koreanModeConfig, next.koreanModeConfig);
             boolean koreanChanged = koreanModeConfigChanged || changed(oldValue.koreanMode, next.koreanMode);
             boolean chineseTonesChanged = oldValue.chineseTones != next.chineseTones;
@@ -301,8 +393,16 @@ public final class LyricsRenderConfig {
                     || changed(oldValue.liveCardTextSizeMultiplier, next.liveCardTextSizeMultiplier);
             liveCardConfigChanged = liveCardTextSizeChanged
                     || changed(oldValue.liveCardWeight, next.liveCardWeight)
+                    || changed(oldValue.liveCardSecondaryMode, next.liveCardSecondaryMode)
                     || oldValue.liveCardShowTransliteration != next.liveCardShowTransliteration
+                    || oldValue.liveCardShowTranslation != next.liveCardShowTranslation
                     || oldValue.liveCardMinimalAnimation != next.liveCardMinimalAnimation
+                    || changed(oldValue.liveCardAnimationMode, next.liveCardAnimationMode)
+                    || changed(oldValue.liveCardGlowMode, next.liveCardGlowMode)
+                    || changed(oldValue.liveCardLineSyncFillMode, next.liveCardLineSyncFillMode)
+                    || changed(oldValue.liveCardTransitionMode, next.liveCardTransitionMode)
+                    || changed(oldValue.liveCardOverflowMode, next.liveCardOverflowMode)
+                    || changed(oldValue.liveCardScrollScope, next.liveCardScrollScope)
                     || fontChanged;
             needsTranslationReprocess = oldValue.translationEnabled != next.translationEnabled
                     || changed(oldValue.translationTarget, next.translationTarget);

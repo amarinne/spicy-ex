@@ -21,6 +21,7 @@ import de.robv.android.xposed.XposedBridge;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
+import com.eza.spicyex.Diagnostics;
 
 /** Spotify-native lyrics source backed by captured models and Spotify's local lyrics_db. */
 public final class NativeLyricsSource implements LyricsRepository.NativeLyricsProvider {
@@ -45,7 +46,7 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
             if (doc == null || doc.lines.isEmpty()) return;
             store(doc);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " native lyrics capture failed source=" + sourceTag + ": " + t);
+            Diagnostics.warn(TAG, "native lyrics capture failed source=" + sourceTag, t);
         }
     }
 
@@ -122,7 +123,7 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
             XposedBridge.log(TAG + " native DB read miss track=" + trackId);
             return null;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " native DB read failed: " + t);
+            Diagnostics.warn(TAG, "native DB read failed", t);
             return null;
         } finally {
             if (cursor != null) try { cursor.close(); } catch (Throwable ignored) {}
@@ -137,6 +138,7 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
         try {
             arr = JsonParser.parseString(linesJson).getAsJsonArray();
         } catch (Throwable t) {
+            Diagnostics.warn(TAG, "parseNativeDbLyrics", t);
             return null;
         }
         String ss = syncStatus == null ? "" : syncStatus.toUpperCase(Locale.ROOT);

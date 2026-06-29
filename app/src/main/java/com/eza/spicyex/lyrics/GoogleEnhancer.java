@@ -8,10 +8,12 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.io.IOException;
@@ -78,6 +80,7 @@ public final class GoogleEnhancer {
         if (!isBlank(parsedRomanized) && SpicyTextDetection.hasRomanizableScript(parsedRomanized)) parsedRomanized = "";
         result.romanized = firstNonBlank(cachedRomanized, parsedRomanized);
         result.translated = firstNonBlank(cachedTranslated, needTranslate ? parseTranslation(body) : "");
+        if (!shouldDisplayTranslation(text, result.translated)) result.translated = "";
         if (needRomanize && !isBlank(result.romanized)) LyricCaches.putProcessingValue(context, processingVersion, romanKey, result.romanized);
         if (needTranslate && !isBlank(result.translated)) LyricCaches.putProcessingValue(context, processingVersion, translateKey, result.translated);
         return result;
@@ -101,7 +104,7 @@ public final class GoogleEnhancer {
             if (line == null || isBlank(line.text)) continue;
             String cached = LyricCaches.getProcessingValue(context, processingVersion,
                     LyricCaches.translationKey(trackId, sourceLang, target, line.text));
-            if (!isBlank(cached)) {
+            if (!isBlank(cached) && shouldDisplayTranslation(line.text, cached)) {
                 result.translations.put(line.index, cached);
                 result.cachedIndices.add(line.index);
             } else {
@@ -131,7 +134,7 @@ public final class GoogleEnhancer {
             String translated = parsed.get(i);
             if (isBlank(translated)) continue;
             translated = stripMarkerEcho(translated, i).trim();
-            if (isBlank(translated)) continue;
+            if (!shouldDisplayTranslation(line.text, translated)) continue;
             result.translations.put(line.index, translated);
             LyricCaches.putProcessingValue(context, processingVersion,
                     LyricCaches.translationKey(trackId, sourceLang, target, line.text), translated);
@@ -255,9 +258,59 @@ public final class GoogleEnhancer {
         return normalizeCompare(a).equals(normalizeCompare(b));
     }
 
+    public static boolean shouldDisplayTranslation(String source, String translated) {
+        return !isBlank(translated)
+                && !sameText(source, translated)
+                && !looksLikeRomanizationEcho(source, translated);
+    }
+
+    static boolean looksLikeRomanizationEcho(String source, String translated) {
+        if (isBlank(source) || isBlank(translated)) return false;
+        String out = normalizeCompare(translated);
+        if (isBlank(out)) return false;
+        for (String candidate : romanizationCandidates(source)) {
+            if (!isBlank(candidate) && out.equals(normalizeCompare(candidate))) return true;
+        }
+        return false;
+    }
+
+    private static List<String> romanizationCandidates(String source) {
+        ArrayList<String> out = new ArrayList<>();
+        if (SpicyTextDetection.itemCyrillicTest(source)) {
+            out.add(SpicyRomanizer.romanizeCyrillic(source, SpicyRomanizer.CYRILLIC_RUSSIAN, false));
+            out.add(SpicyRomanizer.romanizeCyrillic(source, SpicyRomanizer.CYRILLIC_UKRAINIAN, false));
+        }
+        if (SpicyTextDetection.itemGreekTest(source)) out.add(SpicyRomanizer.romanizeGreek(source));
+        if (SpicyTextDetection.itemKoreanTest(source)) {
+            out.add(SpicyRomanizer.romanizeKorean(source));
+            out.add(SpicyKoreanG2P.romanize(source));
+        }
+        if (SpicyTextDetection.itemChineseTest(source) && !SpicyTextDetection.hasKana(source)) {
+            out.add(SpicyJapaneseChineseProcessor.romanizeChineseLine(source, "pinyin", false));
+        }
+        if (SpicyTextDetection.hasKana(source)) out.add(SpicyJapaneseChineseProcessor.romanizeJapaneseLine(source));
+        return out;
+    }
+
     private static String normalizeCompare(String value) {
         if (value == null) return "";
-        return value.replaceAll("\\s+", " ").trim();
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFKC);
+        normalized = Normalizer.normalize(normalized, Normalizer.Form.NFKD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase(Locale.ROOT)
+                .replace('ң', 'n')
+                .replace('ŋ', 'n')
+                .replace('’', '\'')
+                .replace('‘', '\'')
+                .replace('“', '"')
+                .replace('”', '"')
+                .replace('–', '-')
+                .replace('—', '-')
+                .replace("…", "...");
+        return normalized
+                .replaceAll("[\\p{Punct}\\p{IsPunctuation}\\p{S}]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     public static final class BatchLine {

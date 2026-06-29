@@ -159,16 +159,6 @@ public final class LyricsLineViewState {
         if (state(line).translationView != null) state(line).translationView.setGradientPosition(100f, 0f);
     }
 
-    public static void applySpotlightSecondaryGradient(AppliedLine line, float spotGlow) {
-        if (line == null) return;
-        if (state(line).romanView != null && state(line).mainView == null) {
-            state(line).romanView.setGradientPosition(100f, spotGlow);
-        }
-        if (state(line).translationView != null) {
-            state(line).translationView.setGradientPosition(100f, 0f);
-        }
-    }
-
     public static void applyLineSecondaryGradient(AppliedLine line, float gradient, float glow) {
         if (line == null) return;
         if (state(line).romanView != null && state(line).mainView == null) {

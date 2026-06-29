@@ -37,11 +37,19 @@ Spotify enforces Play Integrity during login. Bypass this using the **Downgrade-
 > May conflicts with ReVanced / modified Spotify or old Spotify Plus 
 
 ## Build
-JDK 21, Android SDK.
+JDK 21 and an Android SDK are required. Gradle wrapper builds should be run with JDK 21; newer JDKs can fail during build-script compilation. The Android app still targets Java 11 bytecode unless that is changed intentionally.
 
 ```sh
-./gradlew assembleDebug
+# Build both debug flavors and copy stamped APKs into artifacts/.
+JAVA_HOME=/path/to/jdk21 ./gradlew :app:assembleLiteDebug :app:assembleFullDebug
+
+# Run the primary JVM unit suite (current tests exercise full-flavor romanization code).
+JAVA_HOME=/path/to/jdk21 ./gradlew :app:testFullDebugUnitTest
 ```
+
+`lite` disables transliteration/translation features; `full` enables them and includes the heavier language dependencies. For app-code changes, validate both flavors unless the change is demonstrably scoped to one source set.
+
+Docs-only changes do not require unit/device testing. Device behavior remains the final validation path for UI, hook, and Spotify-host integration changes.
 
 ## Credits
 - [LeNerd46/SpotifyPlus](https://github.com/LeNerd46/SpotifyPlus)

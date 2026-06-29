@@ -9,19 +9,21 @@ import android.view.Choreographer;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.AppliedLine;
-import com.eza.spicyex.lyrics.FuriganaText;
 import com.eza.spicyex.lyrics.LiveLyricCardView;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.LyricsDisplayMode;
+import com.eza.spicyex.lyrics.LyricsFetchErrors;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.LyricsLocalRomanizer;
-import com.eza.spicyex.lyrics.LyricsLineAnimationState;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
+import com.eza.spicyex.lyrics.LyricsSecondaryProcessor;
+import com.eza.spicyex.lyrics.LyricsSecondaryProcessingSession;
 import com.eza.spicyex.lyrics.RomanizationOptions;
 import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.SpicyTextDetection;
+import com.eza.spicyex.lyrics.SyllableSegment;
 
 import java.util.List;
 
@@ -37,6 +39,7 @@ final class NowPlayingLyricController {
     private final LiveLyricCardView card;
     private final SpotifyPlusConfig config;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final LyricsSecondaryProcessingSession secondaryProcessingSession;
 
     // Inherited from the same shared Spotify-side prefs the fullscreen screen reads — no separate
     // per-component config. Refreshed on each fetch so panel/chip toggles take effect on next track.
@@ -54,6 +57,11 @@ final class NowPlayingLyricController {
     private long lastConfigCheckMs;
     private long lastProcessedCacheCheckMs;
     private long lastCardTapMs;
+    private long lastFrameMs;
+    private long nextFetchAllowedMs;
+    private boolean secondaryProcessingActive;
+    private String secondaryProcessingId = "";
+    private LyricsDocument secondaryProcessingDocument;
     private boolean running;
 
     private final Choreographer.FrameCallback frame = new Choreographer.FrameCallback() {
@@ -73,6 +81,19 @@ final class NowPlayingLyricController {
         this.activity = activity;
         this.card = card;
         this.config = SpotifyPlusConfig.from(activity);
+        LyricsSecondaryProcessor secondaryProcessor = new LyricsSecondaryProcessor(
+                activity,
+                NativeRuntime.HTTP,
+                NativeRuntime.PROCESSOR,
+                NativeRuntime.GOOGLE_WORKERS,
+                handler,
+                NativeRuntime.GOOGLE_PROCESSING_VERSION);
+        this.secondaryProcessingSession = new LyricsSecondaryProcessingSession(
+                activity,
+                config,
+                secondaryProcessor,
+                NativeRuntime.GOOGLE_PROCESSING_VERSION,
+                NativeSpicyLyricsHook.TAG);
         refreshConfig();
         this.card.setOnClickListener(v -> handleCardTap());
     }
@@ -80,11 +101,29 @@ final class NowPlayingLyricController {
     private boolean refreshConfig() {
         LyricsRenderConfig next = LyricsRenderConfig.read(activity, config);
         boolean changed = renderConfig == null
+                || !renderConfig.liveCardSecondaryMode.equals(next.liveCardSecondaryMode)
                 || renderConfig.liveCardShowTransliteration != next.liveCardShowTransliteration
+                || renderConfig.liveCardShowTranslation != next.liveCardShowTranslation
                 || !renderConfig.liveCardWeight.equals(next.liveCardWeight)
                 || !renderConfig.lyricsFont.equals(next.lyricsFont)
                 || !renderConfig.liveCardTextSizeMode.equals(next.liveCardTextSizeMode)
-                || renderConfig.liveCardMinimalAnimation != next.liveCardMinimalAnimation;
+                || renderConfig.liveCardMinimalAnimation != next.liveCardMinimalAnimation
+                || !renderConfig.liveCardAnimationMode.equals(next.liveCardAnimationMode)
+                || !renderConfig.liveCardGlowMode.equals(next.liveCardGlowMode)
+                || !renderConfig.liveCardLineSyncFillMode.equals(next.liveCardLineSyncFillMode)
+                || !renderConfig.liveCardTransitionMode.equals(next.liveCardTransitionMode)
+                || !renderConfig.liveCardOverflowMode.equals(next.liveCardOverflowMode)
+                || !renderConfig.liveCardScrollScope.equals(next.liveCardScrollScope)
+                || renderConfig.attachTransliterationToWords != next.attachTransliterationToWords
+                || !renderConfig.defaultJapaneseReadingMode.equals(next.defaultJapaneseReadingMode)
+                || !renderConfig.defaultChineseMode.equals(next.defaultChineseMode)
+                || !renderConfig.defaultKoreanMode.equals(next.defaultKoreanMode)
+                || !renderConfig.defaultCyrillicMode.equals(next.defaultCyrillicMode)
+                || renderConfig.chineseTones != next.chineseTones
+                || renderConfig.cyrillicKeepSigns != next.cyrillicKeepSigns
+                || renderConfig.translationEnabled != next.translationEnabled
+                || !renderConfig.translationTarget.equals(next.translationTarget)
+                || renderConfig.translationBright != next.translationBright;
         renderConfig = next;
         if (changed) card.applyConfig(renderConfig);
         return changed;
@@ -103,6 +142,9 @@ final class NowPlayingLyricController {
     }
 
     private void onFrame(long nowMs) {
+        float deltaSeconds = lastFrameMs <= 0L ? (1f / 60f)
+                : Math.max(1f / 120f, Math.min(1f / 15f, (nowMs - lastFrameMs) / 1000f));
+        lastFrameMs = nowMs;
         SpotifyTrack track = hook.getCurrentTrackSafely();
         if (track == null) return;
         String id = NativeLyricsUtils.trackIdFromUri(track.uri);
@@ -119,12 +161,19 @@ final class NowPlayingLyricController {
             card.clear();
             lastIdx = Integer.MIN_VALUE;
             placeholderShown = false;
+            nextFetchAllowedMs = 0L;
+            document = null;
+            loadedId = "";
+            secondaryProcessingActive = false;
+            secondaryProcessingId = "";
+            secondaryProcessingDocument = null;
         }
 
         // Track-change / fetch check is throttled — only the gradient needs per-frame work.
         if (nowMs - lastTrackCheckMs > 400) {
             lastTrackCheckMs = nowMs;
-            if (!id.isEmpty() && !id.equals(loadedId) && !id.equals(loadingId) && !id.equals(failedId)) {
+            if (!id.isEmpty() && nowMs >= nextFetchAllowedMs
+                    && !id.equals(loadedId) && !id.equals(loadingId) && !id.equals(failedId)) {
                 fetch(track, id);
             }
         }
@@ -135,10 +184,11 @@ final class NowPlayingLyricController {
         }
         if (document == null || !id.equals(loadedId)) return; // not loaded for THIS track → stay cleared
         refreshProcessedSecondaryRows(nowMs);
+        startSecondaryProcessingIfNeeded(id);
 
         // Unsynced lyrics: no line tracks playback, so the live card can't karaoke-follow —
         // show the interlude indicator (set once) and leave reading to the fullscreen screen.
-        if ("Static".equalsIgnoreCase(document.type)) {
+        if (isUnsyncedDocument(document)) {
             if (!placeholderShown) { card.setInterlude(renderConfig.interludeNoteIcon); placeholderShown = true; }
             return;
         }
@@ -153,23 +203,14 @@ final class NowPlayingLyricController {
             return;
         }
         AppliedLine cur = lines.get(idx);
+        boolean lineChanged = idx != lastIdx;
         if (idx != lastIdx) {
             lastIdx = idx;
-            if (cur.dotLine) card.setInterlude(renderConfig.interludeNoteIcon);
-            else card.setLine(liveCardMainText(cur), liveCardSecondaryText(cur));
         }
-        if (!cur.dotLine) {
-            LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
-                    cur, pos, renderConfig.spotlight, renderConfig.lineGradientEnabled);
-            if (renderConfig.liveCardMinimalAnimation) {
-                card.setMinimalAnimation(true);
-            } else {
-                card.setMinimalAnimation(false);
-                float glow = renderConfig.glowBlurEnabled ? lineState.glowTarget : 0f;
-                card.setGradient(lineState.gradient, glow, lineState.brightnessTarget);
-                card.setScaleTarget(lineState.scaleTarget);
-            }
-        }
+        card.renderLine(activity, cur, renderConfig, pos, deltaSeconds,
+                document,
+                this::segmentRomanizedText,
+                lineChanged);
     }
 
     private void handleCardTap() {
@@ -214,6 +255,7 @@ final class NowPlayingLyricController {
                     document = doc;
                     loadedId = id;
                     lastIdx = Integer.MIN_VALUE; // force a line refresh
+                    startSecondaryProcessingIfNeeded(id);
                 });
             }
 
@@ -222,20 +264,120 @@ final class NowPlayingLyricController {
                 handler.post(() -> {
                     if (gen != fetchGen) return;
                     loadingId = "";
-                    failedId = id; // no lyrics / fetch failed — keep the card cleared, don't retry-spam
+                    if (LyricsFetchErrors.isDurableNoLyrics(error)) {
+                        failedId = id; // durable no lyrics — keep the placeholder and avoid retry spam
+                        return;
+                    }
+                    // Transient provider/network/native misses should retry, but not every frame.
+                    if (id.equals(currentId)) {
+                        nextFetchAllowedMs = System.nanoTime() / 1_000_000L + 5000L;
+                    }
                 });
             }
         });
     }
 
     private void refreshProcessedSecondaryRows(long nowMs) {
-        if (!renderConfig.liveCardShowTransliteration) return;
+        if (!renderConfig.liveCardShowTransliteration && !renderConfig.liveCardShowTranslation) return;
         if (document == null || nowMs - lastProcessedCacheCheckMs < 2500L) return;
         lastProcessedCacheCheckMs = nowMs;
+        String before = secondarySignature(document);
         LyricsDocumentProcessor.applyProcessedCache(activity, document, romanizationOptions(),
                 NativeRuntime.GOOGLE_PROCESSING_VERSION);
         prepareLiveCardRomanization(document);
-        LyricTimeline.applySyncedRows(document);
+        if (!before.equals(secondarySignature(document))) {
+            LyricTimeline.applySyncedRows(document);
+        }
+    }
+
+    private void startSecondaryProcessingIfNeeded(String id) {
+        LyricsDocument snapshot = document;
+        if (snapshot == null || snapshot.lines == null || snapshot.lines.isEmpty() || renderConfig == null) return;
+        boolean wantsRomanization = renderConfig.liveCardShowTransliteration && snapshot.romanizationPending;
+        boolean wantsTranslation = renderConfig.liveCardShowTranslation && snapshot.translationPending;
+        if (!wantsRomanization && !wantsTranslation) return;
+        if (secondaryProcessingActive && snapshot == secondaryProcessingDocument && id.equals(secondaryProcessingId)) return;
+        secondaryProcessingActive = true;
+        secondaryProcessingId = id;
+        secondaryProcessingDocument = snapshot;
+        boolean started = secondaryProcessingSession.start(id, fetchGen, snapshot,
+                renderConfig.liveCardShowTransliteration,
+                romanizationOptions(),
+                this::isCurrentProcessingResult,
+                new LyricsSecondaryProcessingSession.Callback() {
+                    @Override
+                    public void status(String message) {
+                    }
+
+                    @Override
+                    public void rerender(LyricsDocument callbackSnapshot, String message) {
+                        applySecondaryProcessingUpdate(callbackSnapshot);
+                    }
+
+                    @Override
+                    public void progress(LyricsDocument callbackSnapshot, String message) {
+                    }
+
+                    @Override
+                    public void complete(LyricsDocument callbackSnapshot, String message, int changed) {
+                        if (callbackSnapshot == secondaryProcessingDocument) {
+                            secondaryProcessingActive = false;
+                            secondaryProcessingId = "";
+                            secondaryProcessingDocument = null;
+                        }
+                        applySecondaryProcessingUpdate(callbackSnapshot);
+                    }
+                });
+        if (!started) {
+            secondaryProcessingActive = false;
+            secondaryProcessingId = "";
+            secondaryProcessingDocument = null;
+        }
+    }
+
+    private boolean isCurrentProcessingResult(String id, int generation, LyricsDocument snapshot) {
+        if (!running || document != snapshot) return false;
+        if (generation > 0 && generation != fetchGen) return false;
+        return isBlank(id) || id.equals(currentId);
+    }
+
+    private void applySecondaryProcessingUpdate(LyricsDocument snapshot) {
+        if (!running || document != snapshot) return;
+        prepareLiveCardRomanization(snapshot);
+        LyricTimeline.applySyncedRows(snapshot);
+        lastIdx = Integer.MIN_VALUE;
+    }
+
+    private String secondarySignature(LyricsDocument doc) {
+        if (doc == null || doc.lines == null) return "";
+        StringBuilder builder = new StringBuilder();
+        for (LyricsLine line : doc.lines) {
+            if (line == null) continue;
+            builder.append(line.startMs)
+                    .append('|').append(line.endMs)
+                    .append('|').append(line.romanizedText)
+                    .append('|').append(line.translatedText)
+                    .append('|').append(japaneseReadingSignature(line.japaneseReading))
+                    .append('\n');
+        }
+        return builder.toString();
+    }
+
+    private String japaneseReadingSignature(SpicyJapaneseChineseProcessor.JapaneseReading reading) {
+        if (reading == null) return "";
+        StringBuilder builder = new StringBuilder();
+        builder.append(reading.sourceText).append('|').append(reading.romaji);
+        if (reading.furigana == null) return builder.toString();
+        for (SpicyJapaneseChineseProcessor.FuriganaSegment segment : reading.furigana) {
+            if (segment == null) continue;
+            builder.append('|')
+                    .append(segment.start)
+                    .append('-')
+                    .append(segment.end)
+                    .append(':')
+                    .append(segment.reading);
+        }
+        return builder.toString();
     }
 
     private void prepareLiveCardRomanization(LyricsDocument doc) {
@@ -245,7 +387,11 @@ final class NowPlayingLyricController {
         for (LyricsLine line : doc.lines) {
             if (line == null || line.interlude || isBlank(line.text)) continue;
             boolean japanese = SpicyJapaneseChineseProcessor.canRomanizeJapanese(line.text);
-            if (!japanese && !isBlank(line.romanizedText) && !SpicyTextDetection.hasRomanizableScript(line.romanizedText)) continue;
+            boolean missingJapaneseReading = japanese && (line.japaneseReading == null
+                    || line.japaneseReading.furigana == null
+                    || line.japaneseReading.furigana.isEmpty());
+            if (!missingJapaneseReading && !japanese && !isBlank(line.romanizedText)
+                    && !SpicyTextDetection.hasRomanizableScript(line.romanizedText)) continue;
             String local = LyricsLocalRomanizer.romanizeLine(opts, doc, line, fullText);
             if (!isBlank(local) && !local.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
                 line.romanizedText = local;
@@ -253,28 +399,28 @@ final class NowPlayingLyricController {
         }
     }
 
-    private CharSequence liveCardMainText(AppliedLine line) {
-        if (line == null) return "";
-        if (showLiveCardJapaneseFurigana(line)) return FuriganaText.build(line);
-        return line.text;
-    }
-
-    private String liveCardSecondaryText(AppliedLine line) {
-        if (line == null || !renderConfig.liveCardShowTransliteration) return "";
-        if (LyricsDisplayMode.isJapaneseLine(line)
-                && !LyricsDisplayMode.showJapaneseRomaji(
-                line, renderConfig.liveCardShowTransliteration, renderConfig.defaultJapaneseReadingMode)) return "";
-        return line.romanizedText;
-    }
-
-    private boolean showLiveCardJapaneseFurigana(AppliedLine line) {
-        return LyricsDisplayMode.showJapaneseFurigana(
-                line, renderConfig.liveCardShowTransliteration, renderConfig.defaultJapaneseReadingMode);
-    }
-
     private RomanizationOptions romanizationOptions() {
         return new RomanizationOptions(renderConfig.defaultChineseMode, renderConfig.defaultKoreanMode,
                 renderConfig.chineseTones, renderConfig.defaultCyrillicMode, renderConfig.cyrillicKeepSigns);
+    }
+
+    private String segmentRomanizedText(AppliedLine line, SyllableSegment seg, String fullText) {
+        if (seg == null || isBlank(seg.text)) return "";
+        if (!isBlank(seg.romanizedText)) return seg.romanizedText;
+        if (LyricsDisplayMode.isJapaneseLine(line)) return "";
+        LyricsLine source = line == null ? null : line.sourceLine;
+        String local = LyricsLocalRomanizer.romanizeText(romanizationOptions(), document, seg.text,
+                fullText, source == null ? "" : source.chineseMode);
+        if (!isBlank(local) && !local.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
+            seg.romanizedText = local;
+            return local;
+        }
+        return "";
+    }
+
+    private boolean isUnsyncedDocument(LyricsDocument doc) {
+        if (doc == null) return true;
+        return !"Line".equalsIgnoreCase(doc.type) && !"Syllable".equalsIgnoreCase(doc.type);
     }
 
     private static boolean isBlank(String value) {

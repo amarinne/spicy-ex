@@ -7,9 +7,18 @@ public final class LyricsDisplayMode {
 
     public static boolean isJapaneseLine(AppliedLine line) {
         return line != null
+                && !isChineseModeLine(line)
                 && ((line.japaneseReading != null && line.japaneseReading.furigana != null
                 && !line.japaneseReading.furigana.isEmpty())
                 || SpicyTextDetection.hasKana(line.text));
+    }
+
+    public static boolean isChineseModeLine(AppliedLine line) {
+        return line != null && line.sourceLine != null && !isBlank(line.sourceLine.chineseMode);
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isEmpty();
     }
 
     public static boolean showJapaneseFurigana(AppliedLine line, boolean showRomanization, String japaneseReadingMode) {

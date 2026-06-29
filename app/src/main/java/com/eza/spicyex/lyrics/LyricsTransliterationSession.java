@@ -152,7 +152,7 @@ public final class LyricsTransliterationSession {
         if ("cycle".equals(chineseModeConfig)) {
             if (!showRomanization) {
                 showRomanization = true;
-                if (isBlank(chineseMode)) chineseMode = SpotifyPlusConfig.CHINESE_MODE_PINYIN;
+                chineseMode = SpotifyPlusConfig.CHINESE_MODE_PINYIN;
             } else if (SpotifyPlusConfig.CHINESE_MODE_PINYIN.equals(LyricsShellSettings.normalizeChineseMode(chineseMode))) {
                 chineseMode = SpotifyPlusConfig.CHINESE_MODE_JYUTPING;
             } else {

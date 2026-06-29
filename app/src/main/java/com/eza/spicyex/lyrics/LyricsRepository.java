@@ -7,7 +7,6 @@ import android.os.Looper;
 
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
-
 import java.io.IOException;
 
 import de.robv.android.xposed.XposedBridge;
@@ -94,9 +93,7 @@ public final class LyricsRepository {
                 // re-queries it. NOT transient network/server failures (those should retry):
                 //   not-found  -> "LRCLIB empty", "no LRCLIB result", "LRCLIB HTTP 404"
                 //   transient  -> "LRCLIB failed: <io>", "LRCLIB HTTP 5xx"
-                if (error != null && (error.contains("LRCLIB empty")
-                        || error.contains("no LRCLIB result")
-                        || error.contains("LRCLIB HTTP 404"))) {
+                if (LyricsFetchErrors.isDurableNoLyrics(error)) {
                     NO_LYRICS.add(negId);
                     XposedBridge.log(TAG + " cached no-lyrics for id=" + negId + " (" + error + ")");
                 }

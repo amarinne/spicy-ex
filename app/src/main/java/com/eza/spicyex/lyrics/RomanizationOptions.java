@@ -24,7 +24,7 @@ public final class RomanizationOptions {
     }
 
     public static final RomanizationOptions DEFAULTS = new RomanizationOptions(
-            SpotifyPlusConfig.CHINESE_MODE_PINYIN, "Letter-by-letter", false,
+            SpotifyPlusConfig.CHINESE_MODE_PINYIN, SpicyRomanizer.KOREAN_PRONUNCIATION, false,
             SpicyRomanizer.CYRILLIC_RUSSIAN, false);
 
     /** Stable cache-key fragment for the option combination. */

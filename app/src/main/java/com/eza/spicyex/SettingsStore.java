@@ -5,9 +5,9 @@ import android.content.SharedPreferences;
 import java.util.Map;
 
 /**
- * Typed read/write access to the "SpotifyPlus" prefs. Used by the in-Spotify settings panel, which
- * runs in Spotify's process — so writes land in Spotify-side prefs that {@link SpotifyPlusConfig}
- * (the hook) reads directly, no IPC. (The standalone app + broadcast bridge were removed.)
+ * Owns typed writes and raw schema-coerced reads for the in-Spotify settings panel.
+ * Does not own setting defaults (Settings) or surface-specific normalization (LyricsShellSettings).
+ * Runs in Spotify's process, so writes land in Spotify-side prefs that SpotifyPlusConfig reads directly.
  */
 public final class SettingsStore {
     private final SharedPreferences prefs;

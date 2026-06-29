@@ -4,8 +4,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 /**
- * Modernized config layer. Acts as a bridge between the host (Spotify) process
- * and the module's settings, driven by the Settings schema.
+ * Owns hook/runtime reads from the host-process "SpotifyPlus" preferences.
+ * Does not own panel writes (SettingsStore), schema/defaults (Settings), or UI normalization.
+ * Acts as the bridge between Spotify-process prefs and module runtime settings.
  */
 public final class SpotifyPlusConfig {
     public static final String PREFS_NAME = "SpotifyPlus";

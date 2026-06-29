@@ -2,10 +2,12 @@ package com.eza.spicyex;
 
 import android.app.Dialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.graphics.drawable.RippleDrawable;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -21,10 +23,10 @@ import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.lyrics.LyricCaches;
 
 /**
- * The Spicy EX settings UI as a single floating rounded card (centered modal), built from the
- * {@link Settings} schema. Rendered in-Spotify by the hook (the only config surface). Platform
- * widgets + a custom {@link GlossyToggle} so it needs no host theme; one card with flat labelled
- * sections (no nested cards), the whole thing sized/centered by the hosting dialog.
+ * Owns settings-panel view construction only.
+ * Does not own setting defaults (Settings), persistence (SettingsStore), or runtime normalization.
+ * Rendered in-Spotify by the hook as a single floating rounded card using platform widgets and
+ * {@link GlossyToggle}; layout should remain visually stable unless device screenshots verify parity.
  */
 public final class SettingsPanel {
     private static final int COL_CARD = 0xF21C1C22;
@@ -37,6 +39,7 @@ public final class SettingsPanel {
     private final Context context;
     private final SettingsStore store;
     private final Runnable onClose;
+    private final java.util.Set<String> expandedSections = new java.util.HashSet<>();
     private LinearLayout sectionsContainer;
 
     public SettingsPanel(Context context, SettingsStore store, Runnable onClose) {
@@ -68,8 +71,6 @@ public final class SettingsPanel {
         content.addView(sectionsContainer, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         renderSections(sectionsContainer);
-        renderActions(content);
-        renderStatus(content);
         return scroll;
     }
 
@@ -93,14 +94,35 @@ public final class SettingsPanel {
     }
 
     private void renderSections(LinearLayout content) {
-        Settings.Section currentSection = null;
+        java.util.LinkedHashMap<Settings.Section, java.util.List<Settings.Setting<?>>> grouped =
+                new java.util.LinkedHashMap<>();
         for (Settings.Setting<?> setting : Settings.ALL) {
             if (setting.section == Settings.INTERNAL) continue;
             if (!shouldRender(setting)) continue;
-            if (setting.section != currentSection) {
-                currentSection = setting.section;
-                sectionLabel(content, currentSection.label);
+            java.util.List<Settings.Setting<?>> items = grouped.get(setting.section);
+            if (items == null) {
+                items = new java.util.ArrayList<>();
+                grouped.put(setting.section, items);
             }
+            items.add(setting);
+        }
+        for (java.util.Map.Entry<Settings.Section, java.util.List<Settings.Setting<?>>> entry : grouped.entrySet()) {
+            Settings.Section section = entry.getKey();
+            java.util.List<Settings.Setting<?>> items = entry.getValue();
+            boolean expanded = expandedSections.contains(section.id);
+            sectionHeader(content, section, expanded);
+            if (!expanded) continue;
+            for (Settings.Setting<?> setting : items) renderSetting(content, setting);
+        }
+        boolean debugExpanded = expandedSections.contains(Settings.DEBUG.id);
+        sectionHeader(content, Settings.DEBUG, debugExpanded);
+        if (debugExpanded) {
+            renderActions(content);
+            renderStatus(content);
+        }
+    }
+
+    private void renderSetting(LinearLayout content, Settings.Setting<?> setting) {
             if (setting instanceof Settings.BooleanSetting) {
                 switchRow(content, (Settings.BooleanSetting) setting);
             } else if (setting instanceof Settings.IntegerSetting) {
@@ -110,7 +132,6 @@ public final class SettingsPanel {
                 if (s.allowedValues == null || s.allowedValues.isEmpty()) textFieldRow(content, s);
                 else selectorRow(content, s);
             }
-        }
     }
 
     private void rebuildSections() {
@@ -129,8 +150,7 @@ public final class SettingsPanel {
                 || setting == Settings.KOREAN_ROMANIZATION
                 || setting == Settings.CHINESE_TONES
                 || setting == Settings.CYRILLIC_MODE
-                || setting == Settings.CYRILLIC_KEEP_SIGNS
-                || setting == Settings.LIVE_CARD_SHOW_TRANSLITERATION) {
+                || setting == Settings.CYRILLIC_KEEP_SIGNS) {
             return FeatureAvailability.transliterationAvailable() && store.get(Settings.TRANSLITERATION_ENABLED);
         }
         if (setting == Settings.FORCE_DARK_BACKGROUND) {
@@ -139,6 +159,12 @@ public final class SettingsPanel {
         if (setting == Settings.LINE_SYNC_FILL) {
             return "Gradient wash".equals(store.get(Settings.ANIMATION_STYLE));
         }
+        if (setting == Settings.LIVE_CARD_LINE_SYNC_FILL) {
+            return "Karaoke fill".equals(store.get(Settings.LIVE_CARD_ANIMATION));
+        }
+        if (setting == Settings.LIVE_CARD_GLOW) {
+            return !"Minimal".equals(store.get(Settings.LIVE_CARD_ANIMATION));
+        }
         return true;
     }
 
@@ -146,7 +172,8 @@ public final class SettingsPanel {
         return setting == Settings.TRANSLATION_ENABLED
                 || setting == Settings.TRANSLITERATION_ENABLED
                 || setting == Settings.ENABLE_BACKGROUND
-                || setting == Settings.ANIMATION_STYLE;
+                || setting == Settings.ANIMATION_STYLE
+                || setting == Settings.LIVE_CARD_ANIMATION;
     }
 
     private boolean unavailable(Settings.Setting<?> setting) {
@@ -155,13 +182,12 @@ public final class SettingsPanel {
     }
 
     private void renderActions(LinearLayout content) {
-        sectionLabel(content, "Actions");
         actionRow(content, "Clear translation cache", v -> LyricCaches.clearGoogle(context));
         actionRow(content, "Clear lyrics response cache", v -> LyricsResponseCache.clear(context));
+        actionRow(content, "Open GitHub", v -> openGithub());
     }
 
     private void renderStatus(LinearLayout content) {
-        sectionLabel(content, "Status");
         CurrentLyricState s = CurrentLyricState.get();
         String summary = "Last state: " + s.status
                 + "\nTrack: " + s.title
@@ -181,6 +207,32 @@ public final class SettingsPanel {
         view.setLetterSpacing(0.08f);
         view.setPadding(0, dp(18), 0, dp(6));
         content.addView(view);
+    }
+
+    private void sectionHeader(LinearLayout content, Settings.Section section, boolean expanded) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(50));
+        row.setPadding(dp(4), dp(12), dp(4), dp(8));
+        row.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
+
+        TextView title = text(section.label, 15, COL_ACCENT, true);
+        title.setAllCaps(true);
+        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView arrow = text(expanded ? "⌃" : "⌄", 18, COL_SECTION, false);
+        arrow.setGravity(Gravity.CENTER);
+        row.addView(arrow, new LinearLayout.LayoutParams(dp(32), dp(32)));
+        row.setOnClickListener(v -> {
+            if (expandedSections.contains(section.id)) expandedSections.remove(section.id);
+            else expandedSections.add(section.id);
+            rebuildSections();
+        });
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(10);
+        content.addView(row, lp);
     }
 
     private LinearLayout newRow(LinearLayout content) {
@@ -331,32 +383,7 @@ public final class SettingsPanel {
 
         String current = store.get(setting);
         for (final String val : setting.allowedValues) {
-            boolean selected = val.equals(current);
-            LinearLayout optRow = new LinearLayout(context);
-            optRow.setOrientation(LinearLayout.HORIZONTAL);
-            optRow.setGravity(Gravity.CENTER_VERTICAL);
-            optRow.setMinimumHeight(dp(52));
-            optRow.setPadding(dp(22), dp(8), dp(22), dp(8));
-            optRow.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
-
-            TextView dot = text(selected ? "●" : "○", 15, selected ? COL_ACCENT : COL_SECTION, false);
-            dot.setPadding(0, 0, dp(16), 0);
-            optRow.addView(dot);
-            TextView label = text(labelFor(setting, val), 16, selected ? COL_ACCENT : COL_TITLE, false);
-            optRow.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-            String preview = optionPreview(setting, val);
-            if (!preview.isEmpty()) {
-                TextView pv = text(preview, 18, selected ? COL_ACCENT : COL_TITLE, false);
-                pv.setPadding(dp(12), 0, 0, 0);
-                optRow.addView(pv);
-            }
-            optRow.setOnClickListener(v -> {
-                store.put(setting, val);
-                valueView.setText(labelFor(setting, val));
-                dialog.dismiss();
-            });
-            box.addView(optRow);
+            box.addView(selectorOptionRow(setting, val, val.equals(current), valueView, dialog));
         }
 
         ScrollView scroll = new ScrollView(context);
@@ -373,6 +400,59 @@ public final class SettingsPanel {
             window.setLayout(w, setting.allowedValues.size() > 8 ? maxH : ViewGroup.LayoutParams.WRAP_CONTENT);
         }
         dialog.show();
+    }
+
+    private LinearLayout selectorOptionRow(Settings.StringSetting setting, String value, boolean selected,
+                                           TextView valueView, Dialog dialog) {
+        String unavailableReason = optionUnavailableReason(setting, value);
+        boolean unavailable = !unavailableReason.isEmpty();
+        LinearLayout optRow = new LinearLayout(context);
+        optRow.setOrientation(LinearLayout.HORIZONTAL);
+        optRow.setGravity(Gravity.CENTER_VERTICAL);
+        optRow.setMinimumHeight(dp(52));
+        optRow.setPadding(dp(22), dp(8), dp(22), dp(8));
+        optRow.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
+
+        TextView dot = text(selected ? "●" : "○", 15, selected ? COL_ACCENT : COL_SECTION, false);
+        dot.setPadding(0, 0, dp(16), 0);
+        optRow.addView(dot);
+        String optionLabel = labelFor(setting, value);
+        if (unavailable) optionLabel = optionLabel + "  · " + unavailableReason;
+        TextView label = text(optionLabel, 16, selected ? COL_ACCENT : COL_TITLE, false);
+        optRow.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        String preview = optionPreview(setting, value);
+        if (!preview.isEmpty()) {
+            TextView pv = text(preview, 18, selected ? COL_ACCENT : COL_TITLE, false);
+            pv.setPadding(dp(12), 0, 0, 0);
+            optRow.addView(pv);
+        }
+        optRow.setEnabled(!unavailable);
+        optRow.setAlpha(unavailable ? 0.48f : 1f);
+        if (!unavailable) {
+            optRow.setOnClickListener(v -> {
+                store.put(setting, value);
+                valueView.setText(labelFor(setting, value));
+                dialog.dismiss();
+                if (shouldRebuildAfterChange(setting)) rebuildSections();
+            });
+        }
+        return optRow;
+    }
+
+    private String optionUnavailableReason(Settings.StringSetting setting, String value) {
+        if (setting != Settings.LIVE_CARD_SECONDARY_MODE) return "";
+        boolean needsTransliteration = "Transliteration".equals(value) || "Both".equals(value);
+        boolean needsTranslation = "Translation".equals(value) || "Both".equals(value);
+        if (needsTransliteration && !FeatureAvailability.transliterationAvailable()) {
+            return FeatureAvailability.unavailableSummary();
+        }
+        if (needsTranslation && !FeatureAvailability.translationAvailable()) {
+            return FeatureAvailability.unavailableSummary();
+        }
+        if (needsTransliteration && !store.get(Settings.TRANSLITERATION_ENABLED)) return "Enable transliteration";
+        if (needsTranslation && !store.get(Settings.TRANSLATION_ENABLED)) return "Enable translation";
+        return "";
     }
 
     private void textFieldRow(LinearLayout content, Settings.StringSetting setting) {
@@ -399,6 +479,15 @@ public final class SettingsPanel {
         LinearLayout row = newRow(content);
         row.addView(text(label, 16, COL_ACCENT, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         row.setOnClickListener(listener);
+    }
+
+    private void openGithub() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/amarinne/spicy-ex"));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static String optionPreview(Settings.StringSetting setting, String value) {
@@ -430,10 +519,11 @@ public final class SettingsPanel {
         }
         if ("lyrics_text_size".equals(key) || "lyrics_live_card_text_size".equals(key)) {
             switch (value) {
-                case "small": return "0.88";
-                case "normal": return "1.0";
-                case "large": return "1.2";
-                case "xlarge": return "1.45";
+                case "small":
+                case "normal":
+                case "large":
+                case "xlarge":
+                    return SettingsValueNormalizer.textSizeMultiplierLabel(value);
                 default: return null;
             }
         }

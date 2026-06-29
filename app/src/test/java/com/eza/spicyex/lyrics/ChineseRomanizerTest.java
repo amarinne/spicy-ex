@@ -3,6 +3,10 @@ package com.eza.spicyex.lyrics;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
+import com.eza.spicyex.SpotifyPlusConfig;
+
+import java.util.Collections;
+
 import org.junit.Test;
 
 /**
@@ -54,5 +58,26 @@ public class ChineseRomanizerTest {
         line.text = "中国";
         line.romanizedText = "zhong guo";
         assertFalse(LyricsDisplayMode.isJapaneseLine(line));
+    }
+
+    @Test
+    public void chineseRomanizationClearsStaleJapaneseReadingInMixedJapaneseChineseDocument() {
+        LyricsDocument doc = new LyricsDocument();
+        doc.detectedScripts.add(SpicyTextDetection.Script.JAPANESE);
+        LyricsLine line = new LyricsLine();
+        line.text = "中国";
+        line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading(
+                "中国", "naka kuni", Collections.singletonList(
+                new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "なか")));
+
+        String romanized = LyricsLocalRomanizer.romanizeLine(
+                new RomanizationOptions(SpotifyPlusConfig.CHINESE_MODE_PINYIN, "Off", false, "Off", false),
+                doc,
+                line,
+                line.text);
+
+        assertEquals("zhong guo", romanized);
+        assertFalse(line.japaneseReading != null && line.japaneseReading.furigana != null
+                && !line.japaneseReading.furigana.isEmpty());
     }
 }
