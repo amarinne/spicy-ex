@@ -25,11 +25,12 @@ import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 public final class LyricsRepository {
     private static final String TAG = "[SpotifyPlusSpicyRepository]";
     private static final String SPICY_QUERY_URL = "https://api.spicylyrics.org/query";
+    private static final String SPICY_ORIGIN = "https://xpui.app.spotify.com";
+    private static final String SPICY_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Spotify/1.2.63 Chrome/132.0.6834.210 Electron/34.3.1 Safari/537.36";
     // Must track the current Spicy Lyrics client version — api.spicylyrics.org rejects outdated
     // clients with a "please update spicy lyrics" payload (gated on client.version / SpicyLyrics-Version).
     // Request schema (verified against Spikerko/spicy-lyrics 6.1.1 src/utils/API/Query.ts) is unchanged.
     private static final String SPICY_VERSION = "6.1.1";
-    private static final String SPICY_LEGACY_NO_TOKEN_VERSION = "6.1.1";
     private static final MediaType JSON = MediaType.parse("application/json");
     private static final int NATIVE_LYRICS_RETRY_LIMIT = 4;
     private static final long NATIVE_LYRICS_RETRY_DELAY_MS = 125;
@@ -135,15 +136,28 @@ public final class LyricsRepository {
         }
 
         boolean hasToken = sendToken && !isBlank(accessToken);
-        String requestVersion = hasToken ? SPICY_VERSION : SPICY_LEGACY_NO_TOKEN_VERSION;
+        if (!hasToken) {
+            if (deliveredCachedSynced[0]) return;
+            fetchNativeThenLrclib(activity, track, generation, callback, 0, "Spicy token unavailable");
+            return;
+        }
+        String requestVersion = SPICY_VERSION;
         String bodyJson = "{\"queries\":[{\"operation\":\"lyrics\",\"variables\":{\"id\":\"" + escapeJson(trackId) + "\",\"auth\":\"SpicyLyrics-WebAuth\"}}],\"client\":{\"version\":\"" + requestVersion + "\"}}";
         RequestBody body = RequestBody.create(bodyJson.getBytes(java.nio.charset.StandardCharsets.UTF_8), JSON);
         Request request = new Request.Builder()
                 .url(SPICY_QUERY_URL)
                 .post(body)
-                .header("SpicyLyrics-WebAuth", "Bearer " + (hasToken ? accessToken : "0"))
+                .header("Accept", "*/*")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Content-Type", "application/json")
+                .header("Origin", SPICY_ORIGIN)
+                .header("Referer", SPICY_ORIGIN + "/")
+                .header("Sec-Fetch-Dest", "empty")
+                .header("Sec-Fetch-Mode", "cors")
+                .header("Sec-Fetch-Site", "cross-site")
                 .header("SpicyLyrics-Version", requestVersion)
-                .header("Origin", "https://xpui.app.spotify.com")
+                .header("SpicyLyrics-WebAuth", "Bearer " + accessToken)
+                .header("User-Agent", SPICY_USER_AGENT)
                 .build();
 
         http.newCall(request).enqueue(new Callback() {
