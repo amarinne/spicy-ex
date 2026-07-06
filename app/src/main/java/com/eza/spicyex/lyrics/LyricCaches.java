@@ -34,7 +34,9 @@ public final class LyricCaches {
     }
 
     public static String sourceLanguageForCache(String sourceLang) {
-        return isBlank(sourceLang) || "unknown".equalsIgnoreCase(sourceLang) ? "auto" : sourceLang;
+        return isBlank(sourceLang) || "unknown".equalsIgnoreCase(sourceLang)
+                ? "auto"
+                : SpicyProcessing.toIso2(sourceLang);
     }
 
     public static String romanizationKey(String trackId, String sourceLang, String text) {
@@ -46,10 +48,16 @@ public final class LyricCaches {
     }
 
     public static String processedDocumentKey(int processingVersion, String trackId, String language, RomanizationOptions opts) {
+        return processedDocumentKey(processingVersion, trackId, language, opts, "");
+    }
+
+    public static String processedDocumentKey(int processingVersion, String trackId, String language,
+                                              RomanizationOptions opts, String processingContextKey) {
         return "processed-doc-v" + processingVersion
                 + "|" + safe(trackId)
                 + "|" + sourceLanguageForCache(language)
-                + "|" + opts.cacheKey();
+                + "|" + (opts == null ? RomanizationOptions.DEFAULTS : opts).cacheKey()
+                + "|" + safe(processingContextKey);
     }
 
     public static String getProcessedDocument(Context context, String key) {

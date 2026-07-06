@@ -61,6 +61,16 @@ public class KoreanPronunciationTest {
     }
 
     @Test
+    public void realCorpusKoreanG2PContext() {
+        assertEquals("sumgyeojin tteusi nan gunggeum haeseo", sound("숨겨진 뜻이 난 궁금해서"));
+        assertEquals("ireobeorin geu nunbit", sound("잃어버린 그 눈빛"));
+        assertEquals("noajulge", sound("놓아줄게"));
+        assertEquals("eopji", sound("없지"));
+        assertEquals("eopseo", sound("없어"));
+        assertEquals("eopseul geoya", sound("없을 거야"));
+    }
+
+    @Test
     public void fullLinePiecesPreserveSplitChunkPronunciation() {
         assertEquals(Arrays.asList("han", "gu", "geo"), SpicyKoreanG2P.romanizeSyllablePieces("한국어"));
         assertEquals(Arrays.asList("baeng", "ma"), SpicyKoreanG2P.romanizeSyllablePieces("백마"));

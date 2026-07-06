@@ -279,6 +279,12 @@ public final class GoogleEnhancer {
         if (SpicyTextDetection.itemCyrillicTest(source)) {
             out.add(SpicyRomanizer.romanizeCyrillic(source, SpicyRomanizer.CYRILLIC_RUSSIAN, false));
             out.add(SpicyRomanizer.romanizeCyrillic(source, SpicyRomanizer.CYRILLIC_UKRAINIAN, false));
+            // Google romanizes Central-Asian Cyrillic via Russian base letters
+            // (ң→n not ng), so echo detection needs that variant too.
+            String folded = foldCentralAsianToRussianBase(source);
+            if (!folded.equals(source)) {
+                out.add(SpicyRomanizer.romanizeCyrillic(folded, SpicyRomanizer.CYRILLIC_RUSSIAN, false));
+            }
         }
         if (SpicyTextDetection.itemGreekTest(source)) out.add(SpicyRomanizer.romanizeGreek(source));
         if (SpicyTextDetection.itemKoreanTest(source)) {
@@ -290,6 +296,18 @@ public final class GoogleEnhancer {
         }
         if (SpicyTextDetection.hasKana(source)) out.add(SpicyJapaneseChineseProcessor.romanizeJapaneseLine(source));
         return out;
+    }
+
+    private static String foldCentralAsianToRussianBase(String value) {
+        return value
+                .replace('ң', 'н').replace('Ң', 'Н')
+                .replace('ө', 'о').replace('Ө', 'О')
+                .replace('ү', 'у').replace('Ү', 'У')
+                .replace('ә', 'а').replace('Ә', 'А')
+                .replace('ғ', 'г').replace('Ғ', 'Г')
+                .replace('қ', 'к').replace('Қ', 'К')
+                .replace('ұ', 'у').replace('Ұ', 'У')
+                .replace('һ', 'х').replace('Һ', 'Х');
     }
 
     private static String normalizeCompare(String value) {

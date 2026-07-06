@@ -101,6 +101,22 @@ public final class SpicyTextDetection {
         return containsCodePoint(text, SpicyTextDetection::isGreek);
     }
 
+    public static boolean itemDevanagariTest(String text) {
+        return containsCodePoint(text, SpicyTextDetection::isDevanagari);
+    }
+
+    public static boolean itemGurmukhiTest(String text) {
+        return containsCodePoint(text, SpicyTextDetection::isGurmukhi);
+    }
+
+    public static boolean itemBengaliTest(String text) {
+        return containsCodePoint(text, SpicyTextDetection::isBengali);
+    }
+
+    public static boolean hasIndicScript(String text) {
+        return containsCodePoint(text, cp -> isDevanagari(cp) || isGurmukhi(cp) || isBengali(cp));
+    }
+
     public static boolean hasCjkIdeograph(String text) {
         return containsCodePoint(text, SpicyTextDetection::isCjkIdeograph);
     }
@@ -113,7 +129,7 @@ public final class SpicyTextDetection {
         if (present.contains(script)) out.add(script);
     }
 
-    private static Script romanizationBranchFromLanguage(String language, String iso2Language) {
+    public static Script scriptFromLanguage(String language, String iso2Language) {
         String lang = language == null ? "" : language.toLowerCase(Locale.ROOT);
         String iso2 = iso2Language == null ? "" : iso2Language.toLowerCase(Locale.ROOT);
         if (lang.equals("jpn") || lang.equals("ja")) return Script.JAPANESE;
@@ -122,6 +138,10 @@ public final class SpicyTextDetection {
         if (isCyrillicLanguage(lang, iso2)) return Script.CYRILLIC;
         if (lang.equals("ell") || lang.equals("el")) return Script.GREEK;
         return null;
+    }
+
+    private static Script romanizationBranchFromLanguage(String language, String iso2Language) {
+        return scriptFromLanguage(language, iso2Language);
     }
 
     private static boolean isCyrillicLanguage(String iso3, String iso2) {
@@ -211,6 +231,19 @@ public final class SpicyTextDetection {
     private static boolean isGreek(int cp) {
         return (cp >= 0x0370 && cp <= 0x03FF)
                 || (cp >= 0x1F00 && cp <= 0x1FFF);
+    }
+
+    private static boolean isDevanagari(int cp) {
+        return (cp >= 0x0900 && cp <= 0x097F)
+                || (cp >= 0xA8E0 && cp <= 0xA8FF);
+    }
+
+    private static boolean isGurmukhi(int cp) {
+        return cp >= 0x0A00 && cp <= 0x0A7F;
+    }
+
+    private static boolean isBengali(int cp) {
+        return cp >= 0x0980 && cp <= 0x09FF;
     }
 
     private interface CodePointPredicate {

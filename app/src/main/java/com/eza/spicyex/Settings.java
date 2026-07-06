@@ -24,6 +24,7 @@ public final class Settings {
     public static final Section ANIMATION = LYRICS_SCREEN;
     public static final Section BACKGROUND = LYRICS_SCREEN;
     public static final Section DEBUG = new Section("Debug & About", "debug");
+    public static final Section DIAGNOSTICS = new Section("Diagnostics", "diagnostics");
     public static final Section DISPLAY = TEXT;
     public static final Section INTERNAL = new Section("Internal", "internal");
 

@@ -87,12 +87,15 @@ public final class LyricsRowViewFactory {
         LyricsLineViewState.clearMainView(line);
         boolean hasSyllableWords = line.words != null && !line.words.isEmpty();
         boolean hasRealTimedWords = hasSyllableWords && !line.syntheticWords;
-        boolean showAlignedRomaji = hasSyllableWords
+        boolean indicLine = SpicyTextDetection.hasIndicScript(line.text);
+        boolean furiganaCrossesWords = showJapaneseFurigana && FuriganaText.hasRubyCrossingWordBoundaries(line);
+        boolean showAlignedRomaji = !indicLine
+                && hasSyllableWords
                 && !showJapaneseFurigana
                 && options.attachTransliterationToWords
                 && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji);
-        boolean useSyllableWords = hasRealTimedWords || (hasSyllableWords
-                && (options.wordLevelFill || options.lineLevelFillSentence || showJapaneseFurigana || showAlignedRomaji));
+        boolean useSyllableWords = !indicLine && !furiganaCrossesWords && (hasRealTimedWords || (hasSyllableWords
+                && (options.wordLevelFill || options.lineLevelFillSentence || showJapaneseFurigana || showAlignedRomaji)));
         boolean lineLevelFillTopDown = !useSyllableWords && options.lineLevelFillTopDown;
         if (useSyllableWords) {
             buildSyllableWords(row, line, options, romanizedWordProvider, showJapaneseFurigana, showAlignedRomaji);
@@ -101,7 +104,7 @@ public final class LyricsRowViewFactory {
         }
 
         if (!line.bgLine && !showAlignedRomaji && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)) {
-            SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, line.romanizedText, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)), textFactory.resolveTypeface(false));
+            SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, line.romanizedText, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)), textFactory.resolveTypefaceForText(line.romanizedText, false));
             roman.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
             roman.setMaxLines(wrapLongLines ? 3 : 1);
             roman.setSelfGlow(true);
@@ -115,7 +118,10 @@ public final class LyricsRowViewFactory {
         }
 
         if (!line.bgLine && options.showTranslation && !isBlank(line.translatedText)) {
-            SpicyAnimatedTextView translated = textFactory.createSecondaryAnimatedText(activity, line.translatedText, Math.max(13, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 1), Typeface.create(textFactory.resolveTypeface(false), Typeface.ITALIC));
+            Typeface translatedTypeface = LyricsTextFactory.shouldUseSystemFallbackForText(line.translatedText)
+                    ? Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+                    : Typeface.create(textFactory.resolveTypeface(false), Typeface.ITALIC);
+            SpicyAnimatedTextView translated = textFactory.createSecondaryAnimatedText(activity, line.translatedText, Math.max(13, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 1), translatedTypeface);
             translated.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
             translated.setMaxLines(wrapLongLines ? 3 : 1);
             translated.setAlpha(1f);
@@ -201,7 +207,7 @@ public final class LyricsRowViewFactory {
                 letterView.setText(text);
                 letterView.setTextSize(LyricsLineViewState.baseTextSp(line));
                 letterView.setTextColor(color);
-                letterView.setTypeface(textFactory.resolveLyricTypeface(weight, font));
+                letterView.setTypeface(textFactory.resolveLyricTypeface(weight, font, text));
                 letterView.setIncludeFontPadding(true);
                 letterView.setMaxLines(1);
                 letterView.setGradientPosition(-20f, 0f);
@@ -222,7 +228,7 @@ public final class LyricsRowViewFactory {
         word.setText(showJapaneseFurigana ? FuriganaText.buildWord(line, seg.text, wordStart) : seg.text);
         word.setTextSize(LyricsLineViewState.baseTextSp(line));
         word.setTextColor(color);
-        word.setTypeface(textFactory.resolveLyricTypeface(weight, font));
+        word.setTypeface(textFactory.resolveLyricTypeface(weight, font, seg.text));
         word.setIncludeFontPadding(true);
         if (showJapaneseFurigana) word.setPadding(0, dp(4), 0, 0);
         word.setMaxLines(1);
@@ -240,7 +246,7 @@ public final class LyricsRowViewFactory {
         stack.setClipToPadding(false);
         stack.addView(wordView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         stack.setBaselineAlignedChildIndex(0);
-        SpicyAnimatedTextView romanWord = textFactory.createSecondaryAnimatedText(activity, romanizedWordText, Math.max(11, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 2), textFactory.resolveTypeface(false));
+        SpicyAnimatedTextView romanWord = textFactory.createSecondaryAnimatedText(activity, romanizedWordText, Math.max(11, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 2), textFactory.resolveTypefaceForText(romanizedWordText, false));
         romanWord.setGravity(Gravity.CENTER);
         romanWord.setMaxLines(1);
         LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -258,7 +264,7 @@ public final class LyricsRowViewFactory {
         main.setText(showJapaneseFurigana ? FuriganaText.build(line) : line.text);
         main.setTextSize(LyricsLineViewState.baseTextSp(line));
         main.setTextColor(color);
-        main.setTypeface(textFactory.resolveLyricTypeface(weight, font));
+        main.setTypeface(textFactory.resolveLyricTypeface(weight, font, line.text));
         main.setSelfGlow(true); // line-level row: no GlowFlexbox parent, draw its own halo
         main.setIncludeFontPadding(true);
         if (showJapaneseFurigana) main.setPadding(0, dp(4), 0, 0);

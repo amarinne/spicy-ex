@@ -9,7 +9,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  * Emits decisions only. Renderer/platform own presentation.
  */
 public final class SpicyProcessing {
-    public static final int PROCESSING_VERSION = 8;
+    public static final int PROCESSING_VERSION = 9;
 
     private SpicyProcessing() {
     }
@@ -20,8 +20,10 @@ public final class SpicyProcessing {
 
     public static boolean hasTranslationWorkQuick(String text, String targetLang) {
         if (isBlank(text) || isBlank(targetLang)) return false;
+        if (hasObviousNonTargetScript(text, targetLang)) return true;
         if ("en".equalsIgnoreCase(targetLang)) {
             if (SpicyTextDetection.hasRomanizableScript(text) || hasNonAsciiLatin(text)) return true;
+            if (looksLikeLatinLyricLine(text)) return true;
             return lineLooksNonTargetLatin(text, targetLang);
         }
         return true;
@@ -49,10 +51,15 @@ public final class SpicyProcessing {
     }
 
     public static ProcessingFlags flagsFor(String text, String targetLang) {
+        return flagsFor(text, "", targetLang);
+    }
+
+    public static ProcessingFlags flagsFor(String text, String sourceLang, String targetLang) {
         ProcessingFlags flags = new ProcessingFlags();
         flags.processingVersion = PROCESSING_VERSION;
         flags.romanizationPending = hasRomanizationWorkQuick(text);
-        flags.translationPending = hasTranslationWorkQuick(text, targetLang);
+        flags.translationPending = hasUsableSourceHint(sourceLang) && shouldTranslateLine(text, sourceLang, targetLang)
+                || hasTranslationWorkQuick(text, targetLang);
         flags.processingPending = flags.romanizationPending || flags.translationPending;
         if (!flags.processingPending) markProcessedWithoutBackground(flags);
         return flags;
@@ -74,7 +81,10 @@ public final class SpicyProcessing {
         if (containsKana(text) && !target.equals("ja")) return true;
         if (SpicyTextDetection.itemKoreanTest(text) && !target.equals("ko")) return true;
         if (SpicyTextDetection.itemCyrillicTest(text) && !(target.equals("ru") || target.equals("uk") || target.equals("bg") || target.equals("sr") || target.equals("mk") || target.equals("be"))) return true;
-        return SpicyTextDetection.itemGreekTest(text) && !target.equals("el");
+        if (SpicyTextDetection.itemGreekTest(text) && !target.equals("el")) return true;
+        if (SpicyTextDetection.itemDevanagariTest(text) && !(target.equals("hi") || target.equals("mr") || target.equals("ne") || target.equals("sa"))) return true;
+        if (SpicyTextDetection.itemGurmukhiTest(text) && !target.equals("pa")) return true;
+        return SpicyTextDetection.itemBengaliTest(text) && !(target.equals("bn") || target.equals("as"));
     }
 
     private static boolean lineLooksNonTargetLatin(String text, String targetLang) {
@@ -82,6 +92,11 @@ public final class SpicyProcessing {
         String compact = text.replaceAll("[^\\p{L}\\s']", " ").replaceAll("\\s+", " ").trim();
         if (compact.length() < 24) return false;
         return LatinLanguageGate.lineLooksNonTargetLatin(compact, targetLang);
+    }
+
+    private static boolean looksLikeLatinLyricLine(String text) {
+        String compact = text == null ? "" : text.replaceAll("[^\\p{L}\\s']", " ").replaceAll("\\s+", " ").trim();
+        return compact.length() >= 12 && compact.indexOf(' ') > 0;
     }
 
     private static boolean isLatinTarget(String targetLang) {
@@ -102,6 +117,11 @@ public final class SpicyProcessing {
         return false;
     }
 
+    private static boolean hasUsableSourceHint(String sourceLang) {
+        String source = safe(sourceLang).toLowerCase(Locale.ROOT);
+        return !source.isEmpty() && !"unknown".equals(source) && !"auto".equals(source);
+    }
+
     private static boolean containsKana(String text) {
         if (text == null) return false;
         for (int i = 0; i < text.length(); ) {
@@ -112,7 +132,7 @@ public final class SpicyProcessing {
         return false;
     }
 
-    private static String toIso2(String sourceLang) {
+    static String toIso2(String sourceLang) {
         String source = safe(sourceLang).toLowerCase(Locale.ROOT);
         if (source.length() == 2) return source;
         switch (source) {
@@ -144,6 +164,17 @@ public final class SpicyProcessing {
             case "bel": return "be";
             case "ell":
             case "gre": return "el";
+            case "hin": return "hi";
+            case "pan":
+            case "pun": return "pa";
+            case "ben": return "bn";
+            case "mar": return "mr";
+            case "tam": return "ta";
+            case "tel": return "te";
+            case "urd": return "ur";
+            case "guj": return "gu";
+            case "kan": return "kn";
+            case "mal": return "ml";
             case "jpn": return "ja";
             case "kor": return "ko";
             case "cmn":

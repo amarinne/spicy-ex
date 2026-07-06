@@ -11,7 +11,7 @@ import java.util.Map;
  * Android port of Spicy fork romanization behavior.
  *
  * Current exact port:
- * - Cyrillic BGN/PCGN transliteration + post-processing from Fork/Romanization.ts
+ * - Cyrillic BGN/PCGN transliteration + ASCII simplification from Fork/Romanization.ts
  * - Script priority/detection shape from ProcessLyrics.ts
  *
  * Pending platform ports:
@@ -41,7 +41,7 @@ public final class SpicyRomanizer {
         put("г", "g");
         put("д", "d");
         put("е", "e");
-        put("ё", "ë");
+        put("ё", "yo");
         put("ж", "zh");
         put("з", "z");
         put("и", "i");
@@ -73,15 +73,15 @@ public final class SpicyRomanizer {
         put("і", "i");
         put("ї", "yi");
         put("ґ", "g");
-        put("ѝ", "ì");
-        put("ѓ", "ǵ");
-        put("ќ", "ḱ");
-        put("ѕ", "ẑ");
-        put("ђ", "đ");
-        put("ћ", "ć");
+        put("ѝ", "i");
+        put("ѓ", "g");
+        put("ќ", "k");
+        put("ѕ", "dz");
+        put("ђ", "dj");
+        put("ћ", "c");
         put("љ", "lj");
         put("њ", "nj");
-        put("џ", "dž");
+        put("џ", "dz");
 
         put("А", "A");
         put("Б", "B");
@@ -89,7 +89,7 @@ public final class SpicyRomanizer {
         put("Г", "G");
         put("Д", "D");
         put("Е", "E");
-        put("Ё", "Ë");
+        put("Ё", "Yo");
         put("Ж", "Zh");
         put("З", "Z");
         put("И", "I");
@@ -120,14 +120,14 @@ public final class SpicyRomanizer {
         put("І", "I");
         put("Ї", "Yi");
         put("Ґ", "G");
-        put("Ѓ", "Ǵ");
-        put("Ќ", "Ḱ");
-        put("Ѕ", "Ẑ");
-        put("Ђ", "Đ");
-        put("Ћ", "Ć");
+        put("Ѓ", "G");
+        put("Ќ", "K");
+        put("Ѕ", "Dz");
+        put("Ђ", "Dj");
+        put("Ћ", "C");
         put("Љ", "Lj");
         put("Њ", "Nj");
-        put("Џ", "Dž");
+        put("Џ", "Dz");
 
         putGreek("Α", "A"); putGreek("α", "a");
         putGreek("Β", "V"); putGreek("β", "v");
@@ -208,7 +208,7 @@ public final class SpicyRomanizer {
 
     /**
      * Port of Fork/Romanization.ts romanizeCyrillic():
-     * transliterPkg.transliter(text, "bgn-pcgn") plus ASCII cleanup.
+     * transliterPkg.transliter(text, "bgn-pcgn") plus ASCII simplification.
      *
      * {@code е} uses the BGN/PCGN positional ye rule from the previous Cyrillic
      * source character. Hard/soft signs are dropped at the source so Latin
@@ -239,13 +239,15 @@ public final class SpicyRomanizer {
             }
             i += Character.charCount(cp);
         }
-        return postProcessCyrillic(out.toString());
+        return out.toString();
     }
 
     private static String mapCyrillic(int cp, int prevCyrillicCp, boolean ukrainian, boolean keepSigns) {
         // Hard/soft signs: drop (default) or keep as BGN/PCGN prime marks.
         if (cp == 'ъ' || cp == 'Ъ') return keepSigns ? "ʺ" : "";
         if (cp == 'ь' || cp == 'Ь') return keepSigns ? "ʹ" : "";
+        String centralAsian = centralAsianLetter(cp);
+        if (centralAsian != null) return centralAsian;
         if (ukrainian) {
             String u = ukrainianLetter(cp);
             if (u != null) return u;
@@ -257,6 +259,21 @@ public final class SpicyRomanizer {
         }
         String mapped = BGN_PCGN.get(cp);
         return mapped == null ? new String(Character.toChars(cp)) : mapped;
+    }
+
+    /** Central-Asian Cyrillic values shared by all Cyrillic modes. */
+    private static String centralAsianLetter(int cp) {
+        switch (cp) {
+            case 'ң': return "ng"; case 'Ң': return "Ng";
+            case 'ө': return "o";  case 'Ө': return "O";
+            case 'ү': return "u";  case 'Ү': return "U";
+            case 'ә': return "a";  case 'Ә': return "A";
+            case 'ғ': return "gh"; case 'Ғ': return "Gh";
+            case 'қ': return "q";  case 'Қ': return "Q";
+            case 'ұ': return "u";  case 'Ұ': return "U";
+            case 'һ': return "h";  case 'Һ': return "H";
+            default: return null;
+        }
     }
 
     /** Ukrainian-specific BGN/PCGN values that differ from the shared (Russian) map. */
@@ -292,23 +309,6 @@ public final class SpicyRomanizer {
         return (cp >= 0x0400 && cp <= 0x04FF) || (cp >= 0x0500 && cp <= 0x052F);
     }
 
-    private static String postProcessCyrillic(String value) {
-        return value
-                .replace("Ë", "Yo")
-                .replace("ë", "yo")
-                .replace("ǵ", "g")
-                .replace("Ǵ", "G")
-                .replace("ḱ", "k")
-                .replace("Ḱ", "K")
-                .replace("ẑ", "dz")
-                .replace("Ẑ", "Dz")
-                .replace("ì", "i")
-                .replace("đ", "dj")
-                .replace("Đ", "Dj")
-                .replace("ć", "c")
-                .replace("Ć", "C");
-    }
-
     /** "Pronunciation" (sound-based) Korean mode value; otherwise letter-by-letter. */
     public static final String KOREAN_PRONUNCIATION = "Pronunciation";
 
@@ -316,6 +316,11 @@ public final class SpicyRomanizer {
         return KOREAN_PRONUNCIATION.equalsIgnoreCase(koreanMode);
     }
 
+    /**
+     * Default Korean mode is an aromanize-compatible spelling table romanizer,
+     * not official Revised Romanization. Pronunciation mode routes through the
+     * jamo-aware G2P layer.
+     */
     public static String romanizeKorean(String text) {
         return romanizeKorean(text, false);
     }

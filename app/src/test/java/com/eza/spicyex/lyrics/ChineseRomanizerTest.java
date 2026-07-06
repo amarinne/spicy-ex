@@ -10,8 +10,8 @@ import java.util.Collections;
 import org.junit.Test;
 
 /**
- * Golden corpus for current Mandarin pinyin output (docs/ROMANIZATION_AUDIT_BACKLOG.md CN-T1).
- * Uses pinyin4j first-reading, no-tone, per-character mode — encodes behavior before CN-2.
+ * Golden corpus for Mandarin pinyin output (docs/ROMANIZATION_AUDIT_BACKLOG.md CN-T1/CN-2).
+ * Phrase dictionary covers common polyphones before pinyin4j per-character fallback.
  */
 public class ChineseRomanizerTest {
     private static String pinyin(String line) {
@@ -21,15 +21,16 @@ public class ChineseRomanizerTest {
     @Test
     public void perCharacterPinyinWithoutTones() {
         assertEquals("zhong guo", pinyin("中国"));
-        assertEquals("yin le", pinyin("音乐"));   // 乐 first reading is "le" (CN-2 polyphone gap: music should be "yue")
+        assertEquals("yin yue", pinyin("音乐"));
         assertEquals("kuai le", pinyin("快乐"));
     }
 
     @Test
-    public void polyphoneUsesFirstReading() {
-        // pinyin4j values[0] — documents current behavior, not contextual disambiguation.
-        assertEquals("yin xing", pinyin("银行"));   // 行 first reading "xing" (CN-2 gap: bank should be "hang")
+    public void polyphonePhrasesOverrideFirstReading() {
+        assertEquals("yin hang", pinyin("银行"));
         assertEquals("zhong yao", pinyin("重要"));
+        assertEquals("shui jiao", pinyin("睡觉"));
+        assertEquals("hai you", pinyin("还有"));
     }
 
     @Test
@@ -42,6 +43,8 @@ public class ChineseRomanizerTest {
     public void pinyinToneMarksWhenEnabled() {
         assertEquals("zhōng guó", SpicyJapaneseChineseProcessor.romanizeChineseLine("中国", "pinyin", true));
         assertEquals("zhong guo", SpicyJapaneseChineseProcessor.romanizeChineseLine("中国", "pinyin", false));
+        assertEquals("yīn yuè", SpicyJapaneseChineseProcessor.romanizeChineseLine("音乐", "pinyin", true));
+        assertEquals("yin yue", SpicyJapaneseChineseProcessor.romanizeChineseLine("音乐", "pinyin", false));
     }
 
     @Test

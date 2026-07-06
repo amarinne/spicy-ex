@@ -48,6 +48,11 @@ public final class LyricsTextFactory {
         return resolved;
     }
 
+    public Typeface resolveTypefaceForText(String text, boolean bold) {
+        if (shouldUseSystemFallbackForText(text)) return bold ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT;
+        return resolveTypeface(bold);
+    }
+
     /** Lyric typeface for a user weight choice: Regular / Medium (Spotify bold) / Bold (extrabold). */
     public Typeface resolveLyricTypeface(String weight) {
         return resolveLyricTypeface(weight, config == null ? "default" : config.get(Settings.LYRICS_FONT));
@@ -55,6 +60,13 @@ public final class LyricsTextFactory {
 
     /** Lyric typeface for a user weight + family choice. */
     public Typeface resolveLyricTypeface(String weight, String family) {
+        return resolveLyricTypeface(weight, family, "");
+    }
+
+    public Typeface resolveLyricTypeface(String weight, String family, String text) {
+        if (shouldUseSystemFallbackForText(text)) {
+            return "Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
+        }
         String normalizedFamily = safe(family).toLowerCase(Locale.ROOT);
         if ("apple".equals(normalizedFamily)) {
             String key = "lyric|apple|" + safe(weight);
@@ -88,6 +100,10 @@ public final class LyricsTextFactory {
         }
         typefaceCache.put(key, resolved);
         return resolved;
+    }
+
+    static boolean shouldUseSystemFallbackForText(String text) {
+        return SpicyTextDetection.hasIndicScript(text);
     }
 
     /** Load a font resource from the host (Spotify) package by name, e.g. "spotify_mix_ui_bold". */

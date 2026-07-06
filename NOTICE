@@ -25,6 +25,8 @@ licensed under AGPL-3.0:
     Lyric engine reference.
 - kawarp (@kawarp/core) — https://github.com/better-lyrics/kawarp  (AGPL-3.0)
     Domain-warp + Kawase-blur animated background; ported to an AGSL RuntimeShader.
+- JmdictFurigana — https://github.com/Doublevil/JmdictFurigana  (CC BY-SA)
+    Japanese word-level furigana span data used by the Full flavor for ruby placement.
 
 Behavior reimplemented from observation, public specifications, or factual data
 (CSS values, spring/falloff math, BGN/PCGN romanization tables, kawarp's

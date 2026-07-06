@@ -21,6 +21,7 @@ import android.widget.TextView;
 
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.lyrics.LyricCaches;
+import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
 
 /**
  * Owns settings-panel view construction only.
@@ -120,6 +121,9 @@ public final class SettingsPanel {
             renderActions(content);
             renderStatus(content);
         }
+        boolean diagnosticsExpanded = expandedSections.contains(Settings.DIAGNOSTICS.id);
+        sectionHeader(content, Settings.DIAGNOSTICS, diagnosticsExpanded);
+        if (diagnosticsExpanded) renderDiagnostics(content);
     }
 
     private void renderSetting(LinearLayout content, Settings.Setting<?> setting) {
@@ -198,6 +202,20 @@ public final class SettingsPanel {
         TextView version = text(BuildStamp.FULL, 11, COL_SECTION, false);
         version.setPadding(0, dp(12), 0, 0);
         content.addView(version);
+    }
+
+    private void renderDiagnostics(LinearLayout content) {
+        LyricsFetchDiagnosticsState.Snapshot s = LyricsFetchDiagnosticsState.get();
+        infoRow(content, "Source chosen", s.sourceChosen);
+        infoRow(content, "Candidates seen", s.candidatesSeen);
+        infoRow(content, "Type chosen", s.typeChosen);
+        infoRow(content, "Spicy version sent", emptyDash(s.spicyVersionSent));
+        infoRow(content, "Spicy latest version", emptyDash(s.spicyLatestVersion));
+        infoRow(content, "Token present", yesNo(s.tokenPresent));
+        infoRow(content, "Spicy query status", s.spicyQueryStatus);
+        infoRow(content, "Packed payload", yesNo(s.packedPayload));
+        infoRow(content, "Poison result", s.poisonResult);
+        infoRow(content, "Cache write", yesNo(s.cacheWrite));
     }
 
     // --- Rows ---
@@ -479,6 +497,22 @@ public final class SettingsPanel {
         LinearLayout row = newRow(content);
         row.addView(text(label, 16, COL_ACCENT, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         row.setOnClickListener(listener);
+    }
+
+    private void infoRow(LinearLayout content, String label, String value) {
+        LinearLayout row = newRow(content);
+        row.addView(text(label, 14, COL_SUMMARY, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView val = text(value == null ? "" : value, 14, COL_TITLE, false);
+        val.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        row.addView(val, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+    }
+
+    private static String yesNo(boolean value) {
+        return value ? "yes" : "no";
+    }
+
+    private static String emptyDash(String value) {
+        return value == null || value.isEmpty() ? "-" : value;
     }
 
     private void openGithub() {

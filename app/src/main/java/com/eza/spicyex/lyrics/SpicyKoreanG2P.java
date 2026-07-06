@@ -70,12 +70,17 @@ final class SpicyKoreanG2P {
 
     private static void flushReadableRun(StringBuilder run, java.util.List<String> out) {
         if (run.length() == 0) return;
+        java.util.List<String> syllablePieces = romanizeSyllablePieces(run.toString());
+        int pieceIndex = 0;
         java.util.List<String> chunks = SpicyKoreanSpacing.splitRun(run.toString());
         boolean first = true;
         for (String chunk : chunks) {
             if (chunk == null || chunk.isEmpty()) continue;
             if (!first) out.add(" ");
-            out.addAll(romanizeSyllablePieces(chunk));
+            int pieceCount = chunk.codePointCount(0, chunk.length());
+            for (int i = 0; i < pieceCount && pieceIndex < syllablePieces.size(); i++) {
+                out.add(syllablePieces.get(pieceIndex++));
+            }
             first = false;
         }
         run.setLength(0);
@@ -181,6 +186,9 @@ final class SpicyKoreanG2P {
             } else if (cur[2] == CODA_L && onset == ON_N) {
                 nxt[0] = ON_R;                        // ㄹ + ㄴ → ㄹ + ㄹ
             }
+        }
+        for (int[] syl : run) {
+            if (syl[2] != CODA_NONE) syl[2] = codaRepresentative(syl[2]);
         }
     }
 

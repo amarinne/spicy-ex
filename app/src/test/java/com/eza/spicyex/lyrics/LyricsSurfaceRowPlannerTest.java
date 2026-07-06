@@ -95,6 +95,34 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
+    public void japaneseFuriganaCrossingTimedWordsRequiresLineLevelRendering() {
+        AppliedLine line = line("今年も早いね");
+        line.words.add(word("今", false));
+        line.words.add(word("年", true));
+        line.words.add(word("も", false));
+        line.words.add(word("早い", false));
+        line.words.add(word("ね", false));
+        line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading(
+                line.text, "kotoshi mo hayai ne", java.util.Collections.singletonList(
+                new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "ことし")));
+
+        assertTrue(FuriganaText.hasRubyCrossingWordBoundaries(line));
+    }
+
+    @Test
+    public void japanesePerKanjiFuriganaCanStayWordLevel() {
+        AppliedLine line = line("残念");
+        line.words.add(word("残", false));
+        line.words.add(word("念", true));
+        java.util.ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> segments = new java.util.ArrayList<>();
+        segments.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "ざん"));
+        segments.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(1, 2, "ねん"));
+        line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading(line.text, "zannen", segments);
+
+        assertFalse(FuriganaText.hasRubyCrossingWordBoundaries(line));
+    }
+
+    @Test
     public void liveCardScrollCanNormalizeRightAlignedLineWithoutMutatingSource() {
         AppliedLine source = line("right aligned lyric");
         source.oppositeAligned = true;
@@ -122,6 +150,13 @@ public class LyricsSurfaceRowPlannerTest {
         line.sourceLine.startMs = line.startMs;
         line.sourceLine.endMs = line.endMs;
         return line;
+    }
+
+    private static SyllableSegment word(String text, boolean partOfWord) {
+        SyllableSegment seg = new SyllableSegment();
+        seg.text = text;
+        seg.partOfWord = partOfWord;
+        return seg;
     }
 
     private static LyricsDocument document(AppliedLine line) {

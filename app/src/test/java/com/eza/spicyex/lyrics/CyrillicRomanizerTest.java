@@ -38,9 +38,35 @@ public class CyrillicRomanizerTest {
     }
 
     @Test
+    public void serbianLettersUseConsistentAsciiSimplification() {
+        assertEquals("dj c dz lj nj", SpicyRomanizer.romanizeCyrillic("ђ ћ џ љ њ"));
+        assertEquals("Dj C Dz Lj Nj", SpicyRomanizer.romanizeCyrillic("Ђ Ћ Џ Љ Њ"));
+    }
+
+    @Test
+    public void southSlavicAndMacedonianLettersDoNotLeaveDiacritics() {
+        assertEquals("g k dz dj c dz", SpicyRomanizer.romanizeCyrillic("ѓ ќ ѕ ђ ћ џ"));
+        assertEquals("G K Dz Dj C Dz", SpicyRomanizer.romanizeCyrillic("Ѓ Ќ Ѕ Ђ Ћ Џ"));
+    }
+
+    @Test
     public void keepSignsToggle() {
         assertEquals("den", SpicyRomanizer.romanizeCyrillic("день", SpicyRomanizer.CYRILLIC_RUSSIAN, false));
         assertEquals("denʹ", SpicyRomanizer.romanizeCyrillic("день", SpicyRomanizer.CYRILLIC_RUSSIAN, true));
         assertEquals("obʺyekt", SpicyRomanizer.romanizeCyrillic("объект", SpicyRomanizer.CYRILLIC_RUSSIAN, true));
+    }
+
+    @Test
+    public void centralAsianOverridesApplyInRussianMode() {
+        assertEquals("Aldadyngby", SpicyRomanizer.romanizeCyrillic("Алдадыңбы"));
+        assertEquals("Kalbadyngby zhanymda", SpicyRomanizer.romanizeCyrillic("Калбадыңбы жанымда"));
+        assertEquals("Omur", SpicyRomanizer.romanizeCyrillic("Өмүр"));
+    }
+
+    @Test
+    public void centralAsianOverridesApplyInUkrainianMode() {
+        assertEquals("Aldadyngby", SpicyRomanizer.romanizeCyrillic("Алдадыңбы", SpicyRomanizer.CYRILLIC_UKRAINIAN, false));
+        assertEquals("Kalbadyngby zhanymda", SpicyRomanizer.romanizeCyrillic("Калбадыңбы жанымда", SpicyRomanizer.CYRILLIC_UKRAINIAN, false));
+        assertEquals("Omur", SpicyRomanizer.romanizeCyrillic("Өмүр", SpicyRomanizer.CYRILLIC_UKRAINIAN, false));
     }
 }

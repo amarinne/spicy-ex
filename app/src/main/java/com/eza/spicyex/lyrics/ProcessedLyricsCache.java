@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics;
 
 import android.content.Context;
 
+import com.eza.spicyex.Settings;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -22,7 +23,7 @@ public final class ProcessedLyricsCache {
     public static void apply(Context context, LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
         if (context == null || doc == null || doc.lines == null || doc.lines.isEmpty()) return;
         try {
-            String raw = LyricCaches.getProcessedDocument(context, key(doc, opts, processingVersion));
+            String raw = LyricCaches.getProcessedDocument(context, key(context, doc, opts, processingVersion));
             if (isBlank(raw)) return;
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             if (root == null || Json.optDouble(root, -1, "version") != processingVersion) return;
@@ -83,7 +84,7 @@ public final class ProcessedLyricsCache {
                 lines.add(item);
             }
             root.add("lines", lines);
-            LyricCaches.putProcessedDocument(context, key(doc, opts, processingVersion), root.toString());
+            LyricCaches.putProcessedDocument(context, key(context, doc, opts, processingVersion), root.toString());
         } catch (Throwable t) {
             XposedBridge.log(TAG + " save failed: " + t);
         }
@@ -108,11 +109,35 @@ public final class ProcessedLyricsCache {
         return object;
     }
 
-    private static String key(LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
+    private static String key(Context context, LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
         return LyricCaches.processedDocumentKey(processingVersion,
                 doc == null ? "" : doc.trackId,
                 doc == null ? "" : doc.language,
-                opts);
+                opts,
+                processingContextKey(context));
+    }
+
+    public static String processingContextKey(Context context) {
+        if (context == null) return processingContextKey("off", "disabled", "en", "auto", "auto");
+        SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
+        boolean translationEnabled = config.getBoolean(
+                Settings.TRANSLATION_ENABLED.key,
+                !"disabled".equalsIgnoreCase(config.get(Settings.TRANSLATION_BACKEND))
+        );
+        String backend = config.get(Settings.TRANSLATION_BACKEND);
+        String target = config.get(Settings.TRANSLATION_TARGET);
+        String sourceMode = config.get(Settings.SOURCE_LANGUAGE_MODE);
+        String source = "manual".equalsIgnoreCase(sourceMode) ? config.get(Settings.SOURCE_LANGUAGE) : "auto";
+        return processingContextKey(translationEnabled ? "on" : "off", backend, target, sourceMode, source);
+    }
+
+    static String processingContextKey(String translationEnabled, String backend, String target,
+                                       String sourceMode, String source) {
+        return "tr=" + safe(translationEnabled)
+                + "|backend=" + safe(backend)
+                + "|target=" + safe(target)
+                + "|sourceMode=" + safe(sourceMode)
+                + "|source=" + safe(source);
     }
 
     private static String normalizeChineseMode(String mode) {

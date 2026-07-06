@@ -15,6 +15,17 @@ public final class LyricUtils {
         return value == null ? "" : value;
     }
 
+    /** Match desktop fork invisible-character cleanup while preserving Indic ZWJ/ZWNJ. */
+    public static String cleanInvisibles(String value) {
+        if (value == null) return "";
+        return value
+                .replace("\u200B", "")
+                .replace("\uFEFF", "")
+                .replace('\u00A0', ' ')
+                .replaceAll("[ \t]{2,}", " ")
+                .trim();
+    }
+
     /** Extract the bare track id from a Spotify "spotify:track:ID" URI; "" if not a track URI. */
     public static String trackIdFromUri(String uri) {
         if (uri == null) return "";

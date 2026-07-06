@@ -42,9 +42,9 @@ public final class LyricsSecondaryProcessingSession {
 
         if (callback != null) callback.status("Enhancing " + label(snapshot) + "…");
         final String targetLang = config.get(Settings.TRANSLATION_TARGET);
-        final String sourceLangOverride = "manual".equalsIgnoreCase(config.get(Settings.SOURCE_LANGUAGE_MODE))
-                ? config.get(Settings.SOURCE_LANGUAGE) : null;
-        final String effectiveSourceLang = sourceLangOverride != null ? sourceLangOverride : snapshot.language;
+        final String effectiveSourceLang = effectiveGoogleSourceLanguage(
+                config.get(Settings.SOURCE_LANGUAGE_MODE),
+                config.get(Settings.SOURCE_LANGUAGE));
 
         XposedBridge.log(logTag + " secondary processing start target=" + targetLang + " source=" + effectiveSourceLang);
         processor.start(id, generation, snapshot, showRomanization, options, targetLang, effectiveSourceLang,
@@ -76,6 +76,10 @@ public final class LyricsSecondaryProcessingSession {
                 + (snapshot.romanizationPending && snapshot.translationPending ? " + " : "")
                 + (snapshot.translationPending ? "translation" : "");
         return label.isEmpty() ? "lyrics" : label;
+    }
+
+    static String effectiveGoogleSourceLanguage(String sourceMode, String sourceLanguage) {
+        return "manual".equalsIgnoreCase(sourceMode) ? sourceLanguage : "auto";
     }
 
     public interface Callback {

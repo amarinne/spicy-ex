@@ -143,7 +143,7 @@ public final class LyricsSecondaryProcessor {
                 handler.post(() -> {
                     if (currentGuard == null || currentGuard.isCurrent(id, generation, snapshot)) {
                         localPatch.applyTo(snapshot);
-                        if (changed.get() > 0) callback.rerender("Local romanization ready");
+                        if (localPatch.hasLineChanges()) callback.rerender("Local romanization ready");
                     }
                 });
             }

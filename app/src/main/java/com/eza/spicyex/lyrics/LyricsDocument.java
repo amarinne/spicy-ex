@@ -15,6 +15,11 @@ public class LyricsDocument {
     public String type = "Unknown";
     public String language = "";
     public String fetchSource = "unknown";
+    public boolean spicyPackedPayload;
+    public Integer spicyQueryStatus;
+    public String spicyFormat = "";
+    public boolean spicyPoisoned;
+    public String spicyQualityReason;
     public long durationMs;
     public long startTimeMs;
     public int generation;
@@ -39,6 +44,11 @@ public class LyricsDocument {
         copy.type = safe(source.type);
         copy.language = safe(source.language);
         copy.fetchSource = safe(source.fetchSource);
+        copy.spicyPackedPayload = source.spicyPackedPayload;
+        copy.spicyQueryStatus = source.spicyQueryStatus;
+        copy.spicyFormat = safe(source.spicyFormat);
+        copy.spicyPoisoned = source.spicyPoisoned;
+        copy.spicyQualityReason = source.spicyQualityReason;
         copy.durationMs = source.durationMs;
         copy.startTimeMs = source.startTimeMs;
         copy.generation = source.generation;

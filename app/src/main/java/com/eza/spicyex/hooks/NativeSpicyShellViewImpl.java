@@ -861,7 +861,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             if (!isBlank(message)) setTextIfChanged(status, message);
             return;
         }
-        boolean structureChanged = secondaryRowUpdater.refresh(snapshot, showRomanization(), showTranslation());
+        boolean structureChanged = secondaryRowUpdater.refresh(snapshot, showRomanization(), showTranslation(), japaneseReadingMode());
         if (structureChanged) {
             invalidateRowHeightPrefix();
             rowMountController.markDirty();
@@ -1128,6 +1128,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
         SpicyProcessing.ProcessingFlags flags = SpicyProcessing.flagsFor(
                 LyricsDocumentProcessor.collectText(snapshot),
+                effectiveSourceLanguage(snapshot),
                 renderConfig.translationTarget
         );
         snapshot.translationPending = renderConfig.translationEnabled && flags.translationPending;
@@ -1137,6 +1138,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (snapshot.translationPending) {
             startSecondaryProcessing(trackIdFromUri(lastUri), NativeSpicyLyricsHook.fetchGeneration);
         }
+    }
+
+    private String effectiveSourceLanguage(LyricsDocument snapshot) {
+        if (config != null && "manual".equalsIgnoreCase(config.get(Settings.SOURCE_LANGUAGE_MODE))) {
+            return config.get(Settings.SOURCE_LANGUAGE);
+        }
+        return snapshot == null ? "" : snapshot.language;
     }
 
     private boolean activeLineHasJapanese() {

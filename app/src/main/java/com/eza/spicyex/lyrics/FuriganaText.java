@@ -75,6 +75,39 @@ public final class FuriganaText {
         return segment != null && segment.start >= wordStart && segment.start < wordEnd && segment.end > wordStart;
     }
 
+    static boolean hasRubyCrossingWordBoundaries(AppliedLine line) {
+        if (line == null || line.words == null || line.words.isEmpty()
+                || line.japaneseReading == null || line.japaneseReading.furigana == null
+                || line.japaneseReading.furigana.isEmpty()) return false;
+
+        int offset = 0;
+        int[] starts = new int[line.words.size()];
+        int[] ends = new int[line.words.size()];
+        int count = 0;
+        for (SyllableSegment seg : line.words) {
+            if (seg == null || isBlank(seg.text)) continue;
+            if (offset > 0 && !seg.partOfWord) offset++;
+            starts[count] = offset;
+            offset += seg.text.length();
+            ends[count] = offset;
+            count++;
+        }
+        if (count == 0) return false;
+
+        for (SpicyJapaneseChineseProcessor.FuriganaSegment segment : line.japaneseReading.furigana) {
+            if (segment == null || isBlank(segment.reading) || segment.end <= segment.start) continue;
+            boolean contained = false;
+            for (int i = 0; i < count; i++) {
+                if (segment.start >= starts[i] && segment.end <= ends[i]) {
+                    contained = true;
+                    break;
+                }
+            }
+            if (!contained) return true;
+        }
+        return false;
+    }
+
     /** Draws a small kana reading centered above the spanned base text. */
     static final class FuriganaSpan extends ReplacementSpan {
         private final String reading;

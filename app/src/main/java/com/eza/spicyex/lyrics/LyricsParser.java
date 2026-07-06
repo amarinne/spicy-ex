@@ -15,6 +15,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XposedBridge;
+import static com.eza.spicyex.lyrics.LyricUtils.cleanInvisibles;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
@@ -32,9 +33,10 @@ public final class LyricsParser implements LyricsRepository.Parser {
 
     @Override
     public LyricsDocument parseSpicyLyrics(Activity activity, SpotifyTrack track, String raw, boolean fromCache) {
-        XposedBridge.log(TAG + " parseSpicyLyrics track=" + (track == null ? "null" : safe(track.uri))
+        log(TAG + " parseSpicyLyrics track=" + (track == null ? "null" : safe(track.uri))
                 + " fromCache=" + fromCache + " bytes=" + (raw == null ? 0 : raw.length()));
-        JsonElement root = unpackSpicyPayloads(JsonParser.parseString(raw));
+        SpicyResponseMetadata metadata = new SpicyResponseMetadata();
+        JsonElement root = unpackSpicyPayloads(JsonParser.parseString(raw), metadata, false);
         JsonObject data = findLyricsData(root);
         if (data == null) throw new IllegalStateException("lyrics data not found");
 
@@ -47,13 +49,18 @@ public final class LyricsParser implements LyricsRepository.Parser {
         doc.type = type == null ? "Unknown" : type;
         doc.language = language == null ? "" : language;
         doc.fetchSource = fromCache ? "spicy_api_cache" : "spicy_api";
+        doc.spicyPackedPayload = metadata.packedPayload;
+        doc.spicyQueryStatus = metadata.queryStatus;
+        doc.spicyFormat = metadata.format == null ? "" : metadata.format;
+        doc.spicyPoisoned = false;
+        doc.spicyQualityReason = null;
         doc.provider = providerLabelFromSource(firstNonBlank(
                 Json.optString(data, "source", "Source", "Provider", "provider"),
                 Json.findFirstString(root, "source", "Source", "Provider", "provider")
         ));
         doc.songWriters = joinSongWriters(Json.optArray(data, "SongWriters", "songWriters", "Writers"));
         JsonArray selectedLines = Json.optArray(data, "Lines", "lines", "Content", "content");
-        XposedBridge.log(TAG + " spicy parse selected type=" + type + " candidateLines=" + (selectedLines == null ? 0 : selectedLines.size()));
+        log(TAG + " spicy parse selected type=" + type + " candidateLines=" + (selectedLines == null ? 0 : selectedLines.size()));
 
         if ("Static".equalsIgnoreCase(type)) {
             parseStatic(data, doc);
@@ -111,7 +118,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
     private void parseLrcLines(String synced, LyricsDocument doc) {
         String[] rawLines = synced.split("\\r?\\n");
         for (String rawLine : rawLines) {
-            Matcher matcher = LRC_TIMESTAMP.matcher(rawLine.trim());
+            Matcher matcher = LRC_TIMESTAMP.matcher(cleanInvisibles(rawLine));
             if (!matcher.matches()) continue;
             long minutes = parseLongSafe(matcher.group(1));
             long seconds = parseLongSafe(matcher.group(2));
@@ -121,7 +128,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
                 String ms = (fraction + "000").substring(0, 3);
                 millis = parseLongSafe(ms);
             }
-            String text = safe(matcher.group(4)).trim();
+            String text = cleanInvisibles(matcher.group(4));
             LyricsLine line = new LyricsLine();
             line.startMs = minutes * 60000 + seconds * 1000 + millis;
             if (doc.startTimeMs <= 0 && line.startMs > 0) doc.startTimeMs = line.startMs;
@@ -136,7 +143,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         if (isBlank(plain)) return;
         long cursor = 0;
         for (String rawLine : plain.split("\\r?\\n")) {
-            String text = rawLine.trim();
+            String text = cleanInvisibles(rawLine);
             if (isBlank(text)) continue;
             LyricsLine line = new LyricsLine();
             line.text = text;
@@ -155,7 +162,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         for (JsonElement lineElement : lines) {
             if (!lineElement.isJsonObject()) continue;
             JsonObject object = lineElement.getAsJsonObject();
-            String text = Json.optString(object, "Text", "text");
+            String text = cleanInvisibles(Json.optString(object, "Text", "text"));
             if (isBlank(text)) continue;
             LyricsLine line = new LyricsLine();
             line.text = text;
@@ -175,7 +182,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonObject object = item.getAsJsonObject();
             String type = Json.optString(object, "Type", "type");
             if (type == null || "Vocal".equalsIgnoreCase(type)) {
-                String text = Json.optString(object, "Text", "text");
+                String text = cleanInvisibles(Json.optString(object, "Text", "text"));
                 if (isBlank(text)) continue;
                 LyricsLine line = new LyricsLine();
                 line.text = text;
@@ -227,15 +234,15 @@ public final class LyricsParser implements LyricsRepository.Parser {
     }
 
     private void applySecondaryText(LyricsLine line, JsonObject object) {
-        String providerRomanized = firstNonBlank(
+        String providerRomanized = cleanInvisibles(firstNonBlank(
                 Json.optString(object, "TransliteratedText", "transliteratedText"),
                 Json.optString(object, "RomanizedText", "romanizedText", "RomanisedText", "romanisedText")
-        );
+        ));
         if (!isBlank(providerRomanized) && !providerRomanized.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(providerRomanized)) {
             line.romanizedText = providerRomanized;
         }
 
-        String translated = Json.optString(object, "TranslatedText", "translatedText", "Translation", "translation");
+        String translated = cleanInvisibles(Json.optString(object, "TranslatedText", "translatedText", "Translation", "translation"));
         if (!isBlank(translated) && !translated.equals(line.text)) {
             line.translatedText = translated;
         }
@@ -298,7 +305,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonElement element = syllables.get(i);
             if (!element.isJsonObject()) continue;
             JsonObject syllable = element.getAsJsonObject();
-            String text = Json.optString(syllable, "Text", "text");
+            String text = cleanInvisibles(Json.optString(syllable, "Text", "text"));
             if (isBlank(text)) continue;
             SyllableSegment seg = new SyllableSegment();
             seg.text = text;
@@ -322,7 +329,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonElement element = syllables.get(i);
             if (!element.isJsonObject()) continue;
             JsonObject syllable = element.getAsJsonObject();
-            String text = Json.optString(syllable, textKeys);
+            String text = cleanInvisibles(Json.optString(syllable, textKeys));
             if (isBlank(text)) continue;
             boolean isPart = Json.optBoolean(syllable, false, "IsPartOfWord", "isPartOfWord");
             if (out.length() > 0 && !isPart) out.append(' ');
@@ -331,25 +338,68 @@ public final class LyricsParser implements LyricsRepository.Parser {
         return out.toString().trim();
     }
 
-    private static JsonElement unpackSpicyPayloads(JsonElement element) {
+    private static JsonElement unpackSpicyPayloads(JsonElement element, SpicyResponseMetadata metadata, boolean queryResultData) {
         if (element == null || element.isJsonNull()) return element;
         if (SpicyObjPack.isPackedPayload(element)) {
+            if (queryResultData) metadata.packedPayload = true;
             JsonElement unpacked = SpicyObjPack.unpack(element);
-            XposedBridge.log(TAG + " unpacked SLObjPack Spicy payload");
+            log(TAG + " unpacked SLObjPack Spicy payload");
             return unpacked;
         }
         if (element.isJsonArray()) {
             JsonArray out = new JsonArray();
-            for (JsonElement child : element.getAsJsonArray()) out.add(unpackSpicyPayloads(child));
+            for (JsonElement child : element.getAsJsonArray()) out.add(unpackSpicyPayloads(child, metadata, false));
             return out;
         }
         if (element.isJsonObject()) {
             JsonObject object = element.getAsJsonObject();
+            boolean resultObject = isSpicyQueryResultObject(object);
+            if (resultObject) captureSpicyQueryMetadata(object, metadata);
             JsonObject out = new JsonObject();
-            for (String key : object.keySet()) out.add(key, unpackSpicyPayloads(object.get(key)));
+            for (String key : object.keySet()) {
+                boolean resultData = resultObject && ("data".equals(key) || "Data".equals(key));
+                out.add(key, unpackSpicyPayloads(object.get(key), metadata, resultData));
+            }
             return out;
         }
         return element;
+    }
+
+    private static boolean isSpicyQueryResultObject(JsonObject object) {
+        return Json.optElement(object, "data", "Data") != null
+                && (Json.optElement(object, "httpStatus", "HttpStatus", "status", "Status") != null
+                || Json.optElement(object, "format", "Format") != null);
+    }
+
+    private static void captureSpicyQueryMetadata(JsonObject result, SpicyResponseMetadata metadata) {
+        if (metadata.queryStatus == null) metadata.queryStatus = optInteger(result, "httpStatus", "HttpStatus", "status", "Status");
+        if (metadata.format == null) {
+            String format = Json.optString(result, "format", "Format");
+            if (!isBlank(format)) metadata.format = format;
+        }
+    }
+
+    private static Integer optInteger(JsonObject object, String... keys) {
+        JsonElement element = Json.optElement(object, keys);
+        if (element == null) return null;
+        try {
+            return element.getAsInt();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void log(String message) {
+        try {
+            XposedBridge.log(message);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static final class SpicyResponseMetadata {
+        boolean packedPayload;
+        Integer queryStatus;
+        String format;
     }
 
     private static JsonObject findLyricsData(JsonElement element) {

@@ -11,6 +11,30 @@ public class LyricCachesTest {
         assertEquals("auto", LyricCaches.sourceLanguageForCache(null));
         assertEquals("auto", LyricCaches.sourceLanguageForCache("unknown"));
         assertEquals("ja", LyricCaches.sourceLanguageForCache("ja"));
+        assertEquals("hi", LyricCaches.sourceLanguageForCache("hin"));
+    }
+
+    @Test
+    public void processedDocumentKeyDiffersByTranslationTarget() {
+        String english = LyricCaches.processedDocumentKey(10, "track", "hin", RomanizationOptions.DEFAULTS,
+                ProcessedLyricsCache.processingContextKey("on", "google_unofficial", "en", "auto", "auto"));
+        String spanish = LyricCaches.processedDocumentKey(10, "track", "hin", RomanizationOptions.DEFAULTS,
+                ProcessedLyricsCache.processingContextKey("on", "google_unofficial", "es", "auto", "auto"));
+
+        assertTrue(!english.equals(spanish));
+    }
+
+    @Test
+    public void processedDocumentKeyDiffersByTranslationSourceModeAndBackend() {
+        String autoGoogle = LyricCaches.processedDocumentKey(10, "track", "hin", RomanizationOptions.DEFAULTS,
+                ProcessedLyricsCache.processingContextKey("on", "google_unofficial", "en", "auto", "auto"));
+        String manualGoogle = LyricCaches.processedDocumentKey(10, "track", "hin", RomanizationOptions.DEFAULTS,
+                ProcessedLyricsCache.processingContextKey("on", "google_unofficial", "en", "manual", "hi"));
+        String disabled = LyricCaches.processedDocumentKey(10, "track", "hin", RomanizationOptions.DEFAULTS,
+                ProcessedLyricsCache.processingContextKey("off", "disabled", "en", "auto", "auto"));
+
+        assertTrue(!autoGoogle.equals(manualGoogle));
+        assertTrue(!autoGoogle.equals(disabled));
     }
 
     @Test
