@@ -5,6 +5,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Collections;
+import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
 import org.junit.Test;
 
@@ -35,6 +36,16 @@ public class LyricsSecondaryRowUpdaterTest {
 
         assertTrue(decision.japaneseReadingChanged);
         assertFalse(decision.remountForFurigana);
+    }
+
+    @Test
+    public void readingPlanAppearanceRemountsMountedRow() {
+        AppliedLine row = row("사랑");
+        row.sourceLine.readingRenderPlan = ReadingPlanFactory.lineFallback(row.sourceLine, "sarang", "remoteFallback");
+        LyricsSecondaryRowUpdater.RefreshDecision decision = LyricsSecondaryRowUpdater.decideRefresh(
+                row, "", "", true, false, "off", true);
+        assertTrue(decision.readingPlanChanged);
+        assertTrue(decision.remountForReadingPlan);
     }
 
     private static AppliedLine row(String text) {

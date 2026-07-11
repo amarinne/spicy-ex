@@ -151,6 +151,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final LyricsToggleSpinnerController toggleSpinnerController;
     private final GlyphIconDrawable romanGlyph = new GlyphIconDrawable("A", android.graphics.Typeface.DEFAULT_BOLD);
     private int lyricsTopInsetPx;
+    private long lastLyricPositionMs = -1;
 
     private boolean isLandscape() {
         return getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
@@ -324,6 +325,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 activity,
                 config,
                 followState::holdUntil,
+                followState::setTouching,
                 this::seekNearestLineAt));
         lyricsFrame = new FrameLayout(activity);
         lyricsColumn = new LinearLayout(activity);
@@ -437,6 +439,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void updateState(float deltaSeconds) {
         SpotifyTrack track = currentTrackThrottled();
         boolean playingNow = host.isPlayerActuallyPlaying();
+        ambientController.setPlaying(playingNow);
         updateJumpToCurrentVisibility();
         updateToggleSpinners();
         if (track == null) {
@@ -461,6 +464,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             lastUri = uri;
             playbackClock.reset(uri);
             followState.resetActive();
+            lastLyricPositionMs = -1;
             document = null;
             String id = trackIdFromUri(uri);
             ambientController.updateForTrack(track, () -> running);
@@ -488,8 +492,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             } else {
                 long lyricPos = adjustedLyricPositionMs(pos);
                 int nextActive = LyricTimeline.findPrimaryActiveRow(document.appliedLines, lyricPos);
-                if (nextActive != followState.activeIndex()) {
-                    setActiveLine(nextActive, lyricPos, track);
+                boolean drasticSeek = lastLyricPositionMs >= 0 && Math.abs(lyricPos - lastLyricPositionMs) > 1000;
+                lastLyricPositionMs = lyricPos;
+                maybeAutoResumeFollow(nextActive, track, lyricPos);
+                if (nextActive != followState.activeIndex() || drasticSeek) {
+                    setActiveLine(nextActive, lyricPos, track, drasticSeek);
                 }
                 frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
                         renderConfig, lyricPos, nextActive, deltaSeconds,
@@ -843,9 +850,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 line,
                 document,
                 LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(
-                        renderConfig, showRomanization(), showTranslation(), japaneseReadingMode()),
-                this::segmentRomanizedText);
-        return rowViewFactory.build(rowPlan.line, rowPlan.options, rowPlan.romanizedWordProvider, () -> {
+                        renderConfig, showRomanization(), showTranslation(), japaneseReadingMode()));
+        return rowViewFactory.build(rowPlan.line, rowPlan.options, () -> {
             invalidateRowHeightPrefix();
             updateVirtualSpacerHeights();
         });
@@ -921,7 +927,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (ok) {
             playbackClock.forcePosition(target, host.isPlayerActuallyPlaying());
             long lyricTarget = adjustedLyricPositionMs(target);
-            setActiveLine(index, lyricTarget, host.getCurrentTrackSafely());
+            setActiveLine(index, lyricTarget, host.getCurrentTrackSafely(), true);
             frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
                     renderConfig, lyricTarget, index, 1f / 60f, false);
             XposedBridge.log(TAG + " seek line index=" + index + " ms=" + target + " lyricMs=" + lyricTarget);
@@ -932,6 +938,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void setActiveLine(int index, long positionMs, SpotifyTrack track) {
+        setActiveLine(index, positionMs, track, false);
+    }
+
+    private void setActiveLine(int index, long positionMs, SpotifyTrack track, boolean instantScroll) {
         int old = followState.activeIndex();
         if (document != null && index >= 0) {
             boolean activeVisible = rowMountController.containsIndex(index);
@@ -948,15 +958,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (document == null || index < 0 || index >= document.appliedLines.size()) return;
 
         AppliedLine line = document.appliedLines.get(index);
-        CurrentLyricState.updateLine(track, document.provider, document.language, line.dotLine ? "" : line.text, line.dotLine ? "" : line.romanizedText, line.dotLine ? "" : line.translatedText, positionMs, index, host.isPlayerActuallyPlaying(), "active");
+        String currentReading = line.readingRenderPlan == null ? "" : line.readingRenderPlan.joinedDisplayText;
+        CurrentLyricState.updateLine(track, document.provider, document.language, line.dotLine ? "" : line.text, line.dotLine ? "" : currentReading, line.dotLine ? "" : line.translatedText, positionMs, index, host.isPlayerActuallyPlaying(), "active");
 
         if (followState.isHoldingNow()) return;
         View row = rowMountController.attachedRowView(line);
         if (row == null) return;
-        scrollActiveRowWhenLaidOut(index, line, row, 0);
+        scrollActiveRowWhenLaidOut(index, line, row, 0, instantScroll);
     }
 
-    private void scrollActiveRowWhenLaidOut(int index, AppliedLine line, View row, int attempt) {
+    private void scrollActiveRowWhenLaidOut(int index, AppliedLine line, View row, int attempt, boolean instantScroll) {
         if (!running || followState.isHoldingNow()) return;
         if (document == null || line == null || row == null || lyricsScroll == null) return;
         if (index != followState.activeIndex() || row.getParent() != mountedRowsHost) return;
@@ -971,7 +982,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     if (retried[0]) return;
                     retried[0] = true;
                     row.removeOnLayoutChangeListener(this);
-                    lyricsScroll.post(() -> scrollActiveRowWhenLaidOut(index, line, row, attempt + 1));
+                    lyricsScroll.post(() -> scrollActiveRowWhenLaidOut(index, line, row, attempt + 1, instantScroll));
                 }
             };
             row.addOnLayoutChangeListener(listener);
@@ -979,7 +990,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 if (retried[0]) return;
                 retried[0] = true;
                 row.removeOnLayoutChangeListener(listener);
-                scrollActiveRowWhenLaidOut(index, line, row, attempt + 1);
+                scrollActiveRowWhenLaidOut(index, line, row, attempt + 1, instantScroll);
             }, 80);
             return;
         }
@@ -990,13 +1001,33 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             if (remeasureLine(line)) {
                 updateVirtualSpacerHeights();
                 if (attempt < 3) {
-                    lyricsScroll.post(() -> scrollActiveRowWhenLaidOut(index, line, row, attempt + 1));
+                    lyricsScroll.post(() -> scrollActiveRowWhenLaidOut(index, line, row, attempt + 1, instantScroll));
                     return;
                 }
             }
             int target = scrollController == null ? 0 : scrollController.centeredScrollTarget(row);
-            lyricsScroll.smoothScrollTo(0, Math.max(0, target));
+            scrollToActiveTarget(Math.max(0, target), instantScroll);
         });
+    }
+
+    private void scrollToActiveTarget(int target, boolean instant) {
+        if (lyricsScroll == null) return;
+        if (instant || Math.abs(target - lyricsScroll.getScrollY()) <= 2) {
+            lyricsScroll.scrollTo(0, target);
+            return;
+        }
+        lyricsScroll.smoothScrollTo(0, target);
+    }
+
+    private void maybeAutoResumeFollow(int activeIndex, SpotifyTrack track, long lyricPos) {
+        if (!followState.canAutoResumeNow(750)) return;
+        if (document == null || document.appliedLines == null || activeIndex < 0 || activeIndex >= document.appliedLines.size()) return;
+        AppliedLine line = document.appliedLines.get(activeIndex);
+        View row = rowMountController.attachedRowView(line);
+        if (row == null || scrollController == null || !scrollController.isRowVisible(row, dp(5))) return;
+        followState.clearHold();
+        setActiveLine(activeIndex, lyricPos, track);
+        updateJumpToCurrentVisibility();
     }
 
     private void styleLine(int index, boolean active) {
@@ -1055,22 +1086,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void updateJumpToCurrentVisibility() {
         boolean show = document != null && followState.activeIndex() >= 0 && followState.isHoldingNow();
         jumpToCurrentController.update(show);
-    }
-
-    private String segmentRomanizedText(AppliedLine line, SyllableSegment seg, String fullText) {
-        if (seg == null || isBlank(seg.text)) return "";
-        if (!isBlank(seg.romanizedText)) return seg.romanizedText;
-        // Japanese: the line-level token-aligned syllable romanization is authoritative. A blank
-        // here is an INTENTIONAL continuation syllable (the token's reading was emitted at its first
-        // syllable); re-romanizing the bare segment double-prints it ("tachimukai mukai kai").
-        if (isJapaneseLine(line)) return "";
-        LyricsLine source = line == null ? null : line.sourceLine;
-        String local = LyricsLocalRomanizer.romanizeText(romanizationOptions(), document, seg.text, fullText, source == null ? "" : source.chineseMode);
-        if (!isBlank(local) && !local.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
-            seg.romanizedText = local;
-            return local;
-        }
-        return "";
     }
 
     private void cycleTransliterationMode(SharedPreferences prefs) {
@@ -1149,26 +1164,33 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private boolean activeLineHasJapanese() {
         AppliedLine line = activeLine();
-        if (line != null) return SpicyTextDetection.hasKana(line.text);
+        if (line != null && hasRomanizableScript(line.text)) return SpicyTextDetection.hasKana(line.text);
         return documentHasJapanese();
     }
 
     private boolean activeLineHasChinese() {
         AppliedLine line = activeLine();
-        if (line != null) return SpicyTextDetection.itemChineseTest(line.text) && !SpicyTextDetection.hasKana(line.text);
+        if (line != null && hasRomanizableScript(line.text)) return SpicyTextDetection.itemChineseTest(line.text) && !SpicyTextDetection.hasKana(line.text);
         return documentHasChinese();
     }
 
     private boolean activeLineHasKorean() {
         AppliedLine line = activeLine();
-        if (line != null) return SpicyTextDetection.itemKoreanTest(line.text);
+        if (line != null && hasRomanizableScript(line.text)) return SpicyTextDetection.itemKoreanTest(line.text);
         return documentHasKorean();
     }
 
     private boolean activeLineHasCyrillic() {
         AppliedLine line = activeLine();
-        if (line != null) return SpicyTextDetection.itemCyrillicTest(line.text);
+        if (line != null && hasRomanizableScript(line.text)) return SpicyTextDetection.itemCyrillicTest(line.text);
         return documentHasCyrillic();
+    }
+
+    private boolean hasRomanizableScript(String text) {
+        return SpicyTextDetection.hasKana(text)
+                || SpicyTextDetection.itemChineseTest(text)
+                || SpicyTextDetection.itemKoreanTest(text)
+                || SpicyTextDetection.itemCyrillicTest(text);
     }
 
     private AppliedLine activeLine() {

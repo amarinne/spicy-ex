@@ -3,6 +3,7 @@ package com.eza.spicyex.lyrics;
 /** One timed word/syllable. Parse data lives on this object; renderer state is external. */
 public class SyllableSegment {
     public String text = "";
+    public String sourceText = "";
     public String romanizedText = "";
     public long startMs;
     public long endMs;
@@ -15,6 +16,7 @@ public class SyllableSegment {
         if (source == null) return null;
         SyllableSegment copy = new SyllableSegment();
         copy.text = LyricsDocument.safe(source.text);
+        copy.sourceText = LyricsDocument.safe(source.sourceText);
         copy.romanizedText = LyricsDocument.safe(source.romanizedText);
         copy.startMs = source.startMs;
         copy.endMs = source.endMs;

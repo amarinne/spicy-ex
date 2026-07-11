@@ -369,12 +369,15 @@ final class LyricsActivityTakeoverHook {
 
             NativeSpicyShellView root = new NativeSpicyShellView(host, activity);
             root.setTag(TAG_NATIVE_SPICY_ROOT);
+            root.setAlpha(0f);
+            root.setTranslationY(NativeLyricsUtils.dp(24));
             content.addView(root, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
             ));
             markLyricsActivityKeepWindow(activity);
             root.start();
+            root.animate().alpha(1f).translationY(0f).setDuration(260).start();
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " mounted native Spicy renderer shell");
         } catch (Throwable t) {
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " mount failed: " + t);
@@ -389,8 +392,15 @@ final class LyricsActivityTakeoverHook {
             if (content == null) return;
             View existing = content.findViewWithTag(TAG_NATIVE_SPICY_ROOT);
             if (existing instanceof NativeSpicyShellView) {
-                ((NativeSpicyShellView) existing).stop();
-                content.removeView(existing);
+                NativeSpicyShellView shell = (NativeSpicyShellView) existing;
+                shell.animate().alpha(0f).translationY(NativeLyricsUtils.dp(24)).setDuration(220).withEndAction(() -> {
+                    try {
+                        shell.stop();
+                        content.removeView(shell);
+                    } catch (Throwable t) {
+                        XposedBridge.log(NativeSpicyLyricsHook.TAG + " remove animation cleanup failed: " + t);
+                    }
+                }).start();
                 XposedBridge.log(NativeSpicyLyricsHook.TAG + " removed native Spicy shell");
             }
         } catch (Throwable t) {

@@ -1,0 +1,2166 @@
+{
+ "schemaVersion": 1,
+ "id": "camouflage-provider-capture",
+ "language": "ko",
+ "capture": {
+  "kind": "desktop-provider-cache-whitelist",
+  "sourceSha256": "6d915f19c796c4bb7743f47fb9240518bc6b561f41029ea37ccfd5488d170003",
+  "paragraphDecision": "Provider rows merged raw TTML paragraphs. Provenance unavailable; no hard boundary fabricated.",
+  "spanTuple": [
+   "rawText",
+   "providerPartOfWord",
+   "startMs",
+   "endMs"
+  ]
+ },
+ "lines": [
+  {
+   "id": "camouflage-18",
+   "rawParagraphIndexes": [
+    29,
+    30
+   ],
+   "spans": [
+    [
+     "더",
+     false,
+     49697,
+     50054
+    ],
+    [
+     "이",
+     true,
+     50054,
+     50154
+    ],
+    [
+     "상",
+     false,
+     50154,
+     50435
+    ],
+    [
+     "기",
+     true,
+     50435,
+     50535
+    ],
+    [
+     "댈",
+     false,
+     50535,
+     50661
+    ],
+    [
+     "곳",
+     true,
+     50661,
+     50761
+    ],
+    [
+     "은",
+     false,
+     50761,
+     50939
+    ],
+    [
+     "필",
+     true,
+     50939,
+     51165
+    ],
+    [
+     "요",
+     false,
+     51165,
+     51403
+    ],
+    [
+     "없",
+     true,
+     51403,
+     51570
+    ],
+    [
+     "어",
+     false,
+     51570,
+     52334
+    ]
+   ],
+   "expected": {
+    "canonicalText": "더 이상 기댈 곳은 필요 없어",
+    "boundaries": [
+     [
+      1,
+      "inferred"
+     ],
+     [
+      4,
+      "inferred"
+     ],
+     [
+      7,
+      "inferred"
+     ],
+     [
+      10,
+      "inferred"
+     ],
+     [
+      13,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      1
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      5,
+      6
+     ],
+     [
+      6,
+      7
+     ],
+     [
+      8,
+      9
+     ],
+     [
+      9,
+      10
+     ],
+     [
+      11,
+      12
+     ],
+     [
+      12,
+      13
+     ],
+     [
+      14,
+      15
+     ],
+     [
+      15,
+      16
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      1,
+      "Hangul"
+     ],
+     [
+      1,
+      2,
+      "Whitespace"
+     ],
+     [
+      2,
+      4,
+      "Hangul"
+     ],
+     [
+      4,
+      5,
+      "Whitespace"
+     ],
+     [
+      5,
+      7,
+      "Hangul"
+     ],
+     [
+      7,
+      8,
+      "Whitespace"
+     ],
+     [
+      8,
+      10,
+      "Hangul"
+     ],
+     [
+      10,
+      11,
+      "Whitespace"
+     ],
+     [
+      11,
+      13,
+      "Hangul"
+     ],
+     [
+      13,
+      14,
+      "Whitespace"
+     ],
+     [
+      14,
+      16,
+      "Hangul"
+     ]
+    ],
+    "readingUnits": [
+     {
+      "text": "deo",
+      "kind": "transformed",
+      "startCp": 0,
+      "endCp": 1
+     },
+     {
+      "text": " i",
+      "kind": "transformed",
+      "startCp": 2,
+      "endCp": 3
+     },
+     {
+      "text": "sang",
+      "kind": "transformed",
+      "startCp": 3,
+      "endCp": 4
+     },
+     {
+      "text": " gi",
+      "kind": "transformed",
+      "startCp": 5,
+      "endCp": 6
+     },
+     {
+      "text": "dael",
+      "kind": "transformed",
+      "startCp": 6,
+      "endCp": 7
+     },
+     {
+      "text": " go",
+      "kind": "transformed",
+      "startCp": 8,
+      "endCp": 9
+     },
+     {
+      "text": "seun",
+      "kind": "transformed",
+      "startCp": 9,
+      "endCp": 10
+     },
+     {
+      "text": " pi",
+      "kind": "transformed",
+      "startCp": 11,
+      "endCp": 12
+     },
+     {
+      "text": "ryo",
+      "kind": "transformed",
+      "startCp": 12,
+      "endCp": 13
+     },
+     {
+      "text": " eo",
+      "kind": "transformed",
+      "startCp": 14,
+      "endCp": 15
+     },
+     {
+      "text": "bseo",
+      "kind": "transformed",
+      "startCp": 15,
+      "endCp": 16
+     }
+    ],
+    "timedReadingUnits": [
+     [
+      0,
+      "deo"
+     ],
+     [
+      1,
+      " i"
+     ],
+     [
+      2,
+      "sang"
+     ],
+     [
+      3,
+      " gi"
+     ],
+     [
+      4,
+      "dael"
+     ],
+     [
+      5,
+      " go"
+     ],
+     [
+      6,
+      "seun"
+     ],
+     [
+      7,
+      " pi"
+     ],
+     [
+      8,
+      "ryo"
+     ],
+     [
+      9,
+      " eo"
+     ],
+     [
+      10,
+      "bseo"
+     ]
+    ],
+    "joinedDisplayText": "deo isang gidael goseun piryo eobseo",
+    "readingMode": "rrStandard",
+    "pronunciationDisplays": {
+     "rrPronunciation": "deo isang gidael goseun piryo eopsseo",
+     "vnPronunciation": "do isang gidêl gôsưn piryô opsso"
+    }
+   }
+  },
+  {
+   "id": "camouflage-19",
+   "rawParagraphIndexes": [
+    31,
+    32
+   ],
+   "spans": [
+    [
+     "When",
+     false,
+     52378,
+     52474
+    ],
+    [
+     "you",
+     false,
+     52474,
+     52598
+    ],
+    [
+     "hold",
+     false,
+     52598,
+     52702
+    ],
+    [
+     "me",
+     false,
+     52702,
+     52842
+    ],
+    [
+     "tight",
+     false,
+     52842,
+     53322
+    ]
+   ],
+   "expected": {
+    "canonicalText": "When you hold me tight",
+    "boundaries": [
+     [
+      4,
+      "inferred"
+     ],
+     [
+      8,
+      "inferred"
+     ],
+     [
+      13,
+      "inferred"
+     ],
+     [
+      16,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      4
+     ],
+     [
+      5,
+      8
+     ],
+     [
+      9,
+      13
+     ],
+     [
+      14,
+      16
+     ],
+     [
+      17,
+      22
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      4,
+      "Latin"
+     ],
+     [
+      4,
+      5,
+      "Whitespace"
+     ],
+     [
+      5,
+      8,
+      "Latin"
+     ],
+     [
+      8,
+      9,
+      "Whitespace"
+     ],
+     [
+      9,
+      13,
+      "Latin"
+     ],
+     [
+      13,
+      14,
+      "Whitespace"
+     ],
+     [
+      14,
+      16,
+      "Latin"
+     ],
+     [
+      16,
+      17,
+      "Whitespace"
+     ],
+     [
+      17,
+      22,
+      "Latin"
+     ]
+    ],
+    "readingUnits": [],
+    "timedReadingUnits": [],
+    "joinedDisplayText": ""
+   }
+  },
+  {
+   "id": "camouflage-25",
+   "rawParagraphIndexes": [
+    41,
+    42
+   ],
+   "spans": [
+    [
+     "더",
+     false,
+     62458,
+     62665
+    ],
+    [
+     "속",
+     true,
+     62665,
+     63016
+    ],
+    [
+     "아",
+     true,
+     63016,
+     63243
+    ],
+    [
+     "줄",
+     false,
+     63243,
+     63677
+    ],
+    [
+     "생",
+     true,
+     63677,
+     63998
+    ],
+    [
+     "각",
+     false,
+     63998,
+     64248
+    ],
+    [
+     "없",
+     true,
+     64248,
+     64534
+    ],
+    [
+     "지,",
+     false,
+     64534,
+     65082
+    ],
+    [
+     "네",
+     true,
+     65082,
+     65266
+    ],
+    [
+     "게",
+     true,
+     65266,
+     65445
+    ],
+    [
+     "서",
+     false,
+     65445,
+     65760
+    ],
+    [
+     "Fly",
+     false,
+     65760,
+     66310
+    ]
+   ],
+   "expected": {
+    "canonicalText": "더 속아줄 생각 없지, 네게서 Fly",
+    "boundaries": [
+     [
+      1,
+      "inferred"
+     ],
+     [
+      5,
+      "inferred"
+     ],
+     [
+      8,
+      "inferred"
+     ],
+     [
+      12,
+      "inferred"
+     ],
+     [
+      16,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      1
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      6,
+      7
+     ],
+     [
+      7,
+      8
+     ],
+     [
+      9,
+      10
+     ],
+     [
+      10,
+      12
+     ],
+     [
+      13,
+      14
+     ],
+     [
+      14,
+      15
+     ],
+     [
+      15,
+      16
+     ],
+     [
+      17,
+      20
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      1,
+      "Hangul"
+     ],
+     [
+      1,
+      2,
+      "Whitespace"
+     ],
+     [
+      2,
+      5,
+      "Hangul"
+     ],
+     [
+      5,
+      6,
+      "Whitespace"
+     ],
+     [
+      6,
+      8,
+      "Hangul"
+     ],
+     [
+      8,
+      9,
+      "Whitespace"
+     ],
+     [
+      9,
+      11,
+      "Hangul"
+     ],
+     [
+      11,
+      12,
+      "Punctuation"
+     ],
+     [
+      12,
+      13,
+      "Whitespace"
+     ],
+     [
+      13,
+      16,
+      "Hangul"
+     ],
+     [
+      16,
+      17,
+      "Whitespace"
+     ],
+     [
+      17,
+      20,
+      "Latin"
+     ]
+    ],
+    "readingUnits": [
+     {
+      "text": "deo",
+      "kind": "transformed",
+      "startCp": 0,
+      "endCp": 1
+     },
+     {
+      "text": " so",
+      "kind": "transformed",
+      "startCp": 2,
+      "endCp": 3
+     },
+     {
+      "text": "ga",
+      "kind": "transformed",
+      "startCp": 3,
+      "endCp": 4
+     },
+     {
+      "text": "jul",
+      "kind": "transformed",
+      "startCp": 4,
+      "endCp": 5
+     },
+     {
+      "text": " saeng",
+      "kind": "transformed",
+      "startCp": 6,
+      "endCp": 7
+     },
+     {
+      "text": "gak",
+      "kind": "transformed",
+      "startCp": 7,
+      "endCp": 8
+     },
+     {
+      "text": " eops",
+      "kind": "transformed",
+      "startCp": 9,
+      "endCp": 10
+     },
+     {
+      "text": "ji,",
+      "kind": "transformed",
+      "startCp": 10,
+      "endCp": 12
+     },
+     {
+      "text": " ne",
+      "kind": "transformed",
+      "startCp": 13,
+      "endCp": 14
+     },
+     {
+      "text": "ge",
+      "kind": "transformed",
+      "startCp": 14,
+      "endCp": 15
+     },
+     {
+      "text": "seo",
+      "kind": "transformed",
+      "startCp": 15,
+      "endCp": 16
+     },
+     {
+      "text": " Fly",
+      "kind": "passthrough",
+      "startCp": 17,
+      "endCp": 20
+     }
+    ],
+    "timedReadingUnits": [
+     [
+      0,
+      "deo"
+     ],
+     [
+      1,
+      " so"
+     ],
+     [
+      2,
+      "ga"
+     ],
+     [
+      3,
+      "jul"
+     ],
+     [
+      4,
+      " saeng"
+     ],
+     [
+      5,
+      "gak"
+     ],
+     [
+      6,
+      " eops"
+     ],
+     [
+      7,
+      "ji,"
+     ],
+     [
+      8,
+      " ne"
+     ],
+     [
+      9,
+      "ge"
+     ],
+     [
+      10,
+      "seo"
+     ],
+     [
+      11,
+      " Fly"
+     ]
+    ],
+    "joinedDisplayText": "deo sogajul saenggak eopsji, negeseo Fly",
+    "readingMode": "rrStandard",
+    "pronunciationDisplays": {
+     "rrPronunciation": "deo sogajul saenggak eopjji, negeseo Fly",
+     "vnPronunciation": "do sôgajul sênggak opjji, nêgêso Fly"
+    }
+   }
+  },
+  {
+   "id": "camouflage-29",
+   "rawParagraphIndexes": [
+    48,
+    49
+   ],
+   "spans": [
+    [
+     "주",
+     true,
+     72808,
+     72901
+    ],
+    [
+     "저",
+     false,
+     72901,
+     73009
+    ],
+    [
+     "없",
+     true,
+     73009,
+     73121
+    ],
+    [
+     "이",
+     false,
+     73121,
+     73249
+    ],
+    [
+     "다,",
+     false,
+     73249,
+     73481
+    ],
+    [
+     "Probably",
+     false,
+     73481,
+     73957
+    ],
+    [
+     "delete",
+     false,
+     73957,
+     74437
+    ],
+    [
+     "it",
+     false,
+     74437,
+     75002
+    ]
+   ],
+   "expected": {
+    "canonicalText": "주저 없이 다, Probably delete it",
+    "boundaries": [
+     [
+      2,
+      "inferred"
+     ],
+     [
+      5,
+      "inferred"
+     ],
+     [
+      8,
+      "inferred"
+     ],
+     [
+      17,
+      "inferred"
+     ],
+     [
+      24,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      6,
+      8
+     ],
+     [
+      9,
+      17
+     ],
+     [
+      18,
+      24
+     ],
+     [
+      25,
+      27
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      2,
+      "Hangul"
+     ],
+     [
+      2,
+      3,
+      "Whitespace"
+     ],
+     [
+      3,
+      5,
+      "Hangul"
+     ],
+     [
+      5,
+      6,
+      "Whitespace"
+     ],
+     [
+      6,
+      7,
+      "Hangul"
+     ],
+     [
+      7,
+      8,
+      "Punctuation"
+     ],
+     [
+      8,
+      9,
+      "Whitespace"
+     ],
+     [
+      9,
+      17,
+      "Latin"
+     ],
+     [
+      17,
+      18,
+      "Whitespace"
+     ],
+     [
+      18,
+      24,
+      "Latin"
+     ],
+     [
+      24,
+      25,
+      "Whitespace"
+     ],
+     [
+      25,
+      27,
+      "Latin"
+     ]
+    ],
+    "readingUnits": [
+     {
+      "text": "ju",
+      "kind": "transformed",
+      "startCp": 0,
+      "endCp": 1
+     },
+     {
+      "text": "jeo",
+      "kind": "transformed",
+      "startCp": 1,
+      "endCp": 2
+     },
+     {
+      "text": " eo",
+      "kind": "transformed",
+      "startCp": 3,
+      "endCp": 4
+     },
+     {
+      "text": "bsi",
+      "kind": "transformed",
+      "startCp": 4,
+      "endCp": 5
+     },
+     {
+      "text": " da,",
+      "kind": "transformed",
+      "startCp": 6,
+      "endCp": 8
+     },
+     {
+      "text": " Probably",
+      "kind": "passthrough",
+      "startCp": 9,
+      "endCp": 17
+     },
+     {
+      "text": " delete",
+      "kind": "passthrough",
+      "startCp": 18,
+      "endCp": 24
+     },
+     {
+      "text": " it",
+      "kind": "passthrough",
+      "startCp": 25,
+      "endCp": 27
+     }
+    ],
+    "timedReadingUnits": [
+     [
+      0,
+      "ju"
+     ],
+     [
+      1,
+      "jeo"
+     ],
+     [
+      2,
+      " eo"
+     ],
+     [
+      3,
+      "bsi"
+     ],
+     [
+      4,
+      " da,"
+     ],
+     [
+      5,
+      " Probably"
+     ],
+     [
+      6,
+      " delete"
+     ],
+     [
+      7,
+      " it"
+     ]
+    ],
+    "joinedDisplayText": "jujeo eobsi da, Probably delete it",
+    "readingMode": "rrStandard",
+    "pronunciationDisplays": {
+     "rrPronunciation": "jujeo eopssi da, Probably delete it",
+     "vnPronunciation": "jujo opssi da, Probably delete it"
+    }
+   }
+  },
+  {
+   "id": "camouflage-31",
+   "rawParagraphIndexes": [
+    51,
+    52
+   ],
+   "spans": [
+    [
+     "미",
+     true,
+     76671,
+     76790
+    ],
+    [
+     "련",
+     true,
+     76790,
+     76957
+    ],
+    [
+     "이",
+     false,
+     76957,
+     77057
+    ],
+    [
+     "아",
+     true,
+     77057,
+     77157
+    ],
+    [
+     "냐,",
+     false,
+     77157,
+     77324
+    ],
+    [
+     "그",
+     true,
+     77324,
+     77497
+    ],
+    [
+     "저",
+     false,
+     77497,
+     77597
+    ],
+    [
+     "Hard",
+     false,
+     77597,
+     77841
+    ],
+    [
+     "to",
+     false,
+     77841,
+     78033
+    ],
+    [
+     "see",
+     false,
+     78033,
+     78257
+    ],
+    [
+     "it",
+     false,
+     78257,
+     78841
+    ]
+   ],
+   "expected": {
+    "canonicalText": "미련이 아냐, 그저 Hard to see it",
+    "boundaries": [
+     [
+      3,
+      "inferred"
+     ],
+     [
+      7,
+      "inferred"
+     ],
+     [
+      10,
+      "inferred"
+     ],
+     [
+      15,
+      "inferred"
+     ],
+     [
+      18,
+      "inferred"
+     ],
+     [
+      22,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      7
+     ],
+     [
+      8,
+      9
+     ],
+     [
+      9,
+      10
+     ],
+     [
+      11,
+      15
+     ],
+     [
+      16,
+      18
+     ],
+     [
+      19,
+      22
+     ],
+     [
+      23,
+      25
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      3,
+      "Hangul"
+     ],
+     [
+      3,
+      4,
+      "Whitespace"
+     ],
+     [
+      4,
+      6,
+      "Hangul"
+     ],
+     [
+      6,
+      7,
+      "Punctuation"
+     ],
+     [
+      7,
+      8,
+      "Whitespace"
+     ],
+     [
+      8,
+      10,
+      "Hangul"
+     ],
+     [
+      10,
+      11,
+      "Whitespace"
+     ],
+     [
+      11,
+      15,
+      "Latin"
+     ],
+     [
+      15,
+      16,
+      "Whitespace"
+     ],
+     [
+      16,
+      18,
+      "Latin"
+     ],
+     [
+      18,
+      19,
+      "Whitespace"
+     ],
+     [
+      19,
+      22,
+      "Latin"
+     ],
+     [
+      22,
+      23,
+      "Whitespace"
+     ],
+     [
+      23,
+      25,
+      "Latin"
+     ]
+    ],
+    "readingUnits": [
+     {
+      "text": "mi",
+      "kind": "transformed",
+      "startCp": 0,
+      "endCp": 1
+     },
+     {
+      "text": "ryeo",
+      "kind": "transformed",
+      "startCp": 1,
+      "endCp": 2
+     },
+     {
+      "text": "ni",
+      "kind": "transformed",
+      "startCp": 2,
+      "endCp": 3
+     },
+     {
+      "text": " a",
+      "kind": "transformed",
+      "startCp": 4,
+      "endCp": 5
+     },
+     {
+      "text": "nya,",
+      "kind": "transformed",
+      "startCp": 5,
+      "endCp": 7
+     },
+     {
+      "text": " geu",
+      "kind": "transformed",
+      "startCp": 8,
+      "endCp": 9
+     },
+     {
+      "text": "jeo",
+      "kind": "transformed",
+      "startCp": 9,
+      "endCp": 10
+     },
+     {
+      "text": " Hard",
+      "kind": "passthrough",
+      "startCp": 11,
+      "endCp": 15
+     },
+     {
+      "text": " to",
+      "kind": "passthrough",
+      "startCp": 16,
+      "endCp": 18
+     },
+     {
+      "text": " see",
+      "kind": "passthrough",
+      "startCp": 19,
+      "endCp": 22
+     },
+     {
+      "text": " it",
+      "kind": "passthrough",
+      "startCp": 23,
+      "endCp": 25
+     }
+    ],
+    "timedReadingUnits": [
+     [
+      0,
+      "mi"
+     ],
+     [
+      1,
+      "ryeo"
+     ],
+     [
+      2,
+      "ni"
+     ],
+     [
+      3,
+      " a"
+     ],
+     [
+      4,
+      "nya,"
+     ],
+     [
+      5,
+      " geu"
+     ],
+     [
+      6,
+      "jeo"
+     ],
+     [
+      7,
+      " Hard"
+     ],
+     [
+      8,
+      " to"
+     ],
+     [
+      9,
+      " see"
+     ],
+     [
+      10,
+      " it"
+     ]
+    ],
+    "joinedDisplayText": "miryeoni anya, geujeo Hard to see it",
+    "readingMode": "rrStandard",
+    "pronunciationDisplays": {
+     "rrPronunciation": "miryeoni anya, geujeo Hard to see it",
+     "vnPronunciation": "miryoni anya, gưjo Hard to see it"
+    }
+   }
+  },
+  {
+   "id": "camouflage-33",
+   "rawParagraphIndexes": [
+    54
+   ],
+   "spans": [
+    [
+     "처",
+     true,
+     80440,
+     80761
+    ],
+    [
+     "음",
+     true,
+     80761,
+     80862
+    ],
+    [
+     "부",
+     true,
+     80862,
+     81053
+    ],
+    [
+     "터",
+     false,
+     81053,
+     81153
+    ],
+    [
+     "잘",
+     true,
+     81153,
+     81253
+    ],
+    [
+     "못",
+     true,
+     81253,
+     81353
+    ],
+    [
+     "됐",
+     true,
+     81353,
+     81588
+    ],
+    [
+     "단",
+     false,
+     81588,
+     81850
+    ],
+    [
+     "걸",
+     false,
+     81850,
+     82518
+    ]
+   ],
+   "expected": {
+    "canonicalText": "처음부터 잘못됐단 걸",
+    "boundaries": [
+     [
+      4,
+      "inferred"
+     ],
+     [
+      9,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      5,
+      6
+     ],
+     [
+      6,
+      7
+     ],
+     [
+      7,
+      8
+     ],
+     [
+      8,
+      9
+     ],
+     [
+      10,
+      11
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      4,
+      "Hangul"
+     ],
+     [
+      4,
+      5,
+      "Whitespace"
+     ],
+     [
+      5,
+      9,
+      "Hangul"
+     ],
+     [
+      9,
+      10,
+      "Whitespace"
+     ],
+     [
+      10,
+      11,
+      "Hangul"
+     ]
+    ],
+    "readingUnits": [
+     {
+      "text": "cheo",
+      "kind": "transformed",
+      "startCp": 0,
+      "endCp": 1
+     },
+     {
+      "text": "eum",
+      "kind": "transformed",
+      "startCp": 1,
+      "endCp": 2
+     },
+     {
+      "text": "bu",
+      "kind": "transformed",
+      "startCp": 2,
+      "endCp": 3
+     },
+     {
+      "text": "teo",
+      "kind": "transformed",
+      "startCp": 3,
+      "endCp": 4
+     },
+     {
+      "text": " jal",
+      "kind": "transformed",
+      "startCp": 5,
+      "endCp": 6
+     },
+     {
+      "text": "mot",
+      "kind": "transformed",
+      "startCp": 6,
+      "endCp": 7
+     },
+     {
+      "text": "dwaet",
+      "kind": "transformed",
+      "startCp": 7,
+      "endCp": 8
+     },
+     {
+      "text": "dan",
+      "kind": "transformed",
+      "startCp": 8,
+      "endCp": 9
+     },
+     {
+      "text": " geol",
+      "kind": "transformed",
+      "startCp": 10,
+      "endCp": 11
+     }
+    ],
+    "timedReadingUnits": [
+     [
+      0,
+      "cheo"
+     ],
+     [
+      1,
+      "eum"
+     ],
+     [
+      2,
+      "bu"
+     ],
+     [
+      3,
+      "teo"
+     ],
+     [
+      4,
+      " jal"
+     ],
+     [
+      5,
+      "mot"
+     ],
+     [
+      6,
+      "dwaet"
+     ],
+     [
+      7,
+      "dan"
+     ],
+     [
+      8,
+      " geol"
+     ]
+    ],
+    "joinedDisplayText": "cheoeumbuteo jalmotdwaetdan geol",
+    "readingMode": "rrStandard",
+    "pronunciationDisplays": {
+     "rrPronunciation": "cheo-eumbuteo jalmot-ttwaet-ttan geol",
+     "vnPronunciation": "choưmbuto jalmôt-ttwêt-ttan gol"
+    }
+   }
+  },
+  {
+   "id": "camouflage-46",
+   "rawParagraphIndexes": [
+    75,
+    76,
+    77,
+    78
+   ],
+   "spans": [
+    [
+     "더",
+     false,
+     111119,
+     111512
+    ],
+    [
+     "이",
+     true,
+     111512,
+     111678
+    ],
+    [
+     "상",
+     false,
+     111678,
+     111970
+    ],
+    [
+     "기",
+     true,
+     111970,
+     112083
+    ],
+    [
+     "댈",
+     false,
+     112083,
+     112208
+    ],
+    [
+     "곳",
+     true,
+     112208,
+     112315
+    ],
+    [
+     "은",
+     false,
+     112315,
+     112415
+    ],
+    [
+     "필",
+     true,
+     112344,
+     112444
+    ],
+    [
+     "요",
+     false,
+     112444,
+     112544
+    ],
+    [
+     "없",
+     true,
+     112544,
+     112921
+    ],
+    [
+     "어",
+     false,
+     112921,
+     113591
+    ],
+    [
+     "When",
+     false,
+     113791,
+     113896
+    ],
+    [
+     "you",
+     false,
+     113896,
+     114027
+    ],
+    [
+     "hold",
+     false,
+     114027,
+     114123
+    ],
+    [
+     "me",
+     false,
+     114123,
+     114267
+    ],
+    [
+     "tight",
+     false,
+     114267,
+     114759
+    ]
+   ],
+   "expected": {
+    "canonicalText": "더 이상 기댈 곳은 필요 없어 When you hold me tight",
+    "boundaries": [
+     [
+      1,
+      "inferred"
+     ],
+     [
+      4,
+      "inferred"
+     ],
+     [
+      7,
+      "inferred"
+     ],
+     [
+      10,
+      "inferred"
+     ],
+     [
+      13,
+      "inferred"
+     ],
+     [
+      16,
+      "inferred"
+     ],
+     [
+      21,
+      "inferred"
+     ],
+     [
+      25,
+      "inferred"
+     ],
+     [
+      30,
+      "inferred"
+     ],
+     [
+      33,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      1
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      5,
+      6
+     ],
+     [
+      6,
+      7
+     ],
+     [
+      8,
+      9
+     ],
+     [
+      9,
+      10
+     ],
+     [
+      11,
+      12
+     ],
+     [
+      12,
+      13
+     ],
+     [
+      14,
+      15
+     ],
+     [
+      15,
+      16
+     ],
+     [
+      17,
+      21
+     ],
+     [
+      22,
+      25
+     ],
+     [
+      26,
+      30
+     ],
+     [
+      31,
+      33
+     ],
+     [
+      34,
+      39
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      1,
+      "Hangul"
+     ],
+     [
+      1,
+      2,
+      "Whitespace"
+     ],
+     [
+      2,
+      4,
+      "Hangul"
+     ],
+     [
+      4,
+      5,
+      "Whitespace"
+     ],
+     [
+      5,
+      7,
+      "Hangul"
+     ],
+     [
+      7,
+      8,
+      "Whitespace"
+     ],
+     [
+      8,
+      10,
+      "Hangul"
+     ],
+     [
+      10,
+      11,
+      "Whitespace"
+     ],
+     [
+      11,
+      13,
+      "Hangul"
+     ],
+     [
+      13,
+      14,
+      "Whitespace"
+     ],
+     [
+      14,
+      16,
+      "Hangul"
+     ],
+     [
+      16,
+      17,
+      "Whitespace"
+     ],
+     [
+      17,
+      21,
+      "Latin"
+     ],
+     [
+      21,
+      22,
+      "Whitespace"
+     ],
+     [
+      22,
+      25,
+      "Latin"
+     ],
+     [
+      25,
+      26,
+      "Whitespace"
+     ],
+     [
+      26,
+      30,
+      "Latin"
+     ],
+     [
+      30,
+      31,
+      "Whitespace"
+     ],
+     [
+      31,
+      33,
+      "Latin"
+     ],
+     [
+      33,
+      34,
+      "Whitespace"
+     ],
+     [
+      34,
+      39,
+      "Latin"
+     ]
+    ],
+    "readingUnits": [
+     {
+      "text": "deo",
+      "kind": "transformed",
+      "startCp": 0,
+      "endCp": 1
+     },
+     {
+      "text": " i",
+      "kind": "transformed",
+      "startCp": 2,
+      "endCp": 3
+     },
+     {
+      "text": "sang",
+      "kind": "transformed",
+      "startCp": 3,
+      "endCp": 4
+     },
+     {
+      "text": " gi",
+      "kind": "transformed",
+      "startCp": 5,
+      "endCp": 6
+     },
+     {
+      "text": "dael",
+      "kind": "transformed",
+      "startCp": 6,
+      "endCp": 7
+     },
+     {
+      "text": " go",
+      "kind": "transformed",
+      "startCp": 8,
+      "endCp": 9
+     },
+     {
+      "text": "seun",
+      "kind": "transformed",
+      "startCp": 9,
+      "endCp": 10
+     },
+     {
+      "text": " pi",
+      "kind": "transformed",
+      "startCp": 11,
+      "endCp": 12
+     },
+     {
+      "text": "ryo",
+      "kind": "transformed",
+      "startCp": 12,
+      "endCp": 13
+     },
+     {
+      "text": " eo",
+      "kind": "transformed",
+      "startCp": 14,
+      "endCp": 15
+     },
+     {
+      "text": "bseo",
+      "kind": "transformed",
+      "startCp": 15,
+      "endCp": 16
+     },
+     {
+      "text": " When",
+      "kind": "passthrough",
+      "startCp": 17,
+      "endCp": 21
+     },
+     {
+      "text": " you",
+      "kind": "passthrough",
+      "startCp": 22,
+      "endCp": 25
+     },
+     {
+      "text": " hold",
+      "kind": "passthrough",
+      "startCp": 26,
+      "endCp": 30
+     },
+     {
+      "text": " me",
+      "kind": "passthrough",
+      "startCp": 31,
+      "endCp": 33
+     },
+     {
+      "text": " tight",
+      "kind": "passthrough",
+      "startCp": 34,
+      "endCp": 39
+     }
+    ],
+    "timedReadingUnits": [
+     [
+      0,
+      "deo"
+     ],
+     [
+      1,
+      " i"
+     ],
+     [
+      2,
+      "sang"
+     ],
+     [
+      3,
+      " gi"
+     ],
+     [
+      4,
+      "dael"
+     ],
+     [
+      5,
+      " go"
+     ],
+     [
+      6,
+      "seun"
+     ],
+     [
+      7,
+      " pi"
+     ],
+     [
+      8,
+      "ryo"
+     ],
+     [
+      9,
+      " eo"
+     ],
+     [
+      10,
+      "bseo"
+     ],
+     [
+      11,
+      " When"
+     ],
+     [
+      12,
+      " you"
+     ],
+     [
+      13,
+      " hold"
+     ],
+     [
+      14,
+      " me"
+     ],
+     [
+      15,
+      " tight"
+     ]
+    ],
+    "joinedDisplayText": "deo isang gidael goseun piryo eobseo When you hold me tight",
+    "readingMode": "rrStandard",
+    "pronunciationDisplays": {
+     "rrPronunciation": "deo isang gidael goseun piryo eopsseo When you hold me tight",
+     "vnPronunciation": "do isang gidêl gôsưn piryô opsso When you hold me tight"
+    }
+   }
+  }
+ ]
+}

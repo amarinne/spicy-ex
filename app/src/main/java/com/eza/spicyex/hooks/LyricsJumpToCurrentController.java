@@ -1,6 +1,7 @@
 package com.eza.spicyex.hooks;
 
 import static com.eza.spicyex.hooks.NativeLyricsUtils.dp;
+import static com.eza.spicyex.hooks.NativeIconButtons.applyPressScale;
 
 import android.app.Activity;
 import android.graphics.Color;
@@ -35,6 +36,7 @@ final class LyricsJumpToCurrentController {
         bg.setColor(Color.argb(210, 36, 36, 36));
         view.setBackground(bg);
         view.setElevation(dp(8));
+        applyPressScale(view);
         view.setOnClickListener(v -> {
             if (onClick != null) onClick.run();
         });

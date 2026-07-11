@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 
 /**
  * One renderer row produced by {@link LyricTimeline#applySyncedRows(LyricsDocument)}: a lead
@@ -16,6 +17,7 @@ public class AppliedLine {
     public String romanizedText = "";
     public String translatedText = "";
     public SpicyJapaneseChineseProcessor.JapaneseReading japaneseReading;
+    public RenderPlan readingRenderPlan;
     public final List<SyllableSegment> words = new ArrayList<>();
     // True when `words` were synthesised from the line text (sentence-synced line) purely to attach
     // per-word transliteration — not real word-level timing. Lets us drop them if the setting is off.

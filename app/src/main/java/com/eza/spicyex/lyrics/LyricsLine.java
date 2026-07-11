@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 
 /** One parsed lyric line (vocal or interlude marker), before row planning. */
 public class LyricsLine {
@@ -9,6 +10,7 @@ public class LyricsLine {
     public String romanizedText = "";
     public String translatedText = "";
     public SpicyJapaneseChineseProcessor.JapaneseReading japaneseReading;
+    public RenderPlan readingRenderPlan;
     public List<SyllableSegment> syllables = new ArrayList<>();
     public List<BackgroundLine> backgroundLines = new ArrayList<>();
     public String chineseMode = "";
@@ -24,6 +26,7 @@ public class LyricsLine {
         copy.romanizedText = LyricsDocument.safe(source.romanizedText);
         copy.translatedText = LyricsDocument.safe(source.translatedText);
         copy.japaneseReading = source.japaneseReading;
+        copy.readingRenderPlan = source.readingRenderPlan;
         copy.chineseMode = LyricsDocument.safe(source.chineseMode);
         copy.startMs = source.startMs;
         copy.endMs = source.endMs;

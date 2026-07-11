@@ -29,7 +29,8 @@ public final class LyricsSecondaryRowUpdater {
             row.romanizedText = roman;
             row.translatedText = translated;
             row.japaneseReading = row.sourceLine.japaneseReading;
-            if (decision.remountForFurigana) {
+            row.readingRenderPlan = row.sourceLine.readingRenderPlan;
+            if (decision.remountForFurigana || decision.remountForReadingPlan) {
                 LyricsLineViewState.clear(row, mountedRowsHost, invalidation);
                 structureChanged = true;
                 continue;
@@ -70,6 +71,8 @@ public final class LyricsSecondaryRowUpdater {
         boolean japaneseReadingChanged = row != null
                 && row.sourceLine != null
                 && row.japaneseReading != row.sourceLine.japaneseReading;
+        boolean readingPlanChanged = row != null && row.sourceLine != null
+                && row.readingRenderPlan != row.sourceLine.readingRenderPlan;
         boolean furiganaAppeared = row != null
                 && !hasFurigana(row.japaneseReading)
                 && row.sourceLine != null
@@ -78,7 +81,9 @@ public final class LyricsSecondaryRowUpdater {
                 && showRomanization
                 && LyricsShellSettings.showJapaneseFurigana(japaneseReadingMode)
                 && isMounted;
-        return new RefreshDecision(romanChanged, translatedChanged, japaneseReadingChanged, remountForFurigana);
+        boolean remountForReadingPlan = readingPlanChanged && showRomanization && isMounted;
+        return new RefreshDecision(romanChanged, translatedChanged, japaneseReadingChanged,
+                readingPlanChanged, remountForFurigana, remountForReadingPlan);
     }
 
     private static boolean hasFurigana(SpicyJapaneseChineseProcessor.JapaneseReading reading) {
@@ -93,17 +98,22 @@ public final class LyricsSecondaryRowUpdater {
         final boolean romanChanged;
         final boolean translatedChanged;
         final boolean japaneseReadingChanged;
+        final boolean readingPlanChanged;
         final boolean remountForFurigana;
+        final boolean remountForReadingPlan;
 
-        RefreshDecision(boolean romanChanged, boolean translatedChanged, boolean japaneseReadingChanged, boolean remountForFurigana) {
+        RefreshDecision(boolean romanChanged, boolean translatedChanged, boolean japaneseReadingChanged,
+                        boolean readingPlanChanged, boolean remountForFurigana, boolean remountForReadingPlan) {
             this.romanChanged = romanChanged;
             this.translatedChanged = translatedChanged;
             this.japaneseReadingChanged = japaneseReadingChanged;
+            this.readingPlanChanged = readingPlanChanged;
             this.remountForFurigana = remountForFurigana;
+            this.remountForReadingPlan = remountForReadingPlan;
         }
 
         boolean hasChanges() {
-            return romanChanged || translatedChanged || japaneseReadingChanged;
+            return romanChanged || translatedChanged || japaneseReadingChanged || readingPlanChanged;
         }
     }
 }

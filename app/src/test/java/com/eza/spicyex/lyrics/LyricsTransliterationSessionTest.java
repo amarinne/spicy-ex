@@ -18,29 +18,45 @@ public class LyricsTransliterationSessionTest {
                 cycleConfig(),
                 null,
                 null,
-                SpicyRomanizer.KOREAN_PRONUNCIATION,
+                KoreanDisplayMode.VN_PRONUNCIATION.value,
                 null);
 
         LyricsTransliterationSession.CycleResult result = session.cycle(false, false, true, false);
 
         assertTrue(result.showRomanization);
-        assertEquals(SpicyRomanizer.KOREAN_PRONUNCIATION, session.koreanMode());
+        assertEquals(KoreanDisplayMode.RR_STANDARD.value, session.koreanMode());
     }
 
     @Test
-    public void koreanCycleTurnsOffAfterRestoredLastMode() throws Exception {
+    public void koreanCycleWalksFourModesThenTurnsOff() throws Exception {
         LyricsTransliterationSession session = new LyricsTransliterationSession(
-                true,
+                false,
                 cycleConfig(),
                 null,
                 null,
-                SpicyRomanizer.KOREAN_PRONUNCIATION,
+                null,
                 null);
 
         LyricsTransliterationSession.CycleResult result = session.cycle(false, false, true, false);
+        assertTrue(result.showRomanization);
+        assertEquals(KoreanDisplayMode.RR_STANDARD.value, session.koreanMode());
+
+        result = session.cycle(false, false, true, false);
+        assertTrue(result.showRomanization);
+        assertEquals(KoreanDisplayMode.WORD_TRANSLIT.value, session.koreanMode());
+
+        result = session.cycle(false, false, true, false);
+        assertTrue(result.showRomanization);
+        assertEquals(KoreanDisplayMode.RR_PRONUNCIATION.value, session.koreanMode());
+
+        result = session.cycle(false, false, true, false);
+        assertTrue(result.showRomanization);
+        assertEquals(KoreanDisplayMode.VN_PRONUNCIATION.value, session.koreanMode());
+
+        result = session.cycle(false, false, true, false);
 
         assertFalse(result.showRomanization);
-        assertEquals(SpicyRomanizer.KOREAN_PRONUNCIATION, session.koreanMode());
+        assertEquals(KoreanDisplayMode.VN_PRONUNCIATION.value, session.koreanMode());
     }
 
     @Test
@@ -75,7 +91,31 @@ public class LyricsTransliterationSessionTest {
         assertEquals(SpotifyPlusConfig.CHINESE_MODE_PINYIN, session.chineseMode());
     }
 
+    @Test
+    public void renderConfigCarriesKoreanCycleCurrentModeSeparately() throws Exception {
+        LyricsRenderConfig config = configWithKorean("cycle", KoreanDisplayMode.RR_STANDARD.value, KoreanDisplayMode.VN_PRONUNCIATION.value);
+
+        assertEquals("cycle", config.koreanModeConfig);
+        assertEquals(KoreanDisplayMode.RR_STANDARD.value, config.defaultKoreanMode);
+        assertEquals(KoreanDisplayMode.VN_PRONUNCIATION.value, config.koreanMode);
+    }
+
+    @Test
+    public void renderConfigCarriesFixedKoreanModeAsCurrentMode() throws Exception {
+        LyricsRenderConfig config = configWithKorean(KoreanDisplayMode.WORD_TRANSLIT.value,
+                KoreanDisplayMode.WORD_TRANSLIT.value, KoreanDisplayMode.WORD_TRANSLIT.value);
+
+        assertEquals(KoreanDisplayMode.WORD_TRANSLIT.value, config.koreanModeConfig);
+        assertEquals(KoreanDisplayMode.WORD_TRANSLIT.value, config.defaultKoreanMode);
+        assertEquals(KoreanDisplayMode.WORD_TRANSLIT.value, config.koreanMode);
+    }
+
     private static LyricsRenderConfig cycleConfig() throws Exception {
+        return configWithKorean("cycle", KoreanDisplayMode.WORD_TRANSLIT.value, KoreanDisplayMode.WORD_TRANSLIT.value);
+    }
+
+    private static LyricsRenderConfig configWithKorean(String koreanModeConfig, String defaultKoreanMode,
+                                                       String koreanMode) throws Exception {
         Constructor<LyricsRenderConfig> ctor = LyricsRenderConfig.class.getDeclaredConstructor(
                 boolean.class, boolean.class, boolean.class, boolean.class, boolean.class, boolean.class, float.class,
                 boolean.class, boolean.class, boolean.class, boolean.class,
@@ -94,7 +134,7 @@ public class LyricsTransliterationSessionTest {
                 "Spotlight word", "Off", "Top to bottom", "Fade up", "Scroll with lyric", "Grouped", "Top to bottom",
                 "cycle", SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI,
                 "cycle", SpotifyPlusConfig.CHINESE_MODE_PINYIN,
-                "cycle", "Letter-by-letter", "Letter-by-letter",
+                koreanModeConfig, defaultKoreanMode, koreanMode,
                 false,
                 "cycle", SpicyRomanizer.CYRILLIC_RUSSIAN, SpicyRomanizer.CYRILLIC_RUSSIAN, false,
                 true, "en", false, 0);

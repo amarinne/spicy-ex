@@ -9,7 +9,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  * Emits decisions only. Renderer/platform own presentation.
  */
 public final class SpicyProcessing {
-    public static final int PROCESSING_VERSION = 9;
+    public static final int PROCESSING_VERSION = 10;
 
     private SpicyProcessing() {
     }

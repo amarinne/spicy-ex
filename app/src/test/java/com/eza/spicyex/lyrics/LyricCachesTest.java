@@ -38,6 +38,16 @@ public class LyricCachesTest {
     }
 
     @Test
+    public void processedDocumentKeyDiffersByKoreanDisplayMode() {
+        String rr = LyricCaches.processedDocumentKey(10, "track", "ko",
+                new RomanizationOptions("pinyin", KoreanDisplayMode.RR_STANDARD.value, false, "Russian", false));
+        String vn = LyricCaches.processedDocumentKey(10, "track", "ko",
+                new RomanizationOptions("pinyin", KoreanDisplayMode.VN_PRONUNCIATION.value, false, "Russian", false));
+
+        assertTrue(!rr.equals(vn));
+    }
+
+    @Test
     public void boundedGoogleCacheOrderMovesExistingKeyToNewest() {
         LyricCaches.CacheOrderUpdate update = LyricCaches.boundedGoogleCacheOrder("a\nb\nc", "b", 3);
 

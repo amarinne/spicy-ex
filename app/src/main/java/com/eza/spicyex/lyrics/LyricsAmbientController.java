@@ -13,6 +13,7 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.beautifullyrics.entities.AmbientBackgroundLayer;
 import com.eza.spicyex.beautifullyrics.entities.KawarpBackgroundView;
+import com.eza.spicyex.beautifullyrics.entities.StaticBlurCoverBackgroundView;
 
 import java.io.IOException;
 
@@ -70,6 +71,12 @@ public final class LyricsAmbientController {
         if (animatedBackground != null) animatedBackground.resumeRendering();
     }
 
+    public void setPlaying(boolean playing) {
+        if (animatedBackground instanceof KawarpBackgroundView) {
+            ((KawarpBackgroundView) animatedBackground).setPlaying(playing);
+        }
+    }
+
     /** Apply the "Animated background" setting live: show+resume or hide+pause the layer. */
     public void applyEnabled(boolean enabled) {
         applySettings(enabled, config == null || config.get(Settings.FORCE_DARK_BACKGROUND));
@@ -100,13 +107,12 @@ public final class LyricsAmbientController {
 
     private void createAnimatedLayer(FrameLayout parent, boolean forceDark) {
         if (parent == null) return;
-        // Kawarp needs AGSL (Android 13+). Older devices skip animated background instead of
-        // running the retired CPU blob fallback.
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return;
         try {
-            animatedBackground = new KawarpBackgroundView(activity, forceDark);
+            animatedBackground = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
+                    ? new KawarpBackgroundView(activity, forceDark)
+                    : new StaticBlurCoverBackgroundView(activity);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " kawarp shader unavailable; animated background disabled: " + t);
+            XposedBridge.log(TAG + " ambient background unavailable: " + t);
             animatedBackground = null;
             return;
         }

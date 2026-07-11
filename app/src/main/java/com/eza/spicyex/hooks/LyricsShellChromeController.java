@@ -1,6 +1,7 @@
 package com.eza.spicyex.hooks;
 
 import static com.eza.spicyex.hooks.NativeIconButtons.createRoundIconButton;
+import static com.eza.spicyex.hooks.NativeIconButtons.applyPressScale;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.dp;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.sideSystemPadding;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.topSystemPadding;
@@ -52,6 +53,7 @@ final class LyricsShellChromeController {
                 Color.WHITE, textFactory.resolveTypeface(false));
         back.setGravity(Gravity.CENTER);
         back.setAlpha(0.92f);
+        applyPressScale(back);
         back.setOnClickListener(v -> onBack.run());
         header.addView(back, new LinearLayout.LayoutParams(dp(chromeButtonDp), dp(chromeButtonDp)));
 

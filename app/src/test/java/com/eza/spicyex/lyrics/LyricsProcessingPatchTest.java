@@ -38,7 +38,7 @@ public class LyricsProcessingPatchTest {
     }
 
     @Test
-    public void fromLineCopiesSegmentRomanization() {
+    public void fromLineMovesRomanizationIntoPlan() {
         LyricsLine source = line("kana", "romaji", "translated");
         source.chineseMode = "pinyin";
         source.syllables.add(segment("ka", "ka"));
@@ -52,11 +52,12 @@ public class LyricsProcessingPatchTest {
         patch.applyTo(doc);
 
         LyricsLine target = doc.lines.get(0);
-        assertEquals("romaji", target.romanizedText);
+        assertEquals("", target.romanizedText);
+        assertEquals("romaji", target.readingRenderPlan.joinedDisplayText);
         assertEquals("translated", target.translatedText);
         assertEquals("pinyin", target.chineseMode);
-        assertEquals("ka", target.syllables.get(0).romanizedText);
-        assertEquals("na", target.syllables.get(1).romanizedText);
+        assertEquals("", target.syllables.get(0).romanizedText);
+        assertEquals("", target.syllables.get(1).romanizedText);
     }
 
     @Test

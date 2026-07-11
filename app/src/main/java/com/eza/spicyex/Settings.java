@@ -1,5 +1,7 @@
 package com.eza.spicyex;
 
+import com.eza.spicyex.lyrics.KoreanDisplayMode;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -202,12 +204,14 @@ public final class Settings {
             "off", "pinyin", "jyutping", "cycle"
     );
 
-    // "Letter-by-letter" = literal per-syllable table (aromanize-compatible, default).
-    // "Pronunciation" = jamo-aware pronunciation pass (liaison/nasalization/etc., see SpicyKoreanG2P).
     public static final Setting<String> KOREAN_ROMANIZATION = enumSetting(
-            "lyrics_korean_romanization", TRANSLITERATION, "Korean romanization",
-            "Pronunciation",
-            "Off", "Letter-by-letter", "Pronunciation", "cycle"
+            "lyrics_korean_romanization", TRANSLITERATION, "Korean display",
+            KoreanDisplayMode.RR_STANDARD.value,
+            KoreanDisplayMode.RR_STANDARD.value,
+            KoreanDisplayMode.WORD_TRANSLIT.value,
+            KoreanDisplayMode.RR_PRONUNCIATION.value,
+            KoreanDisplayMode.VN_PRONUNCIATION.value,
+            "cycle"
     );
 
     // On = Mandarin pinyin tone marks (zhōng guó) + Cantonese jyutping tone numbers (nei5).
@@ -297,8 +301,11 @@ public final class Settings {
 
     public static final Setting<String> LAST_KOREAN_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_korean_cycle_mode", "Last Korean cycle mode",
-            "Pronunciation",
-            "Letter-by-letter", "Pronunciation"
+            KoreanDisplayMode.RR_STANDARD.value,
+            KoreanDisplayMode.RR_STANDARD.value,
+            KoreanDisplayMode.WORD_TRANSLIT.value,
+            KoreanDisplayMode.RR_PRONUNCIATION.value,
+            KoreanDisplayMode.VN_PRONUNCIATION.value
     );
 
     public static final Setting<String> LAST_CYRILLIC_CYCLE_MODE = internalEnumSetting(
@@ -402,6 +409,11 @@ public final class Settings {
         public String coerce(Object value) {
             if (!(value instanceof String)) return defaultValue;
             String s = (String) value;
+            if (KOREAN_ROMANIZATION.key.equals(key)) {
+                if ("cycle".equals(s)) return s;
+                return KoreanDisplayMode.valueOfSetting(s);
+            }
+            if (LAST_KOREAN_CYCLE_MODE.key.equals(key)) return KoreanDisplayMode.valueOfSetting(s);
             if (allowedValues != null && !allowedValues.contains(s)) return defaultValue;
             return s;
         }

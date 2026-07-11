@@ -54,6 +54,7 @@ public final class LyricCaches {
     public static String processedDocumentKey(int processingVersion, String trackId, String language,
                                               RomanizationOptions opts, String processingContextKey) {
         return "processed-doc-v" + processingVersion
+                + "|reading-schema-v" + ProcessedLyricsCache.READING_SCHEMA_VERSION
                 + "|" + safe(trackId)
                 + "|" + sourceLanguageForCache(language)
                 + "|" + (opts == null ? RomanizationOptions.DEFAULTS : opts).cacheKey()

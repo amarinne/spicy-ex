@@ -48,6 +48,15 @@ public final class LyricsScrollController {
         return scrollView.getPaddingTop() + r.top - (scrollView.getHeight() / 2) + (row.getHeight() / 2);
     }
 
+    public boolean isRowVisible(View row, int minVisiblePx) {
+        if (scrollView == null || contentColumn == null || row == null) return false;
+        Rect r = new Rect(0, 0, row.getWidth(), row.getHeight());
+        contentColumn.offsetDescendantRectToMyCoords(row, r);
+        int top = scrollView.getScrollY() + scrollView.getPaddingTop();
+        int bottom = scrollView.getScrollY() + scrollView.getHeight() - scrollView.getPaddingBottom();
+        return Math.min(r.bottom, bottom) - Math.max(r.top, top) >= Math.max(1, minVisiblePx);
+    }
+
     public int rowCenterInContent(View row) {
         if (contentColumn == null || row == null) return 0;
         Rect r = new Rect(0, 0, row.getWidth(), row.getHeight());

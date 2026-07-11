@@ -7,6 +7,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.Gson;
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 import com.eza.spicyex.SpotifyPlusConfig;
 
 import de.robv.android.xposed.XposedBridge;
@@ -16,6 +18,8 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 /** Serialized cache for post-processed romanization/translation fields. */
 public final class ProcessedLyricsCache {
     private static final String TAG = "[SpotifyPlusProcessedLyricsCache]";
+    public static final int READING_SCHEMA_VERSION = 1;
+    private static final Gson GSON = new Gson();
 
     private ProcessedLyricsCache() {
     }
@@ -27,6 +31,7 @@ public final class ProcessedLyricsCache {
             if (isBlank(raw)) return;
             JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
             if (root == null || Json.optDouble(root, -1, "version") != processingVersion) return;
+            boolean compatibleReadingSchema = Json.optDouble(root, -1, "readingSchemaVersion") == READING_SCHEMA_VERSION;
             doc.includesRomanization = Json.optBoolean(root, false, "includesRomanization");
             doc.includesTranslation = Json.optBoolean(root, false, "includesTranslation");
             JsonArray lines = Json.optArray(root, "lines");
@@ -48,6 +53,9 @@ public final class ProcessedLyricsCache {
                 if (!isBlank(cnMode)) line.chineseMode = normalizeChineseMode(cnMode);
                 SpicyJapaneseChineseProcessor.JapaneseReading reading = LyricsParser.parseJapaneseReading(item);
                 if (reading != null) line.japaneseReading = reading;
+                if (compatibleReadingSchema && item.has("readingRenderPlan")) {
+                    line.readingRenderPlan = parseRenderPlan(item.get("readingRenderPlan"));
+                }
             }
             // Clear only the passes the cache actually contains. A partial cache (e.g. romanization
             // saved before slower network translation finished, or the screen closed mid-translation)
@@ -68,6 +76,7 @@ public final class ProcessedLyricsCache {
         try {
             JsonObject root = new JsonObject();
             root.addProperty("version", processingVersion);
+            root.addProperty("readingSchemaVersion", READING_SCHEMA_VERSION);
             root.addProperty("trackId", safe(doc.trackId));
             root.addProperty("language", safe(doc.language));
             root.addProperty("chineseMode", normalizeChineseMode(opts.chineseMode));
@@ -81,6 +90,9 @@ public final class ProcessedLyricsCache {
                 if (line != null && !isBlank(line.translatedText)) item.addProperty("translatedText", line.translatedText);
                 if (line != null && !isBlank(line.chineseMode)) item.addProperty("chineseMode", normalizeChineseMode(line.chineseMode));
                 if (line != null && line.japaneseReading != null) item.add("JapaneseReading", japaneseReadingToJson(line.japaneseReading));
+                if (line != null && line.readingRenderPlan != null) {
+                    item.add("readingRenderPlan", renderPlanToJson(line.readingRenderPlan));
+                }
                 lines.add(item);
             }
             root.add("lines", lines);
@@ -109,12 +121,24 @@ public final class ProcessedLyricsCache {
         return object;
     }
 
+    static JsonElement renderPlanToJson(RenderPlan plan) {
+        return GSON.toJsonTree(plan);
+    }
+
+    static RenderPlan parseRenderPlan(JsonElement element) {
+        try {
+            return element == null || element.isJsonNull() ? null : GSON.fromJson(element, RenderPlan.class);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private static String key(Context context, LyricsDocument doc, RomanizationOptions opts, int processingVersion) {
         return LyricCaches.processedDocumentKey(processingVersion,
                 doc == null ? "" : doc.trackId,
                 doc == null ? "" : doc.language,
                 opts,
-                processingContextKey(context));
+                processingContextKey(context) + "|readingSchema=" + READING_SCHEMA_VERSION);
     }
 
     public static String processingContextKey(Context context) {

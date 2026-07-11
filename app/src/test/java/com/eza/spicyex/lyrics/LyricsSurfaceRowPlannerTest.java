@@ -3,8 +3,6 @@ package com.eza.spicyex.lyrics;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -26,8 +24,8 @@ public class LyricsSurfaceRowPlannerTest {
                 false, false, true, false,
                 "Medium", "default", 0.68f, false, false);
 
-        LyricsSurfaceRowPlanner.plan(fullscreen, doc, fullscreenPolicy, (line, seg, fullText) -> "x");
-        LyricsSurfaceRowPlanner.plan(liveCard, liveDoc, livePolicy, (line, seg, fullText) -> "x");
+        LyricsSurfaceRowPlanner.plan(fullscreen, doc, fullscreenPolicy);
+        LyricsSurfaceRowPlanner.plan(liveCard, liveDoc, livePolicy);
 
         assertTrue(fullscreen.syntheticWords);
         assertTrue(liveCard.syntheticWords);
@@ -40,21 +38,19 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
-    public void attachedTransliterationUsesSharedProviderOnlyWhenAligned() {
+    public void lineFallbackDoesNotEnableRendererTimeWordProcessing() {
         AppliedLine line = line("hello world");
         line.romanizedText = "heh-loh world";
         LyricsDocument doc = document(line);
-        LyricsRowViewFactory.RomanizedWordProvider provider = (row, seg, fullText) -> "x";
         LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(
                 1f, true, false, "off", true,
                 false, false, false, false,
                 "Medium", "default", 1f, false, true);
 
-        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(line, doc, policy, provider);
+        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(line, doc, policy);
 
         assertTrue(plan.options.attachTransliterationToWords);
-        assertSame(provider, plan.romanizedWordProvider);
-        assertFalse(plan.options.documentText.isEmpty());
+        assertTrue(plan.options.documentText.isEmpty());
     }
 
     @Test
@@ -67,11 +63,9 @@ public class LyricsSurfaceRowPlannerTest {
                 false, false, false, false,
                 "Medium", "default", 1f, false, true);
 
-        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(line, doc, policy,
-                (row, seg, fullText) -> "x");
+        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(line, doc, policy);
 
         assertFalse(plan.options.attachTransliterationToWords);
-        assertNull(plan.romanizedWordProvider);
     }
 
     @Test
@@ -85,8 +79,7 @@ public class LyricsSurfaceRowPlannerTest {
                 false, false, true, false,
                 "Medium", "default", 1f, false, true);
 
-        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(line, document(line), policy,
-                (row, seg, fullText) -> "x");
+        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(line, document(line), policy);
 
         assertFalse(line.syntheticWords);
         assertTrue(line.words.isEmpty());
@@ -131,7 +124,7 @@ public class LyricsSurfaceRowPlannerTest {
                 false, false, false, false,
                 "Medium", "default", 0.68f, false, false, true);
 
-        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(source, document(source), policy, null);
+        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(source, document(source), policy);
 
         assertTrue(source.oppositeAligned);
         assertNotNull(plan.line);

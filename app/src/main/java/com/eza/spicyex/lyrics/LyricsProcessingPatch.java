@@ -2,6 +2,8 @@ package com.eza.spicyex.lyrics;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
+import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
 /** Main-thread patch for secondary processing changes computed off-thread. */
 public final class LyricsProcessingPatch {
@@ -35,12 +37,16 @@ public final class LyricsProcessingPatch {
         if (line == null) return null;
         LinePatch patch = new LinePatch(index);
         if (includeRomanized) {
-            patch.romanizedText = safe(line.romanizedText);
+            patch.readingRenderPlan = line.readingRenderPlan != null ? line.readingRenderPlan
+                    : ReadingPlanFactory.lineFallback(line, safe(line.romanizedText), "remoteFallback");
+            patch.romanizedText = patch.readingRenderPlan == null ? safe(line.romanizedText) : "";
             patch.japaneseReading = line.japaneseReading;
             patch.chineseMode = safe(line.chineseMode);
-            patch.syllableRomanizedText = new ArrayList<>();
-            for (SyllableSegment seg : line.syllables) {
-                patch.syllableRomanizedText.add(seg == null ? "" : safe(seg.romanizedText));
+            if (patch.readingRenderPlan == null) {
+                patch.syllableRomanizedText = new ArrayList<>();
+                for (SyllableSegment seg : line.syllables) {
+                    patch.syllableRomanizedText.add(seg == null ? "" : safe(seg.romanizedText));
+                }
             }
         }
         if (includeTranslated) patch.translatedText = safe(line.translatedText);
@@ -54,6 +60,7 @@ public final class LyricsProcessingPatch {
         private SpicyJapaneseChineseProcessor.JapaneseReading japaneseReading;
         private String chineseMode;
         private List<String> syllableRomanizedText;
+        private RenderPlan readingRenderPlan;
 
         public LinePatch(int index) {
             this.index = index;
@@ -72,6 +79,7 @@ public final class LyricsProcessingPatch {
             LyricsLine target = document.lines.get(index);
             if (target == null) return;
             if (romanizedText != null) target.romanizedText = romanizedText;
+            if (readingRenderPlan != null) target.readingRenderPlan = readingRenderPlan;
             if (translatedText != null) target.translatedText = translatedText;
             if (japaneseReading != null) target.japaneseReading = japaneseReading;
             if (chineseMode != null) target.chineseMode = chineseMode;

@@ -4,7 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import com.eza.spicyex.lyrics.SpicyRomanizer;
+import com.eza.spicyex.lyrics.KoreanDisplayMode;
 
 import org.junit.Test;
 
@@ -22,7 +22,7 @@ public class SettingsDefaultsTest {
 
         assertEquals(SpotifyPlusConfig.JP_READING_ROMAJI_ONLY, Settings.JAPANESE_READING_MODE.defaultValue);
         assertEquals(SpotifyPlusConfig.CHINESE_MODE_PINYIN, Settings.CHINESE_MODE.defaultValue);
-        assertEquals(SpicyRomanizer.KOREAN_PRONUNCIATION, Settings.KOREAN_ROMANIZATION.defaultValue);
+        assertEquals(KoreanDisplayMode.RR_STANDARD.value, Settings.KOREAN_ROMANIZATION.defaultValue);
 
         assertFalse(Settings.ENABLE_GLOW_BLUR.defaultValue);
         assertFalse(Settings.ENABLE_LINE_BLUR.defaultValue);

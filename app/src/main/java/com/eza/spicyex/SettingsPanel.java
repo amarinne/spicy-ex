@@ -566,6 +566,10 @@ public final class SettingsPanel {
 
     private static String displayLabel(String value) {
         if (value == null || value.isEmpty()) return "";
+        if ("wordTranslit".equals(value)) return "Word-by-word transliteration";
+        if ("rrStandard".equals(value)) return "Standard Korean RR";
+        if ("rrPronunciation".equals(value)) return "Follow pronunciation (RR)";
+        if ("vnPronunciation".equals(value)) return "Follow pronunciation (VN)";
         if ("furigana_romaji".equals(value)) return "Furigana + romaji";
         String name = LANGUAGE_NAMES.get(value);
         if (name != null) return name + " (" + value + ")";

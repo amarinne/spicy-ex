@@ -13,6 +13,7 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
     private final Context context;
     private final SpotifyPlusConfig config;
     private final HoldCallback holdCallback;
+    private final TouchCallback touchCallback;
     private final SeekCallback seekCallback;
     private float scrollDownY;
     private long scrollDownAtMs;
@@ -23,11 +24,13 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
             Context context,
             SpotifyPlusConfig config,
             HoldCallback holdCallback,
+            TouchCallback touchCallback,
             SeekCallback seekCallback
     ) {
         this.context = context;
         this.config = config;
         this.holdCallback = holdCallback;
+        this.touchCallback = touchCallback;
         this.seekCallback = seekCallback;
     }
 
@@ -37,10 +40,12 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
         if (action == MotionEvent.ACTION_DOWN) {
             scrollDownY = event.getY();
             scrollDownAtMs = SystemClock.elapsedRealtime();
+            if (touchCallback != null) touchCallback.touching(true);
             hold();
         } else if (action == MotionEvent.ACTION_MOVE) {
             hold();
         } else if (action == MotionEvent.ACTION_UP) {
+            if (touchCallback != null) touchCallback.touching(false);
             float dy = Math.abs(event.getY() - scrollDownY);
             long held = SystemClock.elapsedRealtime() - scrollDownAtMs;
             if (dy < dp(10) && held < 600) {
@@ -59,6 +64,8 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
                 }
                 return true;
             }
+        } else if (action == MotionEvent.ACTION_CANCEL) {
+            if (touchCallback != null) touchCallback.touching(false);
         }
         return false;
     }
@@ -78,6 +85,10 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
 
     public interface HoldCallback {
         void holdUntil(long untilMs);
+    }
+
+    public interface TouchCallback {
+        void touching(boolean touching);
     }
 
     public interface SeekCallback {

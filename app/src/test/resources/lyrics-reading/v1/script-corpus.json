@@ -1,0 +1,503 @@
+{
+ "schemaVersion": 1,
+ "id": "script-corpus",
+ "language": "mixed",
+ "capture": {
+  "kind": "real-corpus-plus-synthetic-astral",
+  "spanTuple": [
+   "rawText",
+   "providerPartOfWord",
+   "startMs",
+   "endMs"
+  ]
+ },
+ "lines": [
+  {
+   "id": "ko-real-1",
+   "spans": [
+    [
+     "그대",
+     false,
+     0,
+     100
+    ],
+    [
+     "아무런",
+     false,
+     100,
+     200
+    ],
+    [
+     "말도",
+     false,
+     200,
+     300
+    ],
+    [
+     "하지",
+     false,
+     300,
+     400
+    ],
+    [
+     "마요",
+     false,
+     400,
+     500
+    ]
+   ],
+   "expected": {
+    "canonicalText": "그대 아무런 말도 하지 마요",
+    "boundaries": [
+     [
+      2,
+      "inferred"
+     ],
+     [
+      6,
+      "inferred"
+     ],
+     [
+      9,
+      "inferred"
+     ],
+     [
+      12,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      2
+     ],
+     [
+      3,
+      6
+     ],
+     [
+      7,
+      9
+     ],
+     [
+      10,
+      12
+     ],
+     [
+      13,
+      15
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      2,
+      "Hangul"
+     ],
+     [
+      2,
+      3,
+      "Whitespace"
+     ],
+     [
+      3,
+      6,
+      "Hangul"
+     ],
+     [
+      6,
+      7,
+      "Whitespace"
+     ],
+     [
+      7,
+      9,
+      "Hangul"
+     ],
+     [
+      9,
+      10,
+      "Whitespace"
+     ],
+     [
+      10,
+      12,
+      "Hangul"
+     ],
+     [
+      12,
+      13,
+      "Whitespace"
+     ],
+     [
+      13,
+      15,
+      "Hangul"
+     ]
+    ],
+    "readingUnits": [
+     {
+      "text": "geudae",
+      "kind": "transformed",
+      "startCp": 0,
+      "endCp": 2
+     },
+     {
+      "text": " amureon",
+      "kind": "transformed",
+      "startCp": 3,
+      "endCp": 6
+     },
+     {
+      "text": " maldo",
+      "kind": "transformed",
+      "startCp": 7,
+      "endCp": 9
+     },
+     {
+      "text": " haji",
+      "kind": "transformed",
+      "startCp": 10,
+      "endCp": 12
+     },
+     {
+      "text": " mayo",
+      "kind": "transformed",
+      "startCp": 13,
+      "endCp": 15
+     }
+    ],
+    "timedReadingUnits": [
+     [
+      0,
+      "geudae"
+     ],
+     [
+      1,
+      " amureon"
+     ],
+     [
+      2,
+      " maldo"
+     ],
+     [
+      3,
+      " haji"
+     ],
+     [
+      4,
+      " mayo"
+     ]
+    ],
+    "joinedDisplayText": "geudae amureon maldo haji mayo",
+    "readingMode": "rrStandard",
+    "pronunciationDisplays": {
+     "rrPronunciation": "geudae amureon maldo haji mayo",
+     "vnPronunciation": "gưdê amuron maldô haji mayô"
+    }
+   }
+  },
+  {
+   "id": "ja-split",
+   "spans": [
+    [
+     "だん",
+     false,
+     0,
+     100
+    ],
+    [
+     "だん",
+     false,
+     100,
+     200
+    ],
+    [
+     "剥",
+     true,
+     200,
+     300
+    ],
+    [
+     "がれて",
+     true,
+     300,
+     400
+    ],
+    [
+     "く",
+     false,
+     400,
+     500
+    ]
+   ],
+   "expected": {
+    "canonicalText": "だん だん 剥がれてく",
+    "boundaries": [
+     [
+      2,
+      "inferred"
+     ],
+     [
+      5,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      2
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      6,
+      7
+     ],
+     [
+      7,
+      10
+     ],
+     [
+      10,
+      11
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      2,
+      "Kana"
+     ],
+     [
+      2,
+      3,
+      "Whitespace"
+     ],
+     [
+      3,
+      5,
+      "Kana"
+     ],
+     [
+      5,
+      6,
+      "Whitespace"
+     ],
+     [
+      6,
+      7,
+      "Han"
+     ],
+     [
+      7,
+      11,
+      "Kana"
+     ]
+    ],
+    "readingUnits": [],
+    "timedReadingUnits": [],
+    "joinedDisplayText": ""
+   }
+  },
+  {
+   "id": "ja-latin",
+   "spans": [
+    [
+     "Fake",
+     false,
+     0,
+     100
+    ],
+    [
+     "の",
+     false,
+     100,
+     200
+    ],
+    [
+     "ゴールド",
+     false,
+     200,
+     300
+    ],
+    [
+     "メッキ",
+     false,
+     300,
+     400
+    ]
+   ],
+   "expected": {
+    "canonicalText": "Fake の ゴールド メッキ",
+    "boundaries": [
+     [
+      4,
+      "inferred"
+     ],
+     [
+      6,
+      "inferred"
+     ],
+     [
+      11,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      4
+     ],
+     [
+      5,
+      6
+     ],
+     [
+      7,
+      11
+     ],
+     [
+      12,
+      15
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      4,
+      "Latin"
+     ],
+     [
+      4,
+      5,
+      "Whitespace"
+     ],
+     [
+      5,
+      6,
+      "Kana"
+     ],
+     [
+      6,
+      7,
+      "Whitespace"
+     ],
+     [
+      7,
+      8,
+      "Kana"
+     ],
+     [
+      8,
+      9,
+      "Other"
+     ],
+     [
+      9,
+      11,
+      "Kana"
+     ],
+     [
+      11,
+      12,
+      "Whitespace"
+     ],
+     [
+      12,
+      15,
+      "Kana"
+     ]
+    ],
+    "readingUnits": [],
+    "timedReadingUnits": [],
+    "joinedDisplayText": ""
+   }
+  },
+  {
+   "id": "astral",
+   "spans": [
+    [
+     "😀",
+     false,
+     0,
+     100
+    ],
+    [
+     "한국",
+     false,
+     100,
+     200
+    ]
+   ],
+   "expected": {
+    "canonicalText": "😀 한국",
+    "boundaries": [
+     [
+      1,
+      "inferred"
+     ]
+    ],
+    "spanMappings": [
+     [
+      0,
+      1
+     ],
+     [
+      2,
+      4
+     ]
+    ],
+    "scriptRuns": [
+     [
+      0,
+      1,
+      "Punctuation"
+     ],
+     [
+      1,
+      2,
+      "Whitespace"
+     ],
+     [
+      2,
+      4,
+      "Hangul"
+     ]
+    ],
+    "readingUnits": [
+     {
+      "text": "😀",
+      "kind": "punctuation",
+      "startCp": 0,
+      "endCp": 1
+     },
+     {
+      "text": " hanguk",
+      "kind": "transformed",
+      "startCp": 2,
+      "endCp": 4
+     }
+    ],
+    "timedReadingUnits": [
+     [
+      0,
+      "😀"
+     ],
+     [
+      1,
+      " hanguk"
+     ]
+    ],
+    "joinedDisplayText": "😀 hanguk",
+    "readingMode": "rrStandard",
+    "pronunciationDisplays": {
+     "rrPronunciation": "😀 han-guk",
+     "vnPronunciation": "😀 han-guk"
+    }
+   }
+  }
+ ]
+}

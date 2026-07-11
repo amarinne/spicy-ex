@@ -69,7 +69,6 @@ public final class LiveLyricCardView extends LinearLayout {
     public void renderLine(Activity activity, AppliedLine line, LyricsRenderConfig config,
                            long positionMs, float deltaSeconds,
                            LyricsDocument document,
-                           LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider,
                            boolean animateMount) {
         if (activity == null || line == null || config == null) {
             clear();
@@ -77,7 +76,7 @@ public final class LiveLyricCardView extends LinearLayout {
         }
         LyricsRenderConfig liveConfig = config.forLiveCard();
         LyricsSurfaceRowPlanner.RowPlan rowPlan = LyricsSurfaceRowPlanner.plan(
-                line, document, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(liveConfig), romanizedWordProvider);
+                line, document, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(liveConfig));
         String key = configKey(liveConfig)
                 + "|" + rowPlan.options.showJapaneseFurigana
                 + "|" + rowPlan.options.showJapaneseRomaji
@@ -138,7 +137,7 @@ public final class LiveLyricCardView extends LinearLayout {
         clearLineState(rowPlan.line);
         LyricsTextFactory textFactory = new LyricsTextFactory(activity, SpotifyPlusConfig.from(activity));
         LyricsRowViewFactory factory = new LyricsRowViewFactory(activity, textFactory);
-        View row = factory.build(rowPlan.line, rowPlan.options, rowPlan.romanizedWordProvider, null);
+        View row = factory.build(rowPlan.line, rowPlan.options, null);
         installLineOverflowViewports(row, rowPlan.line, rowPlan.options.wrapLongLines);
         nextHost.addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         if (animateMount) animateIn(nextHost, config.liveCardTransitionMode);
@@ -160,11 +159,11 @@ public final class LiveLyricCardView extends LinearLayout {
         LinearLayout nextHost = replaceRowHost(false, config.liveCardTransitionMode);
         clearLineState(line);
         LyricsSurfaceRowPlanner.RowPlan rowPlan = LyricsSurfaceRowPlanner.plan(
-                line, null, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(config), null);
+                line, null, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(config));
         rowPlan.options.interludeNoteIcon = note;
         LyricsTextFactory textFactory = new LyricsTextFactory(activity, SpotifyPlusConfig.from(activity));
         LyricsRowViewFactory factory = new LyricsRowViewFactory(activity, textFactory);
-        View row = factory.build(rowPlan.line, rowPlan.options, rowPlan.romanizedWordProvider, null);
+        View row = factory.build(rowPlan.line, rowPlan.options, null);
         installLineOverflowViewports(row, rowPlan.line, rowPlan.options.wrapLongLines);
         nextHost.addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         mountedSourceLine = null;

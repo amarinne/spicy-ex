@@ -6,6 +6,8 @@ import android.os.SystemClock;
 final class LyricsFollowState {
     private int activeIndex = -2;
     private long holdUntilMs;
+    private long lastManualScrollMs;
+    private boolean touching;
 
     int activeIndex() {
         return activeIndex;
@@ -23,11 +25,24 @@ final class LyricsFollowState {
         holdUntilMs = untilMs;
     }
 
+    void markManualScroll() {
+        lastManualScrollMs = SystemClock.elapsedRealtime();
+    }
+
+    void setTouching(boolean touching) {
+        this.touching = touching;
+        if (touching) markManualScroll();
+    }
+
     void clearHold() {
         holdUntilMs = 0;
     }
 
     boolean isHoldingNow() {
         return SystemClock.elapsedRealtime() < holdUntilMs;
+    }
+
+    boolean canAutoResumeNow(long cooldownMs) {
+        return !touching && isHoldingNow() && SystemClock.elapsedRealtime() - lastManualScrollMs >= cooldownMs;
     }
 }

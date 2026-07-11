@@ -232,9 +232,9 @@ public final class LyricsSyllableViewState {
 
     private static void ensureWordSprings(SyllableSegment segment) {
         if (state(segment).scaleSpring != null && state(segment).ySpring != null && state(segment).glowSpring != null) return;
-        state(segment).scaleSpring = new Spring(0.95f, 0.7f, 0.6f);
-        state(segment).ySpring = new Spring(0.01f, 1.25f, 0.4f);
-        state(segment).glowSpring = new Spring(0f, 1f, 0.5f);
+        state(segment).scaleSpring = new Spring(0.95f, 0.88f, 0.64f);
+        state(segment).ySpring = new Spring(0.01f, 1.45f, 0.4f);
+        state(segment).glowSpring = new Spring(0f, 1.18f, 0.56f);
     }
 
     private static SyllableRenderState state(SyllableSegment segment) {

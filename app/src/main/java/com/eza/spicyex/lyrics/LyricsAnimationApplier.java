@@ -11,11 +11,10 @@ public final class LyricsAnimationApplier {
 
     public static float stepLineOpacity(AppliedLine line, boolean active, boolean sung, float deltaSeconds) {
         if (line == null) return 1f;
-        // Sung (already-played) lines stay close to the current line so they read as "still here"
-        // rather than graying out like the not-yet-sung lines below — more immersive. Upcoming lines
-        // are clearly dimmer. (Distance still reads via blur.)
+        if (line.dotLine && !active) return LyricsLineViewState.stepOpacity(line, 0f, deltaSeconds);
+        // Desktop's ~0.5 sung opacity is too low against mobile album-art washes; keep past lines
+        // readable while upcoming lines stay clearly recessed.
         float target = active ? 1.0f : (sung ? 0.82f : 0.42f);
-        if (line.dotLine && !active) target *= 0.75f;
         if (line.bgLine && !active) target *= 0.90f;
         return LyricsLineViewState.stepOpacity(line, target, deltaSeconds);
     }
@@ -135,26 +134,23 @@ public final class LyricsAnimationApplier {
             StyleSink sink
     ) {
         if (line == null || !LyricsLineViewState.hasDotViews(line) || sink == null) return;
-        float lineProgress = progress01(positionMs, line.startMs, line.endMs);
         boolean preHide = line.endMs > line.startMs && positionMs >= line.endMs - LyricTimeline.PRE_HIDDEN_DOT_LINE_MS;
-        float mainScale = LyricsLineViewState.stepDotMainScale(
-                line, preHide ? 0f : LyricAnimations.dotMainScaleSpline(lineProgress), deltaSeconds);
-        float mainOpacity = LyricsLineViewState.stepDotMainOpacity(
-                line, preHide ? 0f : LyricAnimations.dotMainOpacitySpline(lineProgress), deltaSeconds);
+        float groupScale = LyricsLineViewState.stepDotMainScale(line, preHide ? 0f : 1f, deltaSeconds);
+        float groupOpacity = LyricsLineViewState.stepDotMainOpacity(line, preHide ? 0f : 1f, deltaSeconds);
         List<SpicyAnimatedTextView> dotViews = LyricsLineViewState.dotViews(line);
         for (int i = 0; i < dotViews.size(); i++) {
             SpicyAnimatedTextView dot = dotViews.get(i);
             if (dot == null) continue;
-            float pulse = LyricAnimations.dotPulse(positionMs, i);
-            float stagger = Math.max(0f, Math.min(1f, lineProgress * 1.25f - i * 0.09f));
-            float dotScale = mainScale * LyricAnimations.dotScaleSpline(stagger) * pulse;
-            float dotY = dotBasePx * LyricAnimations.dotYOffsetSpline(stagger);
-            float glow = LyricAnimations.dotGlowSpline(stagger) * mainOpacity;
-            float opacity = mainOpacity * LyricAnimations.dotOpacitySpline(stagger);
+            SyllableSegment seg = line.words != null && i < line.words.size() ? line.words.get(i) : null;
+            DotTargets targets = dotTargets(seg, positionMs);
+            float dotScale = groupScale * targets.scale;
+            float dotY = dotBasePx * targets.yOffset;
+            float glow = targets.glow * groupOpacity;
+            float opacity = targets.opacity * groupOpacity;
             sink.applyScale(dot, dotScale, dotScale);
             sink.applyTranslationY(dot, dotY);
             sink.applyAlpha(dot, opacity);
-            dot.setGradientPosition(-20f + 120f * stagger, glow);
+            dot.setGradientPosition(-20f + 120f * targets.gradientProgress, glow);
         }
     }
 
@@ -166,6 +162,36 @@ public final class LyricsAnimationApplier {
             sink.applyTranslationY(dot, 0f);
             sink.applyAlpha(dot, 0.45f);
             dot.setGradientPosition(-20f, 0f);
+        }
+    }
+
+    static DotTargets dotTargets(SyllableSegment seg, long positionMs) {
+        if (seg == null) return new DotTargets(0.75f, 0f, 0f, 0.35f, 0f);
+        if (positionMs < seg.startMs) return new DotTargets(0.75f, 0f, 0f, 0.35f, 0f);
+        if (positionMs >= seg.endMs) return new DotTargets(1f, 0f, 1f, 1f, 1f);
+        float progress = progress01(positionMs, seg.startMs, seg.endMs);
+        return new DotTargets(
+                LyricAnimations.dotScaleSpline(progress),
+                LyricAnimations.dotYOffsetSpline(progress),
+                LyricAnimations.dotGlowSpline(progress),
+                LyricAnimations.dotOpacitySpline(progress),
+                progress
+        );
+    }
+
+    static final class DotTargets {
+        final float scale;
+        final float yOffset;
+        final float glow;
+        final float opacity;
+        final float gradientProgress;
+
+        DotTargets(float scale, float yOffset, float glow, float opacity, float gradientProgress) {
+            this.scale = scale;
+            this.yOffset = yOffset;
+            this.glow = glow;
+            this.opacity = opacity;
+            this.gradientProgress = gradientProgress;
         }
     }
 

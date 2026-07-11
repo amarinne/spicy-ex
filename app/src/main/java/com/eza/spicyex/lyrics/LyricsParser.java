@@ -213,7 +213,10 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonObject lead = Json.optObject(object, "Lead", "lead");
             if (lead == null) continue;
             JsonArray syllables = Json.optArray(lead, "Syllables", "syllables");
-            String text = joinSyllables(syllables, "Text", "text");
+            String text = cleanInvisibles(firstNonBlank(
+                    Json.optString(lead, "Text", "text"),
+                    Json.optString(object, "Text", "text"),
+                    joinSyllables(syllables, "Text", "text")));
             if (isBlank(text)) continue;
 
             LyricsLine line = new LyricsLine();
@@ -305,11 +308,15 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonElement element = syllables.get(i);
             if (!element.isJsonObject()) continue;
             JsonObject syllable = element.getAsJsonObject();
-            String text = cleanInvisibles(Json.optString(syllable, "Text", "text"));
-            if (isBlank(text)) continue;
+            String rawText = cleanSyllableTextPreserveEdges(Json.optString(syllable, "Text", "text"));
+            if (isBlank(rawText)) continue;
+            boolean boundaryAfter = endsWithWhitespace(rawText);
+            String text = rawText.trim();
+            if (text.isEmpty()) continue;
             SyllableSegment seg = new SyllableSegment();
             seg.text = text;
-            seg.partOfWord = Json.optBoolean(syllable, false, "IsPartOfWord", "isPartOfWord");
+            seg.sourceText = rawText;
+            seg.partOfWord = Json.optBoolean(syllable, false, "IsPartOfWord", "isPartOfWord") && !boundaryAfter;
             long fallbackStart = lineStartMs + fallbackStep * i;
             long fallbackEnd = i == syllables.size() - 1 ? lineEndMs : fallbackStart + fallbackStep;
             seg.startMs = secondsToMs(Json.optDouble(syllable, fallbackStart / 1000d, "StartTime", "startTime"));
@@ -320,6 +327,21 @@ public final class LyricsParser implements LyricsRepository.Parser {
             out.add(seg);
         }
         return out;
+    }
+
+    private static boolean endsWithWhitespace(String text) {
+        if (text == null || text.isEmpty()) return false;
+        int cp = text.codePointBefore(text.length());
+        return Character.isWhitespace(cp);
+    }
+
+    private static String cleanSyllableTextPreserveEdges(String value) {
+        if (value == null) return "";
+        return value
+                .replace("\u200B", "")
+                .replace("\uFEFF", "")
+                .replace('\u00A0', ' ')
+                .replaceAll("[ \t]{2,}", " ");
     }
 
     private static String joinSyllables(JsonArray syllables, String... textKeys) {

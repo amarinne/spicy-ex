@@ -55,14 +55,13 @@ public class GlowFlexbox extends FlexboxLayout {
         TextPaint paint = tv.getPaint();
         int savedColor = paint.getColor();
         Shader savedShader = paint.getShader();
-        int alpha = Math.round(255f * 0.8f * g);
+        int alpha = Math.round(255f * 0.35f * g);
         int glowColor = Color.argb(alpha, 255, 255, 255);
-        // Draw the glyphs at low alpha with a white blur shadow → a soft continuous halo. The real
+        // Draw the glyphs at low alpha with a white blur shadow -> a soft continuous halo. The real
         // word (full gradient) is painted over this by the normal child draw, so this is glow-only.
-        // Bumped up (was 0.5α / 3+7g) now the heavier font can carry a more visible halo.
         paint.setShader(null);
         paint.setColor(glowColor);
-        paint.setShadowLayer((5f + 12f * g) * density, 0f, 0f, glowColor);
+        paint.setShadowLayer((4f + 2f * g) * density, 0f, 0f, glowColor);
         int save = canvas.save();
         canvas.translate(x + tv.getTotalPaddingLeft(), y + tv.getTotalPaddingTop());
         try {

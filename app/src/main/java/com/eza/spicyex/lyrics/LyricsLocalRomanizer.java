@@ -4,6 +4,7 @@ import com.eza.spicyex.SpotifyPlusConfig;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
 import de.robv.android.xposed.XposedBridge;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
@@ -57,8 +58,19 @@ public final class LyricsLocalRomanizer {
                         return "";
                     }
                     line.japaneseReading = local;
-                    if (!isBlank(local.romaji)) return local.romaji;
+                    if (!isBlank(local.romaji)) {
+                        line.readingRenderPlan = ReadingPlanFactory.japanese(line, local);
+                        return line.readingRenderPlan == null ? local.romaji : line.readingRenderPlan.joinedDisplayText;
+                    }
                 }
+                return "";
+            }
+            if (scripts.contains(SpicyTextDetection.Script.KOREAN)
+                    && SpicyTextDetection.itemKoreanTest(line.text)
+            ) {
+                KoreanDisplayMode mode = opts == null ? KoreanDisplayMode.RR_STANDARD : KoreanDisplayMode.fromSetting(opts.koreanMode);
+                line.readingRenderPlan = ReadingPlanFactory.korean(line, mode);
+                if (line.readingRenderPlan != null) return line.readingRenderPlan.joinedDisplayText;
                 return "";
             }
             return SpicyRomanizer.romanizeLine(line.text, scripts, doc == null ? "" : doc.language, opts);
@@ -70,6 +82,10 @@ public final class LyricsLocalRomanizer {
 
     public static void populateLocalSegmentRomanization(RomanizationOptions opts, LyricsDocument doc, LyricsLine line, String fullText) {
         if (line == null || line.syllables == null || line.syllables.isEmpty()) return;
+        if (line.readingRenderPlan != null) {
+            clearSegmentRomanization(line);
+            return;
+        }
         List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
         if (isJapaneseLine(doc, line.text, fullText)) {
             ArrayList<String> syllableTexts = new ArrayList<>();
@@ -86,10 +102,9 @@ public final class LyricsLocalRomanizer {
                 return;
             }
         }
-        if (opts != null && SpicyRomanizer.koreanFollowSound(opts.koreanMode)
-                && scripts.contains(SpicyTextDetection.Script.KOREAN)
+        if (opts != null && scripts.contains(SpicyTextDetection.Script.KOREAN)
                 && SpicyTextDetection.itemKoreanTest(line.text)
-                && populateKoreanPronunciationSegments(line)) {
+                && populateKoreanSegments(line, opts)) {
             return;
         }
         for (SyllableSegment seg : line.syllables) {
@@ -99,32 +114,63 @@ public final class LyricsLocalRomanizer {
             seg.romanizedText = !isBlank(local) && !local.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(local)
                     ? local : "";
         }
+        if (!isBlank(line.romanizedText)) {
+            line.readingRenderPlan = ReadingPlanFactory.timedLegacy(line, line.romanizedText, "LocalScript");
+            if (line.readingRenderPlan != null) clearSegmentRomanization(line);
+        }
     }
 
-    private static boolean populateKoreanPronunciationSegments(LyricsLine line) {
+    private static boolean populateKoreanSegments(LyricsLine line, RomanizationOptions opts) {
         if (line == null || isBlank(line.text) || line.syllables == null || line.syllables.isEmpty()) return false;
-        List<String> pieces = SpicyKoreanG2P.romanizeSyllablePieces(line.text);
+        KoreanDisplayMode mode = opts == null ? KoreanDisplayMode.RR_STANDARD : KoreanDisplayMode.fromSetting(opts.koreanMode);
+        SpicyRomanizer.KoreanSyllableSource source = SpicyRomanizer.buildKoreanSyllableSource(line.syllables);
+        List<String> pieces = SpicyRomanizer.romanizeKoreanDisplayPieces(source.text, mode);
         if (pieces.isEmpty()) return false;
-        int searchFrom = 0;
         boolean changed = false;
-        for (SyllableSegment seg : line.syllables) {
+        for (int index = 0; index < line.syllables.size(); index++) {
+            SyllableSegment seg = line.syllables.get(index);
             if (seg == null || isBlank(seg.text) || !isBlank(seg.romanizedText)) continue;
-            int start = line.text.indexOf(seg.text, searchFrom);
-            if (start < 0) start = line.text.indexOf(seg.text);
-            if (start < 0) continue;
-            int pieceStart = line.text.codePointCount(0, start);
-            int pieceCount = seg.text.codePointCount(0, seg.text.length());
+            String segmentText = seg.text.trim();
+            if (segmentText.isEmpty()) continue;
+            int pieceStart = source.pieceStart(index);
+            int pieceCount = segmentText.codePointCount(0, segmentText.length());
             if (pieceStart < 0 || pieceStart + pieceCount > pieces.size()) continue;
             StringBuilder local = new StringBuilder();
             for (int i = pieceStart; i < pieceStart + pieceCount; i++) local.append(pieces.get(i));
-            String value = local.toString();
+            if (seg.partOfWord && (endsWithWhitespace(seg.text) || hasWhitespaceAfterSpan(source.text, pieceStart, pieceCount))) local.append(' ');
+            String value = seg.partOfWord ? trimLeading(local.toString()) : local.toString().trim();
             if (!isBlank(value) && !value.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(value)) {
                 seg.romanizedText = value;
                 changed = true;
             }
-            searchFrom = start + seg.text.length();
         }
         return changed;
+    }
+
+    private static boolean endsWithWhitespace(String text) {
+        if (text == null || text.isEmpty()) return false;
+        int cp = text.codePointBefore(text.length());
+        return Character.isWhitespace(cp);
+    }
+
+    private static boolean hasWhitespaceAfterSpan(String text, int startCp, int countCp) {
+        if (isBlank(text) || startCp < 0 || countCp < 0) return false;
+        int cpCount = text.codePointCount(0, text.length());
+        int nextCp = startCp + countCp;
+        if (nextCp < 0 || nextCp >= cpCount) return false;
+        int nextIndex = text.offsetByCodePoints(0, nextCp);
+        return Character.isWhitespace(text.codePointAt(nextIndex));
+    }
+
+    private static String trimLeading(String text) {
+        if (text == null || text.isEmpty()) return "";
+        int start = 0;
+        while (start < text.length()) {
+            int cp = text.codePointAt(start);
+            if (!Character.isWhitespace(cp)) break;
+            start += Character.charCount(cp);
+        }
+        return text.substring(start);
     }
 
     public static void clearSegmentRomanization(LyricsLine line) {
@@ -136,6 +182,7 @@ public final class LyricsLocalRomanizer {
 
     public static boolean shouldGoogleRomanize(boolean showRomanization, LyricsLine line) {
         if (!showRomanization || line == null || isBlank(line.text) || !SpicyTextDetection.hasRomanizableScript(line.text)) return false;
+        if (line.readingRenderPlan != null) return false;
         return isBlank(line.romanizedText) || SpicyTextDetection.hasRomanizableScript(line.romanizedText);
     }
 

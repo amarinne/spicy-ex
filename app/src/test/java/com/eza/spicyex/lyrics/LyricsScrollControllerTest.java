@@ -14,4 +14,5 @@ public class LyricsScrollControllerTest {
     public void contentCenterYClampsNegativePadding() {
         assertEquals(1500, LyricsScrollController.contentCenterY(900, 1200, -24));
     }
+
 }

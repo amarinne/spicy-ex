@@ -217,6 +217,7 @@ public final class LyricTimeline {
         row.romanizedText = LyricsDocument.safe(source.romanizedText);
         row.translatedText = LyricsDocument.safe(source.translatedText);
         row.japaneseReading = source.japaneseReading;
+        row.readingRenderPlan = source.readingRenderPlan;
         row.startMs = Math.max(0, startMs);
         row.endMs = Math.max(row.startMs + 1, endMs);
         row.totalMs = row.endMs - row.startMs;

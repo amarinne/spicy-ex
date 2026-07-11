@@ -24,7 +24,7 @@ public final class LyricsTransliterationSession {
         this.showRomanization = showRomanization;
         japaneseReadingMode = safe(lastJapaneseReadingMode);
         chineseMode = safe(lastChineseMode);
-        koreanMode = safe(lastKoreanMode);
+        koreanMode = KoreanDisplayMode.valueOfSetting(lastKoreanMode);
         cyrillicMode = safe(lastCyrillicMode);
         applyConfig(config);
     }
@@ -116,16 +116,20 @@ public final class LyricsTransliterationSession {
         if ("cycle".equals(koreanModeConfig)) {
             if (!showRomanization) {
                 showRomanization = true;
-                if (isBlank(koreanMode)) koreanMode = "Letter-by-letter";
-            } else if ("Letter-by-letter".equals(koreanMode)) {
-                koreanMode = SpicyRomanizer.KOREAN_PRONUNCIATION;
+                koreanMode = KoreanDisplayMode.RR_STANDARD.value;
+            } else if (KoreanDisplayMode.RR_STANDARD.value.equals(koreanMode)) {
+                koreanMode = KoreanDisplayMode.WORD_TRANSLIT.value;
+            } else if (KoreanDisplayMode.WORD_TRANSLIT.value.equals(koreanMode)) {
+                koreanMode = KoreanDisplayMode.RR_PRONUNCIATION.value;
+            } else if (KoreanDisplayMode.RR_PRONUNCIATION.value.equals(koreanMode)) {
+                koreanMode = KoreanDisplayMode.VN_PRONUNCIATION.value;
             } else {
                 showRomanization = false;
             }
         } else if ("Off".equals(koreanModeConfig)) {
             showRomanization = false;
         } else {
-            koreanMode = koreanModeConfig;
+            koreanMode = KoreanDisplayMode.valueOfSetting(koreanModeConfig);
             showRomanization = !showRomanization;
         }
     }

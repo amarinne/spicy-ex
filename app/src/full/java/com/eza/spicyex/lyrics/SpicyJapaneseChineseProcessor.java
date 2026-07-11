@@ -69,8 +69,53 @@ public final class SpicyJapaneseChineseProcessor {
         int end;
         String surface;
         String readingKana; // hiragana reading-of-record; null when token has no reading
+        String dictionaryReadingKana;
+        String readingReason;
         String romaji;
         Token token;
+    }
+
+    static final class JapaneseDebugToken {
+        final String surface;
+        final int analysisStart, analysisEnd, displayStart, displayEnd;
+        final String partOfSpeech1, partOfSpeech2, pronunciation, lemma, lemmaReading;
+        final String dictionaryReading, selectedReading, readingReason, romaji;
+
+        JapaneseDebugToken(Entry entry) {
+            surface = entry.surface;
+            analysisStart = entry.analysisStart;
+            analysisEnd = entry.analysisEnd;
+            displayStart = entry.start;
+            displayEnd = entry.end;
+            Token token = entry.token;
+            partOfSpeech1 = token == null ? "" : safe(token.getPartOfSpeechLevel1());
+            partOfSpeech2 = token == null ? "" : safe(token.getPartOfSpeechLevel2());
+            pronunciation = token == null ? "" : safe(token.getPronunciation());
+            lemma = token == null ? "" : safe(token.getLemma());
+            lemmaReading = token == null ? "" : safe(token.getLemmaReadingForm());
+            dictionaryReading = safe(entry.dictionaryReadingKana);
+            selectedReading = safe(entry.readingKana);
+            readingReason = safe(entry.readingReason);
+            romaji = safe(entry.romaji);
+        }
+    }
+
+    static final class JapaneseDebugSnapshot {
+        final String displayText, analysisText, romaji;
+        final int[] analysisToDisplayUtf16;
+        final List<JapaneseDebugToken> tokens;
+        final List<FuriganaSegment> furigana;
+
+        JapaneseDebugSnapshot(String displayText, AnalysisText analysis, List<Entry> entries,
+                              String romaji, List<FuriganaSegment> furigana) {
+            this.displayText = displayText;
+            this.analysisText = analysis.text;
+            this.analysisToDisplayUtf16 = analysis.originalOffsets.clone();
+            this.tokens = new ArrayList<>();
+            for (Entry entry : entries) this.tokens.add(new JapaneseDebugToken(entry));
+            this.romaji = safe(romaji);
+            this.furigana = new ArrayList<>(furigana);
+        }
     }
 
     private static final class AnalysisText {
@@ -206,18 +251,52 @@ public final class SpicyJapaneseChineseProcessor {
         applyLexicalOverrides(entries);
         for (Entry entry : entries) entry.romaji = entryRomaji(entry);
         applyCrossTokenSokuon(entries);
-        return new JapaneseReading(sourceText, buildRomaji(entries), buildFurigana(sourceText, entries));
+        return new JapaneseReading(sourceText, buildRomaji(entries), buildFurigana(sourceText, entries, furigana));
+    }
+
+    static JapaneseDebugSnapshot debugJapaneseSnapshot(String text, List<FuriganaSegment> providerFurigana) {
+        String sourceText = Normalizer.normalize(safe(text), Normalizer.Form.NFKC);
+        AnalysisText analysis = analysisTextForJapanese(sourceText);
+        List<Entry> entries = buildEntries(sourceText, analysis);
+        if (providerFurigana != null && !providerFurigana.isEmpty()) {
+            applyProviderFuriganaOverrides(sourceText, entries, providerFurigana);
+            applyLexicalOverrides(entries);
+            for (Entry entry : entries) entry.romaji = entryRomaji(entry);
+            applyCrossTokenSokuon(entries);
+        }
+        String romaji = buildRomaji(entries);
+        return new JapaneseDebugSnapshot(sourceText, analysis, entries, romaji, buildFurigana(sourceText, entries));
     }
 
     private static void applyProviderFuriganaOverrides(String sourceText, List<Entry> entries, List<FuriganaSegment> furigana) {
         ArrayList<FuriganaSegment> sorted = new ArrayList<>(furigana);
         sorted.sort((a, b) -> Integer.compare(a.start, b.start));
 
+        int previousEnd = -1;
+        for (FuriganaSegment segment : sorted) {
+            if (segment == null || isBlank(segment.reading) || segment.start < 0
+                    || segment.end <= segment.start || segment.end > sourceText.length()
+                    || segment.start < previousEnd || !isKanjiRun(sourceText, segment.start, segment.end)) return;
+            previousEnd = segment.end;
+        }
+
         for (Entry entry : entries) {
             if (!SpicyTextDetection.itemJapaneseTest(entry.surface)) continue;
             String reading = readingFromProviderFurigana(sourceText, entry.start, entry.end, sorted);
-            if (!isBlank(reading)) entry.readingKana = reading;
+            if (!isBlank(reading) && reading.equals(entry.dictionaryReadingKana)) {
+                entry.readingKana = reading;
+                entry.readingReason = "providerRubyValidated";
+            }
         }
+    }
+
+    private static boolean isKanjiRun(String text, int start, int end) {
+        for (int i = start; i < end;) {
+            int cp = text.codePointAt(i);
+            if (!isCjkCodePoint(cp)) return false;
+            i += Character.charCount(cp);
+        }
+        return true;
     }
 
     private static String readingFromProviderFurigana(String sourceText, int start, int end, List<FuriganaSegment> furigana) {
@@ -229,7 +308,8 @@ public final class SpicyJapaneseChineseProcessor {
             int cpLen = Character.charCount(cp);
             String ch = sourceText.substring(pos, pos + cpLen);
             FuriganaSegment segment = furiganaSegmentAt(furigana, pos);
-            if (isKanjiChar(ch) && segment != null && segment.start <= pos && segment.end > pos) {
+            if (isKanjiChar(ch) && segment != null && segment.start >= start && segment.end <= end
+                    && segment.start <= pos && segment.end > pos) {
                 if (pos == segment.start) {
                     reading.append(kataToHira(segment.reading));
                     usedProvider = true;
@@ -237,6 +317,7 @@ public final class SpicyJapaneseChineseProcessor {
                 pos = Math.min(end, segment.end);
                 continue;
             }
+            if (isKanjiChar(ch)) return null;
             if (isKanaChar(ch)) reading.append(kataToHira(ch));
             pos += cpLen;
         }
@@ -352,6 +433,8 @@ public final class SpicyJapaneseChineseProcessor {
             entry.surface = surface;
             entry.token = token;
             entry.readingKana = readingOfRecord(token, surface);
+            entry.dictionaryReadingKana = entry.readingKana;
+            entry.readingReason = entry.readingKana == null ? "passthrough" : "unidicReadingOfRecord";
             entries.add(entry);
             charPos += surface.length();
         }
@@ -483,10 +566,25 @@ public final class SpicyJapaneseChineseProcessor {
             Token token = entry.token;
             if (token == null) continue;
 
+            // UniDic 2.1.2 lacks the kanji orthography 響めく for どよめく (its own
+            // lemma for どよめき is 響動めき; JMdict marks the word usually-kana), so
+            // the tokenizer falls back to 響(ヒビキ)+めく suffix. 響 directly before
+            // the めく suffix can only read どよ; standalone 響/響く are untouched.
+            if ("響".equals(entry.surface) && i + 1 < entries.size()) {
+                Token next = entries.get(i + 1).token;
+                if (next != null && "接尾辞".equals(safe(next.getPartOfSpeechLevel1()))
+                        && "めく".equals(safe(next.getLemma()))) {
+                    entry.readingKana = "どよ";
+                    entry.readingReason = "lexicalOverride:doyomeku";
+                    continue;
+                }
+            }
+
             // UniDic prefers the formal ワタクシ for bare 私; sung Japanese is
             // essentially always わたし. POS-guarded so 私立 etc. are untouched.
             if ("私".equals(entry.surface) && "代名詞".equals(token.getPartOfSpeechLevel1())) {
                 entry.readingKana = "わたし";
+                entry.readingReason = "lexicalOverride:watashiPronoun";
                 continue;
             }
 
@@ -494,6 +592,7 @@ public final class SpicyJapaneseChineseProcessor {
             // pronoun in lyrics it should read きみ; suffix use remains "kun" in 田中君.
             if ("君".equals(entry.surface) && "代名詞".equals(token.getPartOfSpeechLevel1())) {
                 entry.readingKana = "きみ";
+                entry.readingReason = "lexicalOverride:kimiPronoun";
                 continue;
             }
 
@@ -507,6 +606,7 @@ public final class SpicyJapaneseChineseProcessor {
                 if (("接尾辞".equals(pos1) || "名詞".equals(pos1))
                         && prev != null && "代名詞".equals(prev.getPartOfSpeechLevel1())) {
                     entry.readingKana = "がた";
+                    entry.readingReason = "lexicalOverride:gataAfterPronoun";
                 }
             }
         }
@@ -534,6 +634,17 @@ public final class SpicyJapaneseChineseProcessor {
         for (int i = 0; i + 1 < entries.size(); i++) {
             Entry entry = entries.get(i);
             Entry next = entries.get(i + 1);
+            if ("一".equals(entry.surface)
+                    && ("いち".equals(entry.readingKana) || "ichi".equals(entry.romaji))
+                    && "歩".equals(next.surface)
+                    && "ほ".equals(next.readingKana)) {
+                // UniDic splits 一歩, but lexical reading is いっぽ (ippo), not ichi ho.
+                entry.readingKana = "いっ";
+                entry.romaji = "";
+                next.readingKana = "ぽ";
+                next.romaji = "ippo";
+                continue;
+            }
             if ("一".equals(entry.surface)
                     && ("いち".equals(entry.readingKana) || "ichi".equals(entry.romaji))
                     && startsWithConsonant(next.romaji)
@@ -738,9 +849,21 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static List<FuriganaSegment> buildFurigana(String lineText, List<Entry> entries) {
+        return buildFurigana(lineText, entries, null);
+    }
+
+    private static List<FuriganaSegment> buildFurigana(String lineText, List<Entry> entries, List<FuriganaSegment> provider) {
         List<FuriganaSegment> out = new ArrayList<>();
         for (Entry entry : entries) {
             if (isBlank(entry.readingKana)) continue;
+            if ("providerRubyValidated".equals(entry.readingReason) && provider != null) {
+                for (FuriganaSegment segment : provider) {
+                    if (segment != null && segment.start >= entry.start && segment.end <= entry.end) {
+                        out.add(new FuriganaSegment(segment.start, segment.end, kataToHira(segment.reading)));
+                    }
+                }
+                continue;
+            }
             List<TokenFuriganaReading> tokenSegments = kanaReadingSegments(entry.surface, entry.readingKana);
             for (TokenFuriganaReading segment : tokenSegments) {
                 if (isBlank(segment.text)) continue;
@@ -972,7 +1095,21 @@ public final class SpicyJapaneseChineseProcessor {
         if (entry.surface.matches("^[。、？！…・「」『』（）().?!,\\s]+$")) return true;
         if (shouldMergeNonJapaneseAscii(entry, prevEntry)) return true;
         if (shouldMergeJapaneseVerbContinuation(entry, prevEntry)) return true;
+        if (shouldMergeMekuSuffix(entry, prevEntry)) return true;
         return entry.romaji != null && entry.romaji.length() == 1 && !Character.isLetterOrDigit(entry.romaji.charAt(0));
+    }
+
+    /**
+     * The derivational suffix めく (謎めく, 春めく, 響めく) never stands alone;
+     * bind it to its adjacent noun stem so split tokenizations read as one word
+     * (doyomeki), matching single-token forms like 煌めき (kirameki).
+     */
+    private static boolean shouldMergeMekuSuffix(Entry entry, Entry prevEntry) {
+        if (entry.token == null || prevEntry == null || prevEntry.token == null) return false;
+        if (prevEntry.end != entry.start) return false;
+        return "接尾辞".equals(safe(entry.token.getPartOfSpeechLevel1()))
+                && "めく".equals(safe(entry.token.getLemma()))
+                && "名詞".equals(safe(prevEntry.token.getPartOfSpeechLevel1()));
     }
 
     private static boolean shouldMergeNonJapaneseAscii(Entry entry, Entry prevEntry) {

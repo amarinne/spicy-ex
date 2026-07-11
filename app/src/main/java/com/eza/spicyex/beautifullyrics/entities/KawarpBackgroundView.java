@@ -120,6 +120,10 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
     private boolean rendering = true;
     private long startNanos = 0;
     private long lastFrameNanos = 0;
+    private long lastTimeUpdateNanos = 0;
+    private float shaderTimeSeconds = 0f;
+    private float speedMultiplier = 1f;
+    private float targetSpeedMultiplier = 1f;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
@@ -162,6 +166,10 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
         shader.setFloatUniform("forceDarkAmount", forceDark ? 1.0f : 0.0f);
         applyAccentMix();
         invalidate();
+    }
+
+    public void setPlaying(boolean playing) {
+        targetSpeedMultiplier = playing ? 1f : 0.1f;
     }
 
     public void setPaletteColors(int[] colors) {
@@ -241,8 +249,9 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
             return;
         }
         try {
+            advanceShaderTime();
             shader.setFloatUniform("iResolution", (float) w, (float) h);
-            shader.setFloatUniform("iTime", (startNanos == 0 ? 0f : (lastFrameNanos - startNanos) / 1_000_000_000f));
+            shader.setFloatUniform("iTime", shaderTimeSeconds);
             paint.setShader(shader);
             canvas.drawRect(0, 0, w, h, paint);
         } catch (Throwable ignored) {
@@ -309,6 +318,7 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
     }
 
     private void drawFallback(Canvas canvas, int w, int h) {
+        advanceShaderTime();
         if (fallbackW != w || fallbackH != h || fallbackPaint.getShader() == null) {
             fallbackPaint.setShader(new LinearGradient(0, 0, w, h,
                     fallbackColorA, fallbackColorB, Shader.TileMode.CLAMP));
@@ -316,6 +326,19 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
             fallbackH = h;
         }
         canvas.drawRect(0, 0, w, h, fallbackPaint);
+    }
+
+    private void advanceShaderTime() {
+        long now = lastFrameNanos == 0 ? System.nanoTime() : lastFrameNanos;
+        if (lastTimeUpdateNanos == 0) {
+            lastTimeUpdateNanos = now;
+            return;
+        }
+        float dt = Math.max(0f, Math.min(0.1f, (now - lastTimeUpdateNanos) / 1_000_000_000f));
+        lastTimeUpdateNanos = now;
+        float follow = 1f - (float) Math.exp(-dt * 4.5f);
+        speedMultiplier += (targetSpeedMultiplier - speedMultiplier) * follow;
+        shaderTimeSeconds += dt * speedMultiplier;
     }
 
     private static int ensurePaletteSeparation(int color, int reference) {

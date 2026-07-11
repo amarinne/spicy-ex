@@ -7,6 +7,8 @@ import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import android.view.MotionEvent;
+import android.view.View;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 
@@ -41,7 +43,21 @@ final class NativeIconButtons {
         bg.setStroke(dp(1), Color.argb(52, 255, 255, 255));
         button.setBackground(bg);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) button.setElevation(dp(8));
+        applyPressScale(button);
         return button;
+    }
+
+    static void applyPressScale(View view) {
+        if (view == null) return;
+        view.setOnTouchListener((v, event) -> {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(90).start();
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(180).start();
+            }
+            return false;
+        });
     }
 
     static void setModuleIcon(ImageButton button, Context context, int drawableRes) {

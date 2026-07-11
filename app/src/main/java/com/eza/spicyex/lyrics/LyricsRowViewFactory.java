@@ -15,6 +15,7 @@ import com.google.android.flexbox.FlexboxLayout;
 import com.google.android.flexbox.JustifyContent;
 
 import java.util.List;
+import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /** Builds mounted Android views for applied lyric rows. */
@@ -27,7 +28,7 @@ public final class LyricsRowViewFactory {
         this.textFactory = textFactory;
     }
 
-    public LinearLayout build(AppliedLine line, Options options, RomanizedWordProvider romanizedWordProvider, RowHeightListener heightListener) {
+    public LinearLayout build(AppliedLine line, Options options, RowHeightListener heightListener) {
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
@@ -76,9 +77,12 @@ public final class LyricsRowViewFactory {
         boolean japaneseLine = isJapaneseLine(line);
         boolean chineseLine = !japaneseLine && SpicyTextDetection.itemChineseTest(line.text);
         boolean showJapaneseFurigana = japaneseLine && options.showRomanization && options.showJapaneseFurigana;
-        boolean showJapaneseRomaji = japaneseLine && options.showRomanization && options.showJapaneseRomaji && !isBlank(line.romanizedText);
-        boolean showChineseRomaji = chineseLine && options.showRomanization && !isBlank(line.romanizedText);
-        boolean showGenericRomaji = !japaneseLine && !chineseLine && options.showRomanization && !isBlank(line.romanizedText);
+        boolean showJapaneseRomaji = japaneseLine && options.showRomanization && options.showJapaneseRomaji
+                && line.readingRenderPlan != null;
+        boolean showChineseRomaji = chineseLine && options.showRomanization && line.readingRenderPlan != null;
+        String plannedReading = line.readingRenderPlan == null ? "" : line.readingRenderPlan.joinedDisplayText;
+        boolean showGenericRomaji = !japaneseLine && !chineseLine && options.showRomanization
+                && !isBlank(plannedReading);
 
         float sizeMultiplier = options == null ? 1f : options.textSizeMultiplier;
         LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(LyricVisuals.lyricTextSizeSp(line.text) * sizeMultiplier)));
@@ -93,18 +97,21 @@ public final class LyricsRowViewFactory {
                 && hasSyllableWords
                 && !showJapaneseFurigana
                 && options.attachTransliterationToWords
+                && line.readingRenderPlan != null
+                && line.readingRenderPlan.timedReadingUnits.size() >= line.words.size()
                 && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji);
         boolean useSyllableWords = !indicLine && !furiganaCrossesWords && (hasRealTimedWords || (hasSyllableWords
                 && (options.wordLevelFill || options.lineLevelFillSentence || showJapaneseFurigana || showAlignedRomaji)));
         boolean lineLevelFillTopDown = !useSyllableWords && options.lineLevelFillTopDown;
         if (useSyllableWords) {
-            buildSyllableWords(row, line, options, romanizedWordProvider, showJapaneseFurigana, showAlignedRomaji);
+            buildSyllableWords(row, line, options, showJapaneseFurigana, showAlignedRomaji);
         } else {
             buildLineLevelMain(row, line, showJapaneseFurigana, lineLevelFillTopDown, options.lineLevelFillSentence, weight, font, wrapLongLines);
         }
 
         if (!line.bgLine && !showAlignedRomaji && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)) {
-            SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, line.romanizedText, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)), textFactory.resolveTypefaceForText(line.romanizedText, false));
+            String readingText = plannedReading;
+            SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, readingText, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)), textFactory.resolveTypefaceForText(readingText, false));
             roman.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
             roman.setMaxLines(wrapLongLines ? 3 : 1);
             roman.setSelfGlow(true);
@@ -142,7 +149,6 @@ public final class LyricsRowViewFactory {
             LinearLayout row,
             AppliedLine line,
             Options options,
-            RomanizedWordProvider romanizedWordProvider,
             boolean showJapaneseFurigana,
             boolean showAlignedRomaji
     ) {
@@ -163,6 +169,7 @@ public final class LyricsRowViewFactory {
         words.setClipChildren(false);
         if (showJapaneseFurigana) words.setPadding(0, dp(4), 0, 0);
         int furiganaOffset = 0;
+        int wordIndex = 0;
         for (SyllableSegment seg : line.words) {
             if (seg == null || isBlank(seg.text)) continue;
             if (furiganaOffset > 0 && !seg.partOfWord) furiganaOffset++;
@@ -171,9 +178,12 @@ public final class LyricsRowViewFactory {
             View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
                     options == null ? "Medium" : options.lyricWeight,
                     options == null ? "default" : options.lyricsFont);
-            String romanizedWordText = showAlignedRomaji && romanizedWordProvider != null
-                    ? romanizedWordProvider.romanizedText(line, seg, options.documentText)
-                    : "";
+            String romanizedWordText = "";
+            if (showAlignedRomaji && line.readingRenderPlan != null
+                    && wordIndex < line.readingRenderPlan.timedReadingUnits.size()) {
+                TimedReadingUnit timed = line.readingRenderPlan.timedReadingUnits.get(wordIndex);
+                romanizedWordText = timed == null ? "" : timed.text.trim();
+            }
             if (showAlignedRomaji && !isBlank(romanizedWordText)) {
                 wordView = stackRomanizedWord(line, seg, wordView, romanizedWordText);
             } else {
@@ -185,6 +195,7 @@ public final class LyricsRowViewFactory {
             if (!seg.partOfWord) wlp.rightMargin = dp(8);
             words.addView(wordView, wlp);
             LyricsSyllableViewState.setWordView(seg, wordView);
+            wordIndex++;
         }
         row.addView(words, new LinearLayout.LayoutParams(
                 wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -300,10 +311,6 @@ public final class LyricsRowViewFactory {
     private int dp(int value) {
         float density = activity == null ? 1f : activity.getResources().getDisplayMetrics().density;
         return Math.round(value * density);
-    }
-
-    public interface RomanizedWordProvider {
-        String romanizedText(AppliedLine line, SyllableSegment seg, String fullText);
     }
 
     public interface RowHeightListener {

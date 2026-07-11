@@ -16,8 +16,7 @@ public final class LyricsSurfaceRowPlanner {
     public static RowPlan plan(
             AppliedLine line,
             LyricsDocument document,
-            SurfacePolicy policy,
-            LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider
+            SurfacePolicy policy
     ) {
         SurfacePolicy safePolicy = policy == null ? SurfacePolicy.defaultPolicy() : policy;
         AppliedLine displayLine = displayLineForPolicy(line, safePolicy);
@@ -49,9 +48,10 @@ public final class LyricsSurfaceRowPlanner {
                 && options.attachTransliterationToWords
                 && options.showRomanization
                 && displayLine != null
-                && !isBlank(displayLine.romanizedText);
+                && displayLine.readingRenderPlan != null
+                && displayLine.readingRenderPlan.timedReadingUnits.size() >= displayLine.words.size();
         options.documentText = alignedRomaji && document != null ? LyricsDocumentProcessor.collectText(document) : "";
-        return new RowPlan(displayLine, options, alignedRomaji ? romanizedWordProvider : null);
+        return new RowPlan(displayLine, options);
     }
 
     private static AppliedLine displayLineForPolicy(AppliedLine line, SurfacePolicy policy) {
@@ -63,6 +63,7 @@ public final class LyricsSurfaceRowPlanner {
         copy.romanizedText = line.romanizedText;
         copy.translatedText = line.translatedText;
         copy.japaneseReading = line.japaneseReading;
+        copy.readingRenderPlan = line.readingRenderPlan;
         copy.words.addAll(line.words);
         copy.syntheticWords = line.syntheticWords;
         copy.sourceLine = line.sourceLine;
@@ -76,7 +77,9 @@ public final class LyricsSurfaceRowPlanner {
     }
 
     private static void ensureAlignedWordsForSentenceSync(AppliedLine line, SurfacePolicy policy) {
-        boolean needsAttachedRomanization = policy.attachTransliterationToWords && policy.showRomanization;
+        boolean needsAttachedRomanization = policy.attachTransliterationToWords && policy.showRomanization
+                && line != null && line.readingRenderPlan != null
+                && !line.readingRenderPlan.timedReadingUnits.isEmpty();
         boolean needsSyntheticWords = needsAttachedRomanization || policy.lineLevelFillSentence || policy.wordLevelFill;
         if (line == null || line.dotLine || line.bgLine) return;
         if (line.syntheticWords && !needsSyntheticWords) {
@@ -92,7 +95,7 @@ public final class LyricsSurfaceRowPlanner {
         if (needsAttachedRomanization
                 && !policy.lineLevelFillSentence
                 && !policy.wordLevelFill
-                && isBlank(line.romanizedText)) {
+                && isBlank(line.romanizedText) && line.readingRenderPlan == null) {
             return;
         }
         if (!text.contains(" ")) return;
@@ -134,14 +137,9 @@ public final class LyricsSurfaceRowPlanner {
     public static final class RowPlan {
         public final AppliedLine line;
         public final LyricsRowViewFactory.Options options;
-        public final LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider;
-
-        RowPlan(AppliedLine line,
-                LyricsRowViewFactory.Options options,
-                LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider) {
+        RowPlan(AppliedLine line, LyricsRowViewFactory.Options options) {
             this.line = line;
             this.options = options;
-            this.romanizedWordProvider = romanizedWordProvider;
         }
     }
 

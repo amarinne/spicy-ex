@@ -7,8 +7,9 @@ package com.eza.spicyex.lyrics;
  *
  * <p>Covers the common, visible lyric rules: resyllabification/liaison before ㅇ, ㅎ aspiration
  * and ㅎ-elision, palatalization (ㄷ/ㅌ + 이), obstruent nasalization (ㄱ/ㄷ/ㅂ + ㄴ/ㅁ), ㄹ→ㄴ
- * nasalization, and ㄴ/ㄹ lateralization. It is NOT a full G2P: tensification (된소리) is
- * morphology-sensitive and intentionally omitted, and some double-coda edges are simplified.
+ * nasalization, ㄴ/ㄹ lateralization, and post-obstruent tensification (제23항). It is NOT a
+ * full G2P: morphology-sensitive tensification (compounds, -(으)ㄹ futures) is not derived —
+ * compound cases stay hardcoded and ㄹ-future cases go through the display bigram layer.
  * The "follow spelling" mode ({@link SpicyRomanizer#romanizeKorean}) stays the default.
  */
 final class SpicyKoreanG2P {
@@ -37,7 +38,7 @@ final class SpicyKoreanG2P {
         CODA_ROMAN[21] = "ng"; // ㅇ
     }
 
-    private static final int NUC_I = 20;       // ㅣ
+    private static final int NUC_UI = 19, NUC_I = 20;       // ㅢ, ㅣ
     private static final int CODA_NONE = 0, CODA_G = 1, CODA_N = 4, CODA_D = 7, CODA_L = 8, CODA_M = 16, CODA_B = 17, CODA_NG = 21, CODA_H = 27;
     private static final int ON_G = 0, ON_N = 2, ON_D = 3, ON_R = 5, ON_B = 7, ON_J = 12, ON_CH = 14, ON_K = 15, ON_T = 16, ON_P = 17, ON_H = 18, ON_NULL = 11, ON_S = 9, ON_SS = 10;
 
@@ -47,6 +48,113 @@ final class SpicyKoreanG2P {
         StringBuilder out = new StringBuilder();
         for (String piece : pieces) out.append(piece);
         return out.toString();
+    }
+
+    static String codaRoman(int coda) {
+        if (coda == 0) return "";
+        int rep = codaRepresentative(coda);
+        String value = rep >= 0 && rep < CODA_ROMAN.length ? CODA_ROMAN[rep] : null;
+        return value == null ? "" : value;
+    }
+
+    static String pronounceHangulForDisplay(String text) {
+        if (text == null) return null;
+        StringBuilder out = new StringBuilder();
+        StringBuilder run = new StringBuilder();
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            if (SpicyRomanizer.isHangul(cp) || (run.length() > 0 && Character.isWhitespace(cp))) {
+                run.appendCodePoint(cp);
+            } else {
+                flushPronouncedRun(run, out);
+                out.appendCodePoint(cp);
+            }
+            i += Character.charCount(cp);
+        }
+        flushPronouncedRun(run, out);
+        return out.toString();
+    }
+
+    private static void flushPronouncedRun(StringBuilder run, StringBuilder out) {
+        if (run.length() == 0) return;
+        String[] words = run.toString().trim().split("\\s+");
+        String leading = run.toString().replaceFirst("^(\\s*).*$", "$1");
+        String trailing = run.toString().replaceFirst("^.*?(\\s*)$", "$1");
+        out.append(leading);
+        for (int i = 0; i < words.length; i++) {
+            if (i > 0) out.append(' ');
+            out.append(pronounceWordForDisplay(words[i]));
+        }
+        out.append(trailing);
+        run.setLength(0);
+    }
+
+    private static String pronounceWordForDisplay(String word) {
+        if (word == null || word.isEmpty()) return "";
+        // Compound (합성어) tensification is morphology-sensitive and stays hardcoded;
+        // post-obstruent tensification is now a rule in applyRules.
+        if ("눈빛".equals(word)) return "눈삗";
+        if ("눈동자".equals(word)) return "눈똥자";
+        if ("해돋이".equals(word)) return "해도지";
+        if ("색연필".equals(word)) return "생년필";
+        if ("희미해져".equals(word)) return "히미해저";
+        word = rewriteUi(word);
+        java.util.ArrayList<int[]> run = new java.util.ArrayList<>();
+        for (int i = 0; i < word.length(); ) {
+            int cp = word.codePointAt(i);
+            int[] syl = SpicyRomanizer.decompose(cp);
+            if (syl != null) run.add(syl);
+            i += Character.charCount(cp);
+        }
+        applyRules(run);
+        StringBuilder out = new StringBuilder();
+        for (int[] syl : run) out.append(compose(syl[0], syl[1], syl[2]));
+        return out.toString();
+    }
+
+    private static String rewriteUi(String word) {
+        if (word.length() > 1 && word.endsWith("의")
+                && !"주의".equals(word) && !"의미".equals(word) && !"회의".equals(word) && !"거의".equals(word)) {
+            return word.substring(0, word.length() - 1) + "에";
+        }
+        return word.replaceAll("(?<=.)의", "이");
+    }
+
+    private static char compose(int onset, int vowel, int coda) {
+        return (char) (0xAC00 + (onset * 588) + (vowel * 28) + coda);
+    }
+
+    static java.util.List<String> romanizeSyllablePieces(String text, boolean vn) {
+        java.util.ArrayList<String> pieces = new java.util.ArrayList<>();
+        String pronounced = pronounceHangulForDisplay(text);
+        if (pronounced == null) return pieces;
+        int prevCoda = 0;
+        int runIndex = 0;
+        for (int i = 0; i < pronounced.length(); ) {
+            int cp = pronounced.codePointAt(i);
+            int[] syl = SpicyRomanizer.decompose(cp);
+            if (syl == null) {
+                pieces.add(new String(Character.toChars(cp)));
+                if (Character.isWhitespace(cp)) {
+                    prevCoda = 0;
+                    runIndex = 0;
+                }
+            } else {
+                applyUiPronunciation(syl, runIndex);
+                String onset = syl[0] == ON_R && prevCoda == CODA_L ? "l" : ONSET[syl[0]];
+                String vowel = SpicyRomanizer.koreanDisplayVowel(syl[1], vn);
+                pieces.add(onset + vowel + codaRoman(syl[2]));
+                prevCoda = syl[2];
+                runIndex++;
+            }
+            i += Character.charCount(cp);
+        }
+        return pieces;
+    }
+
+    private static void applyUiPronunciation(int[] syl, int runIndex) {
+        if (syl == null || syl[1] != NUC_UI) return;
+        if (syl[0] != ON_NULL || runIndex > 0) syl[1] = NUC_I;
     }
 
     static java.util.List<String> romanizeReadablePieces(String text) {
@@ -147,6 +255,9 @@ final class SpicyKoreanG2P {
                 // palatalization: ㄷ/ㅌ moved before 이 → ㅈ/ㅊ
                 if (nuc == NUC_I && (moved == ON_D)) moved = ON_J;
                 else if (nuc == NUC_I && (moved == ON_T)) moved = ON_CH;
+                // 제23항: a plain onset moved off a double coda tensifies after the
+                // obstruent that stays behind (값이 → 갑씨, 없어 → 업써).
+                if (isObstruentCoda(split[0])) moved = tenseOnset(moved);
                 nxt[0] = moved;
                 continue;
             }
@@ -169,6 +280,10 @@ final class SpicyKoreanG2P {
             }
 
             cur[2] = rep;
+
+            // tensification (제23항): plain ㄱㄷㅂㅅㅈ tense after an obstruent coda
+            // (없지 → 업찌, 있게 → 읻께, 됐단 → 뙈딴).
+            if (isObstruentCoda(rep)) nxt[0] = tenseOnset(onset);
 
             // obstruent nasalization: ㄱ/ㄷ/ㅂ + ㄴ/ㅁ
             if (onset == ON_N || onset == ON_M_ONSET()) {
@@ -193,6 +308,20 @@ final class SpicyKoreanG2P {
     }
 
     private static int ON_M_ONSET() { return 6; } // ㅁ onset index
+
+    private static boolean isObstruentCoda(int rep) {
+        return rep == CODA_G || rep == CODA_D || rep == CODA_B;
+    }
+
+    /** Plain ㄱㄷㅂㅅㅈ → tense ㄲㄸㅃㅆㅉ; other onsets unchanged. */
+    private static int tenseOnset(int onset) {
+        if (onset == ON_G) return 1;
+        if (onset == ON_D) return 4;
+        if (onset == ON_B) return 8;
+        if (onset == ON_S) return ON_SS;
+        if (onset == ON_J) return 13;
+        return onset;
+    }
 
     /** Underlying coda → {coda remaining on this syllable, onset consonant that moves to the next}. */
     private static int[] liaisonSplit(int coda) {

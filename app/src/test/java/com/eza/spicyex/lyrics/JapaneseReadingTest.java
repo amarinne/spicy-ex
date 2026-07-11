@@ -8,6 +8,8 @@ import static org.junit.Assert.assertTrue;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 
 import org.junit.Test;
 
@@ -34,6 +36,37 @@ public class JapaneseReadingTest {
             out.add(r.sourceText.substring(f.start, Math.min(f.end, r.sourceText.length())) + "=" + f.reading);
         }
         return out;
+    }
+
+    @Test
+    public void renderPlanKeepsSplitJapaneseTimingOwnersUnique() {
+        LyricsLine line = new LyricsLine();
+        line.text = "だんだん剥がれてく";
+        for (String text : Arrays.asList("だん", "だん", "剥", "がれて", "く")) {
+            SyllableSegment segment = new SyllableSegment();
+            segment.text = text;
+            segment.partOfWord = true;
+            line.syllables.add(segment);
+        }
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line.text, null);
+        RenderPlan plan = ReadingPlanFactory.japanese(line, reading);
+        assertNotNull(plan);
+        assertEquals(5, plan.timedReadingUnits.size());
+        assertEquals(reading.romaji, plan.joinedDisplayText);
+    }
+
+    @Test
+    public void doyomekiKanjiOrthographyReadsDoyo() {
+        // UniDic 2.1.2 has no surface entry for 響めき (どよめき; its lemma is
+        // 響動めき, usually written kana-only) and falls back to 響(ひびき)+めき.
+        // Lexical override + めく-suffix join must produce doyomeki as one word.
+        assertEquals("doyomeki kirameki to kimi mo", romaji("響めき煌めきと君も"));
+        assertEquals("doyomeku", romaji("響めく"));
+        assertTrue(furigana("響めき").contains("響=どよ"));
+        // 響 outside the めく context keeps its dictionary readings.
+        assertEquals("hibiku", romaji("響く"));
+        assertEquals("hibiki", romaji("響き"));
     }
 
     @Test
@@ -67,6 +100,48 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void irisNanDemoUsesFullLineContextAcrossTimingSplit() {
+        assertEquals("nan", romaji("何"));
+        String source = "パチモンでもいい何でもいい";
+        assertEquals("pachi mon de mo ii nan de mo ii", romaji(source));
+
+        LyricsLine line = new LyricsLine();
+        line.text = source;
+        for (String text : Arrays.asList("パチモン", "でも", "いい", "何", "でも", "いい")) {
+            SyllableSegment segment = new SyllableSegment();
+            segment.text = text;
+            segment.partOfWord = true;
+            line.syllables.add(segment);
+        }
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line.text, null);
+        RenderPlan plan = ReadingPlanFactory.japanese(line, reading);
+        assertNotNull(plan);
+        assertEquals(reading.romaji, plan.joinedDisplayText);
+        assertEquals(6, plan.timedReadingUnits.size());
+        assertEquals(" nan", plan.timedReadingUnits.get(3).text);
+        assertEquals(" de mo", plan.timedReadingUnits.get(4).text);
+    }
+
+    @Test
+    public void irisTimingFragmentsPreserveSemanticRomajiSpaces() {
+        String source = "ダーリンベイビーダーリン 半端なくラブ!ときらめき浮き足立つフィロソフィ";
+        LyricsLine line = new LyricsLine();
+        line.text = source;
+        for (String text : Arrays.asList("ダー", "リン", "ベイビー", "ダー", "リン ", "半", "端", "なく", "ラブ!と", "きらめき", "浮き", "足", "立つ", "フィロソ", "フィ")) {
+            SyllableSegment segment = new SyllableSegment();
+            segment.text = text;
+            segment.partOfWord = !text.matches(".*\\s$");
+            line.syllables.add(segment);
+        }
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine(source, null);
+        RenderPlan plan = ReadingPlanFactory.japanese(line, reading);
+        assertNotNull(plan);
+        assertEquals(reading.romaji, plan.joinedDisplayText);
+    }
+
+    @Test
     public void lexicalOverridesStayPosGuarded() {
         // 私 as pronoun reads watashi (UniDic default is the formal watakushi).
         assertEquals("watashi wa utau", romaji("私は歌う"));
@@ -84,6 +159,7 @@ public class JapaneseReadingTest {
         assertEquals("hitori", romaji("一人"));
         assertEquals("futari", romaji("二人"));
         assertEquals("ikkai", romaji("一回"));
+        assertEquals("ippo", romaji("一歩"));
     }
 
     @Test
@@ -185,7 +261,46 @@ public class JapaneseReadingTest {
         assertEquals("kouyou", SpicyJapaneseChineseProcessor.romanizeJapaneseLineFromFurigana("紅葉", provider));
         provider.clear();
         provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "もみじ"));
-        assertEquals("momiji", SpicyJapaneseChineseProcessor.romanizeJapaneseLineFromFurigana("紅葉", provider));
+        // Provider ruby is accepted only when it reconstructs UniDic's token reading.
+        assertEquals("kouyou", SpicyJapaneseChineseProcessor.romanizeJapaneseLineFromFurigana("紅葉", provider));
+    }
+
+    @Test
+    public void providerFuriganaRequiresCompleteValidTokenCoverage() {
+        ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> provider = new ArrayList<>();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "こう"));
+        assertEquals("kouyou", SpicyJapaneseChineseProcessor.romanizeJapaneseLineFromFurigana("紅葉", provider));
+
+        provider.clear();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "こうよう"));
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot accepted =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("紅葉", provider);
+        assertEquals("providerRubyValidated", accepted.tokens.get(0).readingReason);
+        SpicyJapaneseChineseProcessor.JapaneseReading acceptedReading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLineWithProviderFurigana("紅葉", provider);
+        assertEquals(Arrays.asList("紅葉=こうよう"), furiganaFrom(acceptedReading));
+
+        provider.clear();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "こう"));
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "こうよう"));
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot overlap =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("紅葉", provider);
+        assertEquals("unidicReadingOfRecord", overlap.tokens.get(0).readingReason);
+    }
+
+    @Test
+    public void debugSnapshotExposesDeterministicOracleStages() {
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot snapshot =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("殺 した", null);
+        assertEquals("殺 した", snapshot.displayText);
+        assertEquals("殺した", snapshot.analysisText);
+        assertEquals(3, snapshot.analysisToDisplayUtf16.length);
+        assertEquals(0, snapshot.analysisToDisplayUtf16[0]);
+        assertEquals(2, snapshot.analysisToDisplayUtf16[1]);
+        assertEquals("koroshita", snapshot.romaji);
+        assertFalse(snapshot.tokens.isEmpty());
+        assertEquals("殺し", snapshot.tokens.get(0).surface);
+        assertEquals("unidicReadingOfRecord", snapshot.tokens.get(0).readingReason);
     }
 
     @Test

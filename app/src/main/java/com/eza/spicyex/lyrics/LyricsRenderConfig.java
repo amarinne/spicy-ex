@@ -1,6 +1,8 @@
 package com.eza.spicyex.lyrics;
 
+import android.app.ActivityManager;
 import android.content.Context;
+import android.provider.Settings.Global;
 
 import com.eza.spicyex.FeatureAvailability;
 import com.eza.spicyex.Settings;
@@ -165,8 +167,9 @@ public final class LyricsRenderConfig {
         String cn = transliterationAvailable ? get(cfg, Settings.CHINESE_MODE) : "off";
         String defaultJp = "cycle".equals(jp) ? SpotifyPlusConfig.JP_READING_ROMAJI_ONLY : jp;
         String defaultCn = transliterationAvailable ? shell.defaultChineseMode(cn) : "";
-        String kr = transliterationAvailable ? get(cfg, Settings.KOREAN_ROMANIZATION) : "Off";
-        String defaultKr = "cycle".equals(kr) ? SpicyRomanizer.KOREAN_PRONUNCIATION : kr;
+        String kr = transliterationAvailable ? get(cfg, Settings.KOREAN_ROMANIZATION) : KoreanDisplayMode.RR_STANDARD.value;
+        String defaultKr = "cycle".equals(kr) ? KoreanDisplayMode.RR_STANDARD.value : KoreanDisplayMode.valueOfSetting(kr);
+        String currentKr = "cycle".equals(kr) ? KoreanDisplayMode.valueOfSetting(get(cfg, Settings.LAST_KOREAN_CYCLE_MODE)) : defaultKr;
         String cy = transliterationAvailable ? get(cfg, Settings.CYRILLIC_MODE) : "Off";
         String defaultCy = "cycle".equals(cy) ? SpicyRomanizer.CYRILLIC_RUSSIAN : cy;
         boolean transliterationEnabled = transliterationAvailable && get(cfg, Settings.TRANSLITERATION_ENABLED);
@@ -210,7 +213,7 @@ public final class LyricsRenderConfig {
                 defaultCn,
                 kr,
                 defaultKr,
-                defaultKr,
+                currentKr,
                 transliterationAvailable && get(cfg, Settings.CHINESE_TONES),
                 cy,
                 defaultCy,
@@ -317,6 +320,36 @@ public final class LyricsRenderConfig {
         );
     }
 
+    private static boolean shouldAutoReduceMotion(Context context) {
+        if (context == null) return false;
+        try {
+            if (Global.getFloat(context.getContentResolver(), Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) return true;
+        } catch (Throwable ignored) {
+        }
+        try {
+            ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            return manager != null && manager.isLowRamDevice();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean hasExplicitPref(Context context, String key) {
+        if (context == null || key == null) return false;
+        try {
+            return context.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE).contains(key);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static float blurQualityMultiplier(String quality) {
+        if ("superLow".equalsIgnoreCase(quality)) return 0f;
+        if ("low".equalsIgnoreCase(quality)) return 0.35f;
+        if ("mid".equalsIgnoreCase(quality)) return 0.70f;
+        return 1f;
+    }
+
     private static boolean changed(String a, String b) {
         return !safe(a).equals(safe(b));
     }
@@ -377,7 +410,8 @@ public final class LyricsRenderConfig {
             japaneseModeConfigChanged = changed(oldValue.japaneseModeConfig, next.japaneseModeConfig);
             chineseModeConfigChanged = changed(oldValue.chineseModeConfig, next.chineseModeConfig)
                     || changed(oldValue.defaultChineseMode, next.defaultChineseMode);
-            koreanModeConfigChanged = changed(oldValue.koreanModeConfig, next.koreanModeConfig);
+            koreanModeConfigChanged = changed(oldValue.koreanModeConfig, next.koreanModeConfig)
+                    || changed(oldValue.defaultKoreanMode, next.defaultKoreanMode);
             boolean koreanChanged = koreanModeConfigChanged || changed(oldValue.koreanMode, next.koreanMode);
             boolean chineseTonesChanged = oldValue.chineseTones != next.chineseTones;
             cyrillicModeConfigChanged = changed(oldValue.cyrillicModeConfig, next.cyrillicModeConfig);

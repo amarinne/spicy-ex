@@ -118,6 +118,7 @@ final class NowPlayingLyricController {
                 || !renderConfig.defaultJapaneseReadingMode.equals(next.defaultJapaneseReadingMode)
                 || !renderConfig.defaultChineseMode.equals(next.defaultChineseMode)
                 || !renderConfig.defaultKoreanMode.equals(next.defaultKoreanMode)
+                || !renderConfig.koreanMode.equals(next.koreanMode)
                 || !renderConfig.defaultCyrillicMode.equals(next.defaultCyrillicMode)
                 || renderConfig.chineseTones != next.chineseTones
                 || renderConfig.cyrillicKeepSigns != next.cyrillicKeepSigns
@@ -209,7 +210,6 @@ final class NowPlayingLyricController {
         }
         card.renderLine(activity, cur, renderConfig, pos, deltaSeconds,
                 document,
-                this::segmentRomanizedText,
                 lineChanged);
     }
 
@@ -356,6 +356,7 @@ final class NowPlayingLyricController {
             builder.append(line.startMs)
                     .append('|').append(line.endMs)
                     .append('|').append(line.romanizedText)
+                    .append('|').append(line.readingRenderPlan == null ? "" : line.readingRenderPlan.joinedDisplayText)
                     .append('|').append(line.translatedText)
                     .append('|').append(japaneseReadingSignature(line.japaneseReading))
                     .append('\n');
@@ -394,28 +395,14 @@ final class NowPlayingLyricController {
                     && !SpicyTextDetection.hasRomanizableScript(line.romanizedText)) continue;
             String local = LyricsLocalRomanizer.romanizeLine(opts, doc, line, fullText);
             if (!isBlank(local) && !local.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
-                line.romanizedText = local;
+                line.romanizedText = line.readingRenderPlan == null ? local : "";
             }
         }
     }
 
     private RomanizationOptions romanizationOptions() {
-        return new RomanizationOptions(renderConfig.defaultChineseMode, renderConfig.defaultKoreanMode,
+        return new RomanizationOptions(renderConfig.defaultChineseMode, renderConfig.koreanMode,
                 renderConfig.chineseTones, renderConfig.defaultCyrillicMode, renderConfig.cyrillicKeepSigns);
-    }
-
-    private String segmentRomanizedText(AppliedLine line, SyllableSegment seg, String fullText) {
-        if (seg == null || isBlank(seg.text)) return "";
-        if (!isBlank(seg.romanizedText)) return seg.romanizedText;
-        if (LyricsDisplayMode.isJapaneseLine(line)) return "";
-        LyricsLine source = line == null ? null : line.sourceLine;
-        String local = LyricsLocalRomanizer.romanizeText(romanizationOptions(), document, seg.text,
-                fullText, source == null ? "" : source.chineseMode);
-        if (!isBlank(local) && !local.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
-            seg.romanizedText = local;
-            return local;
-        }
-        return "";
     }
 
     private boolean isUnsyncedDocument(LyricsDocument doc) {

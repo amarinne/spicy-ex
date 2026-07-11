@@ -25,7 +25,7 @@ public class LyricAnimationsTest {
     @Test
     public void scaleSplineKnots() {
         assertEquals(0.95f, LyricAnimations.scaleSpline(0f), EPS);
-        assertEquals(1.075f, LyricAnimations.scaleSpline(0.7f), EPS);
+        assertEquals(1.0505f, LyricAnimations.scaleSpline(0.7f), EPS);
         assertEquals(1.0f, LyricAnimations.scaleSpline(1f), EPS);
         assertContinuous(LyricAnimations::scaleSpline, 0.7f);
     }
@@ -33,7 +33,7 @@ public class LyricAnimationsTest {
     @Test
     public void yOffsetSplineKnots() {
         assertEquals(0.01f, LyricAnimations.yOffsetSpline(0f), EPS);
-        assertEquals(-(1f / 52.5f), LyricAnimations.yOffsetSpline(0.9f), EPS);
+        assertEquals(-(1f / 60f), LyricAnimations.yOffsetSpline(0.9f), EPS);
         assertEquals(0f, LyricAnimations.yOffsetSpline(1f), EPS);
         assertContinuous(LyricAnimations::yOffsetSpline, 0.9f);
     }
@@ -70,29 +70,26 @@ public class LyricAnimationsTest {
     }
 
     @Test
-    public void dotMainSplinesKnotsAndContinuity() {
-        assertEquals(0f, LyricAnimations.dotMainScaleSpline(0f), EPS);
-        assertEquals(1.05f, LyricAnimations.dotMainScaleSpline(0.2f), EPS);
-        assertEquals(1.15f, LyricAnimations.dotMainScaleSpline(0.925f), EPS);
-        assertEquals(0f, LyricAnimations.dotMainScaleSpline(1f), EPS);
-        assertContinuous(LyricAnimations::dotMainScaleSpline, 0.2f);
-        assertContinuous(LyricAnimations::dotMainScaleSpline, 0.925f);
-
-        assertEquals(0f, LyricAnimations.dotMainOpacitySpline(0f), EPS);
-        assertEquals(1f, LyricAnimations.dotMainOpacitySpline(0.5f), EPS);
-        assertEquals(1f, LyricAnimations.dotMainOpacitySpline(0.925f), EPS);
-        assertEquals(0f, LyricAnimations.dotMainOpacitySpline(1f), EPS);
-    }
-
-    @Test
-    public void dotDetailSplinesContinuous() {
+    public void dotDetailSplinesMatchDesktopKnots() {
+        assertEquals(0.75f, LyricAnimations.dotScaleSpline(0f), EPS);
+        assertEquals(1.05f, LyricAnimations.dotScaleSpline(0.7f), EPS);
+        assertEquals(1f, LyricAnimations.dotScaleSpline(1f), EPS);
         assertContinuous(LyricAnimations::dotScaleSpline, 0.7f);
-        assertContinuous(LyricAnimations::dotYOffsetSpline, 0.7f);
-        assertContinuous(LyricAnimations::dotGlowSpline, 0.18f);
-        assertContinuous(LyricAnimations::dotGlowSpline, 0.7f);
-        assertContinuous(LyricAnimations::dotOpacitySpline, 0.18f);
-        assertContinuous(LyricAnimations::dotOpacitySpline, 0.85f);
-        assertEquals(0.88f, LyricAnimations.dotOpacitySpline(1f), EPS);
+
+        assertEquals(0f, LyricAnimations.dotYOffsetSpline(0f), EPS);
+        assertEquals(-0.12f, LyricAnimations.dotYOffsetSpline(0.9f), EPS);
+        assertEquals(0f, LyricAnimations.dotYOffsetSpline(1f), EPS);
+        assertContinuous(LyricAnimations::dotYOffsetSpline, 0.9f);
+
+        assertEquals(0f, LyricAnimations.dotGlowSpline(0f), EPS);
+        assertEquals(1f, LyricAnimations.dotGlowSpline(0.6f), EPS);
+        assertEquals(1f, LyricAnimations.dotGlowSpline(1f), EPS);
+        assertContinuous(LyricAnimations::dotGlowSpline, 0.6f);
+
+        assertEquals(0.35f, LyricAnimations.dotOpacitySpline(0f), EPS);
+        assertEquals(1f, LyricAnimations.dotOpacitySpline(0.6f), EPS);
+        assertEquals(1f, LyricAnimations.dotOpacitySpline(1f), EPS);
+        assertContinuous(LyricAnimations::dotOpacitySpline, 0.6f);
     }
 
     @Test
@@ -118,13 +115,37 @@ public class LyricAnimationsTest {
     }
 
     @Test
-    public void dotPulseStaysWithinRange() {
-        for (long t = 0; t < 5000; t += 50) {
-            for (int i = 0; i < 3; i++) {
-                float p = LyricAnimations.dotPulse(t, i);
-                assertTrue("pulse out of range: " + p, p >= 0.90f - EPS && p <= 1.05f + EPS);
-            }
-        }
+    public void dotTargetsUsePerDotIntervals() {
+        SyllableSegment dot = new SyllableSegment();
+        dot.startMs = 1000;
+        dot.endMs = 2000;
+
+        LyricsAnimationApplier.DotTargets notSung = LyricsAnimationApplier.dotTargets(dot, 999);
+        assertEquals(0.75f, notSung.scale, EPS);
+        assertEquals(0f, notSung.yOffset, EPS);
+        assertEquals(0f, notSung.glow, EPS);
+        assertEquals(0.35f, notSung.opacity, EPS);
+        assertEquals(0f, notSung.gradientProgress, EPS);
+
+        LyricsAnimationApplier.DotTargets active = LyricsAnimationApplier.dotTargets(dot, 1600);
+        assertEquals(1f, active.glow, EPS);
+        assertEquals(1f, active.opacity, EPS);
+        assertEquals(0.6f, active.gradientProgress, EPS);
+
+        LyricsAnimationApplier.DotTargets sung = LyricsAnimationApplier.dotTargets(dot, 2000);
+        assertEquals(1f, sung.scale, EPS);
+        assertEquals(0f, sung.yOffset, EPS);
+        assertEquals(1f, sung.glow, EPS);
+        assertEquals(1f, sung.opacity, EPS);
+        assertEquals(1f, sung.gradientProgress, EPS);
+    }
+
+    @Test
+    public void inactiveDotRowsFadeOutInsteadOfPersisting() {
+        AppliedLine dots = new AppliedLine();
+        dots.dotLine = true;
+
+        assertEquals(0f, LyricsAnimationApplier.stepLineOpacity(dots, false, false, 1f / 60f), EPS);
     }
 
     @Test

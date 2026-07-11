@@ -27,8 +27,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 305
-        versionName "1.58.30-jp-line-analysis+B305-20260706T0931Z"
+        versionCode 321
+        versionName "1.58.46-korean-junction-hyphens+B321-20260710T1920Z"
 
     }
 

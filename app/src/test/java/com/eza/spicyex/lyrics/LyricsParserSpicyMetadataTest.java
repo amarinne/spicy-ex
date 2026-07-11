@@ -68,6 +68,29 @@ public class LyricsParserSpicyMetadataTest {
                 () -> parser.parseSpicyLyrics(null, track, queryResponse(result).toString(), false));
     }
 
+    @Test
+    public void parseSyllableLyricsUsesTrailingSpanSpaceAsWordBoundary() {
+        JsonObject result = new JsonObject();
+        result.addProperty("httpStatus", 200);
+        result.addProperty("format", "json");
+        result.add("data", syllableLyricsWithSpanSpaces());
+
+        LyricsDocument doc = parser.parseSpicyLyrics(null, track, queryResponse(result).toString(), false);
+
+        LyricsLine line = doc.lines.get(0);
+        assertEquals("점점 내 모습이", line.text);
+        assertEquals("점", line.syllables.get(0).text);
+        assertTrue(line.syllables.get(0).partOfWord);
+        assertEquals("점", line.syllables.get(1).text);
+        assertEquals("점 ", line.syllables.get(1).sourceText);
+        assertFalse(line.syllables.get(1).partOfWord);
+        assertEquals("내", line.syllables.get(2).text);
+        assertEquals("내 ", line.syllables.get(2).sourceText);
+        assertFalse(line.syllables.get(2).partOfWord);
+        assertEquals("모", line.syllables.get(3).text);
+        assertTrue(line.syllables.get(3).partOfWord);
+    }
+
     private static JsonObject queryResponse(JsonObject result) {
         JsonObject query = new JsonObject();
         query.add("result", result);
@@ -113,5 +136,42 @@ public class LyricsParserSpicyMetadataTest {
         packed.add(values);
         packed.add(stream);
         return packed;
+    }
+
+    private static JsonObject syllableLyricsWithSpanSpaces() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("점", true, 22.804, 23.167));
+        syllables.add(syllable("점 ", true, 23.167, 23.304));
+        syllables.add(syllable("내 ", true, 23.304, 23.429));
+        syllables.add(syllable("모", true, 23.429, 23.589));
+        syllables.add(syllable("습", true, 23.589, 23.792));
+        syllables.add(syllable("이", true, 23.792, 23.892));
+
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "점점 내 모습이");
+        lead.addProperty("StartTime", 22.804);
+        lead.addProperty("EndTime", 23.892);
+        lead.add("Syllables", syllables);
+
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+
+        JsonArray content = new JsonArray();
+        content.add(item);
+
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+        return lyrics;
+    }
+
+    private static JsonObject syllable(String text, boolean partOfWord, double start, double end) {
+        JsonObject object = new JsonObject();
+        object.addProperty("Text", text);
+        object.addProperty("IsPartOfWord", partOfWord);
+        object.addProperty("StartTime", start);
+        object.addProperty("EndTime", end);
+        return object;
     }
 }
