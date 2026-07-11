@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
+import android.graphics.MaskFilter;
 import android.graphics.Paint;
 import android.graphics.Shader;
 import android.os.Build;
@@ -39,11 +40,9 @@ public class SpicyAnimatedTextView extends TextView {
     // so they draw their own soft halo here instead — gated by setSelfGlow(true).
     private boolean selfGlow;
     private float brightnessMultiplier = 1f;
-    private final float density;
 
     public SpicyAnimatedTextView(Context context) {
         super(context);
-        density = context.getResources().getDisplayMetrics().density;
     }
 
     /** Enable a self-drawn blur halo (for rows NOT inside a GlowFlexbox). */
@@ -205,11 +204,15 @@ public class SpicyAnimatedTextView extends TextView {
         TextPaint paint = getPaint();
         Shader savedShader = paint.getShader();
         int savedColor = paint.getColor();
-        int alpha = Math.round(255f * Math.min(0.9f, 0.85f * g));
+        MaskFilter savedMask = paint.getMaskFilter();
+        int alpha = Math.round(255f * 0.35f * g);
         int glowColor = Color.argb(alpha, 255, 255, 255);
+        // Same render as GlowFlexbox: desktop's `text-shadow: 0 0 (4+2g)px rgba(255,255,255,.35g)`
+        // — a blurred copy of the glyphs only, sigma scaled to the ~48px desktop reference font.
+        float sigma = (2f + g) * paint.getTextSize() / 48f;
         paint.setShader(null);
         paint.setColor(glowColor);
-        paint.setShadowLayer((5f + 13f * g) * density, 0f, 0f, glowColor);
+        paint.setMaskFilter(GlowFlexbox.blurFilter(sigma));
         int save = canvas.save();
         canvas.translate(getTotalPaddingLeft(), getTotalPaddingTop());
         try {
@@ -217,7 +220,7 @@ public class SpicyAnimatedTextView extends TextView {
         } catch (Throwable ignored) {
         }
         canvas.restoreToCount(save);
-        paint.clearShadowLayer();
+        paint.setMaskFilter(savedMask);
         paint.setColor(savedColor);
         paint.setShader(savedShader);
     }

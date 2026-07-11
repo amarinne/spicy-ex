@@ -2,12 +2,12 @@ package com.eza.spicyex.lyrics;
 
 import android.app.Activity;
 import android.net.Uri;
-import android.os.Handler;
-import android.os.Looper;
 
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import java.io.IOException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import de.robv.android.xposed.XposedBridge;
 import okhttp3.Call;
@@ -44,12 +44,14 @@ public final class LyricsRepository {
     private final OkHttpClient http;
     private final Parser parser;
     private final NativeLyricsProvider nativeLyricsProvider;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ScheduledExecutorService ioScheduler;
 
-    public LyricsRepository(OkHttpClient http, Parser parser, NativeLyricsProvider nativeLyricsProvider) {
+    public LyricsRepository(OkHttpClient http, Parser parser, NativeLyricsProvider nativeLyricsProvider,
+                            ScheduledExecutorService ioScheduler) {
         this.http = http;
         this.parser = parser;
         this.nativeLyricsProvider = nativeLyricsProvider;
+        this.ioScheduler = ioScheduler;
     }
 
     public void fetchLyrics(
@@ -328,10 +330,11 @@ public final class LyricsRepository {
         if (nativeRetryCount < NATIVE_LYRICS_RETRY_LIMIT) {
             int nextRetry = nativeRetryCount + 1;
             XposedBridge.log(TAG + " waiting for native lyrics (" + safe(reason) + ") retry=" + nextRetry);
-            mainHandler.postDelayed(
+            ioScheduler.schedule(
                     () -> fetchNativeThenLrclibWithStatic(activity, track, generation, callback, nextRetry,
                             reason, chain, tokenPresent),
-                    NATIVE_LYRICS_RETRY_DELAY_MS);
+                    NATIVE_LYRICS_RETRY_DELAY_MS,
+                    TimeUnit.MILLISECONDS);
             return;
         }
 

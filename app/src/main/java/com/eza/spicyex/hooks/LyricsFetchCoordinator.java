@@ -15,6 +15,13 @@ import com.eza.spicyex.lyrics.LyricsParser;
 import com.eza.spicyex.lyrics.LyricsRepository;
 import com.eza.spicyex.lyrics.NativeLyricsSource;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 import okhttp3.OkHttpClient;
 
 /** Owns parser/native-source setup and LyricsRepository construction for hook-hosted fetches. */
@@ -23,6 +30,8 @@ final class LyricsFetchCoordinator {
     private final int processingVersion;
     private final LyricsParser lyricsParser;
     private final NativeLyricsSource nativeLyricsSource;
+    private final Object inFlightLock = new Object();
+    private final Map<String, InFlightFetch> inFlight = new HashMap<>();
 
     LyricsFetchCoordinator(
             OkHttpClient http,
@@ -49,28 +58,113 @@ final class LyricsFetchCoordinator {
                 "fetchLyrics",
                 "start generation=" + generation + " track=" + (track == null ? "null" : safe(track.uri))
         );
+        String operationKey = fetchKey(track,
+                SpotifyPlusConfig.from(activity).get(Settings.SEND_TOKEN), References.accessToken);
+        InFlightFetch existing;
+        LyricsDocument replay = null;
+        boolean joined = false;
+        synchronized (inFlightLock) {
+            existing = inFlight.get(operationKey);
+            if (existing != null) {
+                joined = true;
+                existing.callbacks.add(callback);
+                if (existing.latest != null) replay = LyricsDocument.copyOf(existing.latest);
+            } else {
+                existing = new InFlightFetch(operationKey,
+                        SpotifyPlusConfig.from(activity).get(Settings.SEND_TOKEN)
+                                && References.accessToken != null
+                                && !References.accessToken.trim().isEmpty());
+                existing.callbacks.add(callback);
+                inFlight.put(operationKey, existing);
+            }
+        }
+        if (replay != null) callback.onSuccess(replay);
+        if (joined) return;
+        InFlightFetch operation = existing;
         LyricsRepository repository = new LyricsRepository(
                 http,
                 lyricsParser,
-                nativeLyricsSource
+                nativeLyricsSource,
+                NativeRuntime.LYRICS_IO
         );
-        repository.fetchLyrics(
+        boolean sendToken = SpotifyPlusConfig.from(activity).get(Settings.SEND_TOKEN);
+        String accessToken = References.accessToken;
+        NativeRuntime.LYRICS_IO.execute(() -> repository.fetchLyrics(
                 activity,
                 track,
                 generation,
-                SpotifyPlusConfig.from(activity).get(Settings.SEND_TOKEN),
-                References.accessToken,
+                sendToken,
+                accessToken,
                 new LyricsRepository.ResultCallback() {
                     @Override
                     public void onSuccess(LyricsDocument document) {
-                        callback.onSuccess(document);
+                        deliverSuccess(operation, document);
                     }
 
                     @Override
                     public void onError(String error) {
-                        callback.onError(error);
+                        deliverError(operation, error);
                     }
-                });
+                }));
+    }
+
+    private void deliverSuccess(InFlightFetch operation, LyricsDocument document) {
+        List<NativeSpicyLyricsHook.LyricsResultCallback> callbacks;
+        synchronized (inFlightLock) {
+            if (inFlight.get(operation.key) != operation) return;
+            operation.latest = LyricsDocument.copyOf(document);
+            callbacks = new ArrayList<>(operation.callbacks);
+            if (operation.expiry != null) operation.expiry.cancel(false);
+            boolean cachePreview = "spicy_api_cache".equals(document == null ? "" : document.fetchSource);
+            if (!cachePreview || !operation.networkUpgradeExpected) {
+                inFlight.remove(operation.key);
+                operation.callbacks.clear();
+                operation.latest = null;
+            } else {
+                operation.expiry = NativeRuntime.LYRICS_IO.schedule(
+                        () -> expire(operation), 20L, TimeUnit.SECONDS);
+            }
+        }
+        for (NativeSpicyLyricsHook.LyricsResultCallback callback : callbacks) {
+            callback.onSuccess(LyricsDocument.copyOf(document));
+        }
+    }
+
+    private void deliverError(InFlightFetch operation, String error) {
+        List<NativeSpicyLyricsHook.LyricsResultCallback> callbacks;
+        synchronized (inFlightLock) {
+            if (inFlight.remove(operation.key) != operation) return;
+            if (operation.expiry != null) operation.expiry.cancel(false);
+            callbacks = new ArrayList<>(operation.callbacks);
+            operation.callbacks.clear();
+        }
+        for (NativeSpicyLyricsHook.LyricsResultCallback callback : callbacks) callback.onError(error);
+    }
+
+    private void expire(InFlightFetch operation) {
+        synchronized (inFlightLock) {
+            if (inFlight.get(operation.key) == operation) inFlight.remove(operation.key);
+            operation.callbacks.clear();
+            operation.latest = null;
+        }
+    }
+
+    private static String fetchKey(SpotifyTrack track, boolean sendToken, String token) {
+        String uri = track == null ? "" : safe(track.uri);
+        return uri + "|token=" + (sendToken && token != null && !token.trim().isEmpty());
+    }
+
+    private static final class InFlightFetch {
+        final String key;
+        final boolean networkUpgradeExpected;
+        final List<NativeSpicyLyricsHook.LyricsResultCallback> callbacks = new ArrayList<>();
+        LyricsDocument latest;
+        ScheduledFuture<?> expiry;
+
+        InFlightFetch(String key, boolean networkUpgradeExpected) {
+            this.key = key;
+            this.networkUpgradeExpected = networkUpgradeExpected;
+        }
     }
 
     private void finalizeParsedDocument(Context context, LyricsDocument doc) {

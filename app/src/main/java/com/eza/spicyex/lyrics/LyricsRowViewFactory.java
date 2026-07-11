@@ -87,7 +87,7 @@ public final class LyricsRowViewFactory {
         float sizeMultiplier = options == null ? 1f : options.textSizeMultiplier;
         LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(LyricVisuals.lyricTextSizeSp(line.text) * sizeMultiplier)));
         String weight = options == null ? "Medium" : options.lyricWeight;
-        String font = options == null ? "default" : options.lyricsFont;
+        String font = options == null ? "spotify" : options.lyricsFont;
         LyricsLineViewState.clearMainView(line);
         boolean hasSyllableWords = line.words != null && !line.words.isEmpty();
         boolean hasRealTimedWords = hasSyllableWords && !line.syntheticWords;
@@ -177,7 +177,7 @@ public final class LyricsRowViewFactory {
             furiganaOffset += seg.text.length();
             View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
                     options == null ? "Medium" : options.lyricWeight,
-                    options == null ? "default" : options.lyricsFont);
+                    options == null ? "spotify" : options.lyricsFont);
             String romanizedWordText = "";
             if (showAlignedRomaji && line.readingRenderPlan != null
                     && wordIndex < line.readingRenderPlan.timedReadingUnits.size()) {
@@ -329,7 +329,7 @@ public final class LyricsRowViewFactory {
         public boolean wordLevelFill;
         public boolean interludeNoteIcon;
         public String lyricWeight = "Medium";
-        public String lyricsFont = "default";
+        public String lyricsFont = "spotify";
         public float textSizeMultiplier = 1f;
         public boolean translationBright;
         public boolean wrapLongLines = true;

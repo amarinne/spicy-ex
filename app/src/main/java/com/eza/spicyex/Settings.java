@@ -16,7 +16,7 @@ public final class Settings {
     public static final List<Setting<?>> ALL = new ArrayList<>();
 
     // --- Sections ---
-    public static final Section LYRICS = new Section("General", "lyrics");
+    public static final Section LYRICS = new Section("Behavior", "lyrics");
     public static final Section TRANSLITERATION = new Section("Reading & Transliteration", "transliteration");
     public static final Section ROMANIZATION = TRANSLITERATION;
     public static final Section TRANSLATION = new Section("Translation", "translation");
@@ -25,8 +25,7 @@ public final class Settings {
     public static final Section TEXT = LYRICS_SCREEN;
     public static final Section ANIMATION = LYRICS_SCREEN;
     public static final Section BACKGROUND = LYRICS_SCREEN;
-    public static final Section DEBUG = new Section("Debug & About", "debug");
-    public static final Section DIAGNOSTICS = new Section("Diagnostics", "diagnostics");
+    public static final Section DEBUG = new Section("About & Diagnostics", "debug");
     public static final Section DISPLAY = TEXT;
     public static final Section INTERNAL = new Section("Internal", "internal");
 
@@ -48,6 +47,10 @@ public final class Settings {
             "lyric_stay_on_track_change", LYRICS, "Stay in lyric screen on song change", true
     );
 
+    public static final Setting<Boolean> AUTO_RESUME_FOLLOW = boolSetting(
+            "lyric_auto_resume_follow", LYRICS, "Auto-resume lyric follow", true
+    );
+
     public static final IntegerSetting SYNC_OFFSET_MS = intSetting(
             "lyric_sync_offset_ms", LYRICS, "Sync offset",
             0, -5000, 5000, 100
@@ -55,70 +58,84 @@ public final class Settings {
 
     // --- Now Playing ---
     public static final Setting<String> LIVE_CARD_TAP_MODE = enumSetting(
-            "lyrics_live_card_tap_mode", NOW_PLAYING, "Tap now-playing lyric",
+            "lyrics_live_card_tap_mode", NOW_PLAYING, "Tap card to open lyrics",
             "Double tap",
             "Off", "Single tap", "Double tap"
     );
 
     public static final Setting<String> LIVE_CARD_WEIGHT = enumSetting(
-            "lyrics_live_card_weight", NOW_PLAYING, "Now-playing lyric weight",
+            "lyrics_live_card_weight", NOW_PLAYING, "Lyric weight",
             "Medium",
             "Regular", "Medium", "Bold"
     );
 
     public static final Setting<String> LIVE_CARD_TEXT_SIZE = enumSetting(
-            "lyrics_live_card_text_size", NOW_PLAYING, "Now-playing lyric size",
+            "lyrics_live_card_text_size", NOW_PLAYING, "Text size",
             "normal",
-            "small", "normal", "large", "xlarge"
+            "small", "normal", "large", "xlarge", "custom"
+    );
+
+    // Multiplier x100 for the live card's "custom" text size mode (0.0-5.0 in 0.05 steps).
+    public static final IntegerSetting LIVE_CARD_TEXT_SIZE_CUSTOM = intSetting(
+            "lyrics_live_card_text_size_custom", NOW_PLAYING, "Custom size",
+            100, 0, 500, 5
     );
 
     public static final Setting<String> LIVE_CARD_SECONDARY_MODE = enumSetting(
-            "lyrics_live_card_secondary_mode", NOW_PLAYING, "Now-playing extra line",
+            "lyrics_live_card_secondary_mode", NOW_PLAYING, "Extra line",
             "Main only",
             "Main only", "Transliteration", "Translation", "Both"
     );
 
     public static final Setting<String> LIVE_CARD_ANIMATION = enumSetting(
-            "lyrics_live_card_animation", NOW_PLAYING, "Now-playing animation",
+            "lyrics_live_card_animation", NOW_PLAYING, "Animation",
             "Karaoke fill",
             "Minimal", "Karaoke fill", "Spotlight word"
     );
 
     public static final Setting<String> LIVE_CARD_GLOW = enumSetting(
-            "lyrics_live_card_glow", NOW_PLAYING, "Now-playing glow",
+            "lyrics_live_card_glow", NOW_PLAYING, "Glow",
             "Off",
             "Off", "Word only", "Subtle line"
     );
 
     public static final Setting<String> LIVE_CARD_LINE_SYNC_FILL = enumSetting(
-            "lyrics_live_card_line_sync_fill", NOW_PLAYING, "Now-playing fill direction",
+            "lyrics_live_card_line_sync_fill", NOW_PLAYING, "Fill direction",
             "Top to bottom",
             "Top to bottom", "Left to right (sentence)"
     );
 
     public static final Setting<String> LIVE_CARD_OVERFLOW = enumSetting(
-            "lyrics_live_card_overflow", NOW_PLAYING, "Now-playing overflow",
+            "lyrics_live_card_overflow", NOW_PLAYING, "Overflow",
             "Wrap",
             "Wrap", "Scroll with lyric", "Clip"
     );
 
     public static final Setting<String> LIVE_CARD_SCROLL_SCOPE = enumSetting(
-            "lyrics_live_card_scroll_scope", NOW_PLAYING, "Now-playing scroll scope",
+            "lyrics_live_card_scroll_scope", NOW_PLAYING, "Scroll scope",
             "Grouped",
             "Grouped", "Individual lines"
     );
 
     public static final Setting<String> LIVE_CARD_TRANSITION = enumSetting(
-            "lyrics_live_card_transition", NOW_PLAYING, "Now-playing transition",
+            "lyrics_live_card_transition", NOW_PLAYING, "Transition",
             "Fade up",
             "Fade up", "Crossfade", "None"
     );
 
     // --- Text ---
+    // Scales the vertical gap between lyric rows (sentences); wrapped lines inside one sentence
+    // keep a fixed 1.18 line-height (LyricsTextFactory).
     public static final Setting<String> LINE_SPACING = enumSetting(
-            "line_spacing", TEXT, "Line spacing",
+            "line_spacing", TEXT, "Sentence spacing",
             "spacious",
-            "compact", "default", "spacious", "more", "max"
+            "compact", "default", "spacious", "more", "max", "custom"
+    );
+
+    // Multiplier x100 for the "custom" line spacing mode (0.0-5.0 in 0.1 steps).
+    public static final IntegerSetting LINE_SPACING_CUSTOM = intSetting(
+            "line_spacing_custom", TEXT, "Custom spacing",
+            150, 0, 500, 5
     );
 
     // Lyric font weight (Spotify's own faces): "Medium" (default) = spotify_mix_ui_bold,
@@ -129,16 +146,24 @@ public final class Settings {
             "Regular", "Medium", "Bold"
     );
 
+    // Stored value "default" (the old alias for the Spotify font) coerces to "spotify" via the
+    // allowed-values check, so existing configs migrate silently.
     public static final Setting<String> LYRICS_FONT = enumSetting(
             "lyrics_font", TEXT, "Lyric font",
-            "default",
-            "default", "spotify", "apple"
+            "spotify",
+            "spotify", "apple"
     );
 
     public static final Setting<String> LYRICS_TEXT_SIZE = enumSetting(
             "lyrics_text_size", TEXT, "Lyric text size",
             "normal",
-            "small", "normal", "large", "xlarge"
+            "small", "normal", "large", "xlarge", "custom"
+    );
+
+    // Multiplier x100 for the "custom" text size mode (0.0-5.0 in 0.1 steps).
+    public static final IntegerSetting LYRICS_TEXT_SIZE_CUSTOM = intSetting(
+            "lyrics_text_size_custom", TEXT, "Custom size",
+            100, 0, 500, 5
     );
 
     public static final Setting<String> INTERLUDE_ICON = enumSetting(
@@ -156,11 +181,11 @@ public final class Settings {
     );
 
     public static final Setting<Boolean> ENABLE_GLOW_BLUR = boolSetting(
-            "lyric_enable_glow_blur", ANIMATION, "Glow blur", false
+            "lyric_enable_glow_blur", ANIMATION, "Text glow", true
     );
 
     public static final Setting<Boolean> ENABLE_LINE_BLUR = boolSetting(
-            "lyric_enable_line_blur", ANIMATION, "Distance blur", false
+            "lyric_enable_line_blur", ANIMATION, "Blur distant lines", false
     );
 
     // Direction the karaoke gradient fills each line as it plays: down the line ("Top to bottom")
@@ -199,13 +224,13 @@ public final class Settings {
     );
 
     public static final Setting<String> CHINESE_MODE = enumSetting(
-            "lyrics_chinese_mode", TRANSLITERATION, "Chinese transliteration",
+            "lyrics_chinese_mode", TRANSLITERATION, "Chinese reading",
             "pinyin",
             "off", "pinyin", "jyutping", "cycle"
     );
 
     public static final Setting<String> KOREAN_ROMANIZATION = enumSetting(
-            "lyrics_korean_romanization", TRANSLITERATION, "Korean display",
+            "lyrics_korean_romanization", TRANSLITERATION, "Korean reading",
             KoreanDisplayMode.RR_STANDARD.value,
             KoreanDisplayMode.RR_STANDARD.value,
             KoreanDisplayMode.WORD_TRANSLIT.value,
@@ -223,7 +248,7 @@ public final class Settings {
     // Cyrillic source language — shared glyphs differ (Russian г→g, и→i vs Ukrainian г→h, и→y),
     // so one global map can't serve both (see SpicyRomanizer / ROMANIZATION_AUDIT_BACKLOG CY-4).
     public static final Setting<String> CYRILLIC_MODE = enumSetting(
-            "lyrics_cyrillic_mode", TRANSLITERATION, "Cyrillic language",
+            "lyrics_cyrillic_mode", TRANSLITERATION, "Cyrillic reading",
             "Russian",
             "Off", "Russian", "Ukrainian", "cycle"
     );
@@ -248,7 +273,7 @@ public final class Settings {
     );
 
     public static final Setting<String> TRANSLATION_BRIGHTNESS = enumSetting(
-            "lyrics_translation_brightness", TRANSLATION, "Translation line",
+            "lyrics_translation_brightness", TRANSLATION, "Translation brightness",
             "Dimmed",
             "Dimmed", "Bright"
     );

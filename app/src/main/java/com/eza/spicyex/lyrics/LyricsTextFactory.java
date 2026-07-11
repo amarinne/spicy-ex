@@ -55,7 +55,7 @@ public final class LyricsTextFactory {
 
     /** Lyric typeface for a user weight choice: Regular / Medium (Spotify bold) / Bold (extrabold). */
     public Typeface resolveLyricTypeface(String weight) {
-        return resolveLyricTypeface(weight, config == null ? "default" : config.get(Settings.LYRICS_FONT));
+        return resolveLyricTypeface(weight, config == null ? "spotify" : config.get(Settings.LYRICS_FONT));
     }
 
     /** Lyric typeface for a user weight + family choice. */
@@ -67,15 +67,25 @@ public final class LyricsTextFactory {
         if (shouldUseSystemFallbackForText(text)) {
             return "Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
         }
+        if (SpicyTextDetection.hasCjkIdeograph(text) || SpicyTextDetection.hasKana(text)) {
+            return resolveCjkTypeface(weight);
+        }
         String normalizedFamily = safe(family).toLowerCase(Locale.ROOT);
+        // Lite builds don't bundle the Apple faces — a stale "apple" config falls back to Spotify
+        // rather than degrading to Roboto via the missing-asset catch.
+        if ("apple".equals(normalizedFamily) && !com.eza.spicyex.FeatureAvailability.appleFontAvailable()) {
+            normalizedFamily = "spotify";
+        }
         if ("apple".equals(normalizedFamily)) {
             String key = "lyric|apple|" + safe(weight);
             Typeface cached = typefaceCache.get(key);
             if (cached != null) return cached;
             Typeface resolved;
             try {
+                // Apple family end to end: SF medium (BlinkMacSystemFont) for Regular, SF Pro
+                // Display bold for Medium/Bold — never a Spotify face under the "apple" label.
                 resolved = Typeface.createFromAsset(activity.getAssets(),
-                        "Regular".equals(weight) ? "fonts/spotifymix-medium.ttf" : "fonts/sf-pro-display-bold.ttf");
+                        "Regular".equals(weight) ? "fonts/lyrics_medium.ttf" : "fonts/sf-pro-display-bold.ttf");
             } catch (Throwable t) {
                 resolved = "Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
             }
@@ -104,6 +114,27 @@ public final class LyricsTextFactory {
 
     static boolean shouldUseSystemFallbackForText(String text) {
         return SpicyTextDetection.hasIndicScript(text);
+    }
+
+    /**
+     * CJK lyric text: SpotifyMix has no CJK glyphs, so the system fallback (Noto Sans CJK) renders
+     * them — at bold weight when the base typeface is bold, which reads far heavier than desktop
+     * Spicy (whose weight-700 request silently falls back to regular-weight CJK). Match the desktop
+     * *rendered* look with explicit mid weights.
+     */
+    private Typeface resolveCjkTypeface(String weight) {
+        int w = "Regular".equals(weight) ? 400 : "Bold".equals(weight) ? 600 : 500;
+        String key = "lyric|cjk|" + w;
+        Typeface cached = typefaceCache.get(key);
+        if (cached != null) return cached;
+        Typeface resolved;
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            resolved = Typeface.create(Typeface.DEFAULT, w, false);
+        } else {
+            resolved = w >= 600 ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT;
+        }
+        typefaceCache.put(key, resolved);
+        return resolved;
     }
 
     /** Load a font resource from the host (Spotify) package by name, e.g. "spotify_mix_ui_bold". */

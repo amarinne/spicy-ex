@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -109,6 +111,7 @@ public final class LyricsSecondaryProcessor {
         processor.execute(() -> {
             AtomicInteger changed = new AtomicInteger();
             Set<Integer> locallyRomanizedIndices = new HashSet<>();
+            Map<String, String> localCacheWrites = new LinkedHashMap<>();
             LyricsProcessingPatch localPatch = flagsPatch(
                     wantRomanization,
                     wantTranslation,
@@ -128,13 +131,14 @@ public final class LyricsSecondaryProcessor {
                     LyricsLocalRomanizer.populateLocalSegmentRomanization(opts, workerSnapshot, line, fullText);
                     localPatch.addLinePatch(LyricsProcessingPatch.fromLine(index, line, true, false));
                     locallyRomanizedIndices.add(index);
-                    LyricCaches.putProcessingValue(context, processingVersion,
+                    localCacheWrites.put(
                             LyricCaches.romanizationKey(id, workerSnapshot.language, line.text), local);
                     changed.incrementAndGet();
                 } else if (line.japaneseReading != source.japaneseReading || !safe(line.chineseMode).equals(safe(source.chineseMode))) {
                     localPatch.addLinePatch(LyricsProcessingPatch.fromLine(index, line, true, false));
                 }
             }
+            LyricCaches.putProcessingValues(context, processingVersion, localCacheWrites);
 
             if (localPatch.hasLineChanges()) {
                 localPatch.romanizationPending = false;

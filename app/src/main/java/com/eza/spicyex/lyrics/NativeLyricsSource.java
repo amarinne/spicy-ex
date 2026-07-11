@@ -3,6 +3,7 @@ package com.eza.spicyex.lyrics;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
+import android.os.SystemClock;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -28,9 +29,11 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
     private static final String TAG = "[SpotifyPlusNativeLyricsSource]";
     private static final boolean DEBUG_LOGGING = false;
     private static final int CACHE_LIMIT = 24;
+    private static final long DB_MISS_CACHE_MS = 2000L;
 
     private final Object lock = new Object();
     private final LinkedHashMap<String, LyricsDocument> byTrack = new LinkedHashMap<>();
+    private final LinkedHashMap<String, Long> dbMisses = new LinkedHashMap<>();
     private final ContextProvider contextProvider;
     private final LyricsParser.Finalizer finalizer;
 
@@ -58,11 +61,18 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
         synchronized (lock) {
             LyricsDocument doc = byTrack.get(trackId);
             if (doc != null) return LyricsDocument.copyOf(doc);
+            Long missedAt = dbMisses.get(trackId);
+            if (missedAt != null && SystemClock.elapsedRealtime() - missedAt < DB_MISS_CACHE_MS) return null;
+            dbMisses.remove(trackId);
         }
         LyricsDocument fromDb = readNativeLyricsFromDb(track);
         if (fromDb != null && !fromDb.lines.isEmpty()) {
             store(fromDb);
             return fromDb;
+        }
+        synchronized (lock) {
+            dbMisses.put(trackId, SystemClock.elapsedRealtime());
+            while (dbMisses.size() > CACHE_LIMIT) dbMisses.remove(dbMisses.keySet().iterator().next());
         }
         return null;
     }
@@ -73,6 +83,7 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
         String trackId = safe(doc.trackId).trim();
         if (trackId.isEmpty()) return;
         synchronized (lock) {
+            dbMisses.remove(trackId);
             LyricsDocument existing = byTrack.get(trackId);
             if (existing != null && nativeLyricsScore(existing) > nativeLyricsScore(doc)) return;
             byTrack.put(trackId, LyricsDocument.copyOf(doc));

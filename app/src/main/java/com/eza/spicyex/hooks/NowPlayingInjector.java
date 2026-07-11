@@ -21,6 +21,10 @@ final class NowPlayingInjector {
 
     private final NativeSpicyLyricsHook hook;
     private final WeakHashMap<Activity, NowPlayingLyricController> controllers = new WeakHashMap<>();
+    private final WeakHashMap<Activity, RetryState> retries = new WeakHashMap<>();
+    private final WeakHashMap<Activity, AlignmentRetry> alignments = new WeakHashMap<>();
+    private static final long[] RETRY_DELAYS_MS = {700L, 1100L, 1700L};
+    private static final long[] ALIGNMENT_DELAYS_MS = {500L, 700L, 1400L};
 
     NowPlayingInjector(NativeSpicyLyricsHook hook) {
         this.hook = hook;
@@ -32,9 +36,12 @@ final class NowPlayingInjector {
             if (!hook.isNativeSpicyEnabled(activity)) return;
             View decor = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
             if (decor == null) return;
-            decor.postDelayed(() -> inject(activity), 700);
-            decor.postDelayed(() -> inject(activity), 1800);
-            decor.postDelayed(() -> inject(activity), 3500);
+            cancelRetry(activity);
+            RetryState state = new RetryState(activity, decor);
+            synchronized (retries) {
+                retries.put(activity, state);
+            }
+            state.postNext();
         } catch (Throwable t) {
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " schedule live card injection failed: " + t);
         }
@@ -42,6 +49,8 @@ final class NowPlayingInjector {
 
     void stop(Activity activity) {
         if (activity == null) return;
+        cancelRetry(activity);
+        cancelAlignment(activity);
         NowPlayingLyricController controller;
         synchronized (controllers) {
             controller = controllers.get(activity);
@@ -49,23 +58,30 @@ final class NowPlayingInjector {
         if (controller != null) controller.stop();
     }
 
-    private void inject(Activity activity) {
+    void destroy(Activity activity) {
+        stop(activity);
+        synchronized (controllers) {
+            controllers.remove(activity);
+        }
+    }
+
+    private boolean inject(Activity activity) {
         try {
-            if (activity == null || !hook.isNativeSpicyEnabled(activity)) return;
+            if (activity == null || !hook.isNativeSpicyEnabled(activity)) return true;
             FrameLayout content = activity.findViewById(android.R.id.content);
-            if (content == null) return;
+            if (content == null) return false;
             if (content.findViewWithTag(TAG_LIVE_CARD) != null) {
                 NowPlayingLyricController controller;
                 synchronized (controllers) {
                     controller = controllers.get(activity);
                 }
                 if (controller != null) controller.start();
-                return;
+                return true;
             }
             View lyricsElement = findViewByResourceEntryName(content, "lyrics_element");
-            if (lyricsElement == null || !(lyricsElement.getParent() instanceof ViewGroup)) return;
+            if (lyricsElement == null || !(lyricsElement.getParent() instanceof ViewGroup)) return false;
             ViewGroup parent = (ViewGroup) lyricsElement.getParent();
-            if (parent.findViewWithTag(TAG_LIVE_CARD) != null) return;
+            if (parent.findViewWithTag(TAG_LIVE_CARD) != null) return true;
 
             int index = parent.indexOfChild(lyricsElement);
             ViewGroup.LayoutParams layoutParams = lyricsElement.getLayoutParams();
@@ -83,14 +99,103 @@ final class NowPlayingInjector {
 
             View decor = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
             if (decor != null) {
-                Runnable align = () -> alignCardLeftToContent(activity, card);
-                decor.postDelayed(align, 500);
-                decor.postDelayed(align, 1200);
-                decor.postDelayed(align, 2600);
+                AlignmentRetry alignment = new AlignmentRetry(activity, decor, card);
+                synchronized (alignments) {
+                    alignments.put(activity, alignment);
+                }
+                alignment.postNext();
             }
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " live lyric card injected in " + activity.getClass().getName());
+            return true;
         } catch (Throwable t) {
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " live card inject failed: " + t);
+            return false;
+        }
+    }
+
+    private void cancelRetry(Activity activity) {
+        RetryState state;
+        synchronized (retries) {
+            state = retries.remove(activity);
+        }
+        if (state != null) state.cancel();
+    }
+
+    private void cancelAlignment(Activity activity) {
+        AlignmentRetry retry;
+        synchronized (alignments) {
+            retry = alignments.remove(activity);
+        }
+        if (retry != null) retry.cancel();
+    }
+
+    private final class RetryState implements Runnable {
+        private final Activity activity;
+        private final View decor;
+        private int attempt;
+        private boolean cancelled;
+
+        RetryState(Activity activity, View decor) {
+            this.activity = activity;
+            this.decor = decor;
+        }
+
+        void postNext() {
+            if (cancelled || attempt >= RETRY_DELAYS_MS.length) return;
+            decor.postDelayed(this, RETRY_DELAYS_MS[attempt++]);
+        }
+
+        void cancel() {
+            cancelled = true;
+            decor.removeCallbacks(this);
+        }
+
+        @Override
+        public void run() {
+            if (cancelled) return;
+            if (inject(activity)) {
+                synchronized (retries) {
+                    if (retries.get(activity) == this) retries.remove(activity);
+                }
+                return;
+            }
+            postNext();
+        }
+    }
+
+    private final class AlignmentRetry implements Runnable {
+        private final Activity activity;
+        private final View decor;
+        private final View card;
+        private int attempt;
+        private boolean cancelled;
+
+        AlignmentRetry(Activity activity, View decor, View card) {
+            this.activity = activity;
+            this.decor = decor;
+            this.card = card;
+        }
+
+        void postNext() {
+            if (cancelled || attempt >= ALIGNMENT_DELAYS_MS.length) return;
+            decor.postDelayed(this, ALIGNMENT_DELAYS_MS[attempt++]);
+        }
+
+        void cancel() {
+            cancelled = true;
+            decor.removeCallbacks(this);
+        }
+
+        @Override
+        public void run() {
+            if (cancelled) return;
+            if (alignCardLeftToContent(activity, card)) {
+                synchronized (alignments) {
+                    if (alignments.get(activity) == this) alignments.remove(activity);
+                }
+                return;
+            }
+            postNext();
         }
     }
 

@@ -32,7 +32,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class References {
-    public static Activity currentActivity = null;
+    private static WeakReference<Activity> currentActivity = new WeakReference<>(null);
     public static WeakReference<Object> playerState = new WeakReference<>(null);
     public static WeakReference<Object> playerStateWrapper = new WeakReference<>(null);
     public static String accessToken = "";
@@ -43,6 +43,19 @@ public class References {
     private static final Pattern DIGITS = Pattern.compile("\\d+");
     private static Method hasTrackMethod;
     private static Method getContextTrack;
+
+    public static Activity currentActivity() {
+        return currentActivity.get();
+    }
+
+    public static void setCurrentActivity(Activity activity) {
+        currentActivity = new WeakReference<>(activity);
+    }
+
+    public static void clearCurrentActivity(Activity activity) {
+        Activity current = currentActivity.get();
+        if (current == activity) currentActivity.clear();
+    }
 
     public static SpotifyTrack getTrackTitle(XC_LoadPackage.LoadPackageParam lpparam, DexKitBridge bridge) {
         if(playerState == null || playerState.get() == null) {
@@ -161,7 +174,7 @@ public class References {
     }
 
     public static SharedPreferences getPreferences() {
-        Activity activity = currentActivity;
+        Activity activity = currentActivity();
         if(activity == null) return null;
 
         return activity.getSharedPreferences("SpotifyPlus", Context.MODE_PRIVATE);
@@ -177,4 +190,3 @@ public class References {
     }
 
 }
-

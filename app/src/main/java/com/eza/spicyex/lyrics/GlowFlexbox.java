@@ -1,11 +1,14 @@
 package com.eza.spicyex.lyrics;
 
 import android.content.Context;
+import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.MaskFilter;
 import android.graphics.Shader;
 import android.text.Layout;
 import android.text.TextPaint;
+import android.util.SparseArray;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -20,12 +23,24 @@ import com.google.android.flexbox.FlexboxLayout;
  * the active karaoke position. The real (gradient) word text is drawn on top by super.dispatchDraw.
  */
 public class GlowFlexbox extends FlexboxLayout {
-    private final float density;
+    // Blur filters cached by quantized sigma; sigma animates every frame and BlurMaskFilter is
+    // immutable, so allocating one per word per frame would churn. Shared with the selfGlow path
+    // in SpicyAnimatedTextView; only touched from the UI thread.
+    private static final SparseArray<BlurMaskFilter> blurCache = new SparseArray<>();
 
     public GlowFlexbox(Context context) {
         super(context);
-        density = context.getResources().getDisplayMetrics().density;
         setWillNotDraw(false);
+    }
+
+    static BlurMaskFilter blurFilter(float sigma) {
+        int key = Math.max(1, Math.round(sigma * 4f)); // quantize to 0.25px steps
+        BlurMaskFilter filter = blurCache.get(key);
+        if (filter == null) {
+            filter = new BlurMaskFilter(key / 4f, BlurMaskFilter.Blur.NORMAL);
+            blurCache.put(key, filter);
+        }
+        return filter;
     }
 
     @Override
@@ -55,13 +70,16 @@ public class GlowFlexbox extends FlexboxLayout {
         TextPaint paint = tv.getPaint();
         int savedColor = paint.getColor();
         Shader savedShader = paint.getShader();
+        MaskFilter savedMask = paint.getMaskFilter();
         int alpha = Math.round(255f * 0.35f * g);
         int glowColor = Color.argb(alpha, 255, 255, 255);
-        // Draw the glyphs at low alpha with a white blur shadow -> a soft continuous halo. The real
-        // word (full gradient) is painted over this by the normal child draw, so this is glow-only.
+        // CSS-equivalent of desktop's `text-shadow: 0 0 (4+2g)px rgba(255,255,255,.35g)`: a blurred
+        // copy of the glyphs only — no sharp underlay. CSS blur radius r means Gaussian sigma r/2,
+        // and desktop's r is 4-6px against a ~48px reference font, so sigma scales with text size.
+        float sigma = (2f + g) * paint.getTextSize() / 48f;
         paint.setShader(null);
         paint.setColor(glowColor);
-        paint.setShadowLayer((4f + 2f * g) * density, 0f, 0f, glowColor);
+        paint.setMaskFilter(blurFilter(sigma));
         int save = canvas.save();
         canvas.translate(x + tv.getTotalPaddingLeft(), y + tv.getTotalPaddingTop());
         try {
@@ -69,7 +87,7 @@ public class GlowFlexbox extends FlexboxLayout {
         } catch (Throwable ignored) {
         }
         canvas.restoreToCount(save);
-        paint.clearShadowLayer();
+        paint.setMaskFilter(savedMask);
         paint.setColor(savedColor);
         paint.setShader(savedShader);
     }

@@ -46,7 +46,7 @@ public class XposedLoader implements IXposedHookLoadPackage, IXposedHookZygoteIn
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                 Activity activity = (Activity) param.thisObject;
-                References.currentActivity = activity;
+                References.setCurrentActivity(activity);
 
                 if (!injectionToastShown) {
                     injectionToastShown = true;
@@ -58,6 +58,13 @@ public class XposedLoader implements IXposedHookLoadPackage, IXposedHookZygoteIn
                         XposedBridge.log(t);
                     }
                 }
+            }
+        });
+
+        XposedHelpers.findAndHookMethod(Activity.class, "onDestroy", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                References.clearCurrentActivity((Activity) param.thisObject);
             }
         });
 

@@ -113,8 +113,14 @@ public final class LyricsSyllableViewState {
     public static void updateTextPivot(SyllableSegment segment) {
         if (segment == null || state(segment).textView == null || state(segment).textView.getHeight() <= 0) return;
         int baseline = state(segment).textView.getBaseline();
-        state(segment).textView.setPivotX(state(segment).textView.getWidth() / 2f);
-        state(segment).textView.setPivotY(baseline > 0 ? baseline : state(segment).textView.getHeight());
+        float pivotX = state(segment).textView.getWidth() / 2f;
+        float pivotY = baseline > 0 ? baseline : state(segment).textView.getHeight();
+        if (Math.abs(state(segment).textView.getPivotX() - pivotX) > 0.5f) {
+            state(segment).textView.setPivotX(pivotX);
+        }
+        if (Math.abs(state(segment).textView.getPivotY() - pivotY) > 0.5f) {
+            state(segment).textView.setPivotY(pivotY);
+        }
     }
 
     public static void applyWordFrame(SyllableSegment segment, LyricsAnimationApplier.StyleSink sink,
@@ -207,9 +213,23 @@ public final class LyricsSyllableViewState {
 
     public static void resetWordTransform(SyllableSegment segment) {
         if (segment == null || state(segment).view == null) return;
-        state(segment).view.setScaleX(1f);
-        state(segment).view.setScaleY(1f);
-        state(segment).view.setTranslationY(0f);
+        View view = state(segment).view;
+        if (Math.abs(view.getScaleX() - 1f) > 0.002f) view.setScaleX(1f);
+        if (Math.abs(view.getScaleY() - 1f) > 0.002f) view.setScaleY(1f);
+        if (Math.abs(view.getTranslationY()) > 0.5f) view.setTranslationY(0f);
+    }
+
+    public static boolean isSettled(SyllableSegment segment) {
+        if (segment == null) return true;
+        SyllableRenderState state = state(segment);
+        if (!springAtRest(state.scaleSpring) || !springAtRest(state.ySpring)
+                || !springAtRest(state.glowSpring)) return false;
+        for (AnimatedLetterState letter : state.letters) {
+            if (letter == null) continue;
+            if (!springAtRest(letter.scaleSpring) || !springAtRest(letter.ySpring)
+                    || !springAtRest(letter.glowSpring)) return false;
+        }
+        return true;
     }
 
     public static void applySyntheticLineGradient(SyllableSegment segment, View container,
@@ -280,5 +300,9 @@ public final class LyricsSyllableViewState {
             current = parent instanceof View ? (View) parent : null;
         }
         return x;
+    }
+
+    private static boolean springAtRest(Spring spring) {
+        return spring == null || spring.isAtRest(0.0025f, 0.0025f);
     }
 }

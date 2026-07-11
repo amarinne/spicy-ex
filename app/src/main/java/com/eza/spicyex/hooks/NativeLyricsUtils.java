@@ -44,7 +44,7 @@ final class NativeLyricsUtils {
     }
 
     static float spToPx(float sp) {
-        Activity activity = References.currentActivity;
+        Activity activity = References.currentActivity();
         float scaledDensity = activity == null ? 1f : activity.getResources().getDisplayMetrics().scaledDensity;
         return sp * scaledDensity;
     }
@@ -69,7 +69,7 @@ final class NativeLyricsUtils {
     }
 
     static int dp(int value) {
-        Activity activity = References.currentActivity;
+        Activity activity = References.currentActivity();
         float density = activity == null ? 1f : activity.getResources().getDisplayMetrics().density;
         return Math.round(value * density);
     }

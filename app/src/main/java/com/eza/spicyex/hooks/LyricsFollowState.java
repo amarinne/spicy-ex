@@ -1,6 +1,6 @@
 package com.eza.spicyex.hooks;
 
-import android.os.SystemClock;
+import java.util.function.LongSupplier;
 
 /** Tracks active lyric row and temporary manual-scroll hold state. */
 final class LyricsFollowState {
@@ -8,6 +8,16 @@ final class LyricsFollowState {
     private long holdUntilMs;
     private long lastManualScrollMs;
     private boolean touching;
+    private boolean manuallySuspended;
+    private final LongSupplier clock;
+
+    LyricsFollowState() {
+        this(android.os.SystemClock::elapsedRealtime);
+    }
+
+    LyricsFollowState(LongSupplier clock) {
+        this.clock = clock;
+    }
 
     int activeIndex() {
         return activeIndex;
@@ -19,6 +29,9 @@ final class LyricsFollowState {
 
     void resetActive() {
         activeIndex = -2;
+        holdUntilMs = 0;
+        touching = false;
+        manuallySuspended = false;
     }
 
     void holdUntil(long untilMs) {
@@ -26,23 +39,28 @@ final class LyricsFollowState {
     }
 
     void markManualScroll() {
-        lastManualScrollMs = SystemClock.elapsedRealtime();
+        lastManualScrollMs = clock.getAsLong();
     }
 
     void setTouching(boolean touching) {
         this.touching = touching;
-        if (touching) markManualScroll();
+        if (touching) {
+            manuallySuspended = true;
+            markManualScroll();
+        }
     }
 
     void clearHold() {
         holdUntilMs = 0;
+        manuallySuspended = false;
     }
 
     boolean isHoldingNow() {
-        return SystemClock.elapsedRealtime() < holdUntilMs;
+        return manuallySuspended || clock.getAsLong() < holdUntilMs;
     }
 
     boolean canAutoResumeNow(long cooldownMs) {
-        return !touching && isHoldingNow() && SystemClock.elapsedRealtime() - lastManualScrollMs >= cooldownMs;
+        return !touching && manuallySuspended
+                && clock.getAsLong() - lastManualScrollMs >= cooldownMs;
     }
 }

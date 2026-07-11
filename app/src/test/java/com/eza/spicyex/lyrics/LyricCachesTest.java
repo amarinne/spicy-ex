@@ -4,6 +4,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import java.util.Arrays;
 
 public class LyricCachesTest {
     @Test
@@ -70,5 +71,44 @@ public class LyricCachesTest {
 
         assertEquals("a\nb", update.nextOrder);
         assertTrue(update.evictedKeys.isEmpty());
+    }
+
+    @Test
+    public void boundedGoogleCacheOrderAddsBatchAndMovesDuplicatesOnce() {
+        LyricCaches.CacheOrderUpdate update = LyricCaches.boundedGoogleCacheOrder(
+                "a\nb\nc", Arrays.asList("b", "d", "e", "d"), 4);
+
+        assertEquals("c\nb\ne\nd", update.nextOrder);
+        assertEquals(1, update.evictedKeys.size());
+        assertTrue(update.evictedKeys.contains("a"));
+    }
+
+    @Test
+    public void boundedGoogleCacheOrderEvictsWholeOverflowForBatch() {
+        LyricCaches.CacheOrderUpdate update = LyricCaches.boundedGoogleCacheOrder(
+                "a\nb\nc", Arrays.asList("d", "e"), 3);
+
+        assertEquals("c\nd\ne", update.nextOrder);
+        assertEquals(2, update.evictedKeys.size());
+        assertTrue(update.evictedKeys.contains("a"));
+        assertTrue(update.evictedKeys.contains("b"));
+    }
+
+    @Test
+    public void processedCacheOrderEvictsByEntryAndByteLimits() {
+        LyricCaches.ProcessedCacheOrderUpdate update = LyricCaches.boundedProcessedCacheOrder(
+                "a|100|40\nb|100|40", "c", 40, 200, 2, 80, 1000);
+
+        assertEquals("b|100|40\nc|200|40", update.nextOrder);
+        assertTrue(update.evictedKeys.contains("a"));
+    }
+
+    @Test
+    public void processedCacheOrderExpiresOldEntries() {
+        LyricCaches.ProcessedCacheOrderUpdate update = LyricCaches.boundedProcessedCacheOrder(
+                "old|100|20\nfresh|950|20", "new", 20, 1000, 4, 100, 100);
+
+        assertEquals("fresh|950|20\nnew|1000|20", update.nextOrder);
+        assertTrue(update.evictedKeys.contains("old"));
     }
 }

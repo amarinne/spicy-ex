@@ -49,13 +49,26 @@ public final class LyricsShellSettings {
 
     public float lineSpacingMultiplier() {
         String spacing = lineSpacingMode();
+        if ("custom".equals(spacing)) {
+            int fallback = config == null ? Settings.LINE_SPACING_CUSTOM.defaultValue
+                    : config.get(Settings.LINE_SPACING_CUSTOM);
+            int hundredths = fallback;
+            try {
+                SharedPreferences prefs = prefs();
+                if (prefs != null && prefs.contains(Settings.LINE_SPACING_CUSTOM.key)) {
+                    hundredths = prefs.getInt(Settings.LINE_SPACING_CUSTOM.key, fallback);
+                }
+            } catch (Throwable ignored) {
+            }
+            return Math.max(0f, Math.min(5f, hundredths / 100f));
+        }
         // Widened spread so the setting is clearly visible (previously 0.82–1.45 barely moved the
         // ~10/13dp row padding it scales). Tune freely.
         // Dialed back from the old 0.7–4.2 spread (too coarse a jump per step) to finer increments.
         switch (safe(spacing)) {
             case "compact": return 0.8f;
-            case "spacious": return 1.45f;
-            case "more": return 1.9f;
+            case "spacious": return 1.5f;
+            case "more": return 2.0f;
             case "max": return 2.5f;
             default: return 1.1f;
         }
@@ -95,6 +108,19 @@ public final class LyricsShellSettings {
     }
 
     public float lyricsTextSizeMultiplier() {
+        if ("custom".equals(lyricsTextSizeMode())) {
+            int fallback = config == null ? Settings.LYRICS_TEXT_SIZE_CUSTOM.defaultValue
+                    : config.get(Settings.LYRICS_TEXT_SIZE_CUSTOM);
+            int hundredths = fallback;
+            try {
+                SharedPreferences prefs = prefs();
+                if (prefs != null && prefs.contains(Settings.LYRICS_TEXT_SIZE_CUSTOM.key)) {
+                    hundredths = prefs.getInt(Settings.LYRICS_TEXT_SIZE_CUSTOM.key, fallback);
+                }
+            } catch (Throwable ignored) {
+            }
+            return Math.max(0f, Math.min(5f, hundredths / 100f));
+        }
         return SettingsValueNormalizer.textSizeMultiplierFor(lyricsTextSizeMode());
     }
 
@@ -112,6 +138,19 @@ public final class LyricsShellSettings {
     }
 
     public float liveCardTextSizeMultiplier() {
+        if ("custom".equals(liveCardTextSizeMode())) {
+            int fallback = config == null ? Settings.LIVE_CARD_TEXT_SIZE_CUSTOM.defaultValue
+                    : config.get(Settings.LIVE_CARD_TEXT_SIZE_CUSTOM);
+            int hundredths = fallback;
+            try {
+                SharedPreferences prefs = prefs();
+                if (prefs != null && prefs.contains(Settings.LIVE_CARD_TEXT_SIZE_CUSTOM.key)) {
+                    hundredths = prefs.getInt(Settings.LIVE_CARD_TEXT_SIZE_CUSTOM.key, fallback);
+                }
+            } catch (Throwable ignored) {
+            }
+            return Math.max(0f, Math.min(5f, hundredths / 100f));
+        }
         return SettingsValueNormalizer.textSizeMultiplierFor(liveCardTextSizeMode());
     }
 
@@ -299,6 +338,7 @@ public final class LyricsShellSettings {
             case "spacious":
             case "more":
             case "max":
+            case "custom":
                 return value;
             default:
                 return "spacious";

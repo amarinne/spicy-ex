@@ -39,13 +39,19 @@ public final class SettingsPanel {
 
     private final Context context;
     private final SettingsStore store;
+    private final java.util.function.BooleanSupplier isHalfSize;
+    private final Runnable onToggleSize;
     private final Runnable onClose;
-    private final java.util.Set<String> expandedSections = new java.util.HashSet<>();
+    // Static: survives panel re-opens within the process, so the panel never re-opens fully collapsed.
+    private static final java.util.Set<String> expandedSections = new java.util.HashSet<>();
     private LinearLayout sectionsContainer;
 
-    public SettingsPanel(Context context, SettingsStore store, Runnable onClose) {
+    public SettingsPanel(Context context, SettingsStore store, java.util.function.BooleanSupplier isHalfSize,
+                         Runnable onToggleSize, Runnable onClose) {
         this.context = context;
         this.store = store;
+        this.isHalfSize = isHalfSize;
+        this.onToggleSize = onToggleSize;
         this.onClose = onClose;
     }
 
@@ -81,17 +87,39 @@ public final class SettingsPanel {
         header.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text("Spicy EX", 26, COL_TITLE, true);
         header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (onToggleSize != null) {
+            // ▴ = shrink to the top-anchored half panel, ▾ = grow back to full.
+            TextView resize = headerButton(sizeGlyph(), null);
+            resize.setOnClickListener(v -> {
+                onToggleSize.run();
+                resize.setText(sizeGlyph());
+            });
+            header.addView(resize);
+        }
         if (onClose != null) {
-            TextView close = text("✕", 20, COL_SUMMARY, false);
-            close.setPadding(dp(10), dp(6), dp(6), dp(6));
-            close.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
-            close.setOnClickListener(v -> onClose.run());
-            header.addView(close);
+            header.addView(headerButton("✕", v -> onClose.run()));
         }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = dp(6);
         content.addView(header, lp);
+    }
+
+    private String sizeGlyph() {
+        return isHalfSize != null && isHalfSize.getAsBoolean() ? "▾" : "▴";
+    }
+
+    /** Uniform 36dp centered icon button so header glyphs align regardless of their metrics. */
+    private TextView headerButton(String glyph, View.OnClickListener listener) {
+        TextView button = text(glyph, 18, COL_SUMMARY, false);
+        button.setGravity(Gravity.CENTER);
+        button.setIncludeFontPadding(false);
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
+        if (listener != null) button.setOnClickListener(listener);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(36), dp(36));
+        lp.leftMargin = dp(4);
+        button.setLayoutParams(lp);
+        return button;
     }
 
     private void renderSections(LinearLayout content) {
@@ -113,17 +141,33 @@ public final class SettingsPanel {
             boolean expanded = expandedSections.contains(section.id);
             sectionHeader(content, section, expanded);
             if (!expanded) continue;
-            for (Settings.Setting<?> setting : items) renderSetting(content, setting);
+            LinearLayout card = sectionCard(content);
+            for (Settings.Setting<?> setting : items) renderSetting(card, setting);
         }
         boolean debugExpanded = expandedSections.contains(Settings.DEBUG.id);
         sectionHeader(content, Settings.DEBUG, debugExpanded);
         if (debugExpanded) {
-            renderActions(content);
-            renderStatus(content);
+            LinearLayout card = sectionCard(content);
+            renderActions(card);
+            renderStatus(card);
+            renderDiagnostics(card);
         }
-        boolean diagnosticsExpanded = expandedSections.contains(Settings.DIAGNOSTICS.id);
-        sectionHeader(content, Settings.DIAGNOSTICS, diagnosticsExpanded);
-        if (diagnosticsExpanded) renderDiagnostics(content);
+    }
+
+    /** Rounded container that visually groups an expanded section's rows. */
+    private LinearLayout sectionCard(LinearLayout content) {
+        LinearLayout card = new LinearLayout(context);
+        card.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0x0DFFFFFF);
+        bg.setCornerRadius(dp(14));
+        card.setBackground(bg);
+        card.setPadding(dp(10), dp(2), dp(10), dp(2));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(4);
+        content.addView(card, lp);
+        return card;
     }
 
     private void renderSetting(LinearLayout content, Settings.Setting<?> setting) {
@@ -169,6 +213,15 @@ public final class SettingsPanel {
         if (setting == Settings.LIVE_CARD_GLOW) {
             return !"Minimal".equals(store.get(Settings.LIVE_CARD_ANIMATION));
         }
+        if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM) {
+            return "custom".equals(store.get(Settings.LYRICS_TEXT_SIZE));
+        }
+        if (setting == Settings.LINE_SPACING_CUSTOM) {
+            return "custom".equals(store.get(Settings.LINE_SPACING));
+        }
+        if (setting == Settings.LIVE_CARD_TEXT_SIZE_CUSTOM) {
+            return "custom".equals(store.get(Settings.LIVE_CARD_TEXT_SIZE));
+        }
         return true;
     }
 
@@ -177,12 +230,16 @@ public final class SettingsPanel {
                 || setting == Settings.TRANSLITERATION_ENABLED
                 || setting == Settings.ENABLE_BACKGROUND
                 || setting == Settings.ANIMATION_STYLE
-                || setting == Settings.LIVE_CARD_ANIMATION;
+                || setting == Settings.LIVE_CARD_ANIMATION
+                || setting == Settings.LYRICS_TEXT_SIZE
+                || setting == Settings.LINE_SPACING
+                || setting == Settings.LIVE_CARD_TEXT_SIZE;
     }
 
     private boolean unavailable(Settings.Setting<?> setting) {
         return (setting == Settings.TRANSLITERATION_ENABLED && !FeatureAvailability.transliterationAvailable())
-                || (setting == Settings.TRANSLATION_ENABLED && !FeatureAvailability.translationAvailable());
+                || (setting == Settings.TRANSLATION_ENABLED && !FeatureAvailability.translationAvailable())
+                || (setting == Settings.LYRICS_FONT && !FeatureAvailability.appleFontAvailable());
     }
 
     private void renderActions(LinearLayout content) {
@@ -231,16 +288,17 @@ public final class SettingsPanel {
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setMinimumHeight(dp(50));
-        row.setPadding(dp(4), dp(12), dp(4), dp(8));
+        row.setMinimumHeight(dp(44));
+        row.setPadding(dp(4), dp(8), dp(4), dp(8));
         row.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
 
-        TextView title = text(section.label, 15, COL_ACCENT, true);
+        TextView title = text(section.label, 14, COL_TITLE, true);
         title.setAllCaps(true);
+        title.setLetterSpacing(0.05f);
         row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView arrow = text(expanded ? "⌃" : "⌄", 18, COL_SECTION, false);
+        TextView arrow = text(expanded ? "▾" : "▸", 16, COL_SECTION, false);
         arrow.setGravity(Gravity.CENTER);
-        row.addView(arrow, new LinearLayout.LayoutParams(dp(32), dp(32)));
+        row.addView(arrow, new LinearLayout.LayoutParams(dp(28), dp(28)));
         row.setOnClickListener(v -> {
             if (expandedSections.contains(section.id)) expandedSections.remove(section.id);
             else expandedSections.add(section.id);
@@ -249,7 +307,7 @@ public final class SettingsPanel {
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(10);
+        lp.topMargin = dp(4);
         content.addView(row, lp);
     }
 
@@ -301,22 +359,25 @@ public final class SettingsPanel {
 
     private void selectorRow(LinearLayout content, Settings.StringSetting setting) {
         LinearLayout row = newRow(content);
-        TextView value = titleColumn(row, setting.label, labelFor(setting, store.get(setting)));
-        value.setTextColor(COL_ACCENT);
+        boolean unavailable = unavailable(setting);
+        TextView value = titleColumn(row, setting.label,
+                unavailable ? FeatureAvailability.unavailableSummary() : labelFor(setting, store.get(setting)));
+        if (!unavailable) value.setTextColor(COL_ACCENT);
         row.addView(text("›", 22, COL_SECTION, false));
-        row.setOnClickListener(v -> showSelectorDialog(setting, value));
+        row.setEnabled(!unavailable);
+        if (!unavailable) row.setOnClickListener(v -> showSelectorDialog(setting, value));
     }
 
     private void stepperRow(LinearLayout content, Settings.IntegerSetting setting) {
         LinearLayout row = newRow(content);
-        titleColumn(row, setting.label, null);
+        titleColumn(row, setting.label, stepperSummary(setting));
 
         LinearLayout controls = new LinearLayout(context);
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView minus = stepButton("-");
-        TextView value = text(formatOffset(store.get(setting)), 15, COL_ACCENT, true);
+        TextView value = text(formatStepper(setting, store.get(setting)), 15, COL_ACCENT, true);
         value.setGravity(Gravity.CENTER);
         TextView plus = stepButton("+");
 
@@ -328,8 +389,10 @@ public final class SettingsPanel {
         controls.addView(plus, new LinearLayout.LayoutParams(dp(36), dp(36)));
         row.addView(controls);
 
-        attachStepperTouch(minus, setting, value, -setting.stepValue);
-        attachStepperTouch(plus, setting, value, setting.stepValue);
+        final int[] pending = new int[]{store.get(setting)};
+        final Runnable commit = () -> store.put(setting, pending[0]);
+        attachStepperTouch(minus, setting, value, -setting.stepValue, pending, commit);
+        attachStepperTouch(plus, setting, value, setting.stepValue, pending, commit);
     }
 
     private TextView stepButton(String label) {
@@ -343,18 +406,26 @@ public final class SettingsPanel {
         return button;
     }
 
-    private void adjustStepper(Settings.IntegerSetting setting, TextView valueView, int delta) {
-        int current = store.get(setting);
-        int next = Math.max(setting.minValue, Math.min(setting.maxValue, current + delta));
-        store.put(setting, next);
-        valueView.setText(formatOffset(next));
+    /**
+     * Steppers track the pending value locally and only commit to the store ~250ms after the last
+     * tick: expensive consumers (text size / spacing trigger a full lyric rebuild) would otherwise
+     * lag the press-and-hold ramp. The label updates instantly, the rerender waits for settle.
+     */
+    private void adjustStepper(Settings.IntegerSetting setting, TextView valueView, int delta,
+                               int[] pending, Runnable commit) {
+        int next = Math.max(setting.minValue, Math.min(setting.maxValue, pending[0] + delta));
+        pending[0] = next;
+        valueView.setText(formatStepper(setting, next));
+        valueView.removeCallbacks(commit);
+        valueView.postDelayed(commit, 250L);
     }
 
-    private void attachStepperTouch(TextView button, Settings.IntegerSetting setting, TextView valueView, int delta) {
+    private void attachStepperTouch(TextView button, Settings.IntegerSetting setting, TextView valueView, int delta,
+                                    int[] pending, Runnable commit) {
         final int[] repeatCount = new int[]{0};
         final Runnable[] repeat = new Runnable[1];
         repeat[0] = () -> {
-            adjustStepper(setting, valueView, delta);
+            adjustStepper(setting, valueView, delta, pending, commit);
             repeatCount[0]++;
             long delayMs = Math.max(45L, 130L - repeatCount[0] * 8L);
             button.postDelayed(repeat[0], delayMs);
@@ -363,8 +434,11 @@ public final class SettingsPanel {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     v.setPressed(true);
+                    // Without this the surrounding ScrollView intercepts on the slightest finger
+                    // drift and cancels the hold, so press-and-hold repeat never ramps.
+                    if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
                     repeatCount[0] = 0;
-                    adjustStepper(setting, valueView, delta);
+                    adjustStepper(setting, valueView, delta, pending, commit);
                     v.removeCallbacks(repeat[0]);
                     v.postDelayed(repeat[0], 360L);
                     return true;
@@ -374,6 +448,7 @@ public final class SettingsPanel {
                 case MotionEvent.ACTION_CANCEL:
                 case MotionEvent.ACTION_OUTSIDE:
                     v.setPressed(false);
+                    if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(false);
                     v.removeCallbacks(repeat[0]);
                     return true;
                 default:
@@ -532,11 +607,11 @@ public final class SettingsPanel {
         return "";
     }
 
-    /** Option label with the actual multiplier appended for the magnitude-based selectors. */
+    /** Option label; magnitude-based selectors show the plain multiplier ("\u00d71.5") as the label. */
     private static String labelFor(Settings.StringSetting setting, String value) {
-        String base = displayLabel(value);
         String mult = multiplierFor(setting.key, value);
-        return mult == null ? base : base + "  (" + mult + ")";
+        if (mult != null) return "\u00d7" + mult;
+        return displayLabel(value);
     }
 
     // Mirror of LyricsShellSettings.lineSpacingMultiplier() / lyricsTextSizeMultiplier() — display only.
@@ -545,8 +620,8 @@ public final class SettingsPanel {
             switch (value) {
                 case "compact": return "0.8";
                 case "default": return "1.1";
-                case "spacious": return "1.45";
-                case "more": return "1.9";
+                case "spacious": return "1.5";
+                case "more": return "2.0";
                 case "max": return "2.5";
                 default: return null;
             }
@@ -576,6 +651,19 @@ public final class SettingsPanel {
         String spaced = value.replace('_', ' ').replace('-', ' ').trim();
         if (spaced.isEmpty()) return value;
         return Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
+    }
+
+    private static String stepperSummary(Settings.IntegerSetting setting) {
+        if (setting == Settings.SYNC_OFFSET_MS) return "Positive shows lyrics earlier";
+        return null;
+    }
+
+    private static String formatStepper(Settings.IntegerSetting setting, int value) {
+        if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM || setting == Settings.LINE_SPACING_CUSTOM
+                || setting == Settings.LIVE_CARD_TEXT_SIZE_CUSTOM) {
+            return String.format(java.util.Locale.US, "×%.2f", value / 100f);
+        }
+        return formatOffset(value);
     }
 
     private static String formatOffset(int offsetMs) {

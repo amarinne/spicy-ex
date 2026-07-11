@@ -173,7 +173,7 @@ final class AuthTokenCaptureHook {
     }
 
     private static Context appContext() {
-        Activity activity = References.currentActivity;
+        Activity activity = References.currentActivity();
         if (activity != null) return activity.getApplicationContext();
         try {
             Object app = XposedHelpers.callStaticMethod(

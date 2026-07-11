@@ -11,6 +11,8 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
     private final FrameListener listener;
 
     private boolean running;
+    private boolean continuous = true;
+    private boolean framePosted;
     private long lastFrameNanos;
 
     public VsyncFrameScheduler(FrameListener listener) {
@@ -28,8 +30,9 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
         }
 
         running = true;
+        continuous = true;
         lastFrameNanos = 0L;
-        choreographer.postFrameCallback(this);
+        postFrameIfNeeded();
     }
 
     public void stop() {
@@ -38,6 +41,7 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
         }
 
         running = false;
+        framePosted = false;
         lastFrameNanos = 0L;
         choreographer.removeFrameCallback(this);
     }
@@ -46,8 +50,28 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
         return running;
     }
 
+    public boolean isContinuous() {
+        return continuous;
+    }
+
+    public void setContinuous(boolean continuous) {
+        if (this.continuous == continuous) return;
+        this.continuous = continuous;
+        if (continuous) {
+            lastFrameNanos = 0L;
+            postFrameIfNeeded();
+        }
+    }
+
+    public void requestFrame() {
+        if (!running) return;
+        lastFrameNanos = 0L;
+        postFrameIfNeeded();
+    }
+
     @Override
     public void doFrame(long frameTimeNanos) {
+        framePosted = false;
         if (!running) {
             return;
         }
@@ -60,8 +84,12 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
         lastFrameNanos = frameTimeNanos;
         listener.onFrame(deltaTimeSeconds);
 
-        if (running) {
-            choreographer.postFrameCallback(this);
-        }
+        if (running && continuous) postFrameIfNeeded();
+    }
+
+    private void postFrameIfNeeded() {
+        if (!running || framePosted) return;
+        framePosted = true;
+        choreographer.postFrameCallback(this);
     }
 }

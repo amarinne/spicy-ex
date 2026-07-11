@@ -11,7 +11,8 @@ public final class SettingsValueNormalizer {
     }
 
     public static String normalizeTextSizeMode(String mode) {
-        if ("small".equals(mode) || "normal".equals(mode) || "large".equals(mode) || "xlarge".equals(mode)) {
+        if ("small".equals(mode) || "normal".equals(mode) || "large".equals(mode) || "xlarge".equals(mode)
+                || "custom".equals(mode)) {
             return mode;
         }
         return "normal";
@@ -19,18 +20,18 @@ public final class SettingsValueNormalizer {
 
     public static float textSizeMultiplierFor(String mode) {
         switch (normalizeTextSizeMode(mode)) {
-            case "small": return 0.88f;
+            case "small": return 0.9f;
             case "large": return 1.2f;
-            case "xlarge": return 1.45f;
+            case "xlarge": return 1.5f;
             default: return 1.0f;
         }
     }
 
     public static String textSizeMultiplierLabel(String mode) {
         switch (normalizeTextSizeMode(mode)) {
-            case "small": return "0.88";
+            case "small": return "0.9";
             case "large": return "1.2";
-            case "xlarge": return "1.45";
+            case "xlarge": return "1.5";
             default: return "1.0";
         }
     }

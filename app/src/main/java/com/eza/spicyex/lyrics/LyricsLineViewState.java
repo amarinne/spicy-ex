@@ -34,7 +34,10 @@ public final class LyricsLineViewState {
     }
 
     public static void setRowView(AppliedLine line, View row) {
-        if (line != null) state(line).rowView = row;
+        if (line != null) {
+            state(line).rowView = row;
+            state(line).needsRender = true;
+        }
     }
 
     public static View rowView(AppliedLine line) {
@@ -219,6 +222,32 @@ public final class LyricsLineViewState {
         return state(line).dotMainOpacitySpring.step(deltaSeconds);
     }
 
+    public static boolean needsFrame(AppliedLine line, int targetClass) {
+        if (line == null) return false;
+        AppliedLineRenderState state = state(line);
+        return state.needsRender || state.lastTargetClass != targetClass || !isSettled(line);
+    }
+
+    public static void markFrameApplied(AppliedLine line, int targetClass) {
+        if (line == null) return;
+        state(line).needsRender = false;
+        state(line).lastTargetClass = targetClass;
+    }
+
+    public static boolean isSettled(AppliedLine line) {
+        if (line == null) return true;
+        AppliedLineRenderState state = state(line);
+        if (!springAtRest(state.opacitySpring) || !springAtRest(state.lineScaleSpring)
+                || !springAtRest(state.lineGlowSpring) || !springAtRest(state.dotMainScaleSpring)
+                || !springAtRest(state.dotMainOpacitySpring)) return false;
+        if (line.words != null) {
+            for (SyllableSegment segment : line.words) {
+                if (!LyricsSyllableViewState.isSettled(segment)) return false;
+            }
+        }
+        return true;
+    }
+
     public static void clear(AppliedLine line, ViewGroup mountedRowsHost, Invalidation invalidation) {
         if (line == null) return;
         if (state(line).rowView != null && state(line).rowView.getParent() == mountedRowsHost) {
@@ -278,6 +307,10 @@ public final class LyricsLineViewState {
 
     private static float frameDelta(float deltaSeconds) {
         return Math.max(0.001f, Math.min(0.08f, deltaSeconds));
+    }
+
+    private static boolean springAtRest(Spring spring) {
+        return spring == null || spring.isAtRest(0.0025f, 0.0025f);
     }
 
     private static float clamp(float value, float min, float max) {

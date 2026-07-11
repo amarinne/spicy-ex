@@ -234,7 +234,7 @@ public final class LyricsSurfaceRowPlanner {
             this.wordLevelFill = wordLevelFill;
             this.interludeNoteIcon = interludeNoteIcon;
             this.lyricWeight = lyricWeight == null ? "Medium" : lyricWeight;
-            this.lyricsFont = lyricsFont == null ? "default" : lyricsFont;
+            this.lyricsFont = lyricsFont == null ? "spotify" : lyricsFont;
             this.textSizeMultiplier = textSizeMultiplier;
             this.translationBright = translationBright;
             this.wrapLongLines = wrapLongLines;
@@ -260,7 +260,7 @@ public final class LyricsSurfaceRowPlanner {
                     cfg != null && cfg.lineSyncFillWord(),
                     cfg != null && cfg.interludeNoteIcon,
                     cfg == null ? "Medium" : cfg.lyricWeight,
-                    cfg == null ? "default" : cfg.lyricsFont,
+                    cfg == null ? "spotify" : cfg.lyricsFont,
                     cfg == null ? 1f : cfg.lyricsTextSizeMultiplier,
                     cfg != null && cfg.translationBright,
                     true,
@@ -282,7 +282,7 @@ public final class LyricsSurfaceRowPlanner {
                     cfg != null && cfg.lineSyncFillWord(),
                     cfg != null && cfg.interludeNoteIcon,
                     cfg == null ? "Medium" : cfg.liveCardWeight,
-                    cfg == null ? "default" : cfg.lyricsFont,
+                    cfg == null ? "spotify" : cfg.lyricsFont,
                     cfg == null ? 1f : Math.max(0.50f, 0.68f * cfg.liveCardTextSizeMultiplier),
                     cfg != null && cfg.translationBright,
                     wrapOverflow,
@@ -292,7 +292,7 @@ public final class LyricsSurfaceRowPlanner {
 
         public static SurfacePolicy defaultPolicy() {
             return new SurfacePolicy(1f, false, false, "", false, false, false,
-                    false, false, "Medium", "default", 1f, false, true, false);
+                    false, false, "Medium", "spotify", 1f, false, true, false);
         }
     }
 }

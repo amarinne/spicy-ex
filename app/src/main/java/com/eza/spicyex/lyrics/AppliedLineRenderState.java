@@ -18,6 +18,8 @@ public final class AppliedLineRenderState {
     public List<SpicyAnimatedTextView> dotViews;
     public Spring dotMainScaleSpring;
     public Spring dotMainOpacitySpring;
+    public int lastTargetClass = Integer.MIN_VALUE;
+    public boolean needsRender = true;
 
     public void clearMounts() {
         rowView = null;
@@ -31,5 +33,7 @@ public final class AppliedLineRenderState {
         dotMainScaleSpring = null;
         dotMainOpacitySpring = null;
         measuredHeightPx = 0;
+        lastTargetClass = Integer.MIN_VALUE;
+        needsRender = true;
     }
 }

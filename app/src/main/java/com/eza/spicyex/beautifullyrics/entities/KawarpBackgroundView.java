@@ -124,17 +124,23 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
     private float shaderTimeSeconds = 0f;
     private float speedMultiplier = 1f;
     private float targetSpeedMultiplier = 1f;
+    private boolean frameCallbackPosted;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
         public void doFrame(long frameTimeNanos) {
+            frameCallbackPosted = false;
             if (!rendering) return;
             if (startNanos == 0) startNanos = frameTimeNanos;
             if (frameTimeNanos - lastFrameNanos >= FRAME_INTERVAL_NS) {
                 lastFrameNanos = frameTimeNanos;
                 if (softCover != null) invalidate();
             }
-            Choreographer.getInstance().postFrameCallback(this);
+            if (targetSpeedMultiplier == 0f && speedMultiplier < 0.01f) {
+                speedMultiplier = 0f;
+                return;
+            }
+            postFrameCallbackIfNeeded();
         }
     };
 
@@ -169,7 +175,13 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
     }
 
     public void setPlaying(boolean playing) {
-        targetSpeedMultiplier = playing ? 1f : 0.1f;
+        targetSpeedMultiplier = playing ? 1f : 0f;
+        if (playing) {
+            lastTimeUpdateNanos = 0L;
+            postFrameCallbackIfNeeded();
+        } else if (rendering) {
+            postFrameCallbackIfNeeded();
+        }
     }
 
     public void setPaletteColors(int[] colors) {
@@ -206,25 +218,40 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
     public void pauseRendering() {
         rendering = false;
         Choreographer.getInstance().removeFrameCallback(frameCallback);
+        frameCallbackPosted = false;
     }
 
     @Override
     public void resumeRendering() {
         if (rendering && lastFrameNanos != 0) return;
         rendering = true;
-        Choreographer.getInstance().postFrameCallback(frameCallback);
+        lastTimeUpdateNanos = 0L;
+        if (targetSpeedMultiplier > 0f || speedMultiplier >= 0.01f) {
+            postFrameCallbackIfNeeded();
+        } else {
+            invalidate();
+        }
     }
 
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (rendering) Choreographer.getInstance().postFrameCallback(frameCallback);
+        if (rendering && (targetSpeedMultiplier > 0f || speedMultiplier >= 0.01f)) {
+            postFrameCallbackIfNeeded();
+        }
     }
 
     @Override
     protected void onDetachedFromWindow() {
         Choreographer.getInstance().removeFrameCallback(frameCallback);
+        frameCallbackPosted = false;
         super.onDetachedFromWindow();
+    }
+
+    private void postFrameCallbackIfNeeded() {
+        if (!rendering || frameCallbackPosted || !isAttachedToWindow()) return;
+        frameCallbackPosted = true;
+        Choreographer.getInstance().postFrameCallback(frameCallback);
     }
 
     @Override

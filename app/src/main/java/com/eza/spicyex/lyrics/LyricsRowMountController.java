@@ -164,6 +164,10 @@ public final class LyricsRowMountController {
     }
 
     public boolean shouldRemountWindowForViewport(List<AppliedLine> lines, int anchor) {
+        return shouldRemountWindowForViewport(lines, anchor, edgeBuffer);
+    }
+
+    public boolean shouldRemountWindowForViewport(List<AppliedLine> lines, int anchor, int remountEdgeBuffer) {
         int count = lines == null ? 0 : lines.size();
         return LyricsRowVirtualizer.shouldRemountWindowForViewport(
                 count,
@@ -171,7 +175,7 @@ public final class LyricsRowMountController {
                 mountedRows.start(),
                 mountedRows.end(),
                 fullRenderThreshold,
-                edgeBuffer,
+                Math.max(0, remountEdgeBuffer),
                 anchor);
     }
 

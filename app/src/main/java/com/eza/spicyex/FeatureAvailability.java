@@ -15,6 +15,10 @@ public final class FeatureAvailability {
                 && hasClass("com.github.pemistahl.lingua.api.LanguageDetectorBuilder");
     }
 
+    public static boolean appleFontAvailable() {
+        return BuildConfig.APPLE_FONT_AVAILABLE;
+    }
+
     public static String unavailableSummary() {
         return "Full build required";
     }

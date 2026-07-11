@@ -29,6 +29,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 /** Owns the native lyrics ambient gradient and optional animated album-art background. */
 public final class LyricsAmbientController {
     private static final String TAG = "[SpotifyPlusAmbientController]";
+    private static final int ART_DECODE_TARGET_PX = 384;
 
     private final Activity activity;
     private final OkHttpClient http;
@@ -44,6 +45,7 @@ public final class LyricsAmbientController {
     private volatile String appliedArtImageId = "";
     private volatile String inFlightArtImageId = "";
     private volatile AmbientBackgroundLayer inFlightArtTarget;
+    private volatile Call inFlightArtCall;
     private volatile android.graphics.Bitmap lastArtBitmap;
     private int[] currentPageColors;
     private ValueAnimator pageColorAnimator;
@@ -118,6 +120,9 @@ public final class LyricsAmbientController {
         }
         animatedForceDark = forceDark;
         appliedArtImageId = "";
+        Call previousCall = inFlightArtCall;
+        if (previousCall != null) previousCall.cancel();
+        inFlightArtCall = null;
         inFlightArtImageId = "";
         inFlightArtTarget = null;
         parent.addView(animatedBackground.asView(), new FrameLayout.LayoutParams(
@@ -186,19 +191,24 @@ public final class LyricsAmbientController {
         if (background == null) return;
         if (isBlank(imageId) || imageId.equals(appliedArtImageId)) return;
         if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) return;
+        Call previousCall = inFlightArtCall;
+        if (previousCall != null) previousCall.cancel();
         inFlightArtImageId = imageId;
         inFlightArtTarget = background;
         Request request = new Request.Builder()
                 .url("https://i.scdn.co/image/" + Uri.encode(imageId))
                 .get()
                 .build();
-        http.newCall(request).enqueue(new Callback() {
+        Call artCall = http.newCall(request);
+        inFlightArtCall = artCall;
+        artCall.enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
                 XposedBridge.log(TAG + " album art fetch failed: " + e.getMessage());
                 if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) {
                     inFlightArtImageId = "";
                     inFlightArtTarget = null;
+                    if (inFlightArtCall == call) inFlightArtCall = null;
                 }
             }
 
@@ -206,12 +216,22 @@ public final class LyricsAmbientController {
             public void onResponse(Call call, Response response) throws IOException {
                 try (Response ignored = response) {
                     if (!response.isSuccessful() || response.body() == null) return;
+                    if (isStaleArtRequest(imageId, background, runningState)) return;
                     byte[] data = response.body().bytes();
-                    android.graphics.Bitmap art = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length);
+                    if (isStaleArtRequest(imageId, background, runningState)) return;
+                    android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+                    bounds.inJustDecodeBounds = true;
+                    android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+                    android.graphics.BitmapFactory.Options decode = new android.graphics.BitmapFactory.Options();
+                    decode.inSampleSize = calculateInSampleSize(
+                            bounds.outWidth, bounds.outHeight, ART_DECODE_TARGET_PX);
+                    android.graphics.Bitmap art = android.graphics.BitmapFactory.decodeByteArray(
+                            data, 0, data.length, decode);
                     if (art == null) return;
-                    if (runningState != null && !runningState.isRunning()) return;
-                    if (background != animatedBackground) return;
-                    if (!imageId.equals(desiredArtImageId)) return;
+                    if (isStaleArtRequest(imageId, background, runningState)) {
+                        art.recycle();
+                        return;
+                    }
                     lastArtBitmap = art;
                     background.updateImage(art);
                     appliedArtImageId = imageId;
@@ -221,10 +241,27 @@ public final class LyricsAmbientController {
                     if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) {
                         inFlightArtImageId = "";
                         inFlightArtTarget = null;
+                        if (inFlightArtCall == call) inFlightArtCall = null;
                     }
                 }
             }
         });
+    }
+
+    private boolean isStaleArtRequest(String imageId, AmbientBackgroundLayer background,
+                                      RunningState runningState) {
+        return (runningState != null && !runningState.isRunning())
+                || background != animatedBackground
+                || !imageId.equals(desiredArtImageId);
+    }
+
+    static int calculateInSampleSize(int width, int height, int targetLongestEdge) {
+        if (width <= 0 || height <= 0 || targetLongestEdge <= 0) return 1;
+        int longest = Math.max(width, height);
+        int target = targetLongestEdge;
+        int sample = 1;
+        while (longest / (sample * 2) >= target) sample *= 2;
+        return sample;
     }
 
     private void applyAnimatedPalette(int[] colors) {

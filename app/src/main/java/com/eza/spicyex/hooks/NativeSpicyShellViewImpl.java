@@ -126,9 +126,28 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final LyricsShellEmptyStateController emptyStateController;
     private LyricsRowMountController rowMountController;
     private LinearLayout contentColumn;
-    private final Runnable scrollSettleRunnable = () -> {
-        remeasureMountedRows();
-        renderWindowForActive(currentWindowAnchor());
+    private boolean scrollInProgress;
+    private boolean scrollSettleScheduled;
+    private long lastScrollEventMs;
+    private final Runnable scrollSettleRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!running) {
+                scrollSettleScheduled = false;
+                scrollInProgress = false;
+                return;
+            }
+            long remaining = SCROLL_SETTLE_REMEASURE_DELAY_MS
+                    - (SystemClock.elapsedRealtime() - lastScrollEventMs);
+            if (remaining > 0) {
+                handler.postDelayed(this, remaining);
+                return;
+            }
+            scrollSettleScheduled = false;
+            scrollInProgress = false;
+            remeasureMountedRows();
+            renderWindowForActive(currentWindowAnchor());
+        }
     };
     private String lastUri = "";
     private String loadingTrackId = "";
@@ -138,7 +157,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean showTranslation;
     private LyricsTransliterationSession transliterationSession;
     private LyricsRenderConfig renderConfig;
-    private long lastTransliterationCheckMs;
+    private final SharedPreferences preferences;
+    private boolean preferencesRegistered;
+    private boolean preferenceRefreshPosted;
+    private final Runnable preferenceRefreshRunnable = this::refreshPreferences;
+    private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
+            (prefs, key) -> schedulePreferenceRefresh();
+
+    private void refreshPreferences() {
+        preferenceRefreshPosted = false;
+        if (!running) return;
+        applyRenderConfigChanges("preference changed", false);
+        ambientController.applySettings(renderConfig.backgroundEnabled, renderConfig.forceDarkBackground);
+    }
     private long lastKeepAliveArmMs;
     // Unsynced (plain) lyrics: no per-line timing, so don't auto-follow or karaoke-wash — render every
     // line uniformly bright + readable and let the user scroll freely (a "static screen").
@@ -152,6 +183,22 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final GlyphIconDrawable romanGlyph = new GlyphIconDrawable("A", android.graphics.Typeface.DEFAULT_BOLD);
     private int lyricsTopInsetPx;
     private long lastLyricPositionMs = -1;
+    private long lastDisplayedProgressSecond = Long.MIN_VALUE;
+    private String lastDisplayedTitle = "";
+    private String lastDisplayedArtist = "";
+    private String lastDisplayedAlbum = "";
+    private boolean autoResumeFollow;
+    private static final long IDLE_FRAME_PROBE_MS = 250L;
+    private static final int SETTLE_FRAMES_BEFORE_IDLE = 15;
+    private int visuallySettledFrames;
+    private final Runnable idleFrameProbe = new Runnable() {
+        @Override
+        public void run() {
+            if (!running || frameScheduler.isContinuous()) return;
+            frameScheduler.requestFrame();
+            handler.postDelayed(this, IDLE_FRAME_PROBE_MS);
+        }
+    };
 
     private boolean isLandscape() {
         return getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
@@ -240,7 +287,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             activity.finish();
         });
         SharedPreferences prefs = activity.getSharedPreferences("SpotifyPlus", Context.MODE_PRIVATE);
+        preferences = prefs;
         renderConfig = LyricsRenderConfig.read(activity, config);
+        autoResumeFollow = config.get(Settings.AUTO_RESUME_FOLLOW);
         transliterationSession = new LyricsTransliterationSession(
                 config.get(Settings.NATIVE_SPICY_ROMANIZATION),
                 renderConfig,
@@ -360,7 +409,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
         ensureLyricsColumnScaffold();
         lyricsScroll.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+            if (!running) return;
             if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) return;
+            scrollInProgress = true;
+            frameScheduler.setContinuous(true);
+            frameScheduler.requestFrame();
             scheduleScrollWindowRender();
             scheduleScrollSettleRemeasure();
         });
@@ -406,6 +459,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         dbgEnter("NativeSpicyShellView.start");
         if (running) return;
         running = true;
+        registerPreferenceListener();
         shellLifecycle.start();
         playbackClock.reset("");
         updateState(1f / 60f);
@@ -415,11 +469,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     void stop() {
         dbgEnter("NativeSpicyShellView.stop");
         running = false;
+        unregisterPreferenceListener();
         toggleSpinnerController.reset();
         shellLifecycle.stop();
         frameScheduler.stop();
+        handler.removeCallbacks(idleFrameProbe);
+        visuallySettledFrames = 0;
         playbackClock.reset("");
         handler.removeCallbacks(scrollSettleRunnable);
+        scrollSettleScheduled = false;
+        scrollInProgress = false;
         handler.removeCallbacksAndMessages(null);
         clearPendingStyleWrites();
     }
@@ -447,6 +506,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             setTextIfChanged(subtitle, "Player state hook has not emitted yet");
             setTextIfChanged(progress, "--:--");
             setTextIfChanged(status, "Native Spicy renderer mounted. Waiting for player state.");
+            updateFrameDemand(false);
             return;
         }
 
@@ -463,6 +523,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (!uri.equals(lastUri)) {
             lastUri = uri;
             playbackClock.reset(uri);
+            lastDisplayedProgressSecond = Long.MIN_VALUE;
+            lastDisplayedTitle = "";
+            lastDisplayedArtist = "";
+            lastDisplayedAlbum = "";
             followState.resetActive();
             lastLyricPositionMs = -1;
             document = null;
@@ -474,21 +538,27 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         long pos = playbackClock.getPosition(track, playingNow);
 
-        setTextIfChanged(title, emptyFallback(track.title, "Unknown title"));
-        setTextIfChanged(subtitle, emptyFallback(track.artist, "Unknown artist") + " • " + emptyFallback(track.album, "Unknown album"));
-        setTextIfChanged(progress, formatMs(pos));
+        String trackTitle = emptyFallback(track.title, "Unknown title");
+        String trackArtist = emptyFallback(track.artist, "Unknown artist");
+        String trackAlbum = emptyFallback(track.album, "Unknown album");
+        if (!trackTitle.equals(lastDisplayedTitle)) {
+            lastDisplayedTitle = trackTitle;
+            setTextIfChanged(title, trackTitle);
+        }
+        if (!trackArtist.equals(lastDisplayedArtist) || !trackAlbum.equals(lastDisplayedAlbum)) {
+            lastDisplayedArtist = trackArtist;
+            lastDisplayedAlbum = trackAlbum;
+            setTextIfChanged(subtitle, trackArtist + " • " + trackAlbum);
+        }
+        long displayedSecond = Math.max(0L, pos) / 1000L;
+        if (displayedSecond != lastDisplayedProgressSecond) {
+            lastDisplayedProgressSecond = displayedSecond;
+            setTextIfChanged(progress, formatMs(pos));
+        }
 
         if (document != null) {
-            // Throttle settings reads off the per-frame path (they do prefs lookups); renderer
-            // layout toggles don't need 60fps responsiveness, ~once/sec is plenty.
-            long nowMs = SystemClock.elapsedRealtime();
-            if (nowMs - lastTransliterationCheckMs > 750) {
-                lastTransliterationCheckMs = nowMs;
-                applyRenderConfigChanges("settings poll", false);
-            }
             if (staticDoc) {
-                // No sync → don't follow or wash; keep every line uniformly readable.
-                frameRenderer.applyStatic(document, rowMountController.mountedIndices(), mountedRowsHost);
+                // Static rows are styled when mounted; nothing changes between frames.
             } else {
                 long lyricPos = adjustedLyricPositionMs(pos);
                 int nextActive = LyricTimeline.findPrimaryActiveRow(document.appliedLines, lyricPos);
@@ -498,25 +568,54 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 if (nextActive != followState.activeIndex() || drasticSeek) {
                     setActiveLine(nextActive, lyricPos, track, drasticSeek);
                 }
+                boolean userScrollHeld = followState.isHoldingNow();
+                long visibleRange = userScrollHeld && scrollController != null
+                        ? scrollController.visibleLineRange(rowHeightPrefix(), document.appliedLines.size())
+                        : LyricsScrollController.ALL_LINES;
                 frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
-                        renderConfig, lyricPos, nextActive, deltaSeconds,
-                        followState.isHoldingNow());
+                        renderConfig, lyricPos, nextActive, deltaSeconds, userScrollHeld,
+                        LyricsScrollController.rangeStart(visibleRange),
+                        LyricsScrollController.rangeEnd(visibleRange));
             }
-            String processingStatus = "";
-            if (document.processingPending) {
-                processingStatus = document.romanizationPending && document.translationPending ? " [P:R+Tr]"
-                        : document.romanizationPending ? " [P:R]"
-                        : document.translationPending ? " [P:Tr]"
-                        : " [P:...]";
+            if (status.getVisibility() == View.VISIBLE) {
+                String processingStatus = "";
+                if (document.processingPending) {
+                    processingStatus = document.romanizationPending && document.translationPending ? " [P:R+Tr]"
+                            : document.romanizationPending ? " [P:R]"
+                            : document.translationPending ? " [P:Tr]"
+                            : " [P:...]";
+                }
+                setTextIfChanged(status, (playingNow ? "Playing" : "Paused")
+                        + processingStatus
+                        + " • " + document.fetchSource
+                        + " • " + document.provider
+                        + " • " + document.type
+                        + " • " + document.appliedLines.size() + " rows");
             }
-            setTextIfChanged(status, (playingNow ? "Playing" : "Paused")
-                    + processingStatus
-                    + " • " + document.fetchSource
-                    + " • " + document.provider
-                    + " • " + document.type
-                    + " • " + document.appliedLines.size() + " rows");
-        } else if (!loadingTrackId.isEmpty()) {
+        } else if (!loadingTrackId.isEmpty() && status.getVisibility() == View.VISIBLE) {
             setTextIfChanged(status, (playingNow ? "Playing" : "Paused") + " • fetching lyrics for " + shortTrackId(uri));
+        }
+        updateFrameDemand(playingNow);
+    }
+
+    private void updateFrameDemand(boolean playingNow) {
+        boolean processing = document != null && document.processingPending;
+        boolean continuous = (playingNow && document != null && !staticDoc)
+                || !loadingTrackId.isEmpty()
+                || processing
+                || localReprocessController.isProcessing()
+                || scrollInProgress;
+        if (continuous) {
+            visuallySettledFrames = 0;
+            handler.removeCallbacks(idleFrameProbe);
+            frameScheduler.setContinuous(true);
+            return;
+        }
+        if (++visuallySettledFrames < SETTLE_FRAMES_BEFORE_IDLE) return;
+        if (frameScheduler.isContinuous()) {
+            frameScheduler.setContinuous(false);
+            handler.removeCallbacks(idleFrameProbe);
+            handler.postDelayed(idleFrameProbe, IDLE_FRAME_PROBE_MS);
         }
     }
 
@@ -551,6 +650,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void applyRenderConfigChanges(String reason, boolean fromPanelClose) {
+        autoResumeFollow = config.get(Settings.AUTO_RESUME_FOLLOW);
         LyricsRenderConfig next = LyricsRenderConfig.read(activity, config);
         LyricsRenderConfig.Diff diff = renderConfig == null ? null : renderConfig.diff(next);
         if (diff == null || !diff.hasChanges) {
@@ -593,9 +693,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         dbg("NativeSpicyShellView.loadLyrics", "id=" + safe(id) + " track=" + (track == null ? "null" : safe(track.uri)));
         loadingTrackId = id;
         int generation = ++NativeSpicyLyricsHook.fetchGeneration;
+        RomanizationOptions loadOptions = romanizationOptions();
+        boolean loadRomanization = showRomanization();
         host.fetchLyrics(activity, track, generation, new LyricsResultCallback() {
             @Override
             public void onSuccess(LyricsDocument doc) {
+                LyricsDocumentProcessor.applyProcessedCache(activity.getApplicationContext(), doc,
+                        loadOptions, GOOGLE_PROCESSING_VERSION);
+                populateLocalSegmentRomanization(doc, loadRomanization, loadOptions);
+                LyricTimeline.applySyncedRows(doc);
                 handler.post(() -> {
                     if (!running) return;
                     if (generation < NativeSpicyLyricsHook.fetchGeneration && !id.equals(loadingTrackId)) return;
@@ -605,10 +711,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                         XposedBridge.log(TAG + " stale lyrics ignored id=" + id + " current=" + currentId);
                         return;
                     }
-                    LyricsDocumentProcessor.applyProcessedCache(activity, doc, romanizationOptions(), GOOGLE_PROCESSING_VERSION);
                     document = doc;
                     loadingTrackId = "";
-                    renderDocument();
+                    renderDocument(false);
                     startSecondaryProcessing(id, generation);
                     XposedBridge.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider=" + doc.provider + " type=" + doc.type + " lines=" + doc.lines.size());
                 });
@@ -679,11 +784,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void populateLocalSegmentRomanization(LyricsDocument doc) {
-        if (!showRomanization() || doc == null || doc.lines == null || doc.lines.isEmpty()) return;
+        populateLocalSegmentRomanization(doc, showRomanization(), romanizationOptions());
+    }
+
+    private void populateLocalSegmentRomanization(LyricsDocument doc, boolean enabled,
+                                                   RomanizationOptions options) {
+        if (!enabled || doc == null || doc.lines == null || doc.lines.isEmpty()) return;
         String fullText = LyricsDocumentProcessor.collectText(doc);
         for (LyricsLine line : doc.lines) {
             if (line == null || line.interlude || isBlank(line.text)) continue;
-            LyricsLocalRomanizer.populateLocalSegmentRomanization(romanizationOptions(), doc, line, fullText);
+            LyricsLocalRomanizer.populateLocalSegmentRomanization(options, doc, line, fullText);
         }
     }
 
@@ -713,6 +823,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void renderDocument() {
+        renderDocument(true);
+    }
+
+    private void renderDocument(boolean prepareDocument) {
         dbg("NativeSpicyShellView.renderDocument", "doc=" + (document == null ? "null" : document.fetchSource + "/" + document.type + "/" + document.lines.size()));
         updateToggleVisuals();
         ensureLyricsColumnScaffold();
@@ -723,8 +837,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             return;
         }
         staticDoc = "Static".equalsIgnoreCase(document.type);
-        populateLocalSegmentRomanization(document);
-        LyricTimeline.applySyncedRows(document);
+        if (prepareDocument) {
+            populateLocalSegmentRomanization(document);
+            LyricTimeline.applySyncedRows(document);
+        }
         if (document.appliedLines.isEmpty()) {
             showError("Empty applied lyrics rows");
             return;
@@ -760,7 +876,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 lineVisualController::invalidate,
                 this::styleLine,
                 this::rowHeightForIndex);
-        if (rendered) flushStyleBatch();
+        if (rendered) {
+            if (staticDoc) frameRenderer.applyStatic(document, rowMountController.mountedIndices(), mountedRowsHost);
+            else flushStyleBatch();
+        }
     }
 
     private View ensureRowView(AppliedLine line) {
@@ -837,11 +956,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private boolean shouldRemountWindowForViewport(int anchor) {
         if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) return false;
-        return rowMountController.shouldRemountWindowForViewport(document.appliedLines, anchor);
+        return rowMountController.shouldRemountWindowForViewport(
+                document.appliedLines, anchor, NativeRuntime.LYRIC_WINDOW_EDGE_BUFFER);
     }
 
     private void scheduleScrollSettleRemeasure() {
-        handler.removeCallbacks(scrollSettleRunnable);
+        if (!running) return;
+        lastScrollEventMs = SystemClock.elapsedRealtime();
+        if (scrollSettleScheduled) return;
+        scrollSettleScheduled = true;
         handler.postDelayed(scrollSettleRunnable, SCROLL_SETTLE_REMEASURE_DELAY_MS);
     }
 
@@ -929,7 +1052,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             long lyricTarget = adjustedLyricPositionMs(target);
             setActiveLine(index, lyricTarget, host.getCurrentTrackSafely(), true);
             frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
-                    renderConfig, lyricTarget, index, 1f / 60f, false);
+                    renderConfig, lyricTarget, index, 1f / 60f, false, 0, Integer.MAX_VALUE);
             XposedBridge.log(TAG + " seek line index=" + index + " ms=" + target + " lyricMs=" + lyricTarget);
         } else {
             followState.holdUntil(SystemClock.elapsedRealtime() + 2500);
@@ -1020,6 +1143,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void maybeAutoResumeFollow(int activeIndex, SpotifyTrack track, long lyricPos) {
+        if (!autoResumeFollow) return;
         if (!followState.canAutoResumeNow(750)) return;
         if (document == null || document.appliedLines == null || activeIndex < 0 || activeIndex >= document.appliedLines.size()) return;
         AppliedLine line = document.appliedLines.get(activeIndex);
@@ -1062,6 +1186,27 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         } catch (Throwable t) {
             XposedBridge.log(TAG + " onSettingsClosed failed: " + t);
         }
+    }
+
+    private void schedulePreferenceRefresh() {
+        if (!running || preferenceRefreshPosted) return;
+        frameScheduler.requestFrame();
+        preferenceRefreshPosted = true;
+        handler.post(preferenceRefreshRunnable);
+    }
+
+    private void registerPreferenceListener() {
+        if (preferencesRegistered) return;
+        preferences.registerOnSharedPreferenceChangeListener(preferenceListener);
+        preferencesRegistered = true;
+    }
+
+    private void unregisterPreferenceListener() {
+        if (!preferencesRegistered) return;
+        preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener);
+        preferencesRegistered = false;
+        preferenceRefreshPosted = false;
+        handler.removeCallbacks(preferenceRefreshRunnable);
     }
 
     // Spin the chip rings while their work is outstanding: initial fetch, or background

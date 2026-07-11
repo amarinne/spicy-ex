@@ -34,6 +34,9 @@ public final class LiveLyricCardView extends LinearLayout {
     private LinearLayout rowHost;
     private AppliedLine mountedSourceLine;
     private AppliedLine mountedLine;
+    private LyricsSurfaceRowPlanner.RowPlan mountedRowPlan;
+    private LyricsRenderConfig mountedLiveConfig;
+    private final List<LineOverflowViewport> mountedOverflowViewports = new ArrayList<>();
     private String mountedConfigKey = "";
     private String mountedOverflowMode = "Wrap";
 
@@ -66,6 +69,12 @@ public final class LiveLyricCardView extends LinearLayout {
         invalidateForFrame();
     }
 
+    public void invalidateMountedContent() {
+        mountedLine = null;
+        mountedRowPlan = null;
+        mountedLiveConfig = null;
+    }
+
     public void renderLine(Activity activity, AppliedLine line, LyricsRenderConfig config,
                            long positionMs, float deltaSeconds,
                            LyricsDocument document,
@@ -74,20 +83,15 @@ public final class LiveLyricCardView extends LinearLayout {
             clear();
             return;
         }
-        LyricsRenderConfig liveConfig = config.forLiveCard();
-        LyricsSurfaceRowPlanner.RowPlan rowPlan = LyricsSurfaceRowPlanner.plan(
-                line, document, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(liveConfig));
-        String key = configKey(liveConfig)
-                + "|" + rowPlan.options.showJapaneseFurigana
-                + "|" + rowPlan.options.showJapaneseRomaji
-                + "|" + rowPlan.options.attachTransliterationToWords
-                + "|" + rowPlan.options.documentText
-                + "|" + (rowPlan.line != null && rowPlan.line.oppositeAligned);
-        if (mountedSourceLine != line || !key.equals(mountedConfigKey)) {
+        if (mountedSourceLine != line || mountedLine == null || mountedRowPlan == null || mountedLiveConfig == null) {
+            LyricsRenderConfig liveConfig = config.forLiveCard();
+            LyricsSurfaceRowPlanner.RowPlan rowPlan = LyricsSurfaceRowPlanner.plan(
+                    line, document, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(liveConfig));
+            String key = rowConfigKey(liveConfig, rowPlan);
             mountLine(activity, line, rowPlan, liveConfig, animateMount);
             mountedConfigKey = key;
         }
-        AppliedLine renderLine = mountedLine == null ? rowPlan.line : mountedLine;
+        AppliedLine renderLine = mountedLine == null ? mountedRowPlan.line : mountedLine;
         if (renderLine == null) {
             clear();
             return;
@@ -98,13 +102,12 @@ public final class LiveLyricCardView extends LinearLayout {
                 oneRowDocument,
                 ACTIVE_ROW,
                 rowHost,
-                liveConfig,
+                mountedLiveConfig,
                 positionMs,
                 0,
                 deltaSeconds,
                 false);
-        updateOverflowScroll(renderLine, liveConfig, positionMs);
-        invalidateForFrame();
+        updateOverflowScroll(renderLine, mountedLiveConfig, positionMs);
     }
 
     public void setInterlude(boolean note) {
@@ -124,6 +127,9 @@ public final class LiveLyricCardView extends LinearLayout {
         stage.addView(rowHost, rowHostLayoutParams(mountedOverflowMode));
         mountedSourceLine = null;
         mountedLine = null;
+        mountedRowPlan = null;
+        mountedLiveConfig = null;
+        mountedOverflowViewports.clear();
         mountedConfigKey = "";
         oneRowDocument.appliedLines.clear();
         invalidateForFrame();
@@ -143,6 +149,10 @@ public final class LiveLyricCardView extends LinearLayout {
         if (animateMount) animateIn(nextHost, config.liveCardTransitionMode);
         mountedSourceLine = sourceLine;
         mountedLine = rowPlan.line;
+        mountedRowPlan = rowPlan;
+        mountedLiveConfig = config;
+        mountedOverflowViewports.clear();
+        collectLineOverflowViewports(nextHost, mountedOverflowViewports);
     }
 
     private void mountSynthetic(AppliedLine line, boolean note) {
@@ -168,6 +178,10 @@ public final class LiveLyricCardView extends LinearLayout {
         nextHost.addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         mountedSourceLine = null;
         mountedLine = rowPlan.line;
+        mountedRowPlan = rowPlan;
+        mountedLiveConfig = config;
+        mountedOverflowViewports.clear();
+        collectLineOverflowViewports(nextHost, mountedOverflowViewports);
         oneRowDocument.appliedLines.clear();
         oneRowDocument.appliedLines.add(rowPlan.line);
         frameRenderer.applySynced(oneRowDocument, ACTIVE_ROW, rowHost, config, 0, 0, 1f / 60f, false);
@@ -291,12 +305,10 @@ public final class LiveLyricCardView extends LinearLayout {
 
     private void updateLineOverflowViewports(AppliedLine line, LyricsRenderConfig config,
                                              long positionMs, boolean transitionActive) {
-        List<LineOverflowViewport> viewports = new ArrayList<>();
-        collectLineOverflowViewports(rowHost, viewports);
-        if (viewports.isEmpty()) return;
+        if (mountedOverflowViewports.isEmpty()) return;
         boolean grouped = config != null && "Grouped".equals(config.liveCardScrollScope);
-        float groupTarget = grouped ? groupedScrollTarget(viewports, line, config, positionMs, transitionActive) : 0f;
-        for (LineOverflowViewport viewport : viewports) {
+        float groupTarget = grouped ? groupedScrollTarget(mountedOverflowViewports, line, config, positionMs, transitionActive) : 0f;
+        for (LineOverflowViewport viewport : mountedOverflowViewports) {
             viewport.update(line, config, positionMs, transitionActive, grouped, groupTarget);
         }
     }
@@ -342,6 +354,15 @@ public final class LiveLyricCardView extends LinearLayout {
                 + "|" + config.glowBlurEnabled
                 + "|" + config.interludeNoteIcon
                 + "|" + config.translationBright;
+    }
+
+    private String rowConfigKey(LyricsRenderConfig config, LyricsSurfaceRowPlanner.RowPlan rowPlan) {
+        return configKey(config)
+                + "|" + rowPlan.options.showJapaneseFurigana
+                + "|" + rowPlan.options.showJapaneseRomaji
+                + "|" + rowPlan.options.attachTransliterationToWords
+                + "|" + rowPlan.options.documentText
+                + "|" + (rowPlan.line != null && rowPlan.line.oppositeAligned);
     }
 
     private void invalidateForFrame() {

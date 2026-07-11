@@ -6,11 +6,13 @@ import android.content.SharedPreferences;
 public final class LyricsResponseCache {
     private static final String PREFS_CACHE = "SpotifyPlusLyricsResponseCache";
     private static final long MAX_AGE_MS = 3L * 24L * 60L * 60L * 1000L;
+    private static final int MAX_ENTRIES = 32;
+    private static final long MAX_PAYLOAD_BYTES = 2L * 1024L * 1024L;
 
     private LyricsResponseCache() {
     }
 
-    public static String get(Context context, String trackId) {
+    public static synchronized String get(Context context, String trackId) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE);
         String cacheKey = key(trackId);
         String response = prefs.getString(cacheKey, null);
@@ -30,16 +32,37 @@ public final class LyricsResponseCache {
         return response;
     }
 
-    public static void put(Context context, String trackId, String response) {
+    public static synchronized void put(Context context, String trackId, String response) {
         if (response == null || response.trim().isEmpty()) return;
-        context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE)
-                .edit()
-                .putString(key(trackId), response)
-                .putLong(key(trackId) + ":updated", System.currentTimeMillis())
-                .apply();
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE);
+        String cacheKey = key(trackId);
+        long now = System.currentTimeMillis();
+        RawLyricsCachePolicy.Decision decision = RawLyricsCachePolicy.planWrite(
+                prefs.getAll(),
+                cacheKey,
+                response,
+                now,
+                MAX_AGE_MS,
+                MAX_ENTRIES,
+                MAX_PAYLOAD_BYTES
+        );
+
+        SharedPreferences.Editor editor = prefs.edit();
+        for (String removedKey : decision.removedPayloadKeys) {
+            editor.remove(removedKey).remove(removedKey + ":updated");
+        }
+        for (String legacyKey : decision.legacyPayloadKeys) {
+            editor.putLong(legacyKey + ":updated", now);
+        }
+        if (decision.retainWrite) {
+            editor.putString(cacheKey, response).putLong(cacheKey + ":updated", now);
+        } else {
+            editor.remove(cacheKey).remove(cacheKey + ":updated");
+        }
+        editor.apply();
     }
 
-    public static void clear(Context context) {
+    public static synchronized void clear(Context context) {
         context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
     }
 

@@ -64,13 +64,13 @@ Supported reading modes:
 - Google unofficial translation backend.
 - Batched translation for faster line processing.
 - Configurable target language.
-- Translation line can be dimmed or bright.
+- Translation brightness: dimmed or bright.
 - Translation cache avoids repeated requests.
 
 ## Visual Customization
 
 - Lyric text size: small, normal, large, xlarge.
-- Lyric font: default, Spotify, Apple.
+- Lyric font: Spotify, Apple.
 - Lyric weight: regular, medium, bold.
 - Line spacing: compact, default, spacious, more, max.
 - Interlude indicator: dots or note.
@@ -81,8 +81,8 @@ Supported reading modes:
   - top to bottom
   - left to right block
   - left to right sentence
-- Glow blur toggle.
-- Distance blur toggle.
+- Text glow toggle (on by default).
+- Blur distant lines toggle.
 
 ## Backgrounds
 

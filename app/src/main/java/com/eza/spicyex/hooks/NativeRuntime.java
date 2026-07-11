@@ -4,6 +4,7 @@ import com.eza.spicyex.lyrics.SpicyProcessing;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.OkHttpClient;
@@ -23,6 +24,7 @@ final class NativeRuntime {
             .writeTimeout(HTTP_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build();
     static final ExecutorService PROCESSOR = Executors.newSingleThreadExecutor();
+    static final ScheduledExecutorService LYRICS_IO = Executors.newScheduledThreadPool(2);
     static final ExecutorService GOOGLE_WORKERS = Executors.newFixedThreadPool(4);
     static final int GOOGLE_PROCESSING_VERSION = SpicyProcessing.PROCESSING_VERSION + 2;
     static final int LYRIC_FULL_RENDER_THRESHOLD = 72;

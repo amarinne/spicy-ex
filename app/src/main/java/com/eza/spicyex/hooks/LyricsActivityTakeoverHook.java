@@ -37,6 +37,7 @@ final class LyricsActivityTakeoverHook {
     private static final int TAG_NATIVE_SPICY_ROOT = 0x53504C53; // SPLS
     private static final int TAG_EXTRA_LYRICS_BUTTON = 0x53504C58; // SPLX
     private static final long KEEP_LYRICS_ACTIVITY_AFTER_MOUNT_MS = 3500L;
+    private static final long[] EXTRA_INJECTION_DELAYS_MS = {450L, 950L, 1400L, 2400L};
 
     private static final WeakHashMap<Activity, Long> EXPLICIT_LYRICS_EXIT_UNTIL_MS = new WeakHashMap<>();
     private static final WeakHashMap<Activity, Long> KEEP_LYRICS_ACTIVITY_UNTIL_MS = new WeakHashMap<>();
@@ -50,6 +51,7 @@ final class LyricsActivityTakeoverHook {
 
     private final NativeSpicyLyricsHook host;
     private final NowPlayingInjector nowPlayingInjector;
+    private final WeakHashMap<Activity, ExtraInjectionRetry> extraInjectionRetries = new WeakHashMap<>();
 
     LyricsActivityTakeoverHook(NativeSpicyLyricsHook host, NowPlayingInjector nowPlayingInjector) {
         this.host = host;
@@ -79,7 +81,7 @@ final class LyricsActivityTakeoverHook {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 Activity activity = (Activity) param.thisObject;
-                References.currentActivity = activity;
+                References.setCurrentActivity(activity);
                 if (isLyricsFullscreenActivity(activity)) {
                     if (hasNativeSpicyRoot(activity) || consumeTakeoverArmed() || nativeLyricsSessionActive) {
                         activity.getWindow().getDecorView().postDelayed(() -> mountNativeSpicyRoot(activity), 150);
@@ -95,7 +97,8 @@ final class LyricsActivityTakeoverHook {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
                 Activity activity = (Activity) param.thisObject;
-                nowPlayingInjector.stop(activity);
+                cancelExtraLyricsButtonInjection(activity);
+                nowPlayingInjector.destroy(activity);
                 if (!isLyricsFullscreenActivity(activity)) return;
                 // Rotation/config change recreates the activity - keep the session so onCreate
                 // re-mounts our shell. Only a real destroy ends the session.
@@ -107,7 +110,9 @@ final class LyricsActivityTakeoverHook {
         XposedHelpers.findAndHookMethod(Activity.class, "onPause", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
-                nowPlayingInjector.stop((Activity) param.thisObject); // quiet the now-playing card ticker
+                Activity activity = (Activity) param.thisObject;
+                cancelExtraLyricsButtonInjection(activity);
+                nowPlayingInjector.stop(activity); // quiet the now-playing card ticker
             }
         });
 
@@ -164,24 +169,27 @@ final class LyricsActivityTakeoverHook {
             if (!isNativeSpicyEnabled(activity)) return;
             View decor = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
             if (decor == null) return;
-            decor.postDelayed(() -> injectExtraLyricsButton(activity), 450);
-            decor.postDelayed(() -> injectExtraLyricsButton(activity), 1400);
-            decor.postDelayed(() -> injectExtraLyricsButton(activity), 2800);
-            decor.postDelayed(() -> injectExtraLyricsButton(activity), 5200);
+            cancelExtraLyricsButtonInjection(activity);
+            ExtraInjectionRetry retry = new ExtraInjectionRetry(activity, decor);
+            synchronized (extraInjectionRetries) {
+                extraInjectionRetries.put(activity, retry);
+            }
+            retry.postNext();
             nowPlayingInjector.schedule(activity);
         } catch (Throwable t) {
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " schedule extra lyrics injection failed: " + t);
         }
     }
 
-    private void injectExtraLyricsButton(Activity activity) {
+    private boolean injectExtraLyricsButton(Activity activity) {
         try {
             if (activity == null || activity.isFinishing()
                     || isLyricsFullscreenActivity(activity)
-                    || !isNativeSpicyEnabled(activity)) return;
+                    || !isNativeSpicyEnabled(activity)) return true;
             FrameLayout content = activity.findViewById(android.R.id.content);
-            if (content == null || content.findViewWithTag(TAG_EXTRA_LYRICS_BUTTON) != null) return;
-            if (!isLikelyNowPlayingScreen(activity, content)) return;
+            if (content == null) return false;
+            if (content.findViewWithTag(TAG_EXTRA_LYRICS_BUTTON) != null) return true;
+            if (!isLikelyNowPlayingScreen(activity, content)) return false;
 
             // The Share/Queue cluster (accessory_row) is an R8-obfuscated ConstraintLayout. Add the
             // entry button to its parent and position it into the empty footer space after layout.
@@ -189,10 +197,11 @@ final class LyricsActivityTakeoverHook {
             if (rowView == null || !rowView.isShown() || rowView.getWidth() == 0) {
                 XposedBridge.log(NativeSpicyLyricsHook.TAG
                         + " Extra lyrics: accessory_row not laid out yet in " + activity.getClass().getName());
-                return;
+                return false;
             }
             ViewGroup buttonHost = rowView.getParent() instanceof ViewGroup ? (ViewGroup) rowView.getParent() : null;
-            if (buttonHost == null || buttonHost.findViewWithTag(TAG_EXTRA_LYRICS_BUTTON) != null) return;
+            if (buttonHost == null) return false;
+            if (buttonHost.findViewWithTag(TAG_EXTRA_LYRICS_BUTTON) != null) return true;
             int side = rowView.getHeight() > 0 ? rowView.getHeight() : dp(48);
             View button = createExtraLyricsRowButton(activity);
             buttonHost.addView(button, new ViewGroup.LayoutParams(side, side));
@@ -200,8 +209,52 @@ final class LyricsActivityTakeoverHook {
             button.setTranslationY(rowView.getTop() + (rowView.getHeight() - side) / 2f);
             XposedBridge.log(NativeSpicyLyricsHook.TAG
                     + " inserted Extra lyrics ♪ centered in footer in " + activity.getClass().getName());
+            return true;
         } catch (Throwable t) {
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " inject extra lyrics button failed: " + t);
+            return false;
+        }
+    }
+
+    private void cancelExtraLyricsButtonInjection(Activity activity) {
+        ExtraInjectionRetry retry;
+        synchronized (extraInjectionRetries) {
+            retry = extraInjectionRetries.remove(activity);
+        }
+        if (retry != null) retry.cancel();
+    }
+
+    private final class ExtraInjectionRetry implements Runnable {
+        private final Activity activity;
+        private final View decor;
+        private int attempt;
+        private boolean cancelled;
+
+        ExtraInjectionRetry(Activity activity, View decor) {
+            this.activity = activity;
+            this.decor = decor;
+        }
+
+        void postNext() {
+            if (cancelled || attempt >= EXTRA_INJECTION_DELAYS_MS.length) return;
+            decor.postDelayed(this, EXTRA_INJECTION_DELAYS_MS[attempt++]);
+        }
+
+        void cancel() {
+            cancelled = true;
+            decor.removeCallbacks(this);
+        }
+
+        @Override
+        public void run() {
+            if (cancelled) return;
+            if (injectExtraLyricsButton(activity)) {
+                synchronized (extraInjectionRetries) {
+                    if (extraInjectionRetries.get(activity) == this) extraInjectionRetries.remove(activity);
+                }
+                return;
+            }
+            postNext();
         }
     }
 

@@ -13,9 +13,11 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Applies one fullscreen lyric animation frame to the currently mounted row window. */
 public final class LyricsFrameRenderer {
+    private static final int SCROLL_RENDER_MARGIN_ROWS = 8;
     private final FrameStyleBatcher styleBatcher;
     private final LyricsAnimationApplier.StyleSink styleSink;
     private final float scaledDensity;
+    private int lastActiveIndex = Integer.MIN_VALUE;
 
     public LyricsFrameRenderer(Context context, FrameStyleBatcher styleBatcher) {
         this.styleBatcher = styleBatcher;
@@ -60,14 +62,42 @@ public final class LyricsFrameRenderer {
             float deltaSeconds,
             boolean userScrollHeld
     ) {
+        applySynced(document, mountedIndices, mountedRowsHost, config, positionMs, activeIndex,
+                deltaSeconds, userScrollHeld, 0, Integer.MAX_VALUE);
+    }
+
+    public void applySynced(
+            LyricsDocument document,
+            Set<Integer> mountedIndices,
+            ViewGroup mountedRowsHost,
+            LyricsRenderConfig config,
+            long positionMs,
+            int activeIndex,
+            float deltaSeconds,
+            boolean userScrollHeld,
+            int visibleStart,
+            int visibleEnd
+    ) {
         if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) return;
+        int boundedVisibleStart = Math.max(0, visibleStart - SCROLL_RENDER_MARGIN_ROWS);
+        int boundedVisibleEnd = visibleEnd >= Integer.MAX_VALUE - SCROLL_RENDER_MARGIN_ROWS
+                ? Integer.MAX_VALUE
+                : visibleEnd + SCROLL_RENDER_MARGIN_ROWS;
+        boolean activeChanged = activeIndex != lastActiveIndex;
         for (int i : mountedIndices) {
             if (i < 0 || i >= document.appliedLines.size()) continue;
+            if (userScrollHeld && i != activeIndex
+                    && (i < boundedVisibleStart || i > boundedVisibleEnd)) continue;
             AppliedLine line = document.appliedLines.get(i);
             if (!LyricsLineViewState.isMounted(line, mountedRowsHost)) continue;
 
             LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
                     line, positionMs, config.spotlight, config.lineGradientEnabled);
+            int targetClass = lineState.active ? 1 : lineState.sung ? 2 : 0;
+            boolean blurNeedsRefresh = activeChanged && config.lineBlurEnabled && !userScrollHeld;
+            if (!lineState.active && !blurNeedsRefresh && !LyricsLineViewState.needsFrame(line, targetClass)) {
+                continue;
+            }
             float opacity = LyricsAnimationApplier.stepLineOpacity(line, lineState.active, lineState.sung, deltaSeconds);
             LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity,
                     mobileLineBlurPx(line, i, activeIndex, userScrollHeld, config));
@@ -123,7 +153,9 @@ public final class LyricsFrameRenderer {
                     }
                 }
             }
+            LyricsLineViewState.markFrameApplied(line, targetClass);
         }
+        lastActiveIndex = activeIndex;
         styleBatcher.flush();
     }
 

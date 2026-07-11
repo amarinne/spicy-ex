@@ -7,8 +7,8 @@ import android.os.Build;
 import android.view.View;
 import android.view.ViewGroup;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.WeakHashMap;
 
 /**
@@ -18,7 +18,7 @@ import java.util.WeakHashMap;
  */
 public final class FrameStyleBatcher {
     private final WeakHashMap<View, AppliedStyleState> styleCache = new WeakHashMap<>();
-    private final LinkedHashMap<View, PendingStyleState> styleQueue = new LinkedHashMap<>();
+    private final ArrayList<AppliedStyleState> styleQueue = new ArrayList<>();
     private final float density;
 
     public FrameStyleBatcher(Context context) {
@@ -43,28 +43,33 @@ public final class FrameStyleBatcher {
     }
 
     public void clearPendingWrites() {
+        for (AppliedStyleState state : styleQueue) state.clearPending();
         styleQueue.clear();
     }
 
     public void flush() {
         if (styleQueue.isEmpty()) return;
-        for (Map.Entry<View, PendingStyleState> entry : styleQueue.entrySet()) {
-            View view = entry.getKey();
-            if (view == null || !view.isAttachedToWindow()) continue;
-            PendingStyleState pending = entry.getValue();
-            if (pending.alpha != null) view.setAlpha(pending.alpha);
-            if (pending.scaleX != null) view.setScaleX(pending.scaleX);
-            if (pending.scaleY != null) view.setScaleY(pending.scaleY);
-            if (pending.translationY != null) view.setTranslationY(pending.translationY);
-            if (pending.blurPx != null) applyBlurEffectImmediate(view, pending.blurPx);
+        for (AppliedStyleState state : styleQueue) {
+            View view = state.view.get();
+            if (view != null && view.isAttachedToWindow()) {
+                if ((state.pendingFields & ALPHA_BIT) != 0) view.setAlpha(state.alpha);
+                if ((state.pendingFields & SCALE_X_BIT) != 0) view.setScaleX(state.scaleX);
+                if ((state.pendingFields & SCALE_Y_BIT) != 0) view.setScaleY(state.scaleY);
+                if ((state.pendingFields & TRANSLATION_Y_BIT) != 0) view.setTranslationY(state.translationY);
+                if ((state.pendingFields & BLUR_BIT) != 0) applyBlurEffectImmediate(view, state.blurPx);
+            }
+            state.clearPending();
         }
         styleQueue.clear();
     }
 
     public void invalidateRecursive(View view) {
         if (view == null) return;
-        styleCache.remove(view);
-        styleQueue.remove(view);
+        AppliedStyleState state = styleCache.remove(view);
+        if (state != null && state.queued) {
+            styleQueue.remove(state);
+            state.clearPending();
+        }
         if (!(view instanceof ViewGroup)) return;
         ViewGroup group = (ViewGroup) view;
         for (int i = 0; i < group.getChildCount(); i++) {
@@ -76,18 +81,15 @@ public final class FrameStyleBatcher {
         if (view == null) return;
         AppliedStyleState applied = styleCache.get(view);
         if (applied == null) {
-            applied = new AppliedStyleState();
+            applied = new AppliedStyleState(view);
             styleCache.put(view, applied);
         }
-        Float previous = applied.get(field);
-        if (previous != null && Math.abs(previous - value) <= epsilon) return;
+        if (applied.isUnchanged(field, value, epsilon)) return;
         applied.set(field, value);
-        PendingStyleState pending = styleQueue.get(view);
-        if (pending == null) {
-            pending = new PendingStyleState();
-            styleQueue.put(view, pending);
+        if (!applied.queued) {
+            applied.queued = true;
+            styleQueue.add(applied);
         }
-        pending.set(field, value);
     }
 
     private void applyBlurEffectImmediate(View view, float blurPx) {
@@ -102,14 +104,33 @@ public final class FrameStyleBatcher {
 
     private enum StyleField { ALPHA, SCALE_X, SCALE_Y, TRANSLATION_Y, BLUR }
 
-    private static class AppliedStyleState {
-        Float alpha;
-        Float scaleX;
-        Float scaleY;
-        Float translationY;
-        Float blurPx;
+    private static final int ALPHA_BIT = 1;
+    private static final int SCALE_X_BIT = 1 << 1;
+    private static final int SCALE_Y_BIT = 1 << 2;
+    private static final int TRANSLATION_Y_BIT = 1 << 3;
+    private static final int BLUR_BIT = 1 << 4;
 
-        Float get(StyleField field) {
+    private static class AppliedStyleState {
+        final WeakReference<View> view;
+        float alpha;
+        float scaleX;
+        float scaleY;
+        float translationY;
+        float blurPx;
+        int initializedFields;
+        int pendingFields;
+        boolean queued;
+
+        AppliedStyleState(View view) {
+            this.view = new WeakReference<>(view);
+        }
+
+        boolean isUnchanged(StyleField field, float value, float epsilon) {
+            int bit = bit(field);
+            return (initializedFields & bit) != 0 && Math.abs(get(field) - value) <= epsilon;
+        }
+
+        float get(StyleField field) {
             switch (field) {
                 case ALPHA: return alpha;
                 case SCALE_X: return scaleX;
@@ -117,10 +138,10 @@ public final class FrameStyleBatcher {
                 case TRANSLATION_Y: return translationY;
                 case BLUR: return blurPx;
             }
-            return null;
+            return 0f;
         }
 
-        void set(StyleField field, Float value) {
+        void set(StyleField field, float value) {
             switch (field) {
                 case ALPHA: alpha = value; break;
                 case SCALE_X: scaleX = value; break;
@@ -128,8 +149,25 @@ public final class FrameStyleBatcher {
                 case TRANSLATION_Y: translationY = value; break;
                 case BLUR: blurPx = value; break;
             }
+            int bit = bit(field);
+            initializedFields |= bit;
+            pendingFields |= bit;
+        }
+
+        void clearPending() {
+            pendingFields = 0;
+            queued = false;
+        }
+
+        private static int bit(StyleField field) {
+            switch (field) {
+                case ALPHA: return ALPHA_BIT;
+                case SCALE_X: return SCALE_X_BIT;
+                case SCALE_Y: return SCALE_Y_BIT;
+                case TRANSLATION_Y: return TRANSLATION_Y_BIT;
+                case BLUR: return BLUR_BIT;
+            }
+            return 0;
         }
     }
-
-    private static final class PendingStyleState extends AppliedStyleState {}
 }

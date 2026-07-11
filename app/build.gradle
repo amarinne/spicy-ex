@@ -27,8 +27,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 321
-        versionName "1.58.46-korean-junction-hyphens+B321-20260710T1920Z"
+        versionCode 337
+        versionName "1.58.62-settings-panel-checkpoint+B337-20260711T1017Z"
 
     }
 
@@ -43,12 +43,14 @@ android {
             versionNameSuffix "-lite"
             buildConfigField "boolean", "TRANSLITERATION_AVAILABLE", "false"
             buildConfigField "boolean", "TRANSLATION_AVAILABLE", "false"
+            buildConfigField "boolean", "APPLE_FONT_AVAILABLE", "false"
         }
         full {
             dimension "tier"
             versionNameSuffix "-full"
             buildConfigField "boolean", "TRANSLITERATION_AVAILABLE", "true"
             buildConfigField "boolean", "TRANSLATION_AVAILABLE", "true"
+            buildConfigField "boolean", "APPLE_FONT_AVAILABLE", "true"
         }
     }
 

@@ -129,6 +129,7 @@ public final class GoogleEnhancer {
         if (isBlank(body)) return result;
 
         Map<Integer, String> parsed = parseBatchTranslation(body);
+        Map<String, String> cacheWrites = new LinkedHashMap<>();
         for (int i = 0; i < pending.size(); i++) {
             BatchLine line = pending.get(i);
             String translated = parsed.get(i);
@@ -136,9 +137,9 @@ public final class GoogleEnhancer {
             translated = stripMarkerEcho(translated, i).trim();
             if (!shouldDisplayTranslation(line.text, translated)) continue;
             result.translations.put(line.index, translated);
-            LyricCaches.putProcessingValue(context, processingVersion,
-                    LyricCaches.translationKey(trackId, sourceLang, target, line.text), translated);
+            cacheWrites.put(LyricCaches.translationKey(trackId, sourceLang, target, line.text), translated);
         }
+        LyricCaches.putProcessingValues(context, processingVersion, cacheWrites);
         return result;
     }
 
