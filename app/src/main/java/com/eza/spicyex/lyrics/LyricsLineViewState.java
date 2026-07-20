@@ -54,7 +54,15 @@ public final class LyricsLineViewState {
     }
 
     public static void setMainView(AppliedLine line, SpicyAnimatedTextView view) {
-        if (line != null) state(line).mainView = view;
+        if (line == null) return;
+        state(line).mainView = view;
+        if (view == null) return;
+        // Inactive line-level rows mount at 0.95 scale. TextView's default center pivot would
+        // create a leading inset until the row becomes active and gets another render frame.
+        view.setPivotX(line.oppositeAligned ? view.getWidth() : 0f);
+        view.addOnLayoutChangeListener((v, left, top, right, bottom,
+                                        oldLeft, oldTop, oldRight, oldBottom) ->
+                updateMainScalePivot(line));
     }
 
     public static void setRomanView(AppliedLine line, SpicyAnimatedTextView view) {
@@ -151,15 +159,34 @@ public final class LyricsLineViewState {
 
     public static void applyLineLevelGradient(AppliedLine line, float gradient, float glow, float brightness) {
         if (line == null) return;
+        View row = state(line).rowView;
+        boolean blockGradient = row != null && row.getHeight() > 0
+                && state(line).mainView != null && state(line).mainView.usesVerticalGradient();
         if (state(line).mainView != null) {
             state(line).mainView.setBrightnessMultiplier(brightness);
-            state(line).mainView.setGradientPosition(gradient, glow);
+            applyLineGradientView(state(line).mainView, row, blockGradient, gradient, glow);
         }
         if (state(line).romanView != null) {
             state(line).romanView.setBrightnessMultiplier(brightness);
-            state(line).romanView.setGradientPosition(gradient, glow);
+            applyLineGradientView(state(line).romanView, row, blockGradient, gradient, glow);
         }
-        if (state(line).translationView != null) state(line).translationView.setGradientPosition(100f, 0f);
+        if (state(line).translationView != null) {
+            if (blockGradient) {
+                applyLineGradientView(state(line).translationView, row, true, gradient, glow);
+            } else {
+                state(line).translationView.setGradientPosition(LyricAnimations.GRADIENT_SUNG, 0f);
+            }
+        }
+    }
+
+    private static void applyLineGradientView(SpicyAnimatedTextView view, View row,
+                                              boolean blockGradient, float gradient, float glow) {
+        if (view == null) return;
+        if (blockGradient && row != null) {
+            view.setContainerVerticalGradientPosition(gradient, glow, row.getHeight(), view.getTop());
+        } else {
+            view.setGradientPosition(gradient, glow);
+        }
     }
 
     public static void applyLineSecondaryGradient(AppliedLine line, float gradient, float glow) {

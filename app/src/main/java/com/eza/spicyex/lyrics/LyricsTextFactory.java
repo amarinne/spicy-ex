@@ -4,6 +4,10 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.TextPaint;
+import android.text.style.MetricAffectingSpan;
 import android.view.Gravity;
 import android.widget.ImageButton;
 import android.widget.TextView;
@@ -12,6 +16,8 @@ import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
@@ -112,6 +118,79 @@ public final class LyricsTextFactory {
         return resolved;
     }
 
+    /** Preserve configured Latin face while applying weighted system fallback only to CJK runs. */
+    public void applyLyricTypeface(TextView view, CharSequence value, String weight, String family) {
+        if (view == null) return;
+        String plain = value == null ? "" : value.toString();
+        if (shouldUseSystemFallbackForText(plain)) {
+            view.setTypeface("Regular".equals(weight) ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD);
+            view.setText(value == null ? "" : value);
+            return;
+        }
+        Typeface configured = resolveConfiguredLyricTypeface(weight, family);
+        view.setTypeface(configured);
+        List<int[]> ranges = cjkFontRanges(plain);
+        if (ranges.isEmpty()) {
+            view.setText(value == null ? "" : value);
+            return;
+        }
+        SpannableStringBuilder styled = new SpannableStringBuilder(value == null ? "" : value);
+        Typeface cjk = resolveCjkTypeface(weight);
+        for (int[] range : ranges) {
+            styled.setSpan(new ExactTypefaceSpan(cjk), range[0], range[1], Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        view.setText(styled);
+    }
+
+    private Typeface resolveConfiguredLyricTypeface(String weight, String family) {
+        return resolveLyricTypeface(weight, family, "");
+    }
+
+    static List<int[]> cjkFontRanges(String text) {
+        ArrayList<int[]> ranges = new ArrayList<>();
+        String value = safe(text);
+        int start = -1;
+        for (int index = 0; index < value.length();) {
+            int cp = value.codePointAt(index);
+            int next = index + Character.charCount(cp);
+            boolean cjk = isCjkFontCodePoint(cp);
+            if (cjk && start < 0) start = index;
+            if (!cjk && start >= 0) {
+                ranges.add(new int[]{start, index});
+                start = -1;
+            }
+            index = next;
+        }
+        if (start >= 0) ranges.add(new int[]{start, value.length()});
+        return ranges;
+    }
+
+    private static boolean isCjkFontCodePoint(int cp) {
+        return (cp >= 0x3040 && cp <= 0x30FF)
+                || (cp >= 0x3400 && cp <= 0x4DBF)
+                || (cp >= 0x4E00 && cp <= 0x9FFF)
+                || (cp >= 0x3000 && cp <= 0x303F)
+                || cp == 0x3005;
+    }
+
+    private static final class ExactTypefaceSpan extends MetricAffectingSpan {
+        private final Typeface typeface;
+
+        ExactTypefaceSpan(Typeface typeface) {
+            this.typeface = typeface;
+        }
+
+        @Override
+        public void updateMeasureState(TextPaint paint) {
+            paint.setTypeface(typeface);
+        }
+
+        @Override
+        public void updateDrawState(TextPaint paint) {
+            paint.setTypeface(typeface);
+        }
+    }
+
     static boolean shouldUseSystemFallbackForText(String text) {
         return SpicyTextDetection.hasIndicScript(text);
     }
@@ -203,7 +282,7 @@ public final class LyricsTextFactory {
         view.setTypeface(typeface);
         view.setIncludeFontPadding(true);
         view.setLineSpacing(0f, 1.04f);
-        view.setGradientPosition(-20f, 0f);
+        view.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
         return view;
     }
 

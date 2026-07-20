@@ -9,6 +9,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.Gson;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
+import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
+import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
+import com.eza.spicyex.lyrics.reading.CodePointRanges;
+import com.eza.spicyex.lyrics.reading.DefaultRenderPlanBuilder;
 import com.eza.spicyex.SpotifyPlusConfig;
 
 import de.robv.android.xposed.XposedBridge;
@@ -18,7 +22,8 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 /** Serialized cache for post-processed romanization/translation fields. */
 public final class ProcessedLyricsCache {
     private static final String TAG = "[SpotifyPlusProcessedLyricsCache]";
-    public static final int READING_SCHEMA_VERSION = 1;
+    /** Plan v2 stores one semantic reading authority; legacy strings are cache fallback only. */
+    public static final int READING_SCHEMA_VERSION = 2;
     private static final Gson GSON = new Gson();
 
     private ProcessedLyricsCache() {
@@ -45,16 +50,24 @@ public final class ProcessedLyricsCache {
                 if (line == null) continue;
                 String text = Json.optString(item, "text");
                 if (!safe(line.text).equals(text)) continue;
-                String romanized = Json.optString(item, "romanizedText");
-                if (!isBlank(romanized)) line.romanizedText = romanized;
                 String translated = Json.optString(item, "translatedText");
                 if (!isBlank(translated)) line.translatedText = translated;
                 String cnMode = Json.optString(item, "chineseMode");
                 if (!isBlank(cnMode)) line.chineseMode = normalizeChineseMode(cnMode);
                 SpicyJapaneseChineseProcessor.JapaneseReading reading = LyricsParser.parseJapaneseReading(item);
-                if (reading != null) line.japaneseReading = reading;
-                if (compatibleReadingSchema && item.has("readingRenderPlan")) {
-                    line.readingRenderPlan = parseRenderPlan(item.get("readingRenderPlan"));
+                RenderPlan plan = compatibleReadingSchema && item.has("readingRenderPlan")
+                        ? parseRenderPlan(item.get("readingRenderPlan")) : null;
+                if (plan != null) {
+                    if (!validPlanForLine(line, plan, reading)) continue;
+                    line.readingRenderPlan = plan;
+                    // A plan's joined display text is authoritative. Never restore a competing
+                    // cached legacy string beside it.
+                    line.romanizedText = "";
+                    if (reading != null) line.japaneseReading = reading;
+                } else {
+                    String romanized = Json.optString(item, "romanizedText");
+                    if (!isBlank(romanized)) line.romanizedText = romanized;
+                    if (reading != null) line.japaneseReading = reading;
                 }
             }
             // Clear only the passes the cache actually contains. A partial cache (e.g. romanization
@@ -86,7 +99,11 @@ public final class ProcessedLyricsCache {
             for (LyricsLine line : doc.lines) {
                 JsonObject item = new JsonObject();
                 item.addProperty("text", line == null ? "" : safe(line.text));
-                if (line != null && !isBlank(line.romanizedText)) item.addProperty("romanizedText", line.romanizedText);
+                // A valid plan owns displayed reading text. Write legacy romaji only when no plan
+                // exists, so cache restore cannot combine two independently-derived projections.
+                if (line != null && line.readingRenderPlan == null && !isBlank(line.romanizedText)) {
+                    item.addProperty("romanizedText", line.romanizedText);
+                }
                 if (line != null && !isBlank(line.translatedText)) item.addProperty("translatedText", line.translatedText);
                 if (line != null && !isBlank(line.chineseMode)) item.addProperty("chineseMode", normalizeChineseMode(line.chineseMode));
                 if (line != null && line.japaneseReading != null) item.add("JapaneseReading", japaneseReadingToJson(line.japaneseReading));
@@ -131,6 +148,19 @@ public final class ProcessedLyricsCache {
         } catch (Throwable ignored) {
             return null;
         }
+    }
+
+    static boolean validPlanForLine(LyricsLine line, RenderPlan plan,
+                                    SpicyJapaneseChineseProcessor.JapaneseReading reading) {
+        if (line == null || plan == null || !DefaultRenderPlanBuilder.validate(plan).valid) return false;
+        String text = safe(line.text);
+        for (CanonicalSpanMapping source : plan.sourceUnits) {
+            if (source == null || source.spanId == null || !CodePointRanges.isValid(text, source.canonicalRange)) return false;
+        }
+        for (TimedReadingUnit timed : plan.timedReadingUnits) {
+            if (timed == null || isBlank(timed.spanId) || !CodePointRanges.isValid(text, timed.canonicalRange)) return false;
+        }
+        return reading == null || isBlank(reading.romaji) || safe(reading.romaji).equals(safe(plan.joinedDisplayText));
     }
 
     private static String key(Context context, LyricsDocument doc, RomanizationOptions opts, int processingVersion) {

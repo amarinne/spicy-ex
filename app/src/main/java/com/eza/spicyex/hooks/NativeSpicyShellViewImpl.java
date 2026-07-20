@@ -429,6 +429,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         contentColumn.addView(lyricsFrame, scrollLp);
 
         progress = textFactory.createText(activity, "--:--", 13, Color.rgb(210, 210, 210), textFactory.resolveTypeface(true));
+        progress.setFontFeatureSettings("tnum");
         progress.setVisibility(GONE);
         progress.setGravity(Gravity.CENTER);
         progress.setAlpha(0.72f);
@@ -695,7 +696,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         int generation = ++NativeSpicyLyricsHook.fetchGeneration;
         RomanizationOptions loadOptions = romanizationOptions();
         boolean loadRomanization = showRomanization();
-        host.fetchLyrics(activity, track, generation, new LyricsResultCallback() {
+        host.fetchLyrics(track, new LyricsResultCallback() {
             @Override
             public void onSuccess(LyricsDocument doc) {
                 LyricsDocumentProcessor.applyProcessedCache(activity.getApplicationContext(), doc,
@@ -714,7 +715,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     document = doc;
                     loadingTrackId = "";
                     renderDocument(false);
-                    startSecondaryProcessing(id, generation);
                     XposedBridge.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider=" + doc.provider + " type=" + doc.type + " lines=" + doc.lines.size());
                 });
             }

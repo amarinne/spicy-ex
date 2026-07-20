@@ -3,6 +3,7 @@ package com.eza.spicyex.hooks;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 
 import android.app.Activity;
+import android.app.Application;
 import android.content.Context;
 
 import com.eza.spicyex.BuildStamp;
@@ -28,6 +29,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     private static final String BUILD_CLUE = BuildStamp.CLUE;
     private static final boolean DEBUG_LOGGING = false;
     static volatile int fetchGeneration;
+    private final Context applicationContext;
     private final NowPlayingInjector nowPlayingInjector = new NowPlayingInjector(this);
     private final LyricsActivityTakeoverHook activityTakeoverHook =
             new LyricsActivityTakeoverHook(this, nowPlayingInjector);
@@ -38,6 +40,14 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
                     NativeSpicyLyricsHook::appContext,
                     NativeRuntime.GOOGLE_PROCESSING_VERSION
             );
+    private final LyricsSessionManager lyricsSessionManager;
+    private SpicyLyricBridgeCoordinator bridgeCoordinator;
+
+    public NativeSpicyLyricsHook(Context context) {
+        Context app = context.getApplicationContext();
+        applicationContext = app != null ? app : context;
+        lyricsSessionManager = new LyricsSessionManager(this, lyricsFetchCoordinator, applicationContext);
+    }
 
     static void dbg(String function, String message) {
         if (!DEBUG_LOGGING) return;
@@ -60,6 +70,17 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         ).hook();
         playbackBridge.install(lpparm, bridge);
         activityTakeoverHook.hook();
+        String processName = Application.getProcessName();
+        XposedBridge.log(TAG + " bridge init package=" + lpparm.packageName
+                + " loadProcess=" + lpparm.processName + " appProcess=" + processName);
+        if (lpparm.packageName.equals(processName)) {
+            lyricsSessionManager.start();
+            bridgeCoordinator = new SpicyLyricBridgeCoordinator(
+                    lyricsSessionManager, applicationContext);
+            bridgeCoordinator.start();
+        } else {
+            XposedBridge.log(TAG + " bridge skipped outside main Spotify process");
+        }
     }
 
     public void markExplicitLyricsExit(Activity activity) {
@@ -114,8 +135,8 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         return playbackBridge.isPlayerActuallyPlaying();
     }
 
-    public void fetchLyrics(Activity activity, SpotifyTrack track, int generation, LyricsResultCallback callback) {
-        lyricsFetchCoordinator.fetchLyrics(activity, track, generation, callback);
+    public void fetchLyrics(SpotifyTrack track, LyricsResultCallback callback) {
+        lyricsSessionManager.requestLyrics(track, callback);
     }
 
 

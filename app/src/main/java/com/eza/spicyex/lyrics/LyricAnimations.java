@@ -10,8 +10,16 @@ import java.util.List;
  * Inputs are normalized progress in [0,1]; outputs are scale/offset/opacity/gradient multipliers.
  */
 public final class LyricAnimations {
+    public static final float GRADIENT_UNSUNG = -40f;
+    public static final float GRADIENT_SUNG = 100f;
+    public static final float GRADIENT_BAND = 40f;
+    public static final float GRADIENT_RANGE = GRADIENT_SUNG - GRADIENT_UNSUNG;
 
     private LyricAnimations() {
+    }
+
+    public static float gradientPosition(float progress) {
+        return GRADIENT_UNSUNG + GRADIENT_RANGE * clamp01(progress);
     }
 
     // --- word-level karaoke curves ---

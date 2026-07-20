@@ -29,6 +29,5 @@ interface LyricsHost {
     // expires shortly after the shell stops calling (teardown), which re-enables normal finish().
     void markLyricsKeepAlive(Activity activity);
 
-    void fetchLyrics(Activity activity, SpotifyTrack track, int generation,
-                     NativeSpicyLyricsHook.LyricsResultCallback callback);
+    void fetchLyrics(SpotifyTrack track, NativeSpicyLyricsHook.LyricsResultCallback callback);
 }

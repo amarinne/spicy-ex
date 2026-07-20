@@ -91,6 +91,89 @@ public class LyricsParserSpicyMetadataTest {
         assertTrue(line.syllables.get(3).partOfWord);
     }
 
+    @Test
+    public void parseSyllableLyricsRebuildsTextFromRawSpansBeforePrejoinedLeadText() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("I ", false, 15.144, 15.381));
+        syllables.add(syllable("let ", false, 15.381, 15.565));
+        syllables.add(syllable("you ", false, 15.565, 15.715));
+        syllables.add(syllable("go ", false, 15.715, 16.032));
+        syllables.add(syllable("君のた", true, 16.032, 16.800));
+        syllables.add(syllable("めなら", true, 16.800, 17.948));
+
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "I let you go君のためなら");
+        lead.addProperty("StartTime", 15.144);
+        lead.addProperty("EndTime", 17.948);
+        lead.add("Syllables", syllables);
+
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        JsonArray content = new JsonArray();
+        content.add(item);
+
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+        assertEquals("I let you go 君のためなら", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void parseSyllableLyricsRestoresPackedJapaneseLatinBoundary() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("I", false, 15.144, 15.381));
+        syllables.add(syllable("let", false, 15.381, 15.565));
+        syllables.add(syllable("you", false, 15.565, 15.715));
+        syllables.add(syllable("go", false, 15.715, 16.032));
+        syllables.add(syllable("君のた", true, 16.032, 16.800));
+        syllables.add(syllable("めなら", true, 16.800, 17.948));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "I let you go君のためなら");
+        lead.addProperty("StartTime", 15.144);
+        lead.addProperty("EndTime", 17.948);
+        lead.add("Syllables", syllables);
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        JsonArray content = new JsonArray();
+        content.add(item);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+        assertEquals("I let you go 君のためなら", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void parseSyllableLyricsDoesNotInventJapaneseWordSpaceFromPackedFlags() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("とて", false, 47.379, 48.580));
+        syllables.add(syllable("も", false, 48.580, 49.495));
+        syllables.add(syllable("きれい", false, 52.006, 53.276));
+        syllables.add(syllable("だっ", false, 53.276, 54.068));
+        syllables.add(syllable("た", false, 54.068, 55.523));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("StartTime", 47.379);
+        lead.addProperty("EndTime", 55.523);
+        lead.add("Syllables", syllables);
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        JsonArray content = new JsonArray();
+        content.add(item);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+        assertEquals("とてもきれいだった", doc.lines.get(0).text);
+    }
+
     private static JsonObject queryResponse(JsonObject result) {
         JsonObject query = new JsonObject();
         query.add("result", result);
@@ -99,6 +182,14 @@ public class LyricsParserSpicyMetadataTest {
         JsonObject root = new JsonObject();
         root.add("queries", queries);
         return root;
+    }
+
+    private static JsonObject queryResult(JsonObject lyrics) {
+        JsonObject result = new JsonObject();
+        result.addProperty("httpStatus", 200);
+        result.addProperty("format", "json");
+        result.add("data", lyrics);
+        return result;
     }
 
     private static JsonObject unpackedStaticLyrics() {

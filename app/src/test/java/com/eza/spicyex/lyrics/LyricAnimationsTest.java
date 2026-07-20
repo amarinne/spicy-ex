@@ -23,6 +23,14 @@ public class LyricAnimationsTest {
     }
 
     @Test
+    public void gradientRangeUsesWideTransitionBand() {
+        assertEquals(-40f, LyricAnimations.gradientPosition(0f), EPS);
+        assertEquals(30f, LyricAnimations.gradientPosition(0.5f), EPS);
+        assertEquals(100f, LyricAnimations.gradientPosition(1f), EPS);
+        assertEquals(40f, LyricAnimations.GRADIENT_BAND, EPS);
+    }
+
+    @Test
     public void scaleSplineKnots() {
         assertEquals(0.95f, LyricAnimations.scaleSpline(0f), EPS);
         assertEquals(1.0505f, LyricAnimations.scaleSpline(0.7f), EPS);

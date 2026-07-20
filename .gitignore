@@ -23,6 +23,7 @@ tmp/
 *.swp
 *~.nib
 local.properties
+.understand-anything/
 .settings/
 .loadpath
 .recommenders

@@ -27,12 +27,13 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 337
-        versionName "1.58.62-settings-panel-checkpoint+B337-20260711T1017Z"
+        versionCode 366
+        versionName "1.58.91-hyperglow-bridge+B366-20260720T1829Z"
 
     }
 
     buildFeatures {
+        aidl true
         buildConfig true
     }
 

@@ -54,7 +54,10 @@ public final class LyricsLocalRomanizer {
                                 line.text, line.japaneseReading.furigana);
                         if (providerAware != null) line.japaneseReading = providerAware;
                         String romaji = providerAware == null ? "" : providerAware.romaji;
-                        if (!isBlank(romaji)) return romaji;
+                        if (!isBlank(romaji)) {
+                            line.readingRenderPlan = ReadingPlanFactory.japanese(line, providerAware);
+                            return line.readingRenderPlan == null ? romaji : line.readingRenderPlan.joinedDisplayText;
+                        }
                         return "";
                     }
                     line.japaneseReading = local;
@@ -90,7 +93,13 @@ public final class LyricsLocalRomanizer {
         if (isJapaneseLine(doc, line.text, fullText)) {
             ArrayList<String> syllableTexts = new ArrayList<>();
             for (SyllableSegment seg : line.syllables) syllableTexts.add(seg == null ? "" : seg.text);
-            List<String> localSyllables = SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(line.text, syllableTexts);
+            // Reuse the finalized line analysis when romanizeLine already produced one;
+            // only lines that never went through analysis tokenize here.
+            boolean hasFinalizedReading = line.japaneseReading != null
+                    && !line.japaneseReading.groups.isEmpty();
+            List<String> localSyllables = hasFinalizedReading
+                    ? SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(line.japaneseReading, syllableTexts)
+                    : SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(line.text, syllableTexts);
             if (localSyllables.size() == line.syllables.size()) {
                 for (int i = 0; i < line.syllables.size(); i++) {
                     SyllableSegment seg = line.syllables.get(i);

@@ -31,6 +31,8 @@ import com.eza.spicyex.lyrics.reading.ReadingModels.ReadingUnit;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ScriptRun;
 import com.eza.spicyex.lyrics.reading.ReadingModels.SourceSpan;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TextRange;
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
+import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
 public class ReadingContractTest {
     @Test
@@ -160,6 +162,33 @@ public class ReadingContractTest {
                     ReadingAnnotation annotation = KoreanReadingProcessor.annotate(canonical, mode);
                     assertEquals(id + " " + modeName, displays.get(modeName).getAsString(),
                             KoreanReadingProcessor.join(annotation));
+                }
+            }
+
+            if (expected.has("japanesePlan")) {
+                LyricsLine lyric = new LyricsLine();
+                lyric.text = canonical.text;
+                for (int s = 0; s < parsed.spans.size(); s++) {
+                    SourceSpan source = parsed.spans.get(s);
+                    SyllableSegment segment = new SyllableSegment();
+                    segment.spanId = String.valueOf(s);
+                    segment.sourceText = source.rawText;
+                    segment.text = source.cleanText == null ? "" : source.cleanText.trim();
+                    segment.startMs = source.startMs;
+                    segment.endMs = source.endMs;
+                    segment.partOfWord = Boolean.TRUE.equals(source.providerPartOfWord);
+                    lyric.syllables.add(segment);
+                }
+                SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                        SpicyJapaneseChineseProcessor.analyzeJapaneseLine(lyric.text, null);
+                RenderPlan plan = ReadingPlanFactory.japanese(lyric, reading);
+                JsonObject japanese = expected.getAsJsonObject("japanesePlan");
+                assertTrue(id + " japanese plan", plan != null);
+                assertEquals(id, japanese.get("joinedDisplayText").getAsString(), plan.joinedDisplayText);
+                JsonArray owners = japanese.getAsJsonArray("timedSpanIds");
+                assertEquals(id, owners.size(), plan.timedReadingUnits.size());
+                for (int t = 0; t < owners.size(); t++) {
+                    assertEquals(id, owners.get(t).getAsString(), plan.timedReadingUnits.get(t).spanId);
                 }
             }
         }

@@ -20,8 +20,6 @@ import com.eza.spicyex.lyrics.LyricsFetchErrors;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.LyricsLocalRomanizer;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
-import com.eza.spicyex.lyrics.LyricsSecondaryProcessor;
-import com.eza.spicyex.lyrics.LyricsSecondaryProcessingSession;
 import com.eza.spicyex.lyrics.RomanizationOptions;
 import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.SpicyTextDetection;
@@ -41,7 +39,6 @@ final class NowPlayingLyricController {
     private final LiveLyricCardView card;
     private final SpotifyPlusConfig config;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final LyricsSecondaryProcessingSession secondaryProcessingSession;
     private final SharedPreferences preferences;
     private boolean preferencesRegistered;
     private boolean preferenceRefreshPosted;
@@ -65,9 +62,6 @@ final class NowPlayingLyricController {
     private long lastCardTapMs;
     private long lastFrameMs;
     private long nextFetchAllowedMs;
-    private boolean secondaryProcessingActive;
-    private String secondaryProcessingId = "";
-    private LyricsDocument secondaryProcessingDocument;
     private boolean running;
     private SpotifyTrack throttledTrack;
     private long throttledTrackAtMs;
@@ -96,19 +90,6 @@ final class NowPlayingLyricController {
         this.card = card;
         this.config = SpotifyPlusConfig.from(activity);
         this.preferences = activity.getSharedPreferences("SpotifyPlus", Context.MODE_PRIVATE);
-        LyricsSecondaryProcessor secondaryProcessor = new LyricsSecondaryProcessor(
-                activity,
-                NativeRuntime.HTTP,
-                NativeRuntime.PROCESSOR,
-                NativeRuntime.GOOGLE_WORKERS,
-                handler,
-                NativeRuntime.GOOGLE_PROCESSING_VERSION);
-        this.secondaryProcessingSession = new LyricsSecondaryProcessingSession(
-                activity,
-                config,
-                secondaryProcessor,
-                NativeRuntime.GOOGLE_PROCESSING_VERSION,
-                NativeSpicyLyricsHook.TAG);
         refreshConfig();
         this.card.setOnClickListener(v -> handleCardTap());
     }
@@ -129,6 +110,7 @@ final class NowPlayingLyricController {
                 || !renderConfig.liveCardTransitionMode.equals(next.liveCardTransitionMode)
                 || !renderConfig.liveCardOverflowMode.equals(next.liveCardOverflowMode)
                 || !renderConfig.liveCardScrollScope.equals(next.liveCardScrollScope)
+                || renderConfig.adaptiveSectioningEnabled != next.adaptiveSectioningEnabled
                 || renderConfig.attachTransliterationToWords != next.attachTransliterationToWords
                 || !renderConfig.defaultJapaneseReadingMode.equals(next.defaultJapaneseReadingMode)
                 || !renderConfig.defaultChineseMode.equals(next.defaultChineseMode)
@@ -177,9 +159,6 @@ final class NowPlayingLyricController {
             nextFetchAllowedMs = 0L;
             document = null;
             loadedId = "";
-            secondaryProcessingActive = false;
-            secondaryProcessingId = "";
-            secondaryProcessingDocument = null;
         }
 
         // Track-change / fetch check is throttled — only the gradient needs per-frame work.
@@ -196,7 +175,6 @@ final class NowPlayingLyricController {
             return;
         }
         if (document == null || !id.equals(loadedId)) return; // not loaded for THIS track → stay cleared
-        startSecondaryProcessingIfNeeded(id);
 
         // Unsynced lyrics: no line tracks playback, so the live card can't karaoke-follow —
         // show the interlude indicator (set once) and leave reading to the fullscreen screen.
@@ -272,7 +250,7 @@ final class NowPlayingLyricController {
         final LyricsRenderConfig fetchConfig = renderConfig;
         final RomanizationOptions fetchOptions = romanizationOptions();
         try {
-        hook.fetchLyrics(activity, track, gen, new NativeSpicyLyricsHook.LyricsResultCallback() {
+        hook.fetchLyrics(track, new NativeSpicyLyricsHook.LyricsResultCallback() {
             @Override
             public void onSuccess(LyricsDocument doc) {
                 LyricsDocumentProcessor.applyProcessedCache(activity.getApplicationContext(), doc,
@@ -294,7 +272,6 @@ final class NowPlayingLyricController {
                     document = doc;
                     loadedId = id;
                     lastIdx = Integer.MIN_VALUE; // force a line refresh
-                    startSecondaryProcessingIfNeeded(id);
                 });
             }
 
@@ -330,65 +307,6 @@ final class NowPlayingLyricController {
         return throttledTrack;
     }
 
-    private void startSecondaryProcessingIfNeeded(String id) {
-        LyricsDocument snapshot = document;
-        if (snapshot == null || snapshot.lines == null || snapshot.lines.isEmpty() || renderConfig == null) return;
-        boolean wantsRomanization = renderConfig.liveCardShowTransliteration && snapshot.romanizationPending;
-        boolean wantsTranslation = renderConfig.liveCardShowTranslation && snapshot.translationPending;
-        if (!wantsRomanization && !wantsTranslation) return;
-        if (secondaryProcessingActive && snapshot == secondaryProcessingDocument && id.equals(secondaryProcessingId)) return;
-        secondaryProcessingActive = true;
-        secondaryProcessingId = id;
-        secondaryProcessingDocument = snapshot;
-        boolean started = secondaryProcessingSession.start(id, fetchGen, snapshot,
-                renderConfig.liveCardShowTransliteration,
-                romanizationOptions(),
-                this::isCurrentProcessingResult,
-                new LyricsSecondaryProcessingSession.Callback() {
-                    @Override
-                    public void status(String message) {
-                    }
-
-                    @Override
-                    public void rerender(LyricsDocument callbackSnapshot, String message) {
-                        applySecondaryProcessingUpdate(callbackSnapshot);
-                    }
-
-                    @Override
-                    public void progress(LyricsDocument callbackSnapshot, String message) {
-                    }
-
-                    @Override
-                    public void complete(LyricsDocument callbackSnapshot, String message, int changed) {
-                        if (callbackSnapshot == secondaryProcessingDocument) {
-                            secondaryProcessingActive = false;
-                            secondaryProcessingId = "";
-                            secondaryProcessingDocument = null;
-                        }
-                        applySecondaryProcessingUpdate(callbackSnapshot);
-                    }
-                });
-        if (!started) {
-            secondaryProcessingActive = false;
-            secondaryProcessingId = "";
-            secondaryProcessingDocument = null;
-        }
-    }
-
-    private boolean isCurrentProcessingResult(String id, int generation, LyricsDocument snapshot) {
-        if (!running || document != snapshot) return false;
-        if (generation > 0 && generation != fetchGen) return false;
-        return isBlank(id) || id.equals(currentId);
-    }
-
-    private void applySecondaryProcessingUpdate(LyricsDocument snapshot) {
-        if (!running || document != snapshot) return;
-        prepareLiveCardRomanization(snapshot);
-        LyricTimeline.applySyncedRows(snapshot);
-        card.invalidateMountedContent();
-        lastIdx = Integer.MIN_VALUE;
-    }
-
     private void prepareLiveCardRomanization(LyricsDocument doc) {
         prepareLiveCardRomanization(doc, renderConfig, romanizationOptions());
     }
@@ -403,6 +321,9 @@ final class NowPlayingLyricController {
             boolean missingJapaneseReading = japanese && (line.japaneseReading == null
                     || line.japaneseReading.furigana == null
                     || line.japaneseReading.furigana.isEmpty());
+            boolean finalizedNonJapanesePlan = !japanese && line.readingRenderPlan != null
+                    && !isBlank(line.readingRenderPlan.joinedDisplayText);
+            if (finalizedNonJapanesePlan) continue;
             if (!missingJapaneseReading && !japanese && !isBlank(line.romanizedText)
                     && !SpicyTextDetection.hasRomanizableScript(line.romanizedText)) continue;
             String local = LyricsLocalRomanizer.romanizeLine(opts, doc, line, fullText);

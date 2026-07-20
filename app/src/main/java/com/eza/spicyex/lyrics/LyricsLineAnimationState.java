@@ -42,21 +42,25 @@ public final class LyricsLineAnimationState {
         float progress = active ? progress01(positionMs, line.startMs, LyricTimeline.fillEndMs(line)) : 0f;
         float gradient;
         if (spotlight) {
-            gradient = active || sung ? 100f : -20f;
+            gradient = active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG;
         } else if (!washEnabled) {
-            gradient = 100f;
+            gradient = LyricAnimations.GRADIENT_SUNG;
         } else if (active) {
-            gradient = -20f + 120f * progress;
+            gradient = LyricAnimations.gradientPosition(progress);
         } else {
-            gradient = sung ? 100f : -20f;
+            gradient = sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG;
         }
 
         float glowTarget = 0f;
-        if (active && (spotlight || washEnabled)) {
+        if ((active || sung) && (spotlight || washEnabled)) {
             float glowPeak = spotlight ? 1.0f : 0.5f;
-            glowTarget = spotlight
-                    ? glowPeak * LyricAnimations.easeSinOut(progress) * LyricAnimations.easeSinOut(progress)
-                    : 0.16f + (glowPeak - 0.16f) * progress;
+            if (sung) {
+                glowTarget = glowPeak;
+            } else {
+                glowTarget = spotlight
+                        ? glowPeak * LyricAnimations.easeSinOut(progress) * LyricAnimations.easeSinOut(progress)
+                        : 0.16f + (glowPeak - 0.16f) * progress;
+            }
         }
         float brightnessTarget = 1f;
         if (spotlight && active) {

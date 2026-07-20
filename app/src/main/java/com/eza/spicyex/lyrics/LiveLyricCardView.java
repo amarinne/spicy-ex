@@ -2,12 +2,14 @@ package com.eza.spicyex.lyrics;
 
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.Color;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Gravity;
 import android.view.View.MeasureSpec;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import com.eza.spicyex.SpotifyPlusConfig;
 
@@ -111,12 +113,23 @@ public final class LiveLyricCardView extends LinearLayout {
     }
 
     public void setInterlude(boolean note) {
-        AppliedLine line = new AppliedLine();
-        line.dotLine = true;
-        line.text = note ? "♪" : "• • •";
-        line.startMs = 0;
-        line.endMs = 3000;
-        mountSynthetic(line, note);
+        LyricsRenderConfig config = LyricsRenderConfig.read(getContext(), null).forLiveCard();
+        mountedOverflowMode = config.liveCardOverflowMode;
+        LinearLayout nextHost = replaceRowHost(false, "None");
+        TextView indicator = new TextView(getContext());
+        indicator.setText(note ? "♪" : "• • •");
+        indicator.setTextColor(Color.WHITE);
+        indicator.setTextSize(note ? 28f : 22f);
+        indicator.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        indicator.setAlpha(1f);
+        nextHost.addView(indicator, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        mountedSourceLine = null;
+        mountedLine = null;
+        mountedRowPlan = null;
+        mountedLiveConfig = config;
+        mountedOverflowViewports.clear();
+        oneRowDocument.appliedLines.clear();
+        invalidateForFrame();
     }
 
     public void clear() {
@@ -349,6 +362,7 @@ public final class LiveLyricCardView extends LinearLayout {
                 + "|" + config.liveCardTransitionMode
                 + "|" + config.liveCardOverflowMode
                 + "|" + config.liveCardScrollScope
+                + "|" + config.adaptiveSectioningEnabled
                 + "|" + config.spotlight
                 + "|" + config.lineSyncFillMode
                 + "|" + config.glowBlurEnabled

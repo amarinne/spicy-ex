@@ -75,7 +75,7 @@ public final class LyricsSyllableViewState {
             styleBatcher.applyAlphaIfChanged(letter.view, 1.0f);
             letter.view.setBrightnessMultiplier(1f);
             letter.view.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
-            letter.view.setGradientPosition(-20f, 0f);
+            letter.view.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
         }
     }
 
@@ -193,7 +193,7 @@ public final class LyricsSyllableViewState {
         sink.applyScale(state(segment).view, 0.95f, 0.95f);
         sink.applyTranslationY(state(segment).view, 0f);
         sink.applyAlpha(state(segment).view, 1.0f);
-        applyWordGradient(segment, -20f, 0f);
+        applyWordGradient(segment, LyricAnimations.GRADIENT_UNSUNG, 0f);
         for (AnimatedLetterState letter : state(segment).letters) {
             if (letter == null || letter.view == null) continue;
             sink.applyScale(letter.view, 1.0f, 1.0f);
@@ -201,7 +201,7 @@ public final class LyricsSyllableViewState {
             sink.applyAlpha(letter.view, 1.0f);
             letter.view.setBrightnessMultiplier(1f);
             letter.view.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
-            letter.view.setGradientPosition(-20f, 0f);
+            letter.view.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
         }
     }
 

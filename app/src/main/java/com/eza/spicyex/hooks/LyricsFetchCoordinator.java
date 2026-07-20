@@ -2,7 +2,6 @@ package com.eza.spicyex.hooks;
 
 import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 
-import android.app.Activity;
 import android.content.Context;
 
 import com.eza.spicyex.References;
@@ -49,7 +48,7 @@ final class LyricsFetchCoordinator {
     }
 
     void fetchLyrics(
-            Activity activity,
+            Context context,
             SpotifyTrack track,
             int generation,
             NativeSpicyLyricsHook.LyricsResultCallback callback
@@ -59,7 +58,7 @@ final class LyricsFetchCoordinator {
                 "start generation=" + generation + " track=" + (track == null ? "null" : safe(track.uri))
         );
         String operationKey = fetchKey(track,
-                SpotifyPlusConfig.from(activity).get(Settings.SEND_TOKEN), References.accessToken);
+                SpotifyPlusConfig.from(context).get(Settings.SEND_TOKEN), References.accessToken);
         InFlightFetch existing;
         LyricsDocument replay = null;
         boolean joined = false;
@@ -71,7 +70,7 @@ final class LyricsFetchCoordinator {
                 if (existing.latest != null) replay = LyricsDocument.copyOf(existing.latest);
             } else {
                 existing = new InFlightFetch(operationKey,
-                        SpotifyPlusConfig.from(activity).get(Settings.SEND_TOKEN)
+                        SpotifyPlusConfig.from(context).get(Settings.SEND_TOKEN)
                                 && References.accessToken != null
                                 && !References.accessToken.trim().isEmpty());
                 existing.callbacks.add(callback);
@@ -87,10 +86,10 @@ final class LyricsFetchCoordinator {
                 nativeLyricsSource,
                 NativeRuntime.LYRICS_IO
         );
-        boolean sendToken = SpotifyPlusConfig.from(activity).get(Settings.SEND_TOKEN);
+        boolean sendToken = SpotifyPlusConfig.from(context).get(Settings.SEND_TOKEN);
         String accessToken = References.accessToken;
         NativeRuntime.LYRICS_IO.execute(() -> repository.fetchLyrics(
-                activity,
+                context,
                 track,
                 generation,
                 sendToken,

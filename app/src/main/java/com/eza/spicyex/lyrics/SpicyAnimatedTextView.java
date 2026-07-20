@@ -14,11 +14,11 @@ import android.widget.TextView;
 
 /**
  * TextView with the Spicy sung/unsung karaoke gradient. The gradient position is in Spicy's
- * -20..100 coordinate space (-20 fully unsung, 100 fully sung); glow nudges the sung edge
+ * -40..100 coordinate space (-40 fully unsung, 100 fully sung); glow nudges the sung edge
  * toward full white.
  */
 public class SpicyAnimatedTextView extends TextView {
-    private float gradientPosition = -20f;
+    private float gradientPosition = LyricAnimations.GRADIENT_UNSUNG;
     private float glow = 0f;
     // Cached shader: rebuilding a LinearGradient on every frame for every word (with a software
     // layer) was a major source of scroll/animation jank. Rebuild only when an input changes.
@@ -35,6 +35,8 @@ public class SpicyAnimatedTextView extends TextView {
     private boolean contentGradient;
     private int containerGradientWidth = -1;
     private float containerGradientOffsetX = 0f;
+    private int containerGradientHeight = -1;
+    private float containerGradientOffsetY = 0f;
     // Word/letter views inside a GlowFlexbox get their continuous halo drawn by the parent (no seam).
     // Standalone rows (line-level main, secondary romaji/translation, live card) have no such parent,
     // so they draw their own soft halo here instead — gated by setSelfGlow(true).
@@ -54,6 +56,10 @@ public class SpicyAnimatedTextView extends TextView {
         if (this.verticalGradient == vertical) return;
         this.verticalGradient = vertical;
         cachedShader = null;
+    }
+
+    public boolean usesVerticalGradient() {
+        return verticalGradient;
     }
 
     public void setContentGradient(boolean enabled) {
@@ -81,8 +87,9 @@ public class SpicyAnimatedTextView extends TextView {
     }
 
     public void setGradientPosition(float gradientPosition, float glow) {
-        boolean hadContainerGradient = containerGradientWidth > 0;
+        boolean hadContainerGradient = containerGradientWidth > 0 || containerGradientHeight > 0;
         containerGradientWidth = -1;
+        containerGradientHeight = -1;
         if (!hadContainerGradient
                 && Math.abs(this.gradientPosition - gradientPosition) < 0.5f
                 && Math.abs(this.glow - glow) < 0.03f) {
@@ -112,6 +119,28 @@ public class SpicyAnimatedTextView extends TextView {
         this.glow = glow;
         this.containerGradientWidth = safeWidth;
         this.containerGradientOffsetX = offsetX;
+        this.containerGradientHeight = -1;
+        if (selfGlow) updateSelfGlow();
+        if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
+        else invalidate();
+    }
+
+
+    /** Draw a vertical gradient in an ancestor row's coordinate space across all stacked lines. */
+    public void setContainerVerticalGradientPosition(float gradientPosition, float glow,
+                                                     int containerHeight, float offsetY) {
+        int safeHeight = Math.max(1, containerHeight);
+        if (Math.abs(this.gradientPosition - gradientPosition) < 0.5f
+                && Math.abs(this.glow - glow) < 0.03f
+                && this.containerGradientHeight == safeHeight
+                && Math.abs(this.containerGradientOffsetY - offsetY) < 0.5f) {
+            return;
+        }
+        this.gradientPosition = gradientPosition;
+        this.glow = glow;
+        this.containerGradientWidth = -1;
+        this.containerGradientHeight = safeHeight;
+        this.containerGradientOffsetY = offsetY;
         if (selfGlow) updateSelfGlow();
         if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
         else invalidate();
@@ -122,10 +151,15 @@ public class SpicyAnimatedTextView extends TextView {
     }
 
     private Shader resolveShader(int extent) {
-        boolean containerSpace = !verticalGradient && containerGradientWidth > 0;
-        int contentWidth = !containerSpace && !verticalGradient && contentGradient ? contentWidthPx(extent) : extent;
-        int shaderExtent = containerSpace ? containerGradientWidth : contentWidth;
-        float offset = containerSpace ? containerGradientOffsetX : 0f;
+        boolean horizontalContainerSpace = !verticalGradient && containerGradientWidth > 0;
+        boolean verticalContainerSpace = verticalGradient && containerGradientHeight > 0;
+        int contentWidth = !horizontalContainerSpace && !verticalGradient && contentGradient ? contentWidthPx(extent) : extent;
+        int shaderExtent = horizontalContainerSpace
+                ? containerGradientWidth
+                : verticalContainerSpace ? containerGradientHeight : contentWidth;
+        float offset = horizontalContainerSpace
+                ? containerGradientOffsetX
+                : verticalContainerSpace ? containerGradientOffsetY : 0f;
         if (cachedShader != null && shaderExtent == shaderWidth
                 && Math.abs(gradientPosition - shaderPos) < 0.5f
                 && Math.abs(glow - shaderGlow) < 0.03f
@@ -140,11 +174,13 @@ public class SpicyAnimatedTextView extends TextView {
         int endAlpha = Math.round(255f * 0.35f * brightnessMultiplier);
         int sungColor = Color.argb(startAlpha, 255, 255, 255);
         int unsungColor = Color.argb(endAlpha, 255, 255, 255);
-        float origin = verticalGradient ? getPaddingTop() : getPaddingLeft() - offset;
+        float origin = verticalGradient
+                ? (verticalContainerSpace ? -offset : getPaddingTop())
+                : getPaddingLeft() - offset;
         float far = origin + shaderExtent;
         float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
         if (verticalGradient) { y0 = origin; y1 = far; } else { x0 = origin; x1 = far; }
-        if (gradientPosition <= -19.5f) {
+        if (gradientPosition <= LyricAnimations.GRADIENT_UNSUNG + 0.5f) {
             cachedShader = new LinearGradient(x0, y0, x1, y1,
                     new int[]{unsungColor, unsungColor}, null, Shader.TileMode.CLAMP);
         } else if (gradientPosition >= 99.5f) {
@@ -152,7 +188,8 @@ public class SpicyAnimatedTextView extends TextView {
                     new int[]{sungColor, sungColor}, null, Shader.TileMode.CLAMP);
         } else {
             float p0 = Math.max(0f, Math.min(1f, gradientPosition / 100f));
-            float p1 = Math.max(p0 + 0.001f, Math.min(1f, (gradientPosition + 20f) / 100f));
+            float p1 = Math.max(p0 + 0.001f, Math.min(1f,
+                    (gradientPosition + LyricAnimations.GRADIENT_BAND) / 100f));
             cachedShader = new LinearGradient(x0, y0, x1, y1,
                     new int[]{sungColor, unsungColor}, new float[]{p0, p1}, Shader.TileMode.CLAMP);
         }

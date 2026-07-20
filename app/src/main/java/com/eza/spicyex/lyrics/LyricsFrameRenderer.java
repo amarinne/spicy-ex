@@ -120,7 +120,7 @@ public final class LyricsFrameRenderer {
             } else {
                 applySecondaryGradient(line, positionMs, lineGlow, config);
                 if (hasRealTimedWords(line)) {
-                    if (lineState.active) {
+                    if (lineState.active || lineState.sung) {
                         LyricsAnimationApplier.animateSyllables(
                                 line,
                                 positionMs,
@@ -136,7 +136,7 @@ public final class LyricsFrameRenderer {
                         && !config.lineSyncFillWord()
                         && !config.lineSyncFillSentence()) {
                     animateContinuousLineWords(line, lineState, lineGlow, deltaSeconds);
-                } else if (lineState.active) {
+                } else if (lineState.active || lineState.sung) {
                     LyricsAnimationApplier.animateSyllables(
                             line,
                             positionMs,
@@ -208,10 +208,10 @@ public final class LyricsFrameRenderer {
     }
 
     private float secondaryLineGradientPosition(AppliedLine line, long positionMs) {
-        if (line == null || positionMs < line.startMs) return -20f;
+        if (line == null || positionMs < line.startMs) return LyricAnimations.GRADIENT_UNSUNG;
         long fillEnd = LyricTimeline.fillEndMs(line);
-        if (positionMs >= fillEnd) return 100f;
-        return -20f + 120f * progress01(positionMs, line.startMs, fillEnd);
+        if (positionMs >= fillEnd) return LyricAnimations.GRADIENT_SUNG;
+        return LyricAnimations.gradientPosition(progress01(positionMs, line.startMs, fillEnd));
     }
 
     private float mobileLineBlurPx(AppliedLine line, int index, int active, boolean userScrollHeld,

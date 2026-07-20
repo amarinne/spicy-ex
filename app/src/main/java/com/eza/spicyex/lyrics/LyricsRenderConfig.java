@@ -21,6 +21,7 @@ public final class LyricsRenderConfig {
     public final boolean toggleSpinnerEnabled;
     public final boolean attachTransliterationToWords;
     public final boolean transliterationEnabled;
+    public final boolean adaptiveSectioningEnabled;
     public final String lineSpacingMode;
     public final float lineSpacingMultiplier;
     public final String lyricWeight;
@@ -70,6 +71,7 @@ public final class LyricsRenderConfig {
             boolean toggleSpinnerEnabled,
             boolean attachTransliterationToWords,
             boolean transliterationEnabled,
+            boolean adaptiveSectioningEnabled,
             String lineSpacingMode,
             float lineSpacingMultiplier,
             String lyricWeight,
@@ -118,6 +120,7 @@ public final class LyricsRenderConfig {
         this.toggleSpinnerEnabled = toggleSpinnerEnabled;
         this.attachTransliterationToWords = attachTransliterationToWords;
         this.transliterationEnabled = transliterationEnabled;
+        this.adaptiveSectioningEnabled = adaptiveSectioningEnabled;
         this.lineSpacingMode = safe(lineSpacingMode);
         this.lineSpacingMultiplier = lineSpacingMultiplier;
         this.lyricWeight = safe(lyricWeight);
@@ -187,6 +190,7 @@ public final class LyricsRenderConfig {
                 get(cfg, Settings.TOGGLE_PROGRESS_RING),
                 transliterationAvailable && shell.attachTransliterationToWordsEnabled(),
                 transliterationEnabled,
+                get(cfg, Settings.ADAPTIVE_SECTIONING),
                 shell.lineSpacingMode(),
                 shell.lineSpacingMultiplier(),
                 shell.lyricWeight(),
@@ -249,7 +253,9 @@ public final class LyricsRenderConfig {
     public LyricsRenderConfig forLiveCard() {
         boolean minimal = "Minimal".equals(liveCardAnimationMode);
         boolean spotlightCard = "Spotlight word".equals(liveCardAnimationMode);
-        boolean glow = !"Off".equals(liveCardGlowMode) && !spotlightCard;
+        boolean glow = !"Off".equals(liveCardGlowMode)
+                && !"auto".equalsIgnoreCase(liveCardGlowMode)
+                && !spotlightCard;
         String fillMode = spotlightCard
                 ? "Left to right (word)"
                 : ("Karaoke fill".equals(liveCardAnimationMode) ? liveCardLineSyncFillMode : "Top to bottom");
@@ -265,6 +271,7 @@ public final class LyricsRenderConfig {
                 toggleSpinnerEnabled,
                 attachTransliterationToWords,
                 transliterationEnabled,
+                adaptiveSectioningEnabled,
                 lineSpacingMode,
                 lineSpacingMultiplier,
                 lyricWeight,
@@ -404,6 +411,7 @@ public final class LyricsRenderConfig {
                     || changed(oldValue.lyricsTextSizeMultiplier, next.lyricsTextSizeMultiplier);
             boolean attachChanged = oldValue.attachTransliterationToWords != next.attachTransliterationToWords;
             boolean transliterationChanged = oldValue.transliterationEnabled != next.transliterationEnabled;
+            boolean adaptiveSectioningChanged = oldValue.adaptiveSectioningEnabled != next.adaptiveSectioningEnabled;
             boolean spacingChanged = changed(oldValue.lineSpacingMode, next.lineSpacingMode)
                     || changed(oldValue.lineSpacingMultiplier, next.lineSpacingMultiplier);
             boolean fillChanged = changed(oldValue.lineSyncFillMode, next.lineSyncFillMode);
@@ -437,13 +445,15 @@ public final class LyricsRenderConfig {
                     || changed(oldValue.liveCardTransitionMode, next.liveCardTransitionMode)
                     || changed(oldValue.liveCardOverflowMode, next.liveCardOverflowMode)
                     || changed(oldValue.liveCardScrollScope, next.liveCardScrollScope)
+                    || adaptiveSectioningChanged
                     || fontChanged;
             needsTranslationReprocess = oldValue.translationEnabled != next.translationEnabled
                     || changed(oldValue.translationTarget, next.translationTarget);
             needsTimingOnly = oldValue.syncOffsetMs != next.syncOffsetMs;
 
             needsRowRemount = interludeChanged || weightChanged || textSizeChanged || attachChanged || transliterationChanged
-                    || spacingChanged || fillChanged || japaneseModeConfigChanged || oldValue.translationBright != next.translationBright;
+                    || adaptiveSectioningChanged || spacingChanged || fillChanged || japaneseModeConfigChanged
+                    || oldValue.translationBright != next.translationBright;
             needsLocalReprocess = transliterationChanged || chineseModeConfigChanged || koreanChanged || chineseTonesChanged || cyrillicChanged;
             needsBackgroundToggle = oldValue.backgroundEnabled != next.backgroundEnabled
                     || oldValue.forceDarkBackground != next.forceDarkBackground;

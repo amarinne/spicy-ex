@@ -14,6 +14,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -31,7 +32,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  * - One reading-of-record (orthographic kana) per token drives BOTH romaji
  *   and furigana, so the two can never disagree.
  * - The lexical override layer must stay tiny and every entry must cite a
- *   reason the dictionary cannot supply the reading (see applyLexicalOverrides).
+ *   reason the dictionary cannot supply the reading (see applyProductiveOverrides).
      * - Furigana resolution is dictionary/rule first. Per-kanji splits are used
      *   only when reading decomposition is unique; otherwise broad ruby wins.
      *   See docs/JAPANESE_FURIGANA_RULESET.md.
@@ -49,28 +50,79 @@ public final class SpicyJapaneseChineseProcessor {
         }
     }
 
+    /** One finalized-analysis romaji unit spanning [start, end) of sourceText. */
+    public static final class ReadingGroup {
+        public final int start;
+        public final int end;
+        public final String romaji;
+
+        public ReadingGroup(int start, int end, String romaji) {
+            this.start = start;
+            this.end = end;
+            this.romaji = romaji == null ? "" : romaji;
+        }
+    }
+
     public static final class JapaneseReading {
         public final String sourceText;
         public final String romaji;
         public final List<FuriganaSegment> furigana;
+        /** Finalized analysis groups; timing projection consumes these instead of retokenizing. */
+        public final List<ReadingGroup> groups;
+        public final JapaneseReadingPolicyModels.ReadingContext readingContext;
+        public final List<JapaneseReadingPolicyModels.ReadingDecision> readingDecisions;
+        public final List<String> diagnostics;
 
         public JapaneseReading(String sourceText, String romaji, List<FuriganaSegment> furigana) {
+            this(sourceText, romaji, furigana, null);
+        }
+
+        public JapaneseReading(String sourceText, String romaji, List<FuriganaSegment> furigana,
+                               List<ReadingGroup> groups) {
+            this(sourceText, romaji, furigana, groups, null, null, null);
+        }
+
+        public JapaneseReading(String sourceText, String romaji, List<FuriganaSegment> furigana,
+                               List<ReadingGroup> groups,
+                               JapaneseReadingPolicyModels.ReadingContext readingContext,
+                               List<JapaneseReadingPolicyModels.ReadingDecision> readingDecisions,
+                               List<String> diagnostics) {
             this.sourceText = sourceText == null ? "" : sourceText;
             this.romaji = romaji == null ? "" : romaji;
-            this.furigana = furigana == null ? new ArrayList<>() : furigana;
+            this.furigana = immutableCopy(furigana);
+            this.groups = immutableCopy(groups);
+            this.readingContext = readingContext == null
+                    ? JapaneseReadingPolicyModels.ReadingContext.empty(this.sourceText) : readingContext;
+            this.readingDecisions = immutableCopy(readingDecisions);
+            this.diagnostics = immutableCopy(diagnostics);
         }
     }
 
     private static final class Entry {
         AnalysisText analysisText;
+        int tokenIndex;
         int analysisStart;
         int analysisEnd;
         int start;
         int end;
+        String sourceText;
         String surface;
         String readingKana; // hiragana reading-of-record; null when token has no reading
         String dictionaryReadingKana;
+        String dictionaryReadingSource;
         String readingReason;
+        String ruleId; // stable reading-policy rule ID (fixtures/reading-policy) when a rule decided
+        Integer ruleVersion;
+        boolean boundaryBefore; // removed provider/authored whitespace preceded this token
+        boolean hardBoundaryBefore; // explicit hard boundary; blocks phonetic/projection attachment
+        String readingGroupId;
+        String projectionGroupId;
+        String diagnosticId;
+        boolean providerMatched;
+        boolean providerValidated;
+        String providerReadingKana;
+        final List<String> providerEvidenceIds = new ArrayList<>();
+        final List<JapaneseReadingPolicyModels.ReadingDecision> decisions = new ArrayList<>();
         String romaji;
         Token token;
     }
@@ -79,7 +131,9 @@ public final class SpicyJapaneseChineseProcessor {
         final String surface;
         final int analysisStart, analysisEnd, displayStart, displayEnd;
         final String partOfSpeech1, partOfSpeech2, pronunciation, lemma, lemmaReading;
-        final String dictionaryReading, selectedReading, readingReason, romaji;
+        final String dictionaryReading, selectedReading, readingReason, ruleId, romaji, readingGroupId;
+        final Integer ruleVersion;
+        final boolean boundaryBefore;
 
         JapaneseDebugToken(Entry entry) {
             surface = entry.surface;
@@ -96,6 +150,10 @@ public final class SpicyJapaneseChineseProcessor {
             dictionaryReading = safe(entry.dictionaryReadingKana);
             selectedReading = safe(entry.readingKana);
             readingReason = safe(entry.readingReason);
+            ruleId = safe(entry.ruleId);
+            ruleVersion = entry.ruleVersion;
+            boundaryBefore = entry.boundaryBefore;
+            readingGroupId = safe(entry.readingGroupId);
             romaji = safe(entry.romaji);
         }
     }
@@ -105,26 +163,61 @@ public final class SpicyJapaneseChineseProcessor {
         final int[] analysisToDisplayUtf16;
         final List<JapaneseDebugToken> tokens;
         final List<FuriganaSegment> furigana;
+        final List<ReadingGroup> groups;
+        final JapaneseReadingPolicyModels.ReadingContext readingContext;
+        final List<JapaneseReadingPolicyModels.ReadingDecision> readingDecisions;
+        final List<String> diagnostics;
 
         JapaneseDebugSnapshot(String displayText, AnalysisText analysis, List<Entry> entries,
-                              String romaji, List<FuriganaSegment> furigana) {
+                              String romaji, List<FuriganaSegment> furigana,
+                              JapaneseReadingPolicyModels.ReadingContext readingContext,
+                              List<JapaneseReadingPolicyModels.ReadingDecision> readingDecisions,
+                              List<String> diagnostics) {
             this.displayText = displayText;
             this.analysisText = analysis.text;
             this.analysisToDisplayUtf16 = analysis.originalOffsets.clone();
             this.tokens = new ArrayList<>();
             for (Entry entry : entries) this.tokens.add(new JapaneseDebugToken(entry));
             this.romaji = safe(romaji);
-            this.furigana = new ArrayList<>(furigana);
+            this.furigana = immutableCopy(furigana);
+            this.groups = immutableCopy(readingGroups(entries));
+            this.readingContext = readingContext;
+            this.readingDecisions = immutableCopy(readingDecisions);
+            this.diagnostics = immutableCopy(diagnostics);
+        }
+    }
+
+    private static final class NormalizedText {
+        final String rawText;
+        final String text;
+        final int[] rawToCanonicalUtf16;
+
+        NormalizedText(String rawText, String text, int[] rawToCanonicalUtf16) {
+            this.rawText = rawText == null ? "" : rawText;
+            this.text = text == null ? "" : text;
+            this.rawToCanonicalUtf16 = rawToCanonicalUtf16 == null ? new int[]{0} : rawToCanonicalUtf16;
+        }
+
+        int canonicalOffset(int rawOffset) {
+            int safe = Math.max(0, Math.min(rawOffset, rawToCanonicalUtf16.length - 1));
+            return rawToCanonicalUtf16[safe];
         }
     }
 
     private static final class AnalysisText {
         final String text;
         final int[] originalOffsets;
+        /** Analysis UTF-16 offsets directly after removed whitespace (boundary evidence for rules). */
+        final java.util.Set<Integer> boundaryOffsets;
 
         AnalysisText(String text, int[] originalOffsets) {
+            this(text, originalOffsets, null);
+        }
+
+        AnalysisText(String text, int[] originalOffsets, java.util.Set<Integer> boundaryOffsets) {
             this.text = text == null ? "" : text;
             this.originalOffsets = originalOffsets == null ? new int[0] : originalOffsets;
+            this.boundaryOffsets = boundaryOffsets == null ? java.util.Collections.emptySet() : boundaryOffsets;
         }
 
         int originalStart(int analysisStart) {
@@ -136,8 +229,28 @@ public final class SpicyJapaneseChineseProcessor {
         int originalEnd(int analysisEnd) {
             if (originalOffsets.length == 0) return analysisEnd;
             int safe = Math.max(0, Math.min(analysisEnd - 1, originalOffsets.length - 1));
-            int original = originalOffsets[safe];
-            return original + Character.charCount(text.codePointBefore(Math.max(1, Math.min(analysisEnd, text.length()))));
+            return originalOffsets[safe] + 1;
+        }
+    }
+
+    private static final class FinalizedAnalysis {
+        final String sourceText;
+        final AnalysisText analysisText;
+        final List<Entry> entries;
+        final JapaneseReadingPolicyModels.ReadingContext readingContext;
+        final List<JapaneseReadingPolicyModels.ReadingDecision> readingDecisions;
+        final List<String> diagnostics;
+
+        FinalizedAnalysis(String sourceText, AnalysisText analysisText, List<Entry> entries,
+                          JapaneseReadingPolicyModels.ReadingContext readingContext,
+                          List<JapaneseReadingPolicyModels.ReadingDecision> readingDecisions,
+                          List<String> diagnostics) {
+            this.sourceText = sourceText;
+            this.analysisText = analysisText;
+            this.entries = entries;
+            this.readingContext = readingContext;
+            this.readingDecisions = immutableCopy(readingDecisions);
+            this.diagnostics = immutableCopy(diagnostics);
         }
     }
 
@@ -165,6 +278,16 @@ public final class SpicyJapaneseChineseProcessor {
         }
     }
 
+    private static final class ReadingOfRecord {
+        final String kana;
+        final String source;
+
+        ReadingOfRecord(String kana, String source) {
+            this.kana = kana;
+            this.source = source;
+        }
+    }
+
     private static final class PinyinTrieNode {
         final Map<Integer, PinyinTrieNode> children = new HashMap<>();
         String reading;
@@ -183,6 +306,7 @@ public final class SpicyJapaneseChineseProcessor {
     private static volatile Tokenizer tokenizer;
     private static volatile PinyinTrieNode pinyinPhraseTrie;
     private static volatile Map<String, List<TokenFuriganaReading>> jmdictFurigana;
+    private static volatile Map<String, String> jmdictPreferredReadings;
     private static final Map<String, String> KANA = new HashMap<>();
     private static final HanyuPinyinOutputFormat PINYIN_FORMAT = new HanyuPinyinOutputFormat();
     private static final HanyuPinyinOutputFormat PINYIN_FORMAT_TONED = new HanyuPinyinOutputFormat();
@@ -201,6 +325,38 @@ public final class SpicyJapaneseChineseProcessor {
     private SpicyJapaneseChineseProcessor() {
     }
 
+    private static <T> List<T> immutableCopy(List<T> values) {
+        return Collections.unmodifiableList(values == null ? new ArrayList<>() : new ArrayList<>(values));
+    }
+
+    private static NormalizedText normalizeWithOffsets(String rawText) {
+        String raw = safe(rawText);
+        int[] map = new int[raw.length() + 1];
+        map[0] = 0;
+        for (int i = 0; i < raw.length();) {
+            int cp = raw.codePointAt(i);
+            int next = i + Character.charCount(cp);
+            int before = map[i];
+            int normalizedLength = Normalizer.normalize(raw.substring(0, next), Normalizer.Form.NFKC).length();
+            for (int j = i + 1; j < next; j++) map[j] = before;
+            map[next] = normalizedLength;
+            i = next;
+        }
+        return new NormalizedText(raw, Normalizer.normalize(raw, Normalizer.Form.NFKC), map);
+    }
+
+    private static List<FuriganaSegment> mapProviderFurigana(
+            List<FuriganaSegment> furigana, NormalizedText normalized) {
+        if (furigana == null) return null;
+        ArrayList<FuriganaSegment> mapped = new ArrayList<>();
+        for (FuriganaSegment segment : furigana) {
+            if (segment == null) continue;
+            mapped.add(new FuriganaSegment(normalized.canonicalOffset(segment.start),
+                    normalized.canonicalOffset(segment.end), segment.reading));
+        }
+        return mapped;
+    }
+
     public static boolean canRomanizeJapanese(String text) {
         return SpicyTextDetection.itemJapaneseTest(text);
     }
@@ -211,16 +367,16 @@ public final class SpicyJapaneseChineseProcessor {
 
     public static JapaneseReading analyzeJapaneseLine(String text, String fullSpacedRomaji) {
         if (isBlank(text)) return null;
-        String sourceText = Normalizer.normalize(text, Normalizer.Form.NFKC);
+        NormalizedText normalized = normalizeWithOffsets(text);
+        String sourceText = normalized.text;
         if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return null;
 
-        List<Entry> entries = buildEntries(sourceText, analysisTextForJapanese(sourceText));
-        if (entries.isEmpty()) return new JapaneseReading(sourceText, sourceText, new ArrayList<>());
-
-        String romaji = buildRomaji(entries);
+        FinalizedAnalysis finalized = finalizeJapaneseAnalysis(normalized.rawText, sourceText, null, null);
+        String romaji = buildRomaji(finalized.entries);
         if (isBlank(romaji) && !isBlank(fullSpacedRomaji)) romaji = fullSpacedRomaji;
-        List<FuriganaSegment> furigana = buildFurigana(sourceText, entries);
-        return new JapaneseReading(sourceText, romaji, furigana);
+        List<FuriganaSegment> furigana = buildFurigana(sourceText, finalized.entries);
+        return new JapaneseReading(sourceText, romaji, furigana, readingGroups(finalized.entries),
+                finalized.readingContext, finalized.readingDecisions, finalized.diagnostics);
     }
 
     public static String romanizeJapaneseLine(String text) {
@@ -241,31 +397,90 @@ public final class SpicyJapaneseChineseProcessor {
 
     public static JapaneseReading analyzeJapaneseLineWithProviderFurigana(String text, List<FuriganaSegment> furigana) {
         if (isBlank(text) || furigana == null || furigana.isEmpty()) return null;
-        String sourceText = Normalizer.normalize(text, Normalizer.Form.NFKC);
+        NormalizedText normalized = normalizeWithOffsets(text);
+        String sourceText = normalized.text;
         if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return null;
 
-        List<Entry> entries = buildEntries(sourceText, analysisTextForJapanese(sourceText));
-        if (entries.isEmpty()) return null;
-
-        applyProviderFuriganaOverrides(sourceText, entries, furigana);
-        applyLexicalOverrides(entries);
-        for (Entry entry : entries) entry.romaji = entryRomaji(entry);
-        applyCrossTokenSokuon(entries);
-        return new JapaneseReading(sourceText, buildRomaji(entries), buildFurigana(sourceText, entries, furigana));
+        List<FuriganaSegment> mappedFurigana = mapProviderFurigana(furigana, normalized);
+        FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
+                normalized.rawText, sourceText, mappedFurigana, null);
+        return new JapaneseReading(sourceText, buildRomaji(finalized.entries),
+                buildFurigana(sourceText, finalized.entries, mappedFurigana), readingGroups(finalized.entries),
+                finalized.readingContext, finalized.readingDecisions, finalized.diagnostics);
     }
 
     static JapaneseDebugSnapshot debugJapaneseSnapshot(String text, List<FuriganaSegment> providerFurigana) {
+        return debugJapaneseSnapshot(text, providerFurigana, null);
+    }
+
+    static JapaneseDebugSnapshot debugJapaneseSnapshot(
+            String text, List<FuriganaSegment> providerFurigana,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
+        NormalizedText normalized = normalizeWithOffsets(safe(text));
+        List<FuriganaSegment> mappedFurigana = mapProviderFurigana(providerFurigana, normalized);
+        FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
+                normalized.rawText, normalized.text, mappedFurigana, explicitBoundaries);
+        String romaji = buildRomaji(finalized.entries);
+        return new JapaneseDebugSnapshot(normalized.text, finalized.analysisText, finalized.entries, romaji,
+                buildFurigana(normalized.text, finalized.entries, mappedFurigana), finalized.readingContext,
+                finalized.readingDecisions, finalized.diagnostics);
+    }
+
+    static JapaneseReading debugJapaneseProjectionForTest(
+            String text, List<String> tokenParts,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
+        String sourceText = Normalizer.normalize(safe(text), Normalizer.Form.NFKC);
+        ArrayList<Entry> entries = new ArrayList<>();
+        int offset = 0;
+        for (String rawPart : tokenParts == null ? Collections.singletonList(sourceText) : tokenParts) {
+            String part = Normalizer.normalize(safe(rawPart), Normalizer.Form.NFKC);
+            if (part.isEmpty() || !sourceText.regionMatches(offset, part, 0, part.length())) {
+                throw new IllegalArgumentException("projection token parts must exactly cover input");
+            }
+            Entry entry = new Entry();
+            entry.tokenIndex = entries.size();
+            entry.analysisStart = offset;
+            entry.analysisEnd = offset + part.length();
+            entry.start = entry.analysisStart;
+            entry.end = entry.analysisEnd;
+            entry.sourceText = sourceText;
+            entry.surface = part;
+            entry.readingKana = kataToHira(part);
+            entry.dictionaryReadingKana = entry.readingKana;
+            entry.dictionaryReadingSource = "authored-kana";
+            entry.readingReason = "authored-kana";
+            entry.boundaryBefore = offset == 0;
+            entries.add(entry);
+            offset += part.length();
+        }
+        if (offset != sourceText.length()) {
+            throw new IllegalArgumentException("projection token parts must exactly cover input");
+        }
+        applyExplicitBoundaries(sourceText, entries, explicitBoundaries);
+        finalizeCrossTokenKana(entries);
+        for (Entry entry : entries) entry.romaji = entryRomaji(entry);
+        applyRomajiSokuonProjection(entries);
+        ArrayList<String> diagnostics = new ArrayList<>();
+        for (Entry entry : entries) {
+            if (!isBlank(entry.diagnosticId) && !diagnostics.contains(entry.diagnosticId)) {
+                diagnostics.add(entry.diagnosticId);
+            }
+        }
+        return new JapaneseReading(sourceText, buildRomaji(entries), Collections.emptyList(),
+                readingGroups(entries), null, null, diagnostics);
+    }
+
+    static JapaneseDebugSnapshot debugJapaneseFallbackSnapshotForTest(String text, String diagnosticId) {
         String sourceText = Normalizer.normalize(safe(text), Normalizer.Form.NFKC);
         AnalysisText analysis = analysisTextForJapanese(sourceText);
-        List<Entry> entries = buildEntries(sourceText, analysis);
-        if (providerFurigana != null && !providerFurigana.isEmpty()) {
-            applyProviderFuriganaOverrides(sourceText, entries, providerFurigana);
-            applyLexicalOverrides(entries);
-            for (Entry entry : entries) entry.romaji = entryRomaji(entry);
-            applyCrossTokenSokuon(entries);
-        }
-        String romaji = buildRomaji(entries);
-        return new JapaneseDebugSnapshot(sourceText, analysis, entries, romaji, buildFurigana(sourceText, entries));
+        List<Entry> entries = fallbackEntries(sourceText, analysis, diagnosticId);
+        for (Entry entry : entries) entry.romaji = entryRomaji(entry);
+        ArrayList<String> diagnostics = new ArrayList<>();
+        diagnostics.add(diagnosticId);
+        return new JapaneseDebugSnapshot(sourceText, analysis, entries, buildRomaji(entries),
+                buildFurigana(sourceText, entries),
+                buildReadingContext(sourceText, sourceText, analysis, entries, null, null),
+                Collections.emptyList(), diagnostics);
     }
 
     private static void applyProviderFuriganaOverrides(String sourceText, List<Entry> entries, List<FuriganaSegment> furigana) {
@@ -283,10 +498,27 @@ public final class SpicyJapaneseChineseProcessor {
         for (Entry entry : entries) {
             if (!SpicyTextDetection.itemJapaneseTest(entry.surface)) continue;
             String reading = readingFromProviderFurigana(sourceText, entry.start, entry.end, sorted);
-            if (!isBlank(reading) && reading.equals(entry.dictionaryReadingKana)) {
-                entry.readingKana = reading;
-                entry.readingReason = "providerRubyValidated";
+            if (isBlank(reading) || !reading.equals(entry.dictionaryReadingKana)) continue;
+            entry.providerMatched = true;
+            entry.providerReadingKana = reading;
+            for (int i = 0; i < sorted.size(); i++) {
+                FuriganaSegment segment = sorted.get(i);
+                if (segment.start >= entry.start && segment.end <= entry.end) {
+                    entry.providerEvidenceIds.add("provider-" + i);
+                }
             }
+            if (!isBlank(entry.ruleId)) continue;
+            String previousCandidateId = fallbackCandidateId(entry);
+            entry.readingKana = reading;
+            entry.readingReason = "providerRubyValidated";
+            entry.providerValidated = true;
+            ArrayList<String> evidenceIds = new ArrayList<>(entry.providerEvidenceIds);
+            evidenceIds.add(tokenId(entry));
+            entry.decisions.add(new JapaneseReadingPolicyModels.ReadingDecision(
+                    "select", "resolved", "provider-ruby-validated", null, null,
+                    codePointRange(entry, entry.start, entry.end), previousCandidateId,
+                    tokenId(entry) + ":provider", fallbackCandidateId(entry), reading,
+                    evidenceIds, null));
         }
     }
 
@@ -343,8 +575,34 @@ public final class SpicyJapaneseChineseProcessor {
 
         List<Entry> entries = buildEntries(sourceText, analysisTextForJapanese(sourceText));
         if (entries.isEmpty()) return out;
-        List<RomajiGroup> groups = romajiGroups(entries);
+        return mapGroupsToSyllables(sourceText, readingGroups(entries), syllableTexts);
+    }
 
+    /**
+     * Finalized-analysis projection: consumes an already-analyzed reading's groups
+     * instead of tokenizing the line a second time. Callers holding a JapaneseReading
+     * (render planning, segment romanization) must use this overload.
+     */
+    public static List<String> romanizeJapaneseSyllables(JapaneseReading reading, List<String> syllableTexts) {
+        ArrayList<String> out = new ArrayList<>();
+        if (syllableTexts == null) return out;
+        for (int i = 0; i < syllableTexts.size(); i++) out.add("");
+        if (reading == null || reading.groups.isEmpty() || syllableTexts.isEmpty()) return out;
+        return mapGroupsToSyllables(reading.sourceText, reading.groups, syllableTexts);
+    }
+
+    private static List<ReadingGroup> readingGroups(List<Entry> entries) {
+        ArrayList<ReadingGroup> out = new ArrayList<>();
+        for (RomajiGroup group : romajiGroups(entries)) {
+            out.add(new ReadingGroup(group.start, group.end, group.romaji));
+        }
+        return out;
+    }
+
+    private static List<String> mapGroupsToSyllables(String sourceText, List<ReadingGroup> groups,
+                                                     List<String> syllableTexts) {
+        ArrayList<String> out = new ArrayList<>();
+        for (int i = 0; i < syllableTexts.size(); i++) out.add("");
         int syllPos = 0;
         for (int si = 0; si < syllableTexts.size(); si++) {
             String syllableText = Normalizer.normalize(safe(syllableTexts.get(si)), Normalizer.Form.NFKC);
@@ -354,7 +612,7 @@ public final class SpicyJapaneseChineseProcessor {
             syllPos = syllEnd;
 
             StringBuilder romaji = new StringBuilder();
-            for (RomajiGroup group : groups) {
+            for (ReadingGroup group : groups) {
                 if (isBlank(group.romaji)) continue;
                 if (group.end <= syllStart || group.start >= syllEnd) continue; // no overlap
                 // Emit each full-line analysis group once, at the provider chunk where it begins.
@@ -410,50 +668,304 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static List<Entry> buildEntries(String sourceText) {
-        return buildEntries(sourceText, new AnalysisText(sourceText, null));
+        return finalizeJapaneseAnalysis(sourceText, sourceText, null, null).entries;
     }
 
     private static List<Entry> buildEntries(String sourceText, AnalysisText analysisText) {
+        return finalizeJapaneseAnalysis(sourceText, sourceText, analysisText, null, null).entries;
+    }
+
+    private static FinalizedAnalysis finalizeJapaneseAnalysis(
+            String rawSourceText, String sourceText, List<FuriganaSegment> providerFurigana,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
+        return finalizeJapaneseAnalysis(rawSourceText, sourceText, analysisTextForJapanese(sourceText),
+                providerFurigana, explicitBoundaries);
+    }
+
+    private static FinalizedAnalysis finalizeJapaneseAnalysis(
+            String rawSourceText, String sourceText, AnalysisText analysisText,
+            List<FuriganaSegment> providerFurigana,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
+        List<Entry> entries = buildRawEntries(sourceText, analysisText);
+        applyExplicitBoundaries(sourceText, entries, explicitBoundaries);
+        applyProductiveOverrides(entries);
+        if (providerFurigana != null && !providerFurigana.isEmpty()) {
+            applyProviderFuriganaOverrides(sourceText, entries, providerFurigana);
+        }
+        applyReadingDefaults(entries);
+        finalizeCrossTokenKana(entries);
+        for (Entry entry : entries) entry.romaji = entryRomaji(entry);
+        applyRomajiSokuonProjection(entries);
+        for (Entry entry : entries) {
+            if (entry.providerValidated && !safe(entry.readingKana).equals(safe(entry.providerReadingKana))) {
+                entry.providerValidated = false;
+            }
+        }
+        ArrayList<JapaneseReadingPolicyModels.ReadingDecision> decisions = new ArrayList<>();
+        ArrayList<String> diagnostics = new ArrayList<>();
+        for (Entry entry : entries) {
+            decisions.addAll(entry.decisions);
+            if (!isBlank(entry.diagnosticId) && !diagnostics.contains(entry.diagnosticId)) {
+                diagnostics.add(entry.diagnosticId);
+            }
+        }
+        JapaneseReadingPolicyModels.ReadingContext context = buildReadingContext(
+                rawSourceText, sourceText, analysisText, entries, providerFurigana, explicitBoundaries);
+        return new FinalizedAnalysis(sourceText, analysisText, entries, context, decisions, diagnostics);
+    }
+
+    private static void applyExplicitBoundaries(
+            String sourceText, List<Entry> entries,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> boundaries) {
+        if (boundaries == null || boundaries.isEmpty()) return;
+        int codePointLength = sourceText.codePointCount(0, sourceText.length());
+        for (JapaneseReadingPolicyModels.BoundaryEvidence boundary : boundaries) {
+            if (boundary == null || !("authored-whitespace".equals(boundary.kind)
+                    || "provider-fragment".equals(boundary.kind))) continue;
+            int cpOffset = Math.max(0, Math.min(boundary.offset, codePointLength));
+            int utf16Offset = sourceText.offsetByCodePoints(0, cpOffset);
+            for (Entry entry : entries) {
+                if (entry.start != utf16Offset) continue;
+                entry.boundaryBefore = true;
+                if ("hard".equals(boundary.strength)) entry.hardBoundaryBefore = true;
+            }
+        }
+    }
+
+    private static List<Entry> buildRawEntries(String sourceText, AnalysisText analysisText) {
+        String analysisSource = analysisText == null ? sourceText : analysisText.text;
         List<Token> tokens;
         try {
-            tokens = tokenizer().tokenize(analysisText == null ? sourceText : analysisText.text);
+            tokens = tokenizer().tokenize(analysisSource);
         } catch (Throwable t) {
-            return new ArrayList<>();
+            return fallbackEntries(sourceText, analysisText, "tokenizer.exception");
         }
         List<Entry> entries = new ArrayList<>();
         int charPos = 0;
         for (Token token : tokens) {
             String surface = safe(token.getSurface());
+            boolean skippedWhitespace = false;
+            if (!surface.isEmpty() && (charPos + surface.length() > analysisSource.length()
+                    || !analysisSource.regionMatches(charPos, surface, 0, surface.length()))) {
+                while (charPos < analysisSource.length()
+                        && Character.isWhitespace(analysisSource.codePointAt(charPos))) {
+                    skippedWhitespace = true;
+                    charPos += Character.charCount(analysisSource.codePointAt(charPos));
+                }
+            }
+            int end = charPos + surface.length();
+            if (surface.isEmpty() || end > analysisSource.length()
+                    || !analysisSource.regionMatches(charPos, surface, 0, surface.length())) {
+                return fallbackEntries(sourceText, analysisText, "tokenizer.incomplete-coverage");
+            }
             Entry entry = new Entry();
             entry.analysisText = analysisText;
+            entry.tokenIndex = entries.size();
             entry.analysisStart = charPos;
-            entry.analysisEnd = charPos + surface.length();
+            entry.analysisEnd = end;
             entry.start = analysisText == null ? charPos : analysisText.originalStart(charPos);
-            entry.end = analysisText == null ? charPos + surface.length() : analysisText.originalEnd(charPos + surface.length());
+            entry.end = analysisText == null ? end : analysisText.originalEnd(end);
+            entry.sourceText = sourceText;
             entry.surface = surface;
             entry.token = token;
-            entry.readingKana = readingOfRecord(token, surface);
+            entry.boundaryBefore = charPos == 0 || skippedWhitespace
+                    || (analysisText != null && analysisText.boundaryOffsets.contains(charPos));
+            entry.hardBoundaryBefore = isPunctuationSurface(surface);
+            ReadingOfRecord selected = selectReadingOfRecord(token, surface);
+            entry.readingKana = selected.kana;
             entry.dictionaryReadingKana = entry.readingKana;
-            entry.readingReason = entry.readingKana == null ? "passthrough" : "unidicReadingOfRecord";
+            entry.dictionaryReadingSource = selected.source;
+            entry.readingReason = selected.source;
             entries.add(entry);
-            charPos += surface.length();
+            charPos = end;
         }
-        applyLexicalOverrides(entries);
-        for (Entry entry : entries) entry.romaji = entryRomaji(entry);
-        applyCrossTokenSokuon(entries);
+        while (charPos < analysisSource.length()
+                && Character.isWhitespace(analysisSource.codePointAt(charPos))) {
+            charPos += Character.charCount(analysisSource.codePointAt(charPos));
+        }
+        if (charPos != analysisSource.length()) {
+            return fallbackEntries(sourceText, analysisText, "tokenizer.incomplete-coverage");
+        }
         return entries;
+    }
+
+    private static List<Entry> fallbackEntries(String sourceText, AnalysisText analysisText, String diagnosticId) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        if (isBlank(sourceText)) return entries;
+        Entry entry = new Entry();
+        entry.analysisText = analysisText;
+        entry.tokenIndex = 0;
+        entry.analysisStart = 0;
+        entry.analysisEnd = analysisText == null ? sourceText.length() : analysisText.text.length();
+        entry.start = 0;
+        entry.end = sourceText.length();
+        entry.sourceText = sourceText;
+        entry.surface = sourceText;
+        entry.dictionaryReadingSource = "passthrough";
+        entry.readingReason = "passthrough";
+        entry.boundaryBefore = true;
+        entry.diagnosticId = diagnosticId;
+        entries.add(entry);
+        return entries;
+    }
+
+    private static JapaneseReadingPolicyModels.ReadingContext buildReadingContext(
+            String rawSourceText, String sourceText, AnalysisText analysisText, List<Entry> entries,
+            List<FuriganaSegment> providerFurigana,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
+        ArrayList<JapaneseReadingPolicyModels.ReadingTokenEvidence> tokens = new ArrayList<>();
+        for (Entry entry : entries) {
+            ArrayList<JapaneseReadingPolicyModels.ReadingCandidate> candidates = new ArrayList<>();
+            if (!isBlank(entry.dictionaryReadingKana)) {
+                candidates.add(new JapaneseReadingPolicyModels.ReadingCandidate(
+                        tokenId(entry) + ":" + entry.dictionaryReadingSource, entry.dictionaryReadingKana,
+                        entry.dictionaryReadingSource, "accepted"));
+            } else {
+                candidates.add(new JapaneseReadingPolicyModels.ReadingCandidate(
+                        tokenId(entry) + ":passthrough", entry.surface, "passthrough", "accepted"));
+            }
+            if (entry.providerValidated && !isBlank(entry.readingKana)) {
+                candidates.add(new JapaneseReadingPolicyModels.ReadingCandidate(
+                        tokenId(entry) + ":provider", entry.readingKana, "provider", "accepted"));
+            }
+            if (!isBlank(entry.ruleId) && !isBlank(entry.readingKana)) {
+                candidates.add(new JapaneseReadingPolicyModels.ReadingCandidate(
+                        tokenId(entry) + ":rule:" + entry.ruleId, entry.readingKana,
+                        "reviewed-policy", "accepted"));
+            }
+            Token token = entry.token;
+            tokens.add(new JapaneseReadingPolicyModels.ReadingTokenEvidence(
+                    tokenId(entry), entry.surface, codePointRange(entry, entry.start, entry.end),
+                    token == null ? null : safe(token.getPartOfSpeechLevel1()),
+                    token == null ? null : safe(token.getPartOfSpeechLevel2()),
+                    token == null ? null : safe(token.getPartOfSpeechLevel3()),
+                    token == null ? null : safe(token.getPartOfSpeechLevel4()),
+                    token == null ? null : safe(token.getLemma()),
+                    token == null ? null : safe(token.getWrittenBaseForm()),
+                    null,
+                    token == null ? null : kataToHira(safe(token.getLemmaReadingForm())),
+                    token == null ? null : safe(token.getPronunciation()),
+                    token == null ? null : safe(token.getConjugationType()),
+                    token == null ? null : safe(token.getConjugationForm()), candidates));
+        }
+
+        ArrayList<JapaneseReadingPolicyModels.BoundaryEvidence> boundaries = new ArrayList<>();
+        boundaries.add(new JapaneseReadingPolicyModels.BoundaryEvidence(0, "line", "hard", null));
+        boundaries.add(new JapaneseReadingPolicyModels.BoundaryEvidence(
+                sourceText.codePointCount(0, sourceText.length()), "line", "hard", null));
+        if (analysisText != null) {
+            for (Integer analysisOffset : analysisText.boundaryOffsets) {
+                int displayOffset = analysisText.originalStart(analysisOffset);
+                boundaries.add(new JapaneseReadingPolicyModels.BoundaryEvidence(
+                        sourceText.codePointCount(0, Math.max(0, Math.min(displayOffset, sourceText.length()))),
+                        "authored-whitespace", "soft", null));
+            }
+        }
+        for (int i = 1; i < entries.size(); i++) {
+            Entry previous = entries.get(i - 1);
+            Entry current = entries.get(i);
+            if (current.start > previous.end) {
+                String gap = sourceText.substring(previous.end, current.start);
+                if (gap.trim().isEmpty()) {
+                    boundaries.add(new JapaneseReadingPolicyModels.BoundaryEvidence(
+                            sourceText.codePointCount(0, current.start),
+                            "authored-whitespace", "hard", null));
+                }
+            }
+        }
+        for (Entry entry : entries) {
+            if (entry.surface != null && entry.surface.matches("^[。、？！…・「」『』（）().?!,]+$")) {
+                boundaries.add(new JapaneseReadingPolicyModels.BoundaryEvidence(
+                        sourceText.codePointCount(0, Math.max(0, Math.min(entry.start, sourceText.length()))),
+                        "punctuation", "hard", null));
+            }
+        }
+
+        ArrayList<JapaneseReadingPolicyModels.ProviderReadingEvidence> providerEvidence = new ArrayList<>();
+        if (providerFurigana != null) {
+            ArrayList<FuriganaSegment> sorted = new ArrayList<>(providerFurigana);
+            sorted.sort((a, b) -> Integer.compare(a.start, b.start));
+            for (int i = 0; i < sorted.size(); i++) {
+                FuriganaSegment segment = sorted.get(i);
+                Entry owner = null;
+                for (Entry entry : entries) {
+                    if (segment.start >= entry.start && segment.end <= entry.end) {
+                        owner = entry;
+                        break;
+                    }
+                }
+                boolean accepted = owner != null && owner.providerValidated
+                        && owner.providerEvidenceIds.contains("provider-" + i);
+                boolean matched = owner != null && owner.providerMatched
+                        && owner.providerEvidenceIds.contains("provider-" + i);
+                int safeStart = Math.max(0, Math.min(segment.start, sourceText.length()));
+                int safeEnd = Math.max(safeStart, Math.min(segment.end, sourceText.length()));
+                providerEvidence.add(new JapaneseReadingPolicyModels.ProviderReadingEvidence(
+                        "provider-" + i, "provider-ruby",
+                        new JapaneseReadingPolicyModels.CodePointRange(
+                                sourceText.codePointCount(0, safeStart), sourceText.codePointCount(0, safeEnd)),
+                        accepted && owner != null ? tokenId(owner) + ":provider" : null,
+                        kataToHira(segment.reading), accepted ? "accepted" : "rejected",
+                        accepted ? "provider-ruby-validated"
+                                : matched ? "higher-priority-policy-decision"
+                                : "invalid-partial-or-reading-mismatch"));
+            }
+        }
+
+        if (explicitBoundaries != null) {
+            for (JapaneseReadingPolicyModels.BoundaryEvidence boundary : explicitBoundaries) {
+                if (boundary != null) boundaries.add(boundary);
+            }
+        }
+        java.util.TreeMap<String, JapaneseReadingPolicyModels.BoundaryEvidence> uniqueBoundaries = new java.util.TreeMap<>();
+        for (JapaneseReadingPolicyModels.BoundaryEvidence boundary : boundaries) {
+            String key = boundary.offset + ":" + boundary.kind;
+            JapaneseReadingPolicyModels.BoundaryEvidence existing = uniqueBoundaries.get(key);
+            if (existing == null || ("hard".equals(boundary.strength) && !"hard".equals(existing.strength))) {
+                uniqueBoundaries.put(key, boundary);
+            }
+        }
+        boundaries = new ArrayList<>(uniqueBoundaries.values());
+
+        ArrayList<String> capabilities = new ArrayList<>();
+        capabilities.add("source-display-map");
+        if (entries.stream().anyMatch(entry -> entry.token != null
+                && !isBlank(entry.token.getPartOfSpeechLevel4()))) capabilities.add("pos1-4");
+        if (entries.stream().anyMatch(entry -> entry.token != null && !isBlank(entry.token.getLemma()))) {
+            capabilities.add("lemma");
+        }
+        if (entries.stream().anyMatch(entry -> entry.token != null && !isBlank(entry.token.getPronunciation()))) {
+            capabilities.add("pronunciation");
+        }
+        if (boundaries.stream().anyMatch(boundary -> "authored-whitespace".equals(boundary.kind))) {
+            capabilities.add("authored-boundaries");
+        }
+        if (boundaries.stream().anyMatch(boundary -> "provider-fragment".equals(boundary.kind))) {
+            capabilities.add("provider-boundaries");
+        }
+        if (providerFurigana != null && !providerFurigana.isEmpty()) capabilities.add("provider-readings");
+        return new JapaneseReadingPolicyModels.ReadingContext(
+                sourceText, rawSourceText, tokens, boundaries, providerEvidence,
+                Collections.emptyList(), capabilities);
     }
 
     private static AnalysisText analysisTextForJapanese(String sourceText) {
         if (isBlank(sourceText)) return new AnalysisText(sourceText, null);
         StringBuilder normalized = new StringBuilder();
         ArrayList<Integer> offsets = new ArrayList<>();
+        java.util.HashSet<Integer> boundaries = new java.util.HashSet<>();
+        boolean removedWhitespace = false;
         for (int i = 0; i < sourceText.length(); ) {
             int cp = sourceText.codePointAt(i);
             int len = Character.charCount(cp);
             if (Character.isWhitespace(cp) && hasJapaneseBeforeAndAfter(sourceText, i, i + len)) {
+                removedWhitespace = true;
                 i += len;
                 continue;
+            }
+            if (removedWhitespace) {
+                boundaries.add(normalized.length());
+                removedWhitespace = false;
             }
             normalized.appendCodePoint(cp);
             for (int j = 0; j < len; j++) offsets.add(i + j);
@@ -461,7 +973,7 @@ public final class SpicyJapaneseChineseProcessor {
         }
         int[] map = new int[offsets.size()];
         for (int i = 0; i < offsets.size(); i++) map[i] = offsets.get(i);
-        return new AnalysisText(normalized.toString(), map);
+        return new AnalysisText(normalized.toString(), map, boundaries);
     }
 
     private static boolean hasJapaneseBeforeAndAfter(String text, int whitespaceStart, int whitespaceEnd) {
@@ -509,13 +1021,15 @@ public final class SpicyJapaneseChineseProcessor {
      * to spelling convention otherwise (お-row→う, え-row→い, others repeat the vowel).
      * Real loanword ー (スーパー) survives because the lemma reading keeps it.
      */
-    private static String readingOfRecord(Token token, String surface) {
-        if (!SpicyTextDetection.itemJapaneseTest(surface)) return null;
+    private static ReadingOfRecord selectReadingOfRecord(Token token, String surface) {
+        if (!SpicyTextDetection.itemJapaneseTest(surface)) return new ReadingOfRecord(null, "passthrough");
         String pron = safe(token.getPronunciation());
         String lemmaYomi = safe(token.getLemmaReadingForm());
+        if (isKanaOnly(surface) && (!surface.contains("ー") || isBlank(pron) || "*".equals(pron))) {
+            return new ReadingOfRecord(kataToHira(surface), "authored-kana");
+        }
         if (isBlank(pron) || "*".equals(pron)) {
-            if (isKanaOnly(surface)) return kataToHira(surface);
-            return null;
+            return new ReadingOfRecord(null, "passthrough");
         }
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < pron.length(); i++) {
@@ -531,7 +1045,11 @@ public final class SpicyJapaneseChineseProcessor {
             if (resolved == 0) resolved = orthographicLongVowel(i > 0 ? pron.charAt(i - 1) : 0);
             out.append(resolved == 0 ? c : resolved);
         }
-        return kataToHira(out.toString());
+        return new ReadingOfRecord(kataToHira(out.toString()), "analyzer-pronunciation");
+    }
+
+    private static String readingOfRecord(Token token, String surface) {
+        return selectReadingOfRecord(token, surface).kana;
     }
 
     private static char orthographicLongVowel(char prevKatakana) {
@@ -549,10 +1067,14 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     /**
-     * The ONLY hand-maintained reading layer. The dictionary owns grammar and
-     * context; an entry is allowed here solely when the dictionary cannot know
-     * the answer. Each entry must cite its reason. Verified against UniDic 2.1.2
-     * output (docs/JAPANESE_NLP_AUDIT_AND_PLAN.md §2.4).
+     * The ONLY hand-maintained reading layer, implementing the shared reading policy
+     * (nihongo-grammar-lab japanese-reading-policy; vendored conformance corpus under
+     * app/src/test/resources/japanese-reading-policy). The dictionary owns grammar and
+     * context; a rule fires here solely when the dictionary cannot know the answer.
+     * Every decision carries a stable cross-product ruleId; the desktop TypeScript
+     * processor implements the same rules natively. Kana decisions all complete before
+     * any romaji is derived. Verified against UniDic 2.1.2 output
+     * (docs/JAPANESE_NLP_AUDIT_AND_PLAN.md §2.4).
      *
      * Song-specific aesthetic readings (gikun: 運命→さだめ etc.) are undecidable
      * from text and belong in a future per-track override store, not here.
@@ -560,39 +1082,59 @@ public final class SpicyJapaneseChineseProcessor {
      * Known low-frequency reading edges are documented in
      * docs/ROMANIZATION_AUDIT_BACKLOG.md JP-3.
      */
-    private static void applyLexicalOverrides(List<Entry> entries) {
+    private static void applyProductiveOverrides(List<Entry> entries) {
         for (int i = 0; i < entries.size(); i++) {
             Entry entry = entries.get(i);
             Token token = entry.token;
             if (token == null) continue;
+            Entry prevEntry = i > 0 ? entries.get(i - 1) : null;
+            Entry nextEntry = i + 1 < entries.size() ? entries.get(i + 1) : null;
+
+            boolean afterNochi = prevEntry != null && "のち".equals(prevEntry.surface)
+                    && adjacentWithoutHardBoundary(prevEntry, entry);
+            if (!afterNochi && prevEntry != null && "ち".equals(prevEntry.surface) && i > 1) {
+                Entry beforeNochi = entries.get(i - 2);
+                afterNochi = "の".equals(beforeNochi.surface)
+                        && adjacentWithoutHardBoundary(beforeNochi, prevEntry)
+                        && adjacentWithoutHardBoundary(prevEntry, entry);
+            }
+            if ("雨".equals(entry.surface) && afterNochi) {
+                decide(entry, "あめ", "ja.reading.context.ame-after-nochi",
+                        "rule:ja.reading.context.ame-after-nochi");
+                continue;
+            }
 
             // UniDic 2.1.2 lacks the kanji orthography 響めく for どよめく (its own
             // lemma for どよめき is 響動めき; JMdict marks the word usually-kana), so
             // the tokenizer falls back to 響(ヒビキ)+めく suffix. 響 directly before
             // the めく suffix can only read どよ; standalone 響/響く are untouched.
-            if ("響".equals(entry.surface) && i + 1 < entries.size()) {
-                Token next = entries.get(i + 1).token;
-                if (next != null && "接尾辞".equals(safe(next.getPartOfSpeechLevel1()))
-                        && "めく".equals(safe(next.getLemma()))) {
-                    entry.readingKana = "どよ";
-                    entry.readingReason = "lexicalOverride:doyomeku";
-                    continue;
-                }
+            if ("響".equals(entry.surface) && nextEntry != null && nextEntry.token != null
+                    && entry.end == nextEntry.start && !nextEntry.boundaryBefore
+                    && "接尾辞".equals(safe(nextEntry.token.getPartOfSpeechLevel1()))
+                    && "めく".equals(safe(nextEntry.token.getLemma()))) {
+                decide(entry, "どよ", "ja.reading.lexical.doyomeku", "lexicalOverride:doyomeku");
+                continue;
             }
 
             // UniDic prefers the formal ワタクシ for bare 私; sung Japanese is
             // essentially always わたし. POS-guarded so 私立 etc. are untouched.
             if ("私".equals(entry.surface) && "代名詞".equals(token.getPartOfSpeechLevel1())) {
-                entry.readingKana = "わたし";
-                entry.readingReason = "lexicalOverride:watashiPronoun";
+                decide(entry, "わたし", "ja.reading.register.watashi", "lexicalOverride:watashiPronoun");
                 continue;
             }
 
             // UniDic can tag bare 君 as the honorific suffix reading クン. As an independent
             // pronoun in lyrics it should read きみ; suffix use remains "kun" in 田中君.
             if ("君".equals(entry.surface) && "代名詞".equals(token.getPartOfSpeechLevel1())) {
-                entry.readingKana = "きみ";
-                entry.readingReason = "lexicalOverride:kimiPronoun";
+                decide(entry, "きみ", "ja.reading.context.kimi-kun", "lexicalOverride:kimiPronoun");
+                continue;
+            }
+
+            // Boundary-separated 君 (provider/authored whitespace removed before analysis) is
+            // the lyric pronoun; the honorific くん needs an attached person name (時 君 ≠ 時君).
+            if ("君".equals(entry.surface) && "接尾辞".equals(safe(token.getPartOfSpeechLevel1()))
+                    && entry.boundaryBefore) {
+                decide(entry, "きみ", "ja.reading.context.kimi-kun", "rule:ja.reading.context.kimi-kun");
                 continue;
             }
 
@@ -600,16 +1142,242 @@ public final class SpicyJapaneseChineseProcessor {
             // がた (あなた方/君方). kuromoji-unidic 2.1.2 emits unvoiced カタ, tagged
             // 接尾辞 or 名詞 depending on context. Demonstratives (この方) are 連体詞,
             // so "kono kata" is untouched.
-            if ("方".equals(entry.surface) && "かた".equals(entry.readingKana) && i > 0) {
+            if ("方".equals(entry.surface) && "かた".equals(entry.readingKana) && prevEntry != null) {
                 String pos1 = safe(token.getPartOfSpeechLevel1());
-                Token prev = entries.get(i - 1).token;
+                Token prev = prevEntry.token;
                 if (("接尾辞".equals(pos1) || "名詞".equals(pos1))
                         && prev != null && "代名詞".equals(prev.getPartOfSpeechLevel1())) {
-                    entry.readingKana = "がた";
-                    entry.readingReason = "lexicalOverride:gataAfterPronoun";
+                    decide(entry, "がた", "ja.reading.context.gata-after-pronoun", "lexicalOverride:gataAfterPronoun");
+                    continue;
                 }
             }
+
+            // 何 as an independent pronoun before a case particle reads なに; lexicalized
+            // なん constructions (何でも/何です/counters) keep the analyzer reading.
+            if ("何".equals(entry.surface) && "なん".equals(entry.readingKana) && nextEntry != null
+                    && nextEntry.token != null && !nextEntry.boundaryBefore
+                    && "助詞".equals(safe(nextEntry.token.getPartOfSpeechLevel1()))
+                    && "格助詞".equals(safe(nextEntry.token.getPartOfSpeechLevel2()))
+                    && ("が".equals(nextEntry.surface) || "を".equals(nextEntry.surface)
+                        || "に".equals(nextEntry.surface) || "から".equals(nextEntry.surface))) {
+                decide(entry, "なに", "ja.reading.context.nan-nani", "rule:ja.reading.context.nan-nani");
+                continue;
+            }
+
+            // 時 after a finite clause or determiner is the temporal noun とき, not the
+            // clock counter じ. Compounds (時計/時代/lexical 一時) stay analyzer-owned.
+            if ("時".equals(entry.surface) && prevEntry != null
+                    && prevEntry.token != null && !isNumericEntry(prevEntry) && !entry.boundaryBefore) {
+                String prevPos1 = safe(prevEntry.token.getPartOfSpeechLevel1());
+                if ("動詞".equals(prevPos1) || "助動詞".equals(prevPos1)
+                        || "形容詞".equals(prevPos1)) {
+                    decide(entry, "とき", "ja.reading.context.toki-ji", "rule:ja.reading.context.toki-ji");
+                    continue;
+                }
+            }
+
+            // Bounded clock-hour readings 0-24: 4→よ, 7→しち, 9→く, 0→れい. Arabic digits
+            // are unreadable to UniDic; Kanji numerals get the generic reading (四→よん).
+            if ("時".equals(entry.surface) && prevEntry != null && isNumericEntry(prevEntry)) {
+                int runStart = numericRunStart(entries, i);
+                Integer value = numeralValue(concatSurfaces(entries, runStart, i));
+                if (value != null && value >= 0 && value <= 24) {
+                    applyHourReading(entries, runStart, i, value);
+                    decide(entry, "じ", "ja.reading.number.hour", "rule:ja.reading.number.hour");
+                    continue;
+                }
+            }
+
+            // Native one/two-person counts: 1人→ひとり, 2人→ふたり. Kanji 一人/二人 are
+            // already lexical UniDic tokens; three and above stay Sino-Japanese.
+            if ("人".equals(entry.surface) && "にん".equals(entry.readingKana)
+                    && "接尾辞".equals(safe(token.getPartOfSpeechLevel1()))
+                    && prevEntry != null && isArabicDigitEntry(prevEntry)
+                    && ("1".equals(prevEntry.surface) || "2".equals(prevEntry.surface))) {
+                String nativeReading = "1".equals(prevEntry.surface) ? "ひとり" : "ふたり";
+                prevEntry.readingKana = nativeReading;
+                entry.readingKana = "";
+                recordRangeDecision(prevEntry, entry, "ja.reading.number.person-native",
+                        "person-native", nativeReading);
+                continue;
+            }
+
         }
+    }
+
+    private static void applyReadingDefaults(List<Entry> entries) {
+        for (int i = 0; i < entries.size(); i++) {
+            Entry entry = entries.get(i);
+            Entry previous = i > 0 ? entries.get(i - 1) : null;
+            boolean compoundLeft = adjacentWithoutHardBoundary(previous, entry)
+                    && previous.token != null
+                    && ("名詞".equals(safe(previous.token.getPartOfSpeechLevel1()))
+                        || "接頭辞".equals(safe(previous.token.getPartOfSpeechLevel1())));
+            String preferred = isBlank(entry.ruleId) && !entry.providerValidated
+                    && entry.token != null && isAllKanjiCommonNoun(entry)
+                    && !compoundLeft ? jmdictPreferredReadings().get(kataToHira(entry.surface)) : null;
+            if (!isBlank(preferred) && !preferred.equals(entry.readingKana)
+                    && jmdictFuriganaSegments(entry.surface, preferred) != null) {
+                decide(entry, preferred, "ja.reading.policy.preferred-lexical-reading",
+                        "rule:ja.reading.policy.preferred-lexical-reading");
+            } else if ("明日".equals(entry.surface) && !entry.providerValidated
+                    && ("あす".equals(entry.readingKana) || "みょうにち".equals(entry.readingKana))) {
+                decide(entry, "あした", "ja.reading.policy.ashita-default", "rule:ja.reading.policy.ashita-default");
+            }
+        }
+    }
+
+    private static boolean isAllKanjiCommonNoun(Entry entry) {
+        if (entry == null || entry.token == null || isBlank(entry.surface)
+                || entry.surface.codePointCount(0, entry.surface.length()) < 2
+                || !"名詞".equals(safe(entry.token.getPartOfSpeechLevel1()))
+                || !"普通名詞".equals(safe(entry.token.getPartOfSpeechLevel2()))) return false;
+        for (int i = 0; i < entry.surface.length();) {
+            int cp = entry.surface.codePointAt(i);
+            if (!((cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) || cp == 0x3005)) {
+                return false;
+            }
+            i += Character.charCount(cp);
+        }
+        return true;
+    }
+
+    private static void decide(Entry entry, String kana, String ruleId, String reason) {
+        String previousCandidateId = isBlank(entry.readingKana) ? null : fallbackCandidateId(entry);
+        entry.readingKana = kana;
+        entry.ruleId = ruleId;
+        entry.ruleVersion = ruleVersion(ruleId);
+        entry.readingReason = reason;
+        if (isBlank(kana)) return;
+        entry.decisions.add(new JapaneseReadingPolicyModels.ReadingDecision(
+                "select", "resolved", reasonId(reason), ruleId, entry.ruleVersion,
+                codePointRange(entry, entry.start, entry.end), previousCandidateId,
+                tokenId(entry) + ":rule:" + ruleId, fallbackCandidateId(entry), kana,
+                Collections.singletonList(tokenId(entry)), null));
+    }
+
+    private static int ruleVersion(String ruleId) {
+        if ("ja.reading.phonetic.cross-token-sokuon".equals(ruleId)) return 2;
+        if ("ja.reading.context.ame-after-nochi".equals(ruleId)
+                || "ja.reading.phonetic.ichi-following-allomorph".equals(ruleId)) return 1;
+        return 1;
+    }
+
+    private static String reasonId(String reason) {
+        if (reason == null) return "";
+        int colon = reason.indexOf(':');
+        return colon >= 0 && colon + 1 < reason.length() ? reason.substring(colon + 1) : reason;
+    }
+
+    private static String tokenId(Entry entry) {
+        return "token-" + Math.max(0, entry.tokenIndex);
+    }
+
+    private static String fallbackCandidateId(Entry entry) {
+        return tokenId(entry) + ":" + (isBlank(entry.dictionaryReadingSource)
+                ? "passthrough" : entry.dictionaryReadingSource);
+    }
+
+    private static JapaneseReadingPolicyModels.CodePointRange codePointRange(Entry entry, int start, int end) {
+        String source = safe(entry.sourceText);
+        int safeStart = Math.max(0, Math.min(start, source.length()));
+        int safeEnd = Math.max(safeStart, Math.min(end, source.length()));
+        return new JapaneseReadingPolicyModels.CodePointRange(
+                source.codePointCount(0, safeStart), source.codePointCount(0, safeEnd));
+    }
+
+    private static boolean isArabicDigitEntry(Entry entry) {
+        if (entry == null || isBlank(entry.surface)) return false;
+        for (int i = 0; i < entry.surface.length(); i++) {
+            char c = entry.surface.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    private static boolean isKanjiNumeralEntry(Entry entry) {
+        if (entry == null || entry.token == null || isBlank(entry.surface)) return false;
+        if (!"数詞".equals(safe(entry.token.getPartOfSpeechLevel2()))) return false;
+        for (int i = 0; i < entry.surface.length(); i++) {
+            if ("〇零一二三四五六七八九十".indexOf(entry.surface.charAt(i)) < 0) return false;
+        }
+        return true;
+    }
+
+    private static boolean isNumericEntry(Entry entry) {
+        return isArabicDigitEntry(entry) || isKanjiNumeralEntry(entry);
+    }
+
+    /** First index of the contiguous numeric run ending directly before counterIndex. */
+    private static int numericRunStart(List<Entry> entries, int counterIndex) {
+        int start = counterIndex;
+        while (start > 0 && isNumericEntry(entries.get(start - 1))
+                && !entries.get(start).boundaryBefore) {
+            start--;
+        }
+        return start;
+    }
+
+    private static String concatSurfaces(List<Entry> entries, int start, int end) {
+        StringBuilder out = new StringBuilder();
+        for (int i = start; i < end; i++) out.append(entries.get(i).surface);
+        return out.toString();
+    }
+
+    /** Conservative integer numeral parse: Arabic, or positional Kanji up to 99. */
+    private static Integer numeralValue(String surface) {
+        if (isBlank(surface)) return null;
+        boolean digits = true;
+        for (int i = 0; i < surface.length(); i++) {
+            char c = surface.charAt(i);
+            if (c < '0' || c > '9') { digits = false; break; }
+        }
+        if (digits) return surface.length() <= 2 ? Integer.valueOf(surface) : null;
+        int tenIndex = surface.indexOf('十');
+        if (tenIndex < 0) {
+            return surface.length() == 1 ? digitValueBoxed(surface.charAt(0)) : null;
+        }
+        String tensPart = surface.substring(0, tenIndex);
+        String onesPart = surface.substring(tenIndex + 1);
+        if (tensPart.length() > 1 || onesPart.length() > 1 || onesPart.indexOf('十') >= 0) return null;
+        Integer tens = tensPart.isEmpty() ? Integer.valueOf(1) : digitValueBoxed(tensPart.charAt(0));
+        Integer ones = onesPart.isEmpty() ? Integer.valueOf(0) : digitValueBoxed(onesPart.charAt(0));
+        if (tens == null || ones == null || tens == 0) return null;
+        return tens * 10 + ones;
+    }
+
+    private static Integer digitValueBoxed(char kanji) {
+        switch (kanji) {
+            case '〇': case '零': return 0;
+            case '一': return 1;
+            case '二': return 2;
+            case '三': return 3;
+            case '四': return 4;
+            case '五': return 5;
+            case '六': return 6;
+            case '七': return 7;
+            case '八': return 8;
+            case '九': return 9;
+            default: return null;
+        }
+    }
+
+    private static final String[] HOUR_ONES = {
+            "", "いち", "に", "さん", "よ", "ご", "ろく", "しち", "はち", "く"
+    };
+
+    private static void applyHourReading(List<Entry> entries, int runStart, int counterIndex, int value) {
+        String tens = value >= 20 ? "にじゅう" : value >= 10 ? "じゅう" : "";
+        String ones = value == 0 ? "れい" : HOUR_ONES[value % 10];
+        if (counterIndex - runStart == 1) {
+            decide(entries.get(runStart), tens + ones, "ja.reading.number.hour", "rule:ja.reading.number.hour");
+            return;
+        }
+        decide(entries.get(runStart), tens, "ja.reading.number.hour", "rule:ja.reading.number.hour");
+        for (int i = runStart + 1; i < counterIndex - 1; i++) {
+            decide(entries.get(i), "", "ja.reading.number.hour", "rule:ja.reading.number.hour");
+        }
+        decide(entries.get(counterIndex - 1), ones, "ja.reading.number.hour", "rule:ja.reading.number.hour");
     }
 
     private static String entryRomaji(Entry entry) {
@@ -622,42 +1390,161 @@ public final class SpicyJapaneseChineseProcessor {
             if ("を".equals(entry.surface)) return "wo";
         }
         if (entry.readingKana == null) return entry.surface;
-        String romaji = romanizeKana(entry.readingKana);
+        if ("っ".equals(entry.readingKana)) return "";
+        // Rule-decided empty kana marks a merged numeric/counter member: no romaji of its own.
+        if (entry.readingKana.isEmpty() && entry.ruleId != null) return "";
+        String romaji = romanizeKana(entry.readingKana, allowsForeignKanaContraction(entry.surface));
         return isBlank(romaji) ? entry.surface : romaji;
     }
 
-    /**
-     * A token-final っ geminates the next token's initial consonant (言っ+て → itte).
-     * romanizeKana drops a trailing っ, so double the consonant on the next entry.
-     */
-    private static void applyCrossTokenSokuon(List<Entry> entries) {
+    /** Finalizes cross-token kana and records decisions before any romaji projection. */
+    private static void finalizeCrossTokenKana(List<Entry> entries) {
         for (int i = 0; i + 1 < entries.size(); i++) {
             Entry entry = entries.get(i);
             Entry next = entries.get(i + 1);
-            if ("一".equals(entry.surface)
-                    && ("いち".equals(entry.readingKana) || "ichi".equals(entry.romaji))
-                    && "歩".equals(next.surface)
-                    && "ほ".equals(next.readingKana)) {
-                // UniDic splits 一歩, but lexical reading is いっぽ (ippo), not ichi ho.
+            if (!adjacentWithoutHardBoundary(entry, next)) continue;
+            if ("一".equals(entry.surface) && "いち".equals(entry.readingKana)
+                    && "歩".equals(next.surface) && "ほ".equals(next.readingKana)) {
                 entry.readingKana = "いっ";
-                entry.romaji = "";
                 next.readingKana = "ぽ";
-                next.romaji = "ippo";
+                recordRangeDecision(entry, next, "ja.reading.phonetic.ippo", "ippo-step", "いっぽ");
                 continue;
             }
-            if ("一".equals(entry.surface)
-                    && ("いち".equals(entry.readingKana) || "ichi".equals(entry.romaji))
-                    && startsWithConsonant(next.romaji)
+            boolean numericalIchi = "一".equals(entry.surface) && "いち".equals(entry.readingKana)
+                    && entry.token != null
+                    && "名詞".equals(safe(entry.token.getPartOfSpeechLevel1()))
+                    && "数詞".equals(safe(entry.token.getPartOfSpeechLevel2()));
+            if (numericalIchi
                     && startsWithKRow(next.readingKana)) {
                 entry.readingKana = "いっ";
-                entry.romaji = "";
-                next.romaji = "i" + next.romaji.charAt(0) + next.romaji;
+                recordRangeDecision(entry, next, "ja.reading.phonetic.ichi-k-row",
+                        "ichi-k-row", safe(entry.readingKana) + safe(next.readingKana));
                 continue;
             }
-            if (entry.readingKana != null && entry.readingKana.endsWith("っ") && startsWithConsonant(next.romaji)) {
+            IchiFollowingAllomorph allomorph = numericalIchi ? ichiFollowingAllomorph(next) : null;
+            if (allomorph != null) {
+                entry.readingKana = "いっ";
+                next.readingKana = allomorph.outputKana;
+                recordRangeDecision(entry, next, "ja.reading.phonetic.ichi-following-allomorph",
+                        "ichi-following-allomorph", entry.readingKana + next.readingKana);
+                continue;
+            }
+            if (isSmallKanaOnly(next.readingKana)
+                    && isLicensedForeignKatakanaPair(safe(entry.surface) + safe(next.surface))) {
+                String groupId = "projection-group-" + i;
+                entry.projectionGroupId = groupId;
+                next.projectionGroupId = groupId;
+                continue;
+            }
+            if (entry.readingKana != null && entry.readingKana.endsWith("っ")
+                    && startsWithConsonant(entryRomaji(next))) {
+                recordRangeDecision(entry, next, "ja.reading.phonetic.cross-token-sokuon",
+                        "cross-token-sokuon", safe(entry.readingKana) + safe(next.readingKana));
+            }
+        }
+        for (int i = 0; i < entries.size(); i++) {
+            Entry entry = entries.get(i);
+            if (entry.readingKana == null || !entry.readingKana.endsWith("っ")) continue;
+            Entry next = i + 1 < entries.size() ? entries.get(i + 1) : null;
+            boolean resolved = next != null && !isBlank(entry.readingGroupId)
+                    && entry.readingGroupId.equals(next.readingGroupId);
+            if (!resolved && (next == null || adjacentWithoutHardBoundary(entry, next))) {
+                entry.diagnosticId = "ja.romaji.sokuon.unresolved";
+            }
+        }
+    }
+
+    private static void recordRangeDecision(Entry first, Entry last, String ruleId,
+                                            String reasonId, String selectedKana) {
+        String groupId = "reading-group-" + first.tokenIndex + "-" + last.tokenIndex + "-" + first.decisions.size();
+        first.ruleId = ruleId;
+        last.ruleId = ruleId;
+        first.ruleVersion = ruleVersion(ruleId);
+        last.ruleVersion = first.ruleVersion;
+        first.readingGroupId = groupId;
+        last.readingGroupId = groupId;
+        first.readingReason = "rule:" + ruleId;
+        last.readingReason = "rule:" + ruleId;
+        ArrayList<String> evidenceIds = new ArrayList<>();
+        evidenceIds.add(tokenId(first));
+        evidenceIds.add(tokenId(last));
+        first.decisions.add(new JapaneseReadingPolicyModels.ReadingDecision(
+                "select", "resolved", reasonId, ruleId, first.ruleVersion,
+                codePointRange(first, first.start, last.end), fallbackCandidateId(first),
+                tokenId(first) + ":rule:" + ruleId, fallbackCandidateId(first), selectedKana,
+                evidenceIds, null));
+    }
+
+    /** Romaji projection of finalized kana; trailing っ doubles the next consonant. */
+    private static void applyRomajiSokuonProjection(List<Entry> entries) {
+        for (int i = 0; i + 1 < entries.size(); i++) {
+            Entry entry = entries.get(i);
+            Entry next = entries.get(i + 1);
+            if (entry.end != next.start) continue;
+            if (!isBlank(entry.projectionGroupId)
+                    && entry.projectionGroupId.equals(next.projectionGroupId)) {
+                entry.romaji = romanizeKana(safe(entry.readingKana) + safe(next.readingKana), true);
+                next.romaji = "";
+                continue;
+            }
+            if (!isBlank(entry.readingGroupId) && entry.readingGroupId.equals(next.readingGroupId)
+                    && entry.readingKana != null && entry.readingKana.endsWith("っ")
+                    && startsWithConsonant(next.romaji)) {
                 next.romaji = next.romaji.charAt(0) + next.romaji;
             }
         }
+    }
+
+    private static boolean adjacentWithoutHardBoundary(Entry left, Entry right) {
+        return left != null && right != null && left.end == right.start && !right.hardBoundaryBefore;
+    }
+
+    private static boolean isPunctuationSurface(String surface) {
+        return surface != null && surface.matches("^[。、？！…・「」『』（）().?!,]+$");
+    }
+
+    private static final class IchiFollowingAllomorph {
+        final String surface;
+        final String[] inputKana;
+        final String outputKana;
+        final String[] pos1;
+
+        IchiFollowingAllomorph(String surface, String[] inputKana, String outputKana, String[] pos1) {
+            this.surface = surface;
+            this.inputKana = inputKana;
+            this.outputKana = outputKana;
+            this.pos1 = pos1;
+        }
+    }
+
+    private static final IchiFollowingAllomorph[] ICHI_FOLLOWING_ALLOMORPHS = {
+            new IchiFollowingAllomorph("冊", new String[]{"さつ"}, "さつ", new String[]{"接尾辞"}),
+            new IchiFollowingAllomorph("等", new String[]{"とう"}, "とう", new String[]{"名詞", "接尾辞"}),
+            new IchiFollowingAllomorph("着", new String[]{"ちゃく"}, "ちゃく", new String[]{"名詞", "接尾辞"}),
+            new IchiFollowingAllomorph("本", new String[]{"ほん", "ぽん"}, "ぽん", new String[]{"接尾辞"}),
+            new IchiFollowingAllomorph("杯", new String[]{"はい", "ばい", "ぱい"}, "ぱい", new String[]{"名詞", "接尾辞"}),
+            new IchiFollowingAllomorph("匹", new String[]{"ひき", "びき", "ぴき"}, "ぴき", new String[]{"接尾辞"})
+    };
+
+    private static IchiFollowingAllomorph ichiFollowingAllomorph(Entry entry) {
+        if (entry == null || entry.token == null) return null;
+        String pos1 = safe(entry.token.getPartOfSpeechLevel1());
+        for (IchiFollowingAllomorph item : ICHI_FOLLOWING_ALLOMORPHS) {
+            if (!item.surface.equals(entry.surface) || !contains(item.inputKana, entry.readingKana)
+                    || !contains(item.pos1, pos1)) continue;
+            return item;
+        }
+        return null;
+    }
+
+    private static boolean contains(String[] values, String value) {
+        if (values == null) return false;
+        for (String item : values) if (item.equals(value)) return true;
+        return false;
+    }
+
+    private static boolean isSmallKanaOnly(String kana) {
+        return kana != null && kana.length() == 1 && "ぁぃぅぇぉ".indexOf(kana.charAt(0)) >= 0;
     }
 
     private static boolean startsWithKRow(String kana) {
@@ -705,6 +1592,25 @@ public final class SpicyJapaneseChineseProcessor {
             i += Character.charCount(cp);
         }
         return normalizeSpaces(out.toString());
+    }
+
+    /** Longest-match phrase ranges for display wrapping. These ranges never change timing owners. */
+    public static List<int[]> chineseLayoutRanges(String text) {
+        ArrayList<int[]> out = new ArrayList<>();
+        if (isBlank(text)) return out;
+        PinyinTrieNode phrases = pinyinPhraseTrie();
+        for (int i = 0; i < text.length();) {
+            int cp = text.codePointAt(i);
+            if (Character.isWhitespace(cp)) {
+                i += Character.charCount(cp);
+                continue;
+            }
+            PinyinPhraseMatch phrase = matchPinyinPhrase(phrases, text, i);
+            int end = phrase == null ? i + Character.charCount(cp) : phrase.endIndex;
+            out.add(new int[]{i, end});
+            i = end;
+        }
+        return out;
     }
 
     private static PinyinTrieNode pinyinPhraseTrie() {
@@ -854,9 +1760,18 @@ public final class SpicyJapaneseChineseProcessor {
 
     private static List<FuriganaSegment> buildFurigana(String lineText, List<Entry> entries, List<FuriganaSegment> provider) {
         List<FuriganaSegment> out = new ArrayList<>();
-        for (Entry entry : entries) {
+        for (int entryIndex = 0; entryIndex < entries.size(); entryIndex++) {
+            Entry entry = entries.get(entryIndex);
             if (isBlank(entry.readingKana)) continue;
-            if ("providerRubyValidated".equals(entry.readingReason) && provider != null) {
+            int groupEnd = readingGroupEnd(entries, entryIndex);
+            if (groupEnd > entryIndex && shouldRenderGroupedNumericRuby(entries, entryIndex, groupEnd)) {
+                StringBuilder groupedKana = new StringBuilder();
+                for (int i = entryIndex; i <= groupEnd; i++) groupedKana.append(safe(entries.get(i).readingKana));
+                out.add(new FuriganaSegment(entry.start, entries.get(groupEnd).end, groupedKana.toString()));
+                entryIndex = groupEnd;
+                continue;
+            }
+            if (entry.providerValidated && provider != null) {
                 for (FuriganaSegment segment : provider) {
                     if (segment != null && segment.start >= entry.start && segment.end <= entry.end) {
                         out.add(new FuriganaSegment(segment.start, segment.end, kataToHira(segment.reading)));
@@ -873,6 +1788,30 @@ public final class SpicyJapaneseChineseProcessor {
             }
         }
         return out;
+    }
+
+    private static int readingGroupEnd(List<Entry> entries, int start) {
+        if (entries == null || start < 0 || start >= entries.size()) return start;
+        String groupId = entries.get(start).readingGroupId;
+        if (isBlank(groupId)) return start;
+        int end = start;
+        while (end + 1 < entries.size() && groupId.equals(entries.get(end + 1).readingGroupId)) end++;
+        return end;
+    }
+
+    private static boolean shouldRenderGroupedNumericRuby(List<Entry> entries, int start, int end) {
+        boolean hasDigit = false;
+        boolean hasKanji = false;
+        for (int i = start; i <= end; i++) {
+            String surface = safe(entries.get(i).surface);
+            for (int offset = 0; offset < surface.length();) {
+                int cp = surface.codePointAt(offset);
+                hasDigit |= Character.isDigit(cp);
+                hasKanji |= (cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) || cp == 0x3005;
+                offset += Character.charCount(cp);
+            }
+        }
+        return hasDigit && hasKanji;
     }
 
     private static int displayStart(Entry entry, int tokenOffset) {
@@ -974,6 +1913,34 @@ public final class SpicyJapaneseChineseProcessor {
                     if (segments.isEmpty()) continue;
                     String key = kataToHira(surface) + "|" + kataToHira(reading);
                     if (!out.containsKey(key)) out.put(key, segments);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return out;
+    }
+
+    private static Map<String, String> jmdictPreferredReadings() {
+        Map<String, String> local = jmdictPreferredReadings;
+        if (local != null) return local;
+        synchronized (SpicyJapaneseChineseProcessor.class) {
+            if (jmdictPreferredReadings == null) jmdictPreferredReadings = loadJmdictPreferredReadings();
+            return jmdictPreferredReadings;
+        }
+    }
+
+    private static Map<String, String> loadJmdictPreferredReadings() {
+        HashMap<String, String> out = new HashMap<>();
+        try (InputStream in = SpicyJapaneseChineseProcessor.class.getResourceAsStream("JmdictPreferredReadings.txt.gz")) {
+            if (in == null) return out;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(new java.util.zip.GZIPInputStream(in), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (!line.isEmpty() && line.charAt(0) == '\uFEFF') line = line.substring(1);
+                    int separator = line.indexOf('|');
+                    if (separator <= 0 || separator >= line.length() - 1) continue;
+                    out.put(kataToHira(line.substring(0, separator)), kataToHira(line.substring(separator + 1)));
                 }
             }
         } catch (Throwable ignored) {
@@ -1092,11 +2059,26 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static boolean shouldNoSpaceBefore(Entry entry, Entry prevEntry) {
+        if (prevEntry != null && entry.hardBoundaryBefore) return false;
+        if (prevEntry != null && !isBlank(entry.readingGroupId)
+                && entry.readingGroupId.equals(prevEntry.readingGroupId)) return true;
+        if (prevEntry != null && !isBlank(entry.projectionGroupId)
+                && entry.projectionGroupId.equals(prevEntry.projectionGroupId)) return true;
         if (entry.surface.matches("^[。、？！…・「」『』（）().?!,\\s]+$")) return true;
         if (shouldMergeNonJapaneseAscii(entry, prevEntry)) return true;
         if (shouldMergeJapaneseVerbContinuation(entry, prevEntry)) return true;
         if (shouldMergeMekuSuffix(entry, prevEntry)) return true;
+        if (shouldMergeFillerContinuation(entry, prevEntry)) return true;
         return entry.romaji != null && entry.romaji.length() == 1 && !Character.isLetterOrDigit(entry.romaji.charAt(0));
+    }
+
+    private static boolean shouldMergeFillerContinuation(Entry entry, Entry prevEntry) {
+        if (entry == null || prevEntry == null || entry.token == null || prevEntry.token == null) return false;
+        if (prevEntry.end != entry.start) return false;
+        return "感動詞".equals(safe(entry.token.getPartOfSpeechLevel1()))
+                && "フィラー".equals(safe(entry.token.getPartOfSpeechLevel2()))
+                && "感動詞".equals(safe(prevEntry.token.getPartOfSpeechLevel1()))
+                && "フィラー".equals(safe(prevEntry.token.getPartOfSpeechLevel2()));
     }
 
     /**
@@ -1160,6 +2142,43 @@ public final class SpicyJapaneseChineseProcessor {
         if (isBlank(value)) return false;
         char c = Character.toLowerCase(value.charAt(0));
         return c >= 'a' && c <= 'z' && "aeioun".indexOf(c) < 0;
+    }
+
+    private static boolean isLicensedForeignKatakanaPair(String kana) {
+        switch (safe(kana)) {
+            case "ファ": case "フィ": case "フェ": case "フォ":
+            case "ティ": case "ディ": case "トゥ": case "ドゥ":
+            case "ウィ": case "ウェ": case "ウォ":
+            case "ツァ": case "ツィ": case "ツェ": case "ツォ":
+            case "シェ": case "ジェ": case "チェ":
+            case "ヴァ": case "ヴィ": case "ヴェ": case "ヴォ":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean isLicensedForeignHiraganaPair(String kana) {
+        switch (safe(kana)) {
+            case "ふぁ": case "ふぃ": case "ふぇ": case "ふぉ":
+            case "てぃ": case "でぃ": case "とぅ": case "どぅ":
+            case "うぃ": case "うぇ": case "うぉ":
+            case "つぁ": case "つぃ": case "つぇ": case "つぉ":
+            case "しぇ": case "じぇ": case "ちぇ":
+            case "ゔぁ": case "ゔぃ": case "ゔぇ": case "ゔぉ":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean allowsForeignKanaContraction(String surface) {
+        if (isBlank(surface)) return true;
+        for (int i = 0; i < surface.length(); i++) {
+            char c = surface.charAt(i);
+            if (c >= 'ァ' && c <= 'ヶ') return true;
+        }
+        return false;
     }
 
     private static boolean isKanaOnly(String value) {
@@ -1244,6 +2263,10 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static String romanizeKana(String text) {
+        return romanizeKana(text, true);
+    }
+
+    private static String romanizeKana(String text, boolean allowForeignKanaContraction) {
         if (text == null) return null;
         StringBuilder out = new StringBuilder();
         boolean doubleNext = false;
@@ -1261,6 +2284,9 @@ public final class SpicyJapaneseChineseProcessor {
             if (i + 1 < text.length()) {
                 char next = normalizeKana(text.charAt(i + 1));
                 mapped = KANA.get("" + c + next);
+                if (!allowForeignKanaContraction && isLicensedForeignHiraganaPair("" + c + next)) {
+                    mapped = null;
+                }
                 if (mapped != null) i++;
             }
             if (mapped == null) mapped = KANA.get(String.valueOf(c));
@@ -1327,7 +2353,13 @@ public final class SpicyJapaneseChineseProcessor {
                 {"ぎゃ", "gya"}, {"ぎゅ", "gyu"}, {"ぎょ", "gyo"},
                 {"じゃ", "ja"}, {"じゅ", "ju"}, {"じょ", "jo"},
                 {"びゃ", "bya"}, {"びゅ", "byu"}, {"びょ", "byo"},
-                {"ぴゃ", "pya"}, {"ぴゅ", "pyu"}, {"ぴょ", "pyo"}
+                {"ぴゃ", "pya"}, {"ぴゅ", "pyu"}, {"ぴょ", "pyo"},
+                {"ふぁ", "fa"}, {"ふぃ", "fi"}, {"ふぇ", "fe"}, {"ふぉ", "fo"},
+                {"てぃ", "ti"}, {"でぃ", "di"}, {"とぅ", "tu"}, {"どぅ", "du"},
+                {"うぃ", "wi"}, {"うぇ", "we"}, {"うぉ", "wo"},
+                {"つぁ", "tsa"}, {"つぃ", "tsi"}, {"つぇ", "tse"}, {"つぉ", "tso"},
+                {"しぇ", "she"}, {"じぇ", "je"}, {"ちぇ", "che"},
+                {"ゔぁ", "va"}, {"ゔぃ", "vi"}, {"ゔぇ", "ve"}, {"ゔぉ", "vo"}
         };
         for (String[] pair : base) putKana(pair[0], pair[1]);
     }

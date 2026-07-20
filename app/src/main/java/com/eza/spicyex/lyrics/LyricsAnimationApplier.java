@@ -23,7 +23,7 @@ public final class LyricsAnimationApplier {
         return LyricsLineViewState.stepLineScale(line, targetScale, deltaSeconds);
     }
 
-    /** Eased line glow — rises gradually when the line activates, decays after it passes. Always
+    /** Eased line glow — rises gradually when the line activates, then holds after it passes. Always
      *  starts from 0 (never the current target) so a line that mounts mid-play still fades in. */
     public static float stepLineGlow(AppliedLine line, float targetGlow, float deltaSeconds) {
         return LyricsLineViewState.stepLineGlow(line, targetGlow, deltaSeconds);
@@ -68,14 +68,15 @@ public final class LyricsAnimationApplier {
             float targetScale = active ? LyricAnimations.scaleSpline(progress) : (sung ? 1.0f : 0.95f);
             float targetY = active ? LyricAnimations.yOffsetSpline(progress) : (sung ? 0f : 0.01f);
             // Spotlight: no per-word fill — the active word is lit solid and its glow builds with
-            // the word's progress (gradual, not an instant pop), then the spring decays it.
+            // the word's progress (gradual, not an instant pop), then holds after completion.
             float targetGlow = spotlight
-                    ? (active ? 0.60f * progress : 0f)
-                    : (active ? 0.55f * LyricAnimations.glowSpline(progress) : 0f);
+                    ? (active ? 0.60f * progress : (sung ? 0.60f : 0f))
+                    : (active ? 0.55f * LyricAnimations.glowSpline(progress) : (sung ? 0.55f : 0f));
             if (!glowEnabled) targetGlow = 0f;
             float targetGradient = spotlight
-                    ? (active || sung ? 100f : -20f)
-                    : (active ? (-20f + 120f * progress) : (sung ? 100f : -20f));
+                    ? (active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG)
+                    : (active ? LyricAnimations.gradientPosition(progress)
+                    : (sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG));
             float targetBrightness = spotlight && active ? spotlightBrightness(progress) : 1f;
             float scale = LyricsSyllableViewState.stepWordScale(seg, targetScale, deltaSeconds);
             float y = LyricsSyllableViewState.stepWordY(seg, targetY, deltaSeconds);
@@ -100,15 +101,15 @@ public final class LyricsAnimationApplier {
                 float targetLetterScale = 1f + ((LyricAnimations.letterScaleSpline(letterTimeScale) - 1f) * motionFalloff);
                 float targetLetterY = LyricAnimations.letterYOffsetSpline(letterTimeScale) * motionFalloff;
                 float targetLetterGlow = spotlight
-                        ? (active ? 0.6f : 0f)
-                        : LyricAnimations.glowSpline(glowTimeScale) * glowFalloff;
+                        ? (active || sung ? 0.6f : 0f)
+                        : (sung ? 0.55f : LyricAnimations.glowSpline(glowTimeScale) * glowFalloff);
                 if (!glowEnabled) targetLetterGlow = 0f;
                 float letterEnd = letter.start + letter.duration;
                 float letterGradient;
-                if (spotlight) letterGradient = active || sung ? 100f : -20f;
-                else if (timeAlpha >= letterEnd) letterGradient = 100f;
-                else if (timeAlpha <= letter.start) letterGradient = -20f;
-                else letterGradient = -20f + 120f * LyricAnimations.easeSinOut(letterTimeScale);
+                if (spotlight) letterGradient = active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG;
+                else if (timeAlpha >= letterEnd) letterGradient = LyricAnimations.GRADIENT_SUNG;
+                else if (timeAlpha <= letter.start) letterGradient = LyricAnimations.GRADIENT_UNSUNG;
+                else letterGradient = LyricAnimations.gradientPosition(LyricAnimations.easeSinOut(letterTimeScale));
                 float targetLetterBrightness = spotlight && active ? spotlightBrightness(letterTimeScale) : 1f;
                 float letterScale = LyricsSyllableViewState.stepLetterScale(letter, targetLetterScale, deltaSeconds);
                 float letterY = LyricsSyllableViewState.stepLetterY(letter, targetLetterY, deltaSeconds);
@@ -150,7 +151,7 @@ public final class LyricsAnimationApplier {
             sink.applyScale(dot, dotScale, dotScale);
             sink.applyTranslationY(dot, dotY);
             sink.applyAlpha(dot, opacity);
-            dot.setGradientPosition(-20f + 120f * targets.gradientProgress, glow);
+            dot.setGradientPosition(LyricAnimations.gradientPosition(targets.gradientProgress), glow);
         }
     }
 
@@ -161,7 +162,7 @@ public final class LyricsAnimationApplier {
             sink.applyScale(dot, 0.75f, 0.75f);
             sink.applyTranslationY(dot, 0f);
             sink.applyAlpha(dot, 0.45f);
-            dot.setGradientPosition(-20f, 0f);
+            dot.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
         }
     }
 

@@ -18,7 +18,7 @@ public class LyricsLineAnimationStateTest {
         assertTrue(state.active);
         assertFalse(state.sung);
         assertEquals(0.5f, state.progress, EPS);
-        assertEquals(40f, state.gradient, EPS);
+        assertEquals(30f, state.gradient, EPS);
         assertEquals(0.33f, state.glowTarget, EPS);
         assertEquals(1.0f, state.brightnessTarget, EPS);
         assertEquals(1.0f, state.scaleTarget, EPS);
@@ -56,13 +56,24 @@ public class LyricsLineAnimationStateTest {
 
         assertFalse(before.active);
         assertFalse(before.sung);
-        assertEquals(-20f, before.gradient, EPS);
+        assertEquals(LyricAnimations.GRADIENT_UNSUNG, before.gradient, EPS);
         assertEquals(0.95f, before.scaleTarget, EPS);
 
         assertFalse(after.active);
         assertTrue(after.sung);
         assertEquals(100f, after.gradient, EPS);
+        assertEquals(0.5f, after.glowTarget, EPS);
         assertEquals(0.95f, after.scaleTarget, EPS);
+    }
+
+    @Test
+    public void spotlightRetainsPeakGlowAfterLineFinishes() {
+        AppliedLine line = line(1_000, 5_000);
+
+        LyricsLineAnimationState after = LyricsLineAnimationState.forLine(line, 5_500, true, true);
+
+        assertTrue(after.sung);
+        assertEquals(1f, after.glowTarget, EPS);
     }
 
     private static AppliedLine line(long startMs, long endMs) {

@@ -15,6 +15,7 @@ public class SettingsDefaultsTest {
         assertEquals("spacious", Settings.LINE_SPACING.defaultValue);
         assertEquals("note", Settings.INTERLUDE_ICON.defaultValue);
         assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);
+        assertFalse(Settings.HYPERGLOW_ENABLED.defaultValue);
 
         assertFalse(Settings.TRANSLITERATION_ENABLED.defaultValue);
         assertFalse(Settings.TRANSLATION_ENABLED.defaultValue);

@@ -417,6 +417,53 @@
    }
   },
   {
+   "id": "ja-packed-false-no-space",
+   "spans": [
+    ["とて", false, 0, 100],
+    ["も", false, 100, 200],
+    ["きれい", false, 200, 300],
+    ["だっ", false, 300, 400],
+    ["た", false, 400, 500]
+   ],
+   "expected": {
+    "canonicalText": "とてもきれいだった",
+    "boundaries": [],
+    "spanMappings": [[0, 2], [2, 3], [3, 6], [6, 8], [8, 9]],
+    "scriptRuns": [[0, 9, "Kana"]],
+    "japanesePlan": {
+     "joinedDisplayText": "totemo kirei datta",
+     "timedSpanIds": ["0", "1", "2", "3", "4"]
+    },
+    "readingUnits": [],
+    "timedReadingUnits": [],
+    "joinedDisplayText": ""
+   }
+  },
+  {
+   "id": "ja-authored-latin-boundary",
+   "spans": [
+    ["I ", false, 0, 100],
+    ["let ", false, 100, 200],
+    ["you ", false, 200, 300],
+    ["go ", false, 300, 400],
+    ["君のた", false, 400, 500],
+    ["めなら", false, 500, 600]
+   ],
+   "expected": {
+    "canonicalText": "I let you go 君のためなら",
+    "boundaries": [[1, "explicitWhitespace"], [5, "explicitWhitespace"], [9, "explicitWhitespace"], [12, "explicitWhitespace"]],
+    "spanMappings": [[0, 1], [2, 5], [6, 9], [10, 12], [13, 16], [16, 19]],
+    "scriptRuns": [[0, 1, "Latin"], [1, 2, "Whitespace"], [2, 5, "Latin"], [5, 6, "Whitespace"], [6, 9, "Latin"], [9, 10, "Whitespace"], [10, 12, "Latin"], [12, 13, "Whitespace"], [13, 14, "Han"], [14, 19, "Kana"]],
+    "japanesePlan": {
+     "joinedDisplayText": "I let you go kimi no tame nara",
+     "timedSpanIds": ["0", "1", "2", "3", "4", "5"]
+    },
+    "readingUnits": [],
+    "timedReadingUnits": [],
+    "joinedDisplayText": ""
+   }
+  },
+  {
    "id": "astral",
    "spans": [
     [

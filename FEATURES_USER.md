@@ -6,28 +6,37 @@ card, language-learning helpers, translation, and visual customization.
 
 This is the user-facing feature list.
 
+## APK Flavors
+
+- Full includes transliteration, romanization, translation, language dictionaries and extra fonts.
+- Lite removes the heavy language-processing assets.
+- Both flavors include the complete lyric renderer and HyperGlow bridge.
+
 ## Lyrics Experience
 
 - Fullscreen synced lyrics inside Spotify.
 - Spicy-style karaoke wash that follows the current lyric timing.
-- Word-aware and sentence-aware lyric fill when timing data supports it.
+- Line-, word- and syllable-timed lyrics when the source provides them.
+- Top-to-bottom, block-horizontal and sentence-horizontal lyric fill.
+- Spotlight, glow and interlude animation.
 - Static/unsynced lyric fallback when line timing is unavailable.
 - Interlude indicators between sung lines, using dots or a music note.
 - Loading, empty, error, and no-lyrics states.
 - Optional "stay in lyrics" behavior so the lyric screen remains open across track changes.
 - Tap-to-seek on lyric rows, configurable as off, single tap, or double tap.
 - Manual sync offset from -5000 ms to +5000 ms.
+- Jump back to the current lyric after manual scrolling.
+- Dedicated lyrics entry when Spotify does not expose its native lyric card.
 
 ## Now-Playing Lyrics
 
 - Live current lyric line in Spotify's now-playing view.
 - Placeholder display for tracks without lyrics.
-- Configurable tap behavior for the now-playing lyric.
-- Optional transliteration on the now-playing lyric.
-- Configurable now-playing lyric size and font weight.
-- Full animation mode or a minimal animation mode.
+- Configurable single- or double-tap shortcut to fullscreen lyrics.
+- Main, transliteration, translation or combined secondary line in Full.
+- Independent size, weight, animation, glow, fill, overflow and transition settings.
 
-## Transliteration And Reading Aids
+## Transliteration And Reading Aids — Full
 
 - Global transliteration toggle.
 - Optional per-word transliteration attached under lyrics.
@@ -58,7 +67,7 @@ Supported reading modes:
 - Greek:
   - static table romanization.
 
-## Translation
+## Translation — Full
 
 - Optional lyric translation.
 - Google unofficial translation backend.
@@ -67,12 +76,15 @@ Supported reading modes:
 - Translation brightness: dimmed or bright.
 - Translation cache avoids repeated requests.
 
+Translation uses an unofficial Google endpoint. Eligible lyric text is sent only when translation
+is enabled.
+
 ## Visual Customization
 
-- Lyric text size: small, normal, large, xlarge.
-- Lyric font: Spotify, Apple.
+- Lyric text size: small, normal, large, xlarge or custom.
+- Lyric font: Spotify Mix; Apple font in Full.
 - Lyric weight: regular, medium, bold.
-- Line spacing: compact, default, spacious, more, max.
+- Line spacing: compact, default, spacious, more, max or custom.
 - Interlude indicator: dots or note.
 - Animation style:
   - gradient wash
@@ -90,6 +102,13 @@ Supported reading modes:
 - Kawarp-style album-art ambient background.
 - Force-dark background mode.
 - Fallback gradient background when album-art colors are too low contrast.
+
+## HyperGlow Integration
+
+- Publishes synchronized lyrics to HyperGlow for HyperOS 3 lockscreen/AOD rendering.
+- Lite and Full publish original lyrics, timing, metadata and playback lifecycle.
+- Full can also publish generated transliteration and translation.
+- No Spotify bearer token is sent to HyperGlow.
 
 ## In-Spotify Settings
 

@@ -3,6 +3,7 @@
 # Spicy EX
 Spicy Lyrics for Spotify, as an Xposed/LSPosed module.<br>
 For the desktop version, check out [spicy-lyrics](https://github.com/amarinne/spicy-lyrics).
+Xiaomi HyperOS 3 lockscreen/AOD integration: [HyperGlow](https://github.com/amarinne/hyperglow)
 
 <img src="assets/demo.gif" width="320" alt="Spicy EX lyrics demo">
 

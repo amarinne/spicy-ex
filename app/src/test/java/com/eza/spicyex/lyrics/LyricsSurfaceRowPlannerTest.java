@@ -3,11 +3,61 @@ package com.eza.spicyex.lyrics;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+import com.eza.spicyex.Settings;
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
+import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
+import com.eza.spicyex.lyrics.reading.ReadingModels.TextRange;
+import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
 
 public class LyricsSurfaceRowPlannerTest {
+    @Test
+    public void adaptiveSectioningIsPublicAndDefaultsOn() {
+        assertEquals("lyric_adaptive_sectioning", Settings.ADAPTIVE_SECTIONING.key);
+        assertSame(Settings.TEXT, Settings.ADAPTIVE_SECTIONING.section);
+        assertTrue(Settings.ADAPTIVE_SECTIONING.defaultValue);
+    }
+
+    @Test
+    public void adaptiveSectioningSelectsOnlyTheRecentWrappingModes() {
+        assertEquals(LyricsRowViewFactory.AdaptiveBreakMode.NONE,
+                LyricsRowViewFactory.adaptiveBreakMode(false, true, 35));
+        assertEquals(LyricsRowViewFactory.AdaptiveBreakMode.NONE,
+                LyricsRowViewFactory.adaptiveBreakMode(true, true, 22));
+        assertEquals(LyricsRowViewFactory.AdaptiveBreakMode.BALANCED,
+                LyricsRowViewFactory.adaptiveBreakMode(true, false, 35));
+        assertEquals(LyricsRowViewFactory.AdaptiveBreakMode.CJK_PHRASE,
+                LyricsRowViewFactory.adaptiveBreakMode(true, true, 33));
+    }
+
+    @Test
+    public void adaptiveSectioningPolicyThreadsToMountedRowOptions() {
+        AppliedLine source = line("plain upstream wrapping");
+        LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(
+                1f, false, false, "off", false,
+                false, false, false, false,
+                "Medium", "default", 1f, false, true,
+                false, false, false);
+
+        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(source, document(source), policy);
+
+        assertFalse(plan.options.adaptiveSectioningEnabled);
+        assertTrue(plan.options.wrapLongLines);
+    }
+
+    @Test
+    public void fullscreenDisablesLiveCardHorizontalSafetyPadding() {
+        AppliedLine fullscreen = line("hello bright world");
+
+        LyricsSurfaceRowPlanner.RowPlan fullscreenPlan = LyricsSurfaceRowPlanner.plan(
+                fullscreen, document(fullscreen), LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(null, false, false, "off"));
+
+        assertFalse(fullscreenPlan.options.horizontalSafetyPadding);
+    }
+
     @Test
     public void fullscreenAndLiveCardShareSyntheticWordPlanning() {
         AppliedLine fullscreen = line("hello bright world");
@@ -103,6 +153,42 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
+    public void jukujikunRubyCoalescesOnlyCrossedTimingSpans() {
+        AppliedLine line = line("「今年も早いね」と");
+        String[] texts = {"「今", "年", "も", "早", "いね」", "と"};
+        java.util.ArrayList<TimedReadingUnit> timed = new java.util.ArrayList<>();
+        int cp = 0;
+        for (int i = 0; i < texts.length; i++) {
+            SyllableSegment segment = word(texts[i], i > 0);
+            segment.startMs = 1000L + i * 100L;
+            segment.endMs = segment.startMs + 100L;
+            line.words.add(segment);
+            int next = cp + texts[i].codePointCount(0, texts[i].length());
+            timed.add(new TimedReadingUnit(String.valueOf(i), new TextRange(cp, next),
+                    i == 0 ? "kotoshi" : "", "jp-0"));
+            cp = next;
+        }
+        line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading(
+                line.text, "kotoshi mo hayai ne to", java.util.Collections.singletonList(
+                new SpicyJapaneseChineseProcessor.FuriganaSegment(1, 3, "ことし")));
+        line.readingRenderPlan = new RenderPlan("line", java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(), timed, "kotoshi mo hayai ne to", null);
+        RenderPlan sourcePlan = line.readingRenderPlan;
+
+        LyricsSurfaceRowPlanner.coalesceTimedWordsForRuby(line);
+
+        assertEquals(5, line.words.size());
+        assertEquals("「今年", line.words.get(0).text);
+        assertEquals(1000L, line.words.get(0).startMs);
+        assertEquals(1200L, line.words.get(0).endMs);
+        assertFalse(FuriganaText.hasRubyCrossingWordBoundaries(line));
+        assertSame(sourcePlan, line.readingRenderPlan);
+        assertEquals(6, line.readingRenderPlan.timedReadingUnits.size());
+        assertEquals("kotoshi", line.readingRenderPlan.timedReadingUnits.get(0).text);
+        assertEquals("1", line.readingRenderPlan.timedReadingUnits.get(1).spanId);
+    }
+
+    @Test
     public void japanesePerKanjiFuriganaCanStayWordLevel() {
         AppliedLine line = line("残念");
         line.words.add(word("残", false));
@@ -113,6 +199,42 @@ public class LyricsSurfaceRowPlannerTest {
         line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading(line.text, "zannen", segments);
 
         assertFalse(FuriganaText.hasRubyCrossingWordBoundaries(line));
+    }
+
+    @Test
+    public void inferredPackedBoundaryDoesNotMakeRubyAttachToPreviousKana() {
+        AppliedLine line = line("I let you go 君のためなら");
+        line.words.add(word("I", false));
+        line.words.add(word("let", false));
+        line.words.add(word("you", false));
+        line.words.add(word("go", false));
+        line.words.add(word("君のた", true));
+        line.words.add(word("めなら", true));
+        line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading(
+                line.text, "I let you go kimi no tame nara", java.util.Collections.singletonList(
+                new SpicyJapaneseChineseProcessor.FuriganaSegment(13, 14, "きみ")));
+
+        assertFalse(FuriganaText.hasRubyCrossingWordBoundaries(line));
+        assertTrue(FuriganaText.segmentStartsInWord(line.japaneseReading.furigana.get(0), 13, 16));
+    }
+
+    @Test
+    public void rubyWordRangesUseStablePlanSpansForDuplicateText() {
+        AppliedLine line = line("君君");
+        SyllableSegment first = word("君", false);
+        first.spanId = "left";
+        SyllableSegment second = word("君", true);
+        second.spanId = "right";
+        line.words.add(first);
+        line.words.add(second);
+        line.readingRenderPlan = new RenderPlan("line", java.util.Arrays.asList(
+                new CanonicalSpanMapping("left", new TextRange(0, 1)),
+                new CanonicalSpanMapping("right", new TextRange(1, 2))),
+                java.util.Collections.emptyList(), java.util.Collections.emptyList(), "", null);
+
+        int[] right = FuriganaText.wordRange(line, second, 1, 0);
+        assertEquals(1, right[0]);
+        assertEquals(2, right[1]);
     }
 
     @Test

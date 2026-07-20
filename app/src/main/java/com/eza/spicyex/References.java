@@ -35,6 +35,9 @@ public class References {
     private static WeakReference<Activity> currentActivity = new WeakReference<>(null);
     public static WeakReference<Object> playerState = new WeakReference<>(null);
     public static WeakReference<Object> playerStateWrapper = new WeakReference<>(null);
+    /** Strong playback snapshots keep background track detection alive while Spotify UI is idle. */
+    public static volatile Object playerStateStrong;
+    public static volatile Object playerStateWrapperStrong;
     public static String accessToken = "";
     public static WeakReference<Typeface> beautifulFont = new WeakReference<>(null);
     public static XModuleResources modResources = null;
@@ -58,12 +61,14 @@ public class References {
     }
 
     public static SpotifyTrack getTrackTitle(XC_LoadPackage.LoadPackageParam lpparam, DexKitBridge bridge) {
-        if(playerState == null || playerState.get() == null) {
+        Object strongState = playerStateStrong;
+        Object weakState = playerState == null ? null : playerState.get();
+        if(strongState == null && weakState == null) {
             XposedBridge.log("[SpotifyPlus] playerState is null");
             return null;
         }
 
-        Object state = playerState.get();
+        Object state = strongState != null ? strongState : weakState;
 
         try {
             Object wrapper = XposedHelpers.callMethod(state, "track");
@@ -146,7 +151,9 @@ public class References {
 
     private static long previousMs;
     public static long getCurrentPlaybackPosition(DexKitBridge bridge, XC_LoadPackage.LoadPackageParam lpparam) {
-        Object wrapper = References.playerStateWrapper == null ? null : References.playerStateWrapper.get();
+        Object wrapper = playerStateWrapperStrong != null
+                ? playerStateWrapperStrong
+                : (References.playerStateWrapper == null ? null : References.playerStateWrapper.get());
         if (wrapper == null) return -1;
 
         Object state;

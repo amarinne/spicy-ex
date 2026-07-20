@@ -56,6 +56,10 @@ public final class Settings {
             0, -5000, 5000, 100
     );
 
+    public static final Setting<Boolean> HYPERGLOW_ENABLED = boolSetting(
+            "lyrics_hyper_aod_lyrics_enabled", LYRICS, "Publish lyrics to HyperGlow", false
+    );
+
     // --- Now Playing ---
     public static final Setting<String> LIVE_CARD_TAP_MODE = enumSetting(
             "lyrics_live_card_tap_mode", NOW_PLAYING, "Tap card to open lyrics",
@@ -124,6 +128,10 @@ public final class Settings {
     );
 
     // --- Text ---
+    public static final Setting<Boolean> ADAPTIVE_SECTIONING = boolSetting(
+            "lyric_adaptive_sectioning", TEXT, "Adaptive sectioning", true
+    );
+
     // Scales the vertical gap between lyric rows (sentences); wrapped lines inside one sentence
     // keep a fixed 1.18 line-height (LyricsTextFactory).
     public static final Setting<String> LINE_SPACING = enumSetting(

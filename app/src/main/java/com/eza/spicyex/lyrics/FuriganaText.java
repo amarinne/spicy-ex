@@ -7,6 +7,10 @@ import android.graphics.Typeface;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ReplacementSpan;
+import java.util.ArrayList;
+import java.util.List;
+import com.eza.spicyex.lyrics.reading.CodePointRanges;
+import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
@@ -17,8 +21,22 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  * line text.
  */
 public final class FuriganaText {
+    static final float RUBY_SIZE_RATIO = 0.46f;
+    static final float RUBY_GAP_RATIO = 0.12f;
 
     private FuriganaText() {
+    }
+
+    static float rubyTextSize(float baseTextSize) {
+        return Math.max(1f, baseTextSize * RUBY_SIZE_RATIO);
+    }
+
+    static int rubyAscentReservationPx(float baseTextSize) {
+        return (int) Math.ceil(rubyTextSize(baseTextSize) + baseTextSize * RUBY_GAP_RATIO);
+    }
+
+    static int rubyGapReservationPx(float baseTextSize) {
+        return (int) Math.ceil(baseTextSize * RUBY_GAP_RATIO);
     }
 
     /** Whole-line ruby: spans the line's furigana runs over {@code line.text}. */
@@ -76,36 +94,81 @@ public final class FuriganaText {
     }
 
     static boolean hasRubyCrossingWordBoundaries(AppliedLine line) {
+        return !crossingRubyWordRanges(line).isEmpty();
+    }
+
+    static List<int[]> crossingRubyWordRanges(AppliedLine line) {
+        ArrayList<int[]> crossings = new ArrayList<>();
         if (line == null || line.words == null || line.words.isEmpty()
                 || line.japaneseReading == null || line.japaneseReading.furigana == null
-                || line.japaneseReading.furigana.isEmpty()) return false;
+                || line.japaneseReading.furigana.isEmpty()) return crossings;
 
         int offset = 0;
+        String lineText = safe(line.text);
         int[] starts = new int[line.words.size()];
         int[] ends = new int[line.words.size()];
-        int count = 0;
-        for (SyllableSegment seg : line.words) {
-            if (seg == null || isBlank(seg.text)) continue;
-            if (offset > 0 && !seg.partOfWord) offset++;
-            starts[count] = offset;
-            offset += seg.text.length();
-            ends[count] = offset;
-            count++;
+        for (int index = 0; index < line.words.size(); index++) {
+            SyllableSegment seg = line.words.get(index);
+            if (seg == null || isBlank(seg.text)) {
+                starts[index] = ends[index] = offset;
+                continue;
+            }
+            int[] range = wordRange(line, seg, index, offset);
+            starts[index] = range[0];
+            ends[index] = range[1];
+            offset = Math.max(offset, range[1]);
         }
-        if (count == 0) return false;
 
         for (SpicyJapaneseChineseProcessor.FuriganaSegment segment : line.japaneseReading.furigana) {
             if (segment == null || isBlank(segment.reading) || segment.end <= segment.start) continue;
-            boolean contained = false;
-            for (int i = 0; i < count; i++) {
-                if (segment.start >= starts[i] && segment.end <= ends[i]) {
-                    contained = true;
-                    break;
+            int first = -1;
+            int last = -1;
+            for (int i = 0; i < line.words.size(); i++) {
+                if (segment.end <= starts[i] || segment.start >= ends[i]) continue;
+                if (first < 0) first = i;
+                last = i;
+            }
+            if (first >= 0 && last > first) crossings.add(new int[]{first, last});
+        }
+        crossings.sort((left, right) -> Integer.compare(left[0], right[0]));
+        ArrayList<int[]> merged = new ArrayList<>();
+        for (int[] crossing : crossings) {
+            if (merged.isEmpty() || crossing[0] > merged.get(merged.size() - 1)[1]) {
+                merged.add(crossing.clone());
+            } else {
+                merged.get(merged.size() - 1)[1] = Math.max(merged.get(merged.size() - 1)[1], crossing[1]);
+            }
+        }
+        return merged;
+    }
+
+    /** Resolve ruby coordinates from immutable source ownership when a plan is available. The
+     * fallback is only for legacy rows without a plan. */
+    static int[] wordRange(AppliedLine line, SyllableSegment segment, int fallbackIndex, int fallbackOffset) {
+        String text = safe(line == null ? "" : line.text);
+        if (line != null && line.readingRenderPlan != null && segment != null) {
+            String spanId = segment.spanId == null || segment.spanId.trim().isEmpty()
+                    ? String.valueOf(fallbackIndex) : segment.spanId;
+            int startCp = Integer.MAX_VALUE;
+            int endCp = -1;
+            for (String id : spanId.split("\\+")) {
+                for (CanonicalSpanMapping mapping : line.readingRenderPlan.sourceUnits) {
+                    if (mapping == null || mapping.canonicalRange == null || !id.equals(mapping.spanId)) continue;
+                    startCp = Math.min(startCp, mapping.canonicalRange.startCp);
+                    endCp = Math.max(endCp, mapping.canonicalRange.endCp);
                 }
             }
-            if (!contained) return true;
+            if (endCp >= 0) {
+                return new int[]{
+                        CodePointRanges.codePointOffsetToUtf16Index(text, startCp),
+                        CodePointRanges.codePointOffsetToUtf16Index(text, endCp)
+                };
+            }
         }
-        return false;
+        String word = segment == null ? "" : safe(segment.text);
+        int found = word.isEmpty() ? fallbackOffset : text.indexOf(word, fallbackOffset);
+        int start = found >= 0 ? found : fallbackOffset;
+        return new int[]{start, Math.min(text.length(), start + word.length())};
     }
 
     /** Draws a small kana reading centered above the spanned base text. */
@@ -120,8 +183,8 @@ public final class FuriganaText {
         @Override
         public int getSize(Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
             float baseSize = paint.getTextSize();
-            float readingSize = Math.max(1f, baseSize * 0.46f);
-            float gap = baseSize * 0.12f;
+            float readingSize = rubyTextSize(baseSize);
+            float gap = baseSize * RUBY_GAP_RATIO;
             float baseWidth = paint.measureText(text, start, end);
             float oldSize = paint.getTextSize();
             paint.setTextSize(readingSize);
@@ -142,8 +205,8 @@ public final class FuriganaText {
         @Override
         public void draw(Canvas canvas, CharSequence text, int start, int end, float x, int top, int y, int bottom, Paint paint) {
             float baseSize = paint.getTextSize();
-            float readingSize = Math.max(1f, baseSize * 0.46f);
-            float gap = baseSize * 0.12f;
+            float readingSize = rubyTextSize(baseSize);
+            float gap = baseSize * RUBY_GAP_RATIO;
             float baseWidth = paint.measureText(text, start, end);
             int width = spanWidth > 0 ? spanWidth : (int) Math.ceil(baseWidth);
             float baseX = x + (width - baseWidth) / 2f;
@@ -152,7 +215,7 @@ public final class FuriganaText {
             float oldSize = paint.getTextSize();
             Typeface oldTypeface = paint.getTypeface();
             paint.setTextSize(readingSize);
-            paint.setTypeface(Typeface.DEFAULT);
+            paint.setTypeface(oldTypeface);
             paint.setColor(Color.rgb(150, 150, 150));
             Paint.FontMetricsInt readingFm = paint.getFontMetricsInt();
             Paint.FontMetricsInt baseFm = new Paint.FontMetricsInt();
@@ -162,7 +225,7 @@ public final class FuriganaText {
             paint.getFontMetricsInt(baseFm);
 
             paint.setTextSize(readingSize);
-            paint.setTypeface(Typeface.DEFAULT);
+            paint.setTypeface(oldTypeface);
             paint.setColor(Color.rgb(150, 150, 150));
             float readingWidth = paint.measureText(reading);
             float readingX = x + (width - readingWidth) / 2f;

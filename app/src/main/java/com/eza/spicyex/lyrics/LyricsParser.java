@@ -1,6 +1,5 @@
 package com.eza.spicyex.lyrics;
 
-import android.app.Activity;
 import android.content.Context;
 
 import com.google.gson.JsonArray;
@@ -10,12 +9,15 @@ import com.google.gson.JsonParser;
 import com.eza.spicyex.SpotifyTrack;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XposedBridge;
 import static com.eza.spicyex.lyrics.LyricUtils.cleanInvisibles;
+import static com.eza.spicyex.lyrics.LyricUtils.cleanInvisiblesPreserveEdges;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
@@ -32,7 +34,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
     }
 
     @Override
-    public LyricsDocument parseSpicyLyrics(Activity activity, SpotifyTrack track, String raw, boolean fromCache) {
+    public LyricsDocument parseSpicyLyrics(Context context, SpotifyTrack track, String raw, boolean fromCache) {
         log(TAG + " parseSpicyLyrics track=" + (track == null ? "null" : safe(track.uri))
                 + " fromCache=" + fromCache + " bytes=" + (raw == null ? 0 : raw.length()));
         SpicyResponseMetadata metadata = new SpicyResponseMetadata();
@@ -72,12 +74,12 @@ public final class LyricsParser implements LyricsRepository.Parser {
             throw new IllegalStateException("unsupported lyrics type " + type);
         }
 
-        finalizeParsedDocument(activity, doc);
+        finalizeParsedDocument(context, doc);
         return doc;
     }
 
     @Override
-    public LyricsDocument parseLrclibLyrics(Activity activity, SpotifyTrack track, String body) {
+    public LyricsDocument parseLrclibLyrics(Context context, SpotifyTrack track, String body) {
         JsonElement root = JsonParser.parseString(body);
         JsonObject best = null;
         if (root.isJsonArray()) {
@@ -111,7 +113,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
             doc.type = "Static";
             parsePlainLines(Json.optString(best, "plainLyrics"), doc);
         }
-        finalizeParsedDocument(activity, doc);
+        finalizeParsedDocument(context, doc);
         return doc;
     }
 
@@ -213,10 +215,11 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonObject lead = Json.optObject(object, "Lead", "lead");
             if (lead == null) continue;
             JsonArray syllables = Json.optArray(lead, "Syllables", "syllables");
-            String text = cleanInvisibles(firstNonBlank(
+            String stitchedText = cleanInvisibles(joinSyllablesPreserveEdges(syllables, "Text", "text"));
+            String providerLineText = cleanInvisibles(firstNonBlank(
                     Json.optString(lead, "Text", "text"),
-                    Json.optString(object, "Text", "text"),
-                    joinSyllables(syllables, "Text", "text")));
+                    Json.optString(object, "Text", "text")));
+            String text = selectCanonicalSyllableText(stitchedText, providerLineText);
             if (isBlank(text)) continue;
 
             LyricsLine line = new LyricsLine();
@@ -314,6 +317,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
             String text = rawText.trim();
             if (text.isEmpty()) continue;
             SyllableSegment seg = new SyllableSegment();
+            seg.spanId = String.valueOf(i);
             seg.text = text;
             seg.sourceText = rawText;
             seg.partOfWord = Json.optBoolean(syllable, false, "IsPartOfWord", "isPartOfWord") && !boundaryAfter;
@@ -358,6 +362,96 @@ public final class LyricsParser implements LyricsRepository.Parser {
             out.append(text);
         }
         return out.toString().trim();
+    }
+
+    private static String joinSyllablesPreserveEdges(JsonArray syllables, String... textKeys) {
+        if (syllables == null) return "";
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < syllables.size(); i++) {
+            JsonElement element = syllables.get(i);
+            if (!element.isJsonObject()) continue;
+            JsonObject syllable = element.getAsJsonObject();
+            String text = cleanInvisiblesPreserveEdges(Json.optString(syllable, textKeys));
+            if (isBlank(text)) continue;
+            boolean isPart = Json.optBoolean(syllable, false, "IsPartOfWord", "isPartOfWord");
+            boolean continuousJapaneseRun = isJapaneseCodePoint(lastNonWhitespaceCodePoint(out.toString()))
+                    && isJapaneseCodePoint(firstNonWhitespaceCodePoint(text));
+            if (out.length() > 0 && !Character.isWhitespace(out.codePointBefore(out.length()))
+                    && !Character.isWhitespace(text.codePointAt(0))
+                    && !continuousJapaneseRun
+                    && (!isPart || crossesJapaneseLatinBoundary(out.toString(), text))) out.append(' ');
+            out.append(text);
+        }
+        return out.toString().trim();
+    }
+
+    /** A provider's complete line preserves word boundaries better than a reconstructed timing
+     * stream. Accept it only when it represents the same visible content. */
+    private static String selectCanonicalSyllableText(String stitched, String providerLine) {
+        if (isBlank(providerLine)) return stitched;
+        if (isBlank(stitched)) return providerLine;
+        String compactStitched = stitched.replaceAll("\\s+", "");
+        String compactProvider = providerLine.replaceAll("\\s+", "");
+        if (!compactStitched.equals(compactProvider)) return stitched;
+        // A provider line can be a lossy compact alias. It becomes canonical only when it keeps
+        // every boundary already evidenced by timing-span edge text.
+        return whitespaceOffsets(providerLine).containsAll(whitespaceOffsets(stitched)) ? providerLine : stitched;
+    }
+
+    private static Set<Integer> whitespaceOffsets(String value) {
+        Set<Integer> out = new HashSet<>();
+        if (value == null) return out;
+        int visibleOffset = 0;
+        for (int index = 0; index < value.length();) {
+            int cp = value.codePointAt(index);
+            if (Character.isWhitespace(cp)) out.add(visibleOffset);
+            else visibleOffset++;
+            index += Character.charCount(cp);
+        }
+        return out;
+    }
+
+    /** Packed lyric transport can discard authored edge spaces. Restore only clear JP/Latin joins. */
+    private static boolean crossesJapaneseLatinBoundary(String previous, String current) {
+        int previousCp = lastNonWhitespaceCodePoint(previous);
+        int currentCp = firstNonWhitespaceCodePoint(current);
+        if (previousCp < 0 || currentCp < 0) return false;
+        return isJapaneseCodePoint(previousCp) != isJapaneseCodePoint(currentCp)
+                && (isJapaneseCodePoint(previousCp) || isJapaneseCodePoint(currentCp))
+                && (isLatinOrDigit(previousCp) || isLatinOrDigit(currentCp));
+    }
+
+    private static int firstNonWhitespaceCodePoint(String value) {
+        if (value == null) return -1;
+        for (int i = 0; i < value.length();) {
+            int cp = value.codePointAt(i);
+            if (!Character.isWhitespace(cp)) return cp;
+            i += Character.charCount(cp);
+        }
+        return -1;
+    }
+
+    private static int lastNonWhitespaceCodePoint(String value) {
+        if (value == null) return -1;
+        for (int i = value.length(); i > 0;) {
+            int cp = value.codePointBefore(i);
+            if (!Character.isWhitespace(cp)) return cp;
+            i -= Character.charCount(cp);
+        }
+        return -1;
+    }
+
+    private static boolean isJapaneseCodePoint(int cp) {
+        if (cp < 0) return false;
+        Character.UnicodeScript script = Character.UnicodeScript.of(cp);
+        return script == Character.UnicodeScript.HAN
+                || script == Character.UnicodeScript.HIRAGANA
+                || script == Character.UnicodeScript.KATAKANA;
+    }
+
+    private static boolean isLatinOrDigit(int cp) {
+        return Character.UnicodeScript.of(cp) == Character.UnicodeScript.LATIN
+                || Character.isDigit(cp);
     }
 
     private static JsonElement unpackSpicyPayloads(JsonElement element, SpicyResponseMetadata metadata, boolean queryResultData) {

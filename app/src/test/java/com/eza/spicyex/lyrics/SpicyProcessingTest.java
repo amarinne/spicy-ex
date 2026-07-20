@@ -71,4 +71,12 @@ public class SpicyProcessingTest {
         assertTrue(LyricsTextFactory.shouldUseSystemFallbackForText("ভালোবাসা"));
         assertFalse(LyricsTextFactory.shouldUseSystemFallbackForText("hello world"));
     }
+
+    @Test
+    public void mixedJapaneseFontFallbackTargetsOnlyCjkRuns() {
+        java.util.List<int[]> ranges = LyricsTextFactory.cjkFontRanges("また今日 Hit my phone up");
+        assertEquals(1, ranges.size());
+        assertEquals(0, ranges.get(0)[0]);
+        assertEquals(4, ranges.get(0)[1]);
+    }
 }

@@ -56,6 +56,7 @@ final class PlaybackBridge {
                         protected void afterHookedMethod(MethodHookParam param) {
                             Object state = param.getResult();
                             if (state == null) return;
+                            References.playerStateStrong = state;
                             References.playerState = new WeakReference<>(state);
                         }
                     });
@@ -87,6 +88,7 @@ final class PlaybackBridge {
             XposedBridge.hookMethod(playerWrapperGetStateMethod, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
+                    References.playerStateWrapperStrong = param.thisObject;
                     References.playerStateWrapper = new WeakReference<>(param.thisObject);
                 }
             });

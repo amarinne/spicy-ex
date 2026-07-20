@@ -63,6 +63,21 @@ public class LyricsLocalRomanizerDocumentContextTest {
         assertEquals(SpotifyPlusConfig.CHINESE_MODE_JYUTPING, line.chineseMode);
     }
 
+    @Test
+    public void providerFuriganaJapaneseLineStillProducesPlanAuthority() {
+        LyricsDocument doc = doc("jpn", "紅葉");
+        LyricsLine line = doc.lines.get(0);
+        line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading("紅葉", "", java.util.Collections.singletonList(
+                new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "こうよう")));
+
+        String romanized = LyricsLocalRomanizer.romanizeLine(JYUTPING, doc, line,
+                LyricsDocumentProcessor.collectText(doc));
+
+        assertEquals("kouyou", romanized);
+        assertNotNull(line.readingRenderPlan);
+        assertEquals("kouyou", line.readingRenderPlan.joinedDisplayText);
+    }
+
     private static LyricsDocument doc(String language, String... texts) {
         LyricsDocument doc = new LyricsDocument();
         doc.language = language;

@@ -2,6 +2,10 @@ package com.eza.spicyex.lyrics;
 
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
+import java.util.ArrayList;
+import java.util.List;
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
+
 /**
  * Shared row-shape planner for fullscreen and now-playing surfaces.
  *
@@ -40,7 +44,9 @@ public final class LyricsSurfaceRowPlanner {
         options.textSizeMultiplier = safePolicy.textSizeMultiplier;
         options.translationBright = safePolicy.translationBright;
         options.wrapLongLines = safePolicy.wrapLongLines;
+        options.adaptiveSectioningEnabled = safePolicy.adaptiveSectioningEnabled;
         options.horizontalSafetyPadding = safePolicy.horizontalSafetyPadding;
+        if (options.showJapaneseFurigana) coalesceTimedWordsForRuby(displayLine);
 
         boolean hasWords = displayLine != null && displayLine.words != null && !displayLine.words.isEmpty();
         boolean alignedRomaji = hasWords
@@ -52,6 +58,67 @@ public final class LyricsSurfaceRowPlanner {
                 && displayLine.readingRenderPlan.timedReadingUnits.size() >= displayLine.words.size();
         options.documentText = alignedRomaji && document != null ? LyricsDocumentProcessor.collectText(document) : "";
         return new RowPlan(displayLine, options);
+    }
+
+    static void coalesceTimedWordsForRuby(AppliedLine line) {
+        List<int[]> ranges = FuriganaText.crossingRubyWordRanges(line);
+        if (line == null || ranges.isEmpty()) return;
+        ArrayList<SyllableSegment> mergedWords = new ArrayList<>();
+        int rangeIndex = 0;
+        for (int index = 0; index < line.words.size();) {
+            int[] range = rangeIndex < ranges.size() ? ranges.get(rangeIndex) : null;
+            if (range == null || index != range[0]) {
+                mergedWords.add(line.words.get(index++));
+                continue;
+            }
+            mergedWords.add(mergeWords(line.words, range[0], range[1]));
+            index = range[1] + 1;
+            rangeIndex++;
+        }
+        line.words.clear();
+        line.words.addAll(mergedWords);
+    }
+
+    private static SyllableSegment mergeWords(List<SyllableSegment> words, int start, int end) {
+        SyllableSegment first = words.get(start);
+        SyllableSegment last = words.get(end);
+        SyllableSegment merged = new SyllableSegment();
+        merged.spanId = joinSegmentIds(words, start, end);
+        merged.text = joinSegmentField(words, start, end, false, false);
+        merged.sourceText = joinSegmentField(words, start, end, true, false);
+        merged.romanizedText = joinSegmentField(words, start, end, false, true);
+        merged.startMs = first == null ? 0L : first.startMs;
+        merged.endMs = last == null ? merged.startMs + 1 : Math.max(merged.startMs + 1, last.endMs);
+        merged.totalMs = merged.endMs - merged.startMs;
+        merged.partOfWord = first != null && first.partOfWord;
+        merged.dot = false;
+        merged.bgWord = first != null && first.bgWord;
+        return merged;
+    }
+
+    private static String joinSegmentIds(List<SyllableSegment> words, int start, int end) {
+        StringBuilder out = new StringBuilder();
+        for (int index = start; index <= end; index++) {
+            SyllableSegment segment = words.get(index);
+            String id = segment == null ? "" : segment.spanId;
+            if (id == null || id.trim().isEmpty()) id = String.valueOf(index);
+            if (out.length() > 0) out.append('+');
+            out.append(id);
+        }
+        return out.toString();
+    }
+
+    private static String joinSegmentField(List<SyllableSegment> words, int start, int end,
+                                           boolean source, boolean romanized) {
+        StringBuilder out = new StringBuilder();
+        for (int index = start; index <= end; index++) {
+            SyllableSegment segment = words.get(index);
+            if (segment == null) continue;
+            String value = source ? segment.sourceText : romanized ? segment.romanizedText : segment.text;
+            if (out.length() > 0 && !segment.partOfWord) out.append(' ');
+            out.append(value == null ? "" : value);
+        }
+        return out.toString();
     }
 
     private static AppliedLine displayLineForPolicy(AppliedLine line, SurfacePolicy policy) {
@@ -158,6 +225,7 @@ public final class LyricsSurfaceRowPlanner {
         public final float textSizeMultiplier;
         public final boolean translationBright;
         public final boolean wrapLongLines;
+        public final boolean adaptiveSectioningEnabled;
         public final boolean forceStartAligned;
         public final boolean horizontalSafetyPadding;
 
@@ -224,6 +292,31 @@ public final class LyricsSurfaceRowPlanner {
                 boolean forceStartAligned,
                 boolean horizontalSafetyPadding
         ) {
+            this(lineSpacingMultiplier, showRomanization, showTranslation, japaneseReadingMode,
+                    attachTransliterationToWords, lineLevelFillTopDown, lineLevelFillSentence,
+                    wordLevelFill, interludeNoteIcon, lyricWeight, lyricsFont, textSizeMultiplier,
+                    translationBright, wrapLongLines, forceStartAligned, horizontalSafetyPadding, true);
+        }
+
+        public SurfacePolicy(
+                float lineSpacingMultiplier,
+                boolean showRomanization,
+                boolean showTranslation,
+                String japaneseReadingMode,
+                boolean attachTransliterationToWords,
+                boolean lineLevelFillTopDown,
+                boolean lineLevelFillSentence,
+                boolean wordLevelFill,
+                boolean interludeNoteIcon,
+                String lyricWeight,
+                String lyricsFont,
+                float textSizeMultiplier,
+                boolean translationBright,
+                boolean wrapLongLines,
+                boolean forceStartAligned,
+                boolean horizontalSafetyPadding,
+                boolean adaptiveSectioningEnabled
+        ) {
             this.lineSpacingMultiplier = lineSpacingMultiplier;
             this.showRomanization = showRomanization;
             this.showTranslation = showTranslation;
@@ -238,6 +331,7 @@ public final class LyricsSurfaceRowPlanner {
             this.textSizeMultiplier = textSizeMultiplier;
             this.translationBright = translationBright;
             this.wrapLongLines = wrapLongLines;
+            this.adaptiveSectioningEnabled = adaptiveSectioningEnabled;
             this.forceStartAligned = forceStartAligned;
             this.horizontalSafetyPadding = horizontalSafetyPadding;
         }
@@ -264,7 +358,9 @@ public final class LyricsSurfaceRowPlanner {
                     cfg == null ? 1f : cfg.lyricsTextSizeMultiplier,
                     cfg != null && cfg.translationBright,
                     true,
-                    false);
+                    false,
+                    false,
+                    cfg == null || cfg.adaptiveSectioningEnabled);
         }
 
         public static SurfacePolicy liveCard(LyricsRenderConfig config) {
@@ -287,7 +383,8 @@ public final class LyricsSurfaceRowPlanner {
                     cfg != null && cfg.translationBright,
                     wrapOverflow,
                     scrollOverflow,
-                    wrapOverflow);
+                    wrapOverflow,
+                    cfg == null || cfg.adaptiveSectioningEnabled);
         }
 
         public static SurfacePolicy defaultPolicy() {

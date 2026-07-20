@@ -101,7 +101,7 @@ public class XposedLoader implements IXposedHookLoadPackage, IXposedHookZygoteIn
                 cleanUpCache(context);
 
                 // Native Spicy build: mount Android-native lyrics shell and keep Spotify internals as fallback/reference.
-                new NativeSpicyLyricsHook().init(lpparam, bridge);
+                new NativeSpicyLyricsHook(context).init(lpparam, bridge);
             }
         });
     }

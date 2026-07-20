@@ -21,6 +21,10 @@ import org.junit.Test;
  * old override layer (tanaka kimi, tou nen go, even-split furigana, ー handling).
  */
 public class JapaneseReadingTest {
+    @Test
+    public void adjacentFillerFragmentsShareOneRomajiWord() {
+        assertEquals("daibu muri an ne", romaji("だいぶ無理あんね"));
+    }
     private static String romaji(String line) {
         SpicyJapaneseChineseProcessor.JapaneseReading r =
                 SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line, null);
@@ -100,6 +104,12 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void nativeNumericPersonReadingRendersGroupedRuby() {
+        assertEquals(Arrays.asList("2人=ふたり"), furigana("2人"));
+        assertEquals(Arrays.asList("1人=ひとり"), furigana("1人"));
+    }
+
+    @Test
     public void irisNanDemoUsesFullLineContextAcrossTimingSplit() {
         assertEquals("nan", romaji("何"));
         String source = "パチモンでもいい何でもいい";
@@ -150,11 +160,22 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void preferredUsuallyKanaReadingStaysLexicalAndCompoundGuarded() {
+        assertEquals("omocha", romaji("玩具"));
+        assertEquals("otona no omocha", romaji("大人の玩具"));
+        assertEquals("kyouiku gangu", romaji("教育玩具"));
+        assertEquals(Arrays.asList("玩具=おもちゃ"), furigana("玩具"));
+        assertEquals("ichiji no yume", romaji("一時の夢"));
+        assertEquals("myougonichi", romaji("明後日"));
+    }
+
+    @Test
     public void oldOverrideLayerRegressionsStayFixed() {
         // The pre-refactor jukujikun map clobbered correct dictionary readings.
         assertEquals("tanaka kun", romaji("田中君"));
         assertEquals("kimi", romaji("君"));
         assertEquals("kimi no na wa", romaji("君の名は"));
+        assertEquals("I let you go kimi no tame nara", romaji("I let you go 君のためなら"));
         assertEquals("juu nen go", romaji("十年後"));
         assertEquals("hitori", romaji("一人"));
         assertEquals("futari", romaji("二人"));
@@ -177,6 +198,24 @@ public class JapaneseReadingTest {
         assertEquals("itte", romaji("言って"));
         assertEquals("matteru", romaji("待ってる"));
         assertEquals("itteshimatta", romaji("行ってしまった"));
+        assertEquals("totemo kirei datta", romaji("とてもきれいだった"));
+    }
+
+    @Test
+    public void timedSokuonKeepsDoubleTAcrossProviderSplit() {
+        LyricsLine line = new LyricsLine();
+        line.text = "とてもきれいだった";
+        for (String text : Arrays.asList("とて", "も", "きれい", "だっ", "た")) {
+            SyllableSegment segment = new SyllableSegment();
+            segment.text = text;
+            segment.partOfWord = true;
+            line.syllables.add(segment);
+        }
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line.text, null);
+        RenderPlan plan = ReadingPlanFactory.japanese(line, reading);
+        assertNotNull(plan);
+        assertEquals("totemo kirei datta", plan.joinedDisplayText);
     }
 
     @Test
@@ -285,7 +324,7 @@ public class JapaneseReadingTest {
         provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "こうよう"));
         SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot overlap =
                 SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("紅葉", provider);
-        assertEquals("unidicReadingOfRecord", overlap.tokens.get(0).readingReason);
+        assertEquals("analyzer-pronunciation", overlap.tokens.get(0).readingReason);
     }
 
     @Test
@@ -300,7 +339,47 @@ public class JapaneseReadingTest {
         assertEquals("koroshita", snapshot.romaji);
         assertFalse(snapshot.tokens.isEmpty());
         assertEquals("殺し", snapshot.tokens.get(0).surface);
-        assertEquals("unidicReadingOfRecord", snapshot.tokens.get(0).readingReason);
+        assertEquals("analyzer-pronunciation", snapshot.tokens.get(0).readingReason);
+    }
+
+    @Test
+    public void authoredKanaWinsOnlyWhenOccurrenceReadingIsUnavailable() {
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot authored =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("メイク", null);
+        assertEquals("めいく", authored.tokens.get(0).selectedReading);
+        assertEquals("authored-kana", authored.readingContext.tokens.get(0).candidates.get(0).source);
+        assertEquals("meiku", authored.romaji);
+        assertEquals("mou ii yo", romaji("もーいいよ"));
+    }
+
+    @Test
+    public void reviewedIchiAllomorphOwnsOneTimingUnit() {
+        LyricsLine line = new LyricsLine();
+        line.text = "一等";
+        for (String text : Arrays.asList("一", "等")) {
+            SyllableSegment segment = new SyllableSegment();
+            segment.text = text;
+            segment.partOfWord = true;
+            line.syllables.add(segment);
+        }
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line.text, null);
+        assertNotNull(reading);
+        assertEquals("ittou", reading.romaji);
+        assertEquals(1, reading.groups.size());
+        RenderPlan plan = ReadingPlanFactory.japanese(line, reading);
+        assertNotNull(plan);
+        assertEquals("ittou", plan.timedReadingUnits.get(0).text);
+        assertEquals("", plan.timedReadingUnits.get(1).text);
+    }
+
+    @Test
+    public void terminalSokuonIsSuppressedAndDiagnosed() {
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine("ねえっ", null);
+        assertNotNull(reading);
+        assertEquals("nee", reading.romaji);
+        assertEquals(Arrays.asList("ja.romaji.sokuon.unresolved"), reading.diagnostics);
     }
 
     @Test
@@ -351,6 +430,39 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void analyzedReadingCarriesFinalizedGroups() {
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine("本当の声を響かせてよ", null);
+        assertNotNull(reading);
+        assertFalse(reading.groups.isEmpty());
+        // The finalized-analysis overload projects those groups without retokenizing.
+        assertEquals(Arrays.asList("hontou", "no", "koe", "wo", "hibikasete", "", "", "yo"),
+                SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(reading,
+                        Arrays.asList("本当", "の", "声", "を", "響か", "せ", "て", "よ")));
+    }
+
+    @Test
+    public void renderPlanConsumesFinalizedReadingWithoutRetokenizing() {
+        LyricsLine line = new LyricsLine();
+        line.text = "時計";
+        for (String text : Arrays.asList("時", "計")) {
+            SyllableSegment segment = new SyllableSegment();
+            segment.text = text;
+            segment.partOfWord = true;
+            line.syllables.add(segment);
+        }
+        // Tampered groups prove the factory consumes the reading's finalized analysis:
+        // a fresh tokenization of 時計 would produce "tokei", never "faketext".
+        SpicyJapaneseChineseProcessor.JapaneseReading tampered =
+                new SpicyJapaneseChineseProcessor.JapaneseReading("時計", "faketext", new ArrayList<>(),
+                        Arrays.asList(new SpicyJapaneseChineseProcessor.ReadingGroup(0, 2, "faketext")));
+        RenderPlan plan = ReadingPlanFactory.japanese(line, tampered);
+        assertNotNull(plan);
+        assertEquals("faketext", plan.joinedDisplayText);
+        assertEquals("faketext", plan.timedReadingUnits.get(0).text.trim());
+    }
+
+    @Test
     public void syllableRomanizationUsesFullLineContext() {
         List<String> parts = SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(
                 "本当の声を響かせてよ",
@@ -381,6 +493,122 @@ public class JapaneseReadingTest {
         assertEquals("mo", line.syllables.get(2).romanizedText);
         assertEquals("hayai", line.syllables.get(3).romanizedText);
         assertEquals("ne", line.syllables.get(4).romanizedText);
+    }
+
+    @Test
+    public void readingPolicyEvidenceIsImmutableAndVersioned() {
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine("言って", null);
+        assertNotNull(reading);
+        assertEquals("lyrics-language-lab-japanese-reading-context", reading.readingContext.schema);
+        assertEquals(1, reading.readingContext.schemaVersion);
+        JapaneseReadingPolicyModels.ReadingDecision sokuon = null;
+        for (JapaneseReadingPolicyModels.ReadingDecision decision : reading.readingDecisions) {
+            if ("ja.reading.phonetic.cross-token-sokuon".equals(decision.ruleId)) sokuon = decision;
+        }
+        assertNotNull(sokuon);
+        assertEquals(Integer.valueOf(2), sokuon.ruleVersion);
+        assertEquals("いって", sokuon.selectedKana);
+        boolean immutable = false;
+        try {
+            reading.readingDecisions.add(sokuon);
+        } catch (UnsupportedOperationException expected) {
+            immutable = true;
+        }
+        assertTrue(immutable);
+    }
+
+    @Test
+    public void providerEvidenceOutranksAshitaDefaultOnly() {
+        ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> provider = new ArrayList<>();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "あす"));
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLineWithProviderFurigana("明日", provider);
+        assertNotNull(reading);
+        assertEquals("asu", reading.romaji);
+        assertTrue(reading.readingDecisions.stream().anyMatch(
+                decision -> "provider-ruby-validated".equals(decision.reasonId) && decision.ruleId == null));
+        assertFalse(reading.readingDecisions.stream().anyMatch(
+                decision -> "ja.reading.policy.ashita-default".equals(decision.ruleId)));
+    }
+
+    @Test
+    public void phoneticFinalizationRejectsContradictoryProviderRuby() {
+        ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> provider = new ArrayList<>();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "いち"));
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(1, 2, "ほ"));
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLineWithProviderFurigana("一歩", provider);
+        assertNotNull(reading);
+        assertEquals("ippo", reading.romaji);
+        assertTrue(reading.readingContext.providerEvidence.stream().allMatch(
+                evidence -> "higher-priority-policy-decision".equals(evidence.reasonId)));
+    }
+
+    @Test
+    public void nfkcProviderCoordinatesMapIntoCanonicalText() {
+        ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> provider = new ArrayList<>();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(1, 2, "かく"));
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(2, 3, "たば"));
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLineWithProviderFurigana("㍍覚束", provider);
+        assertNotNull(reading);
+        assertEquals("㍍覚束", reading.readingContext.sourceText);
+        assertEquals("メートル覚束", reading.readingContext.canonicalText);
+        assertEquals(4, reading.readingContext.providerEvidence.get(0).targetRange.start);
+        assertEquals(5, reading.readingContext.providerEvidence.get(0).targetRange.end);
+        assertEquals(5, reading.readingContext.providerEvidence.get(1).targetRange.start);
+        assertEquals(6, reading.readingContext.providerEvidence.get(1).targetRange.end);
+        assertTrue(reading.readingContext.providerEvidence.stream().allMatch(
+                item -> "accepted".equals(item.status)));
+    }
+
+    @Test
+    public void supplementaryCodePointsUseCanonicalCodePointRanges() {
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine("😀覚束", null);
+        assertNotNull(reading);
+        assertTrue(reading.readingContext.tokens.size() >= 2);
+        int cursor = 0;
+        for (JapaneseReadingPolicyModels.ReadingTokenEvidence token : reading.readingContext.tokens) {
+            assertTrue(token.canonicalRange.start >= cursor);
+            assertTrue(token.canonicalRange.end > token.canonicalRange.start);
+            cursor = token.canonicalRange.end;
+        }
+        assertEquals(3, cursor);
+    }
+
+    @Test
+    public void readingContextDeduplicatesWhitespaceAndPreservesOccurrenceEvidence() {
+        SpicyJapaneseChineseProcessor.JapaneseReading spaced =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine("時 君", null);
+        long boundaryCount = spaced.readingContext.boundaries.stream().filter(
+                boundary -> boundary.offset == 2 && "authored-whitespace".equals(boundary.kind)).count();
+        assertEquals(1L, boundaryCount);
+        assertTrue(spaced.readingContext.boundaries.stream().anyMatch(
+                boundary -> boundary.offset == 2 && "hard".equals(boundary.strength)));
+
+        SpicyJapaneseChineseProcessor.JapaneseReading occurrence =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine("騒めい", null);
+        assertEquals(null, occurrence.readingContext.tokens.get(0).occurrenceReading);
+        assertEquals("ザワメー", occurrence.readingContext.tokens.get(0).pronunciation);
+        assertEquals("ざわめく", occurrence.readingContext.tokens.get(0).candidates.get(0).kana);
+    }
+
+    @Test
+    public void repeatedPhoneticRulesKeepSeparateOccurrences() {
+        assertEquals("ikkai ikko", romaji("一回一個"));
+    }
+
+    @Test
+    public void tokenizerFallbackPreservesCompleteSourceAndDiagnostic() {
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot snapshot =
+                SpicyJapaneseChineseProcessor.debugJapaneseFallbackSnapshotForTest(
+                        "君は", "tokenizer.incomplete-coverage");
+        assertEquals("君は", snapshot.tokens.get(0).surface);
+        assertEquals(0, snapshot.tokens.get(0).displayStart);
+        assertEquals(2, snapshot.tokens.get(0).displayEnd);
+        assertEquals(Arrays.asList("tokenizer.incomplete-coverage"), snapshot.diagnostics);
     }
 
     private static SyllableSegment segment(String text) {

@@ -34,7 +34,7 @@ public final class ReadingPlanFactory {
             for (int index = 0; index < line.syllables.size(); index++) {
                 SyllableSegment seg = line.syllables.get(index);
                 if (seg == null) continue;
-                spans.add(new SourceSpan(String.valueOf(index), seg.text, seg.text, seg.startMs, seg.endMs,
+                spans.add(new SourceSpan(spanId(seg, index), seg.sourceText, seg.text, seg.startMs, seg.endMs,
                         seg.partOfWord, null));
             }
         } else {
@@ -76,28 +76,21 @@ public final class ReadingPlanFactory {
         List<SyllableSegment> sourceSegments = line.syllables == null || line.syllables.isEmpty()
                 ? Collections.singletonList(singleSegment(line)) : line.syllables;
         List<SourceSpan> spans = new ArrayList<>();
-        List<CanonicalSpanMapping> mappings = new ArrayList<>();
         List<String> texts = new ArrayList<>();
-        int searchUtf16 = 0;
         for (int index = 0; index < sourceSegments.size(); index++) {
             SyllableSegment seg = sourceSegments.get(index);
             String text = seg == null || seg.text == null ? "" : seg.text.trim();
-            int found = text.isEmpty() ? searchUtf16 : line.text.indexOf(text, searchUtf16);
-            if (found < 0) found = searchUtf16;
-            int startCp = line.text.codePointCount(0, Math.min(found, line.text.length()));
-            int endUtf16 = Math.min(line.text.length(), found + text.length());
-            int endCp = line.text.codePointCount(0, endUtf16);
-            String id = String.valueOf(index);
-            spans.add(new SourceSpan(id, text, text, seg == null ? line.startMs : seg.startMs,
+            spans.add(new SourceSpan(spanId(seg, index), seg == null ? text : seg.sourceText, text,
+                    seg == null ? line.startMs : seg.startMs,
                     seg == null ? line.endMs : seg.endMs, seg != null && seg.partOfWord, null));
-            mappings.add(new CanonicalSpanMapping(id, new TextRange(startCp, endCp)));
             texts.add(text);
-            searchUtf16 = endUtf16;
         }
         ParsedLine parsed = new ParsedLine("line-" + line.startMs + "-" + line.endMs, line.text, spans, null,
                 ParagraphProvenance.UNAVAILABLE, Collections.emptyMap());
-        CanonicalLine canonical = new CanonicalLine(parsed.id, line.text, mappings, Collections.emptyList());
-        List<String> parts = SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(line.text, texts);
+        CanonicalLine canonical = new DefaultCanonicalLineBuilder().build(parsed);
+        // Finalized-analysis reuse: the reading already carries its analysis groups,
+        // so timing projection must not tokenize the line a second time.
+        List<String> parts = SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(reading, texts);
         for (int index = 0; index < parts.size(); index++) {
             if ((parts.get(index) == null || parts.get(index).isEmpty())
                     && texts.get(index).matches(".*\\p{IsLatin}.*")) parts.set(index, texts.get(index));
@@ -105,12 +98,12 @@ public final class ReadingPlanFactory {
         parts = align(parts, reading.romaji);
         List<ReadingUnit> units = new ArrayList<>();
         int group = 0;
-        for (int index = 0; index < mappings.size(); index++) {
+        for (int index = 0; index < canonical.spanMappings.size(); index++) {
             if (index > 0 && parts.get(index) != null && !parts.get(index).isEmpty()) group++;
             String source = texts.get(index);
-            units.add(new ReadingUnit(mappings.get(index).canonicalRange, parts.get(index),
+            units.add(new ReadingUnit(canonical.spanMappings.get(index).canonicalRange, parts.get(index),
                     SpicyTextDetection.itemJapaneseTest(source) ? ReadingUnitKind.TRANSFORMED : ReadingUnitKind.PASSTHROUGH,
-                    "jp-" + group, Collections.singletonList(String.valueOf(index))));
+                    "jp-" + group, Collections.singletonList(canonical.spanMappings.get(index).spanId)));
         }
         ReadingAnnotation annotation = new ReadingAnnotation("Japanese", "romaji", ReadingProvenance.LOCAL, units);
         RenderPlan plan = new DefaultRenderPlanBuilder().build(parsed, canonical, Collections.singletonList(annotation));
@@ -119,6 +112,7 @@ public final class ReadingPlanFactory {
 
     private static SyllableSegment singleSegment(LyricsLine line) {
         SyllableSegment seg = new SyllableSegment();
+        seg.spanId = "line";
         seg.text = line.text;
         seg.startMs = line.startMs;
         seg.endMs = line.endMs;
@@ -192,7 +186,7 @@ public final class ReadingPlanFactory {
         List<SourceSpan> spans = new ArrayList<>();
         for (int index = 0; index < line.syllables.size(); index++) {
             SyllableSegment seg = line.syllables.get(index);
-            spans.add(new SourceSpan(String.valueOf(index), seg.text, seg.text, seg.startMs, seg.endMs,
+            spans.add(new SourceSpan(spanId(seg, index), seg.sourceText, seg.text, seg.startMs, seg.endMs,
                     seg.partOfWord, null));
         }
         ParsedLine parsed = new ParsedLine("line-" + line.startMs + "-" + line.endMs, line.text, spans, null,
@@ -210,7 +204,7 @@ public final class ReadingPlanFactory {
             String chunk = chunks.get(index);
             units.add(new ReadingUnit(canonical.spanMappings.get(index).canonicalRange, chunk,
                     chunk.trim().equals(source) ? ReadingUnitKind.PASSTHROUGH : ReadingUnitKind.TRANSFORMED,
-                    "legacy-" + index, Collections.singletonList(String.valueOf(index))));
+                    "legacy-" + index, Collections.singletonList(canonical.spanMappings.get(index).spanId)));
         }
         RenderPlan plan = new DefaultRenderPlanBuilder().build(parsed, canonical,
                 Collections.singletonList(new ReadingAnnotation(processor, "local", ReadingProvenance.LOCAL, units)));
@@ -229,5 +223,10 @@ public final class ReadingPlanFactory {
                 ? ReadingProvenance.REMOTE_FALLBACK : ReadingProvenance.PROVIDER;
         return new DefaultRenderPlanBuilder().build(parsed, canonical, Collections.singletonList(
                 new ReadingAnnotation("Fallback", "line", source, Collections.singletonList(unit))));
+    }
+
+    private static String spanId(SyllableSegment segment, int index) {
+        if (segment != null && segment.spanId != null && !segment.spanId.trim().isEmpty()) return segment.spanId;
+        return String.valueOf(index);
     }
 }
