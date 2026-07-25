@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.zip.GZIPOutputStream;
 
 final class SpicyLyricBridgeDocumentSerializer {
-    static final int DOCUMENT_VERSION = 1;
+    static final int DOCUMENT_VERSION = 2;
     static final int MAX_COMPRESSED_BYTES = 1024 * 1024;
     static final int MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024;
     static final int MAX_ROWS = 5_000;
@@ -100,7 +100,8 @@ final class SpicyLyricBridgeDocumentSerializer {
                 encodedWord.addProperty("romanized", bounded(word.romanizedText));
                 encodedWord.addProperty("startMs", encodedWordStartMs);
                 encodedWord.addProperty("endMs", Math.max(encodedWordStartMs, word.endMs));
-                encodedWord.addProperty("partOfWord", word.partOfWord);
+                encodedWord.addProperty("boundaryAfter", word.boundaryAfter);
+                encodedWord.addProperty("partOfWord", !word.boundaryAfter);
                 encodedWord.addProperty("sourceStart", sourceRange[0]);
                 encodedWord.addProperty("sourceEnd", sourceRange[1]);
                 words.add(encodedWord);
@@ -135,6 +136,14 @@ final class SpicyLyricBridgeDocumentSerializer {
             int fallbackOffset
     ) {
         String text = row == null || row.text == null ? "" : row.text;
+        if (word != null && word.canonicalStartCp >= 0
+                && word.canonicalEndCp > word.canonicalStartCp
+                && word.canonicalEndCp <= CodePointRanges.length(text)) {
+            return new int[]{
+                    CodePointRanges.codePointOffsetToUtf16Index(text, word.canonicalStartCp),
+                    CodePointRanges.codePointOffsetToUtf16Index(text, word.canonicalEndCp)
+            };
+        }
         if (row != null && row.readingRenderPlan != null && word != null) {
             String spanId = word.spanId == null || word.spanId.trim().isEmpty()
                     ? String.valueOf(fallbackIndex) : word.spanId;

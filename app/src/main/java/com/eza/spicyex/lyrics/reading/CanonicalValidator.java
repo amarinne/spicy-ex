@@ -6,6 +6,8 @@ import java.util.List;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ScriptRun;
+import com.eza.spicyex.lyrics.reading.ReadingModels.JoinRelation;
+import com.eza.spicyex.lyrics.reading.ReadingModels.SpanJoinEvidence;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ValidationResult;
 
 public final class CanonicalValidator {
@@ -18,6 +20,23 @@ public final class CanonicalValidator {
             if (!CodePointRanges.isValid(line.text, mapping.canonicalRange)) errors.add("invalid mapping:" + mapping.spanId);
             if (mapping.canonicalRange.startCp < mappingEnd) errors.add("overlapping mapping:" + mapping.spanId);
             mappingEnd = mapping.canonicalRange.endCp;
+        }
+        if (!line.joins.isEmpty()) {
+            if (line.joins.size() != Math.max(0, line.spanMappings.size() - 1)) {
+                errors.add("join count:" + line.joins.size());
+            }
+            for (int index = 0; index < line.joins.size() && index < line.spanMappings.size(); index++) {
+                SpanJoinEvidence join = line.joins.get(index);
+                if (!line.spanMappings.get(index).spanId.equals(join.afterSpanId)) {
+                    errors.add("join owner:" + join.afterSpanId);
+                }
+                if (join.relation == JoinRelation.UNKNOWN) errors.add("unknown join:" + join.afterSpanId);
+            }
+        }
+        for (ReadingModels.Boundary boundary : line.boundaries) {
+            if (boundary.offsetCp < 0 || boundary.offsetCp > CodePointRanges.length(line.text)) {
+                errors.add("invalid boundary");
+            }
         }
         int runEnd = 0;
         for (ScriptRun run : runs) {

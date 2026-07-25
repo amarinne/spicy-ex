@@ -48,12 +48,14 @@ public class SpicyLyricBridgeDocumentSerializerTest {
                 document, "producer", 4, "spotify:track:test");
         JsonObject json = JsonParser.parseString(unzip(compressed)).getAsJsonObject();
 
-        assertEquals(1, json.get("version").getAsInt());
+        assertEquals(2, json.get("version").getAsInt());
         assertEquals("spotify:track:test", json.get("trackUri").getAsString());
         assertEquals("LEAD", json.getAsJsonArray("rows").get(0).getAsJsonObject()
                 .get("role").getAsString());
         assertEquals("word", json.getAsJsonArray("rows").get(0).getAsJsonObject()
                 .getAsJsonArray("words").get(0).getAsJsonObject().get("text").getAsString());
+        assertTrue(!json.getAsJsonArray("rows").get(0).getAsJsonObject()
+                .getAsJsonArray("words").get(0).getAsJsonObject().get("boundaryAfter").getAsBoolean());
         assertEquals(1, json.getAsJsonArray("rows").get(0).getAsJsonObject()
                 .getAsJsonArray("layoutGroups").size());
         assertTrue(compressed.length < SpicyLyricBridgeDocumentSerializer.MAX_COMPRESSED_BYTES);

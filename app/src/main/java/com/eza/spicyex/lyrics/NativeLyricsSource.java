@@ -10,6 +10,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
+import com.eza.spicyex.lyrics.reading.SyllableCanonicalizer;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -320,8 +322,11 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
             if (seg.endMs <= seg.startMs && nextStart > seg.startMs) seg.endMs = nextStart;
             if (seg.endMs <= seg.startMs) seg.endMs = seg.startMs + 180;
             seg.totalMs = Math.max(0, seg.endMs - seg.startMs);
-            line.syllables.add(seg);
         }
+        CanonicalLine canonical = SyllableCanonicalizer.canonicalize(
+                "native-" + line.startMs + "-" + line.endMs, line.text, parsed);
+        line.text = canonical.text;
+        line.syllables.addAll(parsed);
     }
 
     private static SyllableSegment parseNativeSyllable(Object raw) {

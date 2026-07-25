@@ -7,11 +7,8 @@ import java.util.List;
 import com.eza.spicyex.lyrics.KoreanDisplayMode;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.SyllableSegment;
-import com.eza.spicyex.lyrics.SpicyRomanizer;
 import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.SpicyTextDetection;
-import com.eza.spicyex.lyrics.reading.ReadingModels.Boundary;
-import com.eza.spicyex.lyrics.reading.ReadingModels.BoundaryKind;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ParagraphProvenance;
@@ -35,36 +32,14 @@ public final class ReadingPlanFactory {
                 SyllableSegment seg = line.syllables.get(index);
                 if (seg == null) continue;
                 spans.add(new SourceSpan(spanId(seg, index), seg.sourceText, seg.text, seg.startMs, seg.endMs,
-                        seg.partOfWord, null));
+                        seg.providerPartOfWord, null));
             }
         } else {
             spans.add(new SourceSpan("0", line.text, line.text, line.startMs, line.endMs, false, null));
         }
         ParsedLine parsed = new ParsedLine("line-" + line.startMs + "-" + line.endMs, line.text, spans, null,
                 ParagraphProvenance.UNAVAILABLE, Collections.emptyMap());
-        CanonicalLine canonical;
-        if (line.syllables != null && !line.syllables.isEmpty()) {
-            SpicyRomanizer.KoreanSyllableSource source = SpicyRomanizer.buildKoreanSyllableSource(line.syllables);
-            List<CanonicalSpanMapping> mappings = new ArrayList<>();
-            for (int index = 0; index < line.syllables.size(); index++) {
-                SyllableSegment seg = line.syllables.get(index);
-                int startCp = source.pieceStart(index);
-                int countCp = seg == null || seg.text == null ? 0 : seg.text.trim().codePointCount(0, seg.text.trim().length());
-                if (startCp < 0) startCp = index == 0 ? 0 : mappings.get(mappings.size() - 1).canonicalRange.endCp;
-                mappings.add(new CanonicalSpanMapping(String.valueOf(index), new TextRange(startCp, startCp + countCp)));
-            }
-            List<Boundary> boundaries = new ArrayList<>();
-            int cpCount = source.text.codePointCount(0, source.text.length());
-            for (int offset = 0; offset < cpCount; offset++) {
-                int utf16 = source.text.offsetByCodePoints(0, offset);
-                if (Character.isWhitespace(source.text.codePointAt(utf16))) {
-                    boundaries.add(new Boundary(offset, BoundaryKind.INFERRED, 1.0, "providerAdapter:legacySpacingEvidence"));
-                }
-            }
-            canonical = new CanonicalLine(parsed.id, source.text, mappings, boundaries);
-        } else {
-            canonical = new DefaultCanonicalLineBuilder().build(parsed);
-        }
+        CanonicalLine canonical = new DefaultCanonicalLineBuilder().build(parsed);
         ReadingAnnotation annotation = KoreanReadingProcessor.annotate(canonical, mode);
         RenderPlan plan = new DefaultRenderPlanBuilder().build(parsed, canonical,
                 Collections.singletonList(annotation));
@@ -82,7 +57,8 @@ public final class ReadingPlanFactory {
             String text = seg == null || seg.text == null ? "" : seg.text.trim();
             spans.add(new SourceSpan(spanId(seg, index), seg == null ? text : seg.sourceText, text,
                     seg == null ? line.startMs : seg.startMs,
-                    seg == null ? line.endMs : seg.endMs, seg != null && seg.partOfWord, null));
+                    seg == null ? line.endMs : seg.endMs,
+                    seg == null ? null : seg.providerPartOfWord, null));
             texts.add(text);
         }
         ParsedLine parsed = new ParsedLine("line-" + line.startMs + "-" + line.endMs, line.text, spans, null,
@@ -187,7 +163,7 @@ public final class ReadingPlanFactory {
         for (int index = 0; index < line.syllables.size(); index++) {
             SyllableSegment seg = line.syllables.get(index);
             spans.add(new SourceSpan(spanId(seg, index), seg.sourceText, seg.text, seg.startMs, seg.endMs,
-                    seg.partOfWord, null));
+                    seg.providerPartOfWord, null));
         }
         ParsedLine parsed = new ParsedLine("line-" + line.startMs + "-" + line.endMs, line.text, spans, null,
                 ParagraphProvenance.UNAVAILABLE, Collections.emptyMap());

@@ -211,7 +211,7 @@ public final class LyricsRowViewFactory {
             ViewGroup.MarginLayoutParams wlp = words instanceof FlexboxLayout
                     ? new FlexboxLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (!seg.partOfWord) wlp.rightMargin = dp(8);
+            if (seg.boundaryAfter) wlp.rightMargin = dp(8);
             words.addView(wordView, wlp);
             LyricsSyllableViewState.setWordView(seg, wordView);
             wordIndex++;

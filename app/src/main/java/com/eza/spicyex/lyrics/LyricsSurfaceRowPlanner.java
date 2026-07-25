@@ -71,7 +71,7 @@ public final class LyricsSurfaceRowPlanner {
                 mergedWords.add(line.words.get(index++));
                 continue;
             }
-            mergedWords.add(mergeWords(line.words, range[0], range[1]));
+            mergedWords.add(mergeWords(line, range[0], range[1]));
             index = range[1] + 1;
             rangeIndex++;
         }
@@ -79,21 +79,44 @@ public final class LyricsSurfaceRowPlanner {
         line.words.addAll(mergedWords);
     }
 
-    private static SyllableSegment mergeWords(List<SyllableSegment> words, int start, int end) {
+    private static SyllableSegment mergeWords(AppliedLine line, int start, int end) {
+        List<SyllableSegment> words = line.words;
         SyllableSegment first = words.get(start);
         SyllableSegment last = words.get(end);
         SyllableSegment merged = new SyllableSegment();
         merged.spanId = joinSegmentIds(words, start, end);
-        merged.text = joinSegmentField(words, start, end, false, false);
-        merged.sourceText = joinSegmentField(words, start, end, true, false);
+        merged.text = canonicalMergedText(line, start, end);
+        merged.sourceText = merged.text;
         merged.romanizedText = joinSegmentField(words, start, end, false, true);
         merged.startMs = first == null ? 0L : first.startMs;
         merged.endMs = last == null ? merged.startMs + 1 : Math.max(merged.startMs + 1, last.endMs);
         merged.totalMs = merged.endMs - merged.startMs;
-        merged.partOfWord = first != null && first.partOfWord;
+        merged.providerPartOfWord = last == null ? null : last.providerPartOfWord;
+        merged.boundaryAfter = last != null && last.boundaryAfter;
+        merged.boundaryProvenance = last == null ? "" : last.boundaryProvenance;
+        merged.partOfWord = !merged.boundaryAfter;
+        merged.canonicalStartCp = first == null ? -1 : first.canonicalStartCp;
+        merged.canonicalEndCp = last == null ? -1 : last.canonicalEndCp;
         merged.dot = false;
         merged.bgWord = first != null && first.bgWord;
         return merged;
+    }
+
+    private static String canonicalMergedText(AppliedLine line, int start, int end) {
+        String text = line == null ? "" : LyricUtils.safe(line.text);
+        int cursor = 0;
+        int mergedStart = -1;
+        int mergedEnd = -1;
+        for (int index = 0; line != null && index <= end; index++) {
+            int[] range = FuriganaText.wordRange(line, line.words.get(index), index, cursor);
+            cursor = Math.max(cursor, range[1]);
+            if (index == start) mergedStart = range[0];
+            if (index == end) mergedEnd = range[1];
+        }
+        if (mergedStart >= 0 && mergedEnd >= mergedStart && mergedEnd <= text.length()) {
+            return text.substring(mergedStart, mergedEnd);
+        }
+        return joinSegmentField(line.words, start, end, false, false);
     }
 
     private static String joinSegmentIds(List<SyllableSegment> words, int start, int end) {
@@ -115,8 +138,9 @@ public final class LyricsSurfaceRowPlanner {
             SyllableSegment segment = words.get(index);
             if (segment == null) continue;
             String value = source ? segment.sourceText : romanized ? segment.romanizedText : segment.text;
-            if (out.length() > 0 && !segment.partOfWord) out.append(' ');
             out.append(value == null ? "" : value);
+            if (index < end && segment.boundaryAfter && out.length() > 0
+                    && !Character.isWhitespace(out.codePointBefore(out.length()))) out.append(' ');
         }
         return out.toString();
     }
@@ -183,7 +207,9 @@ public final class LyricsSurfaceRowPlanner {
             seg.startMs = cursor;
             seg.endMs = Math.max(cursor + 1, end);
             seg.totalMs = seg.endMs - seg.startMs;
-            seg.partOfWord = false;
+            seg.boundaryAfter = i < parts.length - 1;
+            seg.boundaryProvenance = "syntheticLineWords";
+            seg.partOfWord = !seg.boundaryAfter;
             line.words.add(seg);
             cursor = seg.endMs;
         }

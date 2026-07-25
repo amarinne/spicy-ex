@@ -23,7 +23,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 public final class ProcessedLyricsCache {
     private static final String TAG = "[SpotifyPlusProcessedLyricsCache]";
     /** Plan v2 stores one semantic reading authority; legacy strings are cache fallback only. */
-    public static final int READING_SCHEMA_VERSION = 2;
+    public static final int READING_SCHEMA_VERSION = 3;
     private static final Gson GSON = new Gson();
 
     private ProcessedLyricsCache() {

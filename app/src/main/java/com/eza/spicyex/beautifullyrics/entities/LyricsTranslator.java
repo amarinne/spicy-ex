@@ -141,11 +141,13 @@ public final class LyricsTranslator {
 
     private static String joinSyllables(List<SyllableMetadata> syllables) {
         StringBuilder text = new StringBuilder();
+        SyllableMetadata previous = null;
         for (int i = 0; i < syllables.size(); i++) {
             SyllableMetadata syllable = syllables.get(i);
             if (syllable == null) continue;
-            if (i > 0 && !syllable.isPartOfWord) text.append(' ');
+            if (previous != null && !previous.isPartOfWord) text.append(' ');
             text.append(syllable.text == null ? "" : syllable.text);
+            previous = syllable;
         }
         return text.toString();
     }

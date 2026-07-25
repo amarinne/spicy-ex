@@ -7,17 +7,16 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
+import com.eza.spicyex.lyrics.reading.SyllableCanonicalizer;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XposedBridge;
 import static com.eza.spicyex.lyrics.LyricUtils.cleanInvisibles;
-import static com.eza.spicyex.lyrics.LyricUtils.cleanInvisiblesPreserveEdges;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
@@ -215,24 +214,30 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonObject lead = Json.optObject(object, "Lead", "lead");
             if (lead == null) continue;
             JsonArray syllables = Json.optArray(lead, "Syllables", "syllables");
-            String stitchedText = cleanInvisibles(joinSyllablesPreserveEdges(syllables, "Text", "text"));
             String providerLineText = cleanInvisibles(firstNonBlank(
                     Json.optString(lead, "Text", "text"),
                     Json.optString(object, "Text", "text")));
-            String text = selectCanonicalSyllableText(stitchedText, providerLineText);
-            if (isBlank(text)) continue;
+            long lineStartMs = secondsToMs(Json.optDouble(lead,
+                    Json.optDouble(object, 0d, "StartTime", "startTime"), "StartTime", "startTime"));
+            long lineEndMs = secondsToMs(Json.optDouble(lead,
+                    Json.optDouble(object, 0d, "EndTime", "endTime"), "EndTime", "endTime"));
+            ParsedSyllableLine parsed = parseSyllableLine(syllables, providerLineText,
+                    lineStartMs, lineEndMs, "line-" + lineStartMs + "-" + lineEndMs);
+            if (parsed == null || isBlank(parsed.text)) continue;
 
             LyricsLine line = new LyricsLine();
-            line.text = text;
-            line.startMs = secondsToMs(Json.optDouble(lead, Json.optDouble(object, 0d, "StartTime", "startTime"), "StartTime", "startTime"));
-            line.endMs = secondsToMs(Json.optDouble(lead, Json.optDouble(object, 0d, "EndTime", "endTime"), "EndTime", "endTime"));
+            line.text = parsed.text;
+            line.startMs = lineStartMs;
+            line.endMs = lineEndMs;
             line.oppositeAligned = Json.optBoolean(object, false, "OppositeAligned", "oppositeAligned");
-            line.syllables = parseSyllableSegments(syllables, line.startMs, line.endMs);
+            line.syllables = parsed.segments;
 
-            String transliterated = joinSyllables(syllables, "TransliteratedText", "transliteratedText", "RomanizedText", "romanizedText");
-            if (!isBlank(transliterated) && !transliterated.equals(text)) line.romanizedText = transliterated;
-            String translated = joinSyllables(syllables, "TranslatedText", "translatedText", "Translation", "translation");
-            if (!isBlank(translated) && !translated.equals(text)) line.translatedText = translated;
+            String transliterated = joinSecondarySyllables(syllables, line.syllables,
+                    "TransliteratedText", "transliteratedText", "RomanizedText", "romanizedText");
+            if (!isBlank(transliterated) && !transliterated.equals(line.text)) line.romanizedText = transliterated;
+            String translated = joinSecondarySyllables(syllables, line.syllables,
+                    "TranslatedText", "translatedText", "Translation", "translation");
+            if (!isBlank(translated) && !translated.equals(line.text)) line.translatedText = translated;
             line.backgroundLines = parseBackgroundLines(object);
             applySecondaryText(line, object);
             doc.lines.add(line);
@@ -290,21 +295,27 @@ public final class LyricsParser implements LyricsRepository.Parser {
             BackgroundLine line = new BackgroundLine();
             line.startMs = secondsToMs(Json.optDouble(bg, 0d, "StartTime", "startTime"));
             line.endMs = secondsToMs(Json.optDouble(bg, line.startMs / 1000d, "EndTime", "endTime"));
-            line.syllables = parseSyllableSegments(syllables, line.startMs, line.endMs);
-            line.text = joinSyllables(syllables, "Text", "text");
+            ParsedSyllableLine parsed = parseSyllableLine(syllables,
+                    Json.optString(bg, "Text", "text"), line.startMs, line.endMs,
+                    "background-" + line.startMs + "-" + line.endMs);
+            if (parsed == null) continue;
+            line.syllables = parsed.segments;
+            line.text = parsed.text;
             line.romanizedText = firstNonBlank(
-                    joinSyllables(syllables, "TransliteratedText", "transliteratedText"),
-                    joinSyllables(syllables, "RomanizedText", "romanizedText")
+                    joinSecondarySyllables(syllables, line.syllables, "TransliteratedText", "transliteratedText"),
+                    joinSecondarySyllables(syllables, line.syllables, "RomanizedText", "romanizedText")
             );
-            line.translatedText = joinSyllables(syllables, "TranslatedText", "translatedText", "Translation", "translation");
+            line.translatedText = joinSecondarySyllables(syllables, line.syllables,
+                    "TranslatedText", "translatedText", "Translation", "translation");
             out.add(line);
         }
         return out;
     }
 
-    private static List<SyllableSegment> parseSyllableSegments(JsonArray syllables, long lineStartMs, long lineEndMs) {
-        ArrayList<SyllableSegment> out = new ArrayList<>();
-        if (syllables == null || syllables.isEmpty()) return out;
+    private static ParsedSyllableLine parseSyllableLine(JsonArray syllables, String providerLine,
+                                                        long lineStartMs, long lineEndMs, String lineId) {
+        if (syllables == null || syllables.isEmpty()) return null;
+        ArrayList<SyllableSegment> segments = new ArrayList<>();
         long fallbackDuration = Math.max(1, lineEndMs - lineStartMs);
         long fallbackStep = Math.max(1, fallbackDuration / Math.max(1, syllables.size()));
         for (int i = 0; i < syllables.size(); i++) {
@@ -313,14 +324,13 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonObject syllable = element.getAsJsonObject();
             String rawText = cleanSyllableTextPreserveEdges(Json.optString(syllable, "Text", "text"));
             if (isBlank(rawText)) continue;
-            boolean boundaryAfter = endsWithWhitespace(rawText);
             String text = rawText.trim();
             if (text.isEmpty()) continue;
             SyllableSegment seg = new SyllableSegment();
             seg.spanId = String.valueOf(i);
             seg.text = text;
             seg.sourceText = rawText;
-            seg.partOfWord = Json.optBoolean(syllable, false, "IsPartOfWord", "isPartOfWord") && !boundaryAfter;
+            seg.providerPartOfWord = providerPartOfWord(syllable);
             long fallbackStart = lineStartMs + fallbackStep * i;
             long fallbackEnd = i == syllables.size() - 1 ? lineEndMs : fallbackStart + fallbackStep;
             seg.startMs = secondsToMs(Json.optDouble(syllable, fallbackStart / 1000d, "StartTime", "startTime"));
@@ -328,15 +338,11 @@ public final class LyricsParser implements LyricsRepository.Parser {
             if (seg.endMs <= seg.startMs) seg.endMs = Math.min(lineEndMs, seg.startMs + fallbackStep);
             if (seg.endMs <= seg.startMs) seg.endMs = seg.startMs + 1;
             seg.totalMs = Math.max(0, seg.endMs - seg.startMs);
-            out.add(seg);
+            segments.add(seg);
         }
-        return out;
-    }
-
-    private static boolean endsWithWhitespace(String text) {
-        if (text == null || text.isEmpty()) return false;
-        int cp = text.codePointBefore(text.length());
-        return Character.isWhitespace(cp);
+        if (segments.isEmpty()) return null;
+        CanonicalLine canonical = SyllableCanonicalizer.canonicalize(lineId, providerLine, segments);
+        return new ParsedSyllableLine(canonical.text, segments);
     }
 
     private static String cleanSyllableTextPreserveEdges(String value) {
@@ -348,110 +354,67 @@ public final class LyricsParser implements LyricsRepository.Parser {
                 .replaceAll("[ \t]{2,}", " ");
     }
 
-    private static String joinSyllables(JsonArray syllables, String... textKeys) {
-        if (syllables == null) return "";
+    private static Boolean providerPartOfWord(JsonObject syllable) {
+        if (syllable == null) return null;
+        if (syllable.has("IsPartOfWord")) return syllable.get("IsPartOfWord").getAsBoolean();
+        if (syllable.has("isPartOfWord")) return syllable.get("isPartOfWord").getAsBoolean();
+        return null;
+    }
+
+    private static String joinSecondarySyllables(JsonArray syllables, List<SyllableSegment> segments,
+                                                  String... textKeys) {
+        if (syllables == null || segments == null) return "";
         StringBuilder out = new StringBuilder();
-        for (int i = 0; i < syllables.size(); i++) {
-            JsonElement element = syllables.get(i);
+        for (SyllableSegment segment : segments) {
+            int sourceIndex;
+            try {
+                sourceIndex = Integer.parseInt(segment.spanId);
+            } catch (NumberFormatException ignored) {
+                continue;
+            }
+            if (sourceIndex < 0 || sourceIndex >= syllables.size()) continue;
+            JsonElement element = syllables.get(sourceIndex);
             if (!element.isJsonObject()) continue;
             JsonObject syllable = element.getAsJsonObject();
             String text = cleanInvisibles(Json.optString(syllable, textKeys));
             if (isBlank(text)) continue;
-            boolean isPart = Json.optBoolean(syllable, false, "IsPartOfWord", "isPartOfWord");
-            if (out.length() > 0 && !isPart) out.append(' ');
+            if (out.length() > 0 && !Character.isWhitespace(out.codePointBefore(out.length()))) {
+                SyllableSegment previous = previousNonBlankSegment(segments, segment, syllables, textKeys);
+                if (previous != null && previous.boundaryAfter) out.append(' ');
+            }
             out.append(text);
         }
         return out.toString().trim();
     }
 
-    private static String joinSyllablesPreserveEdges(JsonArray syllables, String... textKeys) {
-        if (syllables == null) return "";
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < syllables.size(); i++) {
-            JsonElement element = syllables.get(i);
-            if (!element.isJsonObject()) continue;
-            JsonObject syllable = element.getAsJsonObject();
-            String text = cleanInvisiblesPreserveEdges(Json.optString(syllable, textKeys));
-            if (isBlank(text)) continue;
-            boolean isPart = Json.optBoolean(syllable, false, "IsPartOfWord", "isPartOfWord");
-            boolean continuousJapaneseRun = isJapaneseCodePoint(lastNonWhitespaceCodePoint(out.toString()))
-                    && isJapaneseCodePoint(firstNonWhitespaceCodePoint(text));
-            if (out.length() > 0 && !Character.isWhitespace(out.codePointBefore(out.length()))
-                    && !Character.isWhitespace(text.codePointAt(0))
-                    && !continuousJapaneseRun
-                    && (!isPart || crossesJapaneseLatinBoundary(out.toString(), text))) out.append(' ');
-            out.append(text);
+    private static SyllableSegment previousNonBlankSegment(List<SyllableSegment> segments,
+                                                           SyllableSegment current,
+                                                           JsonArray syllables, String... textKeys) {
+        int currentIndex = segments.indexOf(current);
+        for (int index = currentIndex - 1; index >= 0; index--) {
+            SyllableSegment candidate = segments.get(index);
+            int sourceIndex;
+            try {
+                sourceIndex = Integer.parseInt(candidate.spanId);
+            } catch (NumberFormatException ignored) {
+                continue;
+            }
+            if (sourceIndex < 0 || sourceIndex >= syllables.size()) continue;
+            JsonElement element = syllables.get(sourceIndex);
+            if (element.isJsonObject() && !isBlank(Json.optString(element.getAsJsonObject(), textKeys))) {
+                return candidate;
+            }
         }
-        return out.toString().trim();
+        return null;
     }
 
-    /** A provider's complete line preserves word boundaries better than a reconstructed timing
-     * stream. Accept it only when it represents the same visible content. */
-    private static String selectCanonicalSyllableText(String stitched, String providerLine) {
-        if (isBlank(providerLine)) return stitched;
-        if (isBlank(stitched)) return providerLine;
-        String compactStitched = stitched.replaceAll("\\s+", "");
-        String compactProvider = providerLine.replaceAll("\\s+", "");
-        if (!compactStitched.equals(compactProvider)) return stitched;
-        // A provider line can be a lossy compact alias. It becomes canonical only when it keeps
-        // every boundary already evidenced by timing-span edge text.
-        return whitespaceOffsets(providerLine).containsAll(whitespaceOffsets(stitched)) ? providerLine : stitched;
-    }
-
-    private static Set<Integer> whitespaceOffsets(String value) {
-        Set<Integer> out = new HashSet<>();
-        if (value == null) return out;
-        int visibleOffset = 0;
-        for (int index = 0; index < value.length();) {
-            int cp = value.codePointAt(index);
-            if (Character.isWhitespace(cp)) out.add(visibleOffset);
-            else visibleOffset++;
-            index += Character.charCount(cp);
+    private static final class ParsedSyllableLine {
+        final String text;
+        final List<SyllableSegment> segments;
+        ParsedSyllableLine(String text, List<SyllableSegment> segments) {
+            this.text = text;
+            this.segments = segments;
         }
-        return out;
-    }
-
-    /** Packed lyric transport can discard authored edge spaces. Restore only clear JP/Latin joins. */
-    private static boolean crossesJapaneseLatinBoundary(String previous, String current) {
-        int previousCp = lastNonWhitespaceCodePoint(previous);
-        int currentCp = firstNonWhitespaceCodePoint(current);
-        if (previousCp < 0 || currentCp < 0) return false;
-        return isJapaneseCodePoint(previousCp) != isJapaneseCodePoint(currentCp)
-                && (isJapaneseCodePoint(previousCp) || isJapaneseCodePoint(currentCp))
-                && (isLatinOrDigit(previousCp) || isLatinOrDigit(currentCp));
-    }
-
-    private static int firstNonWhitespaceCodePoint(String value) {
-        if (value == null) return -1;
-        for (int i = 0; i < value.length();) {
-            int cp = value.codePointAt(i);
-            if (!Character.isWhitespace(cp)) return cp;
-            i += Character.charCount(cp);
-        }
-        return -1;
-    }
-
-    private static int lastNonWhitespaceCodePoint(String value) {
-        if (value == null) return -1;
-        for (int i = value.length(); i > 0;) {
-            int cp = value.codePointBefore(i);
-            if (!Character.isWhitespace(cp)) return cp;
-            i -= Character.charCount(cp);
-        }
-        return -1;
-    }
-
-    private static boolean isJapaneseCodePoint(int cp) {
-        if (cp < 0) return false;
-        Character.UnicodeScript script = Character.UnicodeScript.of(cp);
-        return script == Character.UnicodeScript.HAN
-                || script == Character.UnicodeScript.HIRAGANA
-                || script == Character.UnicodeScript.KATAKANA;
-    }
-
-    private static boolean isLatinOrDigit(int cp) {
-        return Character.UnicodeScript.of(cp) == Character.UnicodeScript.LATIN
-                || Character.isDigit(cp);
     }
 
     private static JsonElement unpackSpicyPayloads(JsonElement element, SpicyResponseMetadata metadata, boolean queryResultData) {

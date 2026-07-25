@@ -20,6 +20,7 @@ public final class ReadingModels {
 
     public enum ParagraphProvenance { PROVIDER, LINE_BOUNDARY, UNAVAILABLE }
     public enum BoundaryKind { EXPLICIT_WHITESPACE, PARAGRAPH, SCRIPT, INFERRED }
+    public enum JoinRelation { ATTACHED, BOUNDARY, UNKNOWN }
     public enum ReadingUnitKind { TRANSFORMED, PASSTHROUGH, PUNCTUATION }
     public enum ReadingProvenance { PROVIDER, LOCAL, REMOTE_FALLBACK }
 
@@ -95,17 +96,38 @@ public final class ReadingModels {
         }
     }
 
+    /** Normalized trailing-edge evidence between this span and the next span. */
+    public static final class SpanJoinEvidence {
+        public final String afterSpanId;
+        public final JoinRelation relation;
+        public final double confidence;
+        public final String provenance;
+        public SpanJoinEvidence(String afterSpanId, JoinRelation relation, double confidence,
+                                String provenance) {
+            this.afterSpanId = afterSpanId;
+            this.relation = relation;
+            this.confidence = confidence;
+            this.provenance = provenance;
+        }
+    }
+
     public static final class CanonicalLine {
         public final String lineId;
         public final String text;
         public final List<CanonicalSpanMapping> spanMappings;
         public final List<Boundary> boundaries;
+        public final List<SpanJoinEvidence> joins;
         public CanonicalLine(String lineId, String text, List<CanonicalSpanMapping> spanMappings,
                              List<Boundary> boundaries) {
+            this(lineId, text, spanMappings, boundaries, Collections.emptyList());
+        }
+        public CanonicalLine(String lineId, String text, List<CanonicalSpanMapping> spanMappings,
+                             List<Boundary> boundaries, List<SpanJoinEvidence> joins) {
             this.lineId = lineId;
             this.text = text;
             this.spanMappings = immutable(spanMappings);
             this.boundaries = immutable(boundaries);
+            this.joins = immutable(joins);
         }
     }
 

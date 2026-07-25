@@ -19,9 +19,9 @@ public class KoreanRomanizerTest {
 
     @Test
     public void commonLyricPhrases() {
-        assertEquals("annyeong haseyo", SpicyRomanizer.romanizeKorean("안녕하세요"));
-        assertEquals("sarang haeyo", SpicyRomanizer.romanizeKorean("사랑해요"));
-        assertEquals("bogo sipeo", SpicyRomanizer.romanizeKorean("보고싶어"));
+        assertEquals("annyeonghaseyo", SpicyRomanizer.romanizeKorean("안녕하세요"));
+        assertEquals("saranghaeyo", SpicyRomanizer.romanizeKorean("사랑해요"));
+        assertEquals("bogosipeo", SpicyRomanizer.romanizeKorean("보고싶어"));
         assertEquals("sarang", SpicyRomanizer.romanizeKorean("사랑"));
     }
 

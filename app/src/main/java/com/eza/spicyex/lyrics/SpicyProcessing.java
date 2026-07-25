@@ -9,8 +9,8 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  * Emits decisions only. Renderer/platform own presentation.
  */
 public final class SpicyProcessing {
-    // v17: do not invent Japanese word spaces from packed timing flags.
-    public static final int PROCESSING_VERSION = 17;
+    // v18: canonical provider boundaries replace downstream IsPartOfWord interpretation.
+    public static final int PROCESSING_VERSION = 18;
 
     private SpicyProcessing() {
     }

@@ -146,6 +146,14 @@ public final class FuriganaText {
      * fallback is only for legacy rows without a plan. */
     static int[] wordRange(AppliedLine line, SyllableSegment segment, int fallbackIndex, int fallbackOffset) {
         String text = safe(line == null ? "" : line.text);
+        if (segment != null && segment.canonicalStartCp >= 0
+                && segment.canonicalEndCp > segment.canonicalStartCp
+                && segment.canonicalEndCp <= CodePointRanges.length(text)) {
+            return new int[]{
+                    CodePointRanges.codePointOffsetToUtf16Index(text, segment.canonicalStartCp),
+                    CodePointRanges.codePointOffsetToUtf16Index(text, segment.canonicalEndCp)
+            };
+        }
         if (line != null && line.readingRenderPlan != null && segment != null) {
             String spanId = segment.spanId == null || segment.spanId.trim().isEmpty()
                     ? String.valueOf(fallbackIndex) : segment.spanId;

@@ -189,6 +189,40 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
+    public void numericPersonRubyCoalescingPreservesCanonicalText() {
+        for (String digit : new String[]{"1", "2"}) {
+            AppliedLine line = line(digit + "人");
+            SyllableSegment number = word(digit, false);
+            number.spanId = "number";
+            SyllableSegment person = word("人", false);
+            person.spanId = "person";
+            person.boundaryAfter = true;
+            person.boundaryProvenance = "testBoundary";
+            line.words.add(number);
+            line.words.add(person);
+            line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading(
+                    line.text, "1".equals(digit) ? "hitori" : "futari",
+                    java.util.Collections.singletonList(
+                            new SpicyJapaneseChineseProcessor.FuriganaSegment(
+                                    0, 2, "1".equals(digit) ? "ひとり" : "ふたり")));
+            line.readingRenderPlan = new RenderPlan("line", java.util.Arrays.asList(
+                    new CanonicalSpanMapping("number", new TextRange(0, 1)),
+                    new CanonicalSpanMapping("person", new TextRange(1, 2))),
+                    java.util.Collections.emptyList(), java.util.Collections.emptyList(),
+                    line.japaneseReading.romaji, null);
+
+            LyricsSurfaceRowPlanner.coalesceTimedWordsForRuby(line);
+
+            assertEquals(1, line.words.size());
+            assertEquals(digit + "人", line.words.get(0).text);
+            assertEquals("number+person", line.words.get(0).spanId);
+            assertTrue(line.words.get(0).boundaryAfter);
+            assertEquals("testBoundary", line.words.get(0).boundaryProvenance);
+            assertFalse(FuriganaText.hasRubyCrossingWordBoundaries(line));
+        }
+    }
+
+    @Test
     public void japanesePerKanjiFuriganaCanStayWordLevel() {
         AppliedLine line = line("残念");
         line.words.add(word("残", false));

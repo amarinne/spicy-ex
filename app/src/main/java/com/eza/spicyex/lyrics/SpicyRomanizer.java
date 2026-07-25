@@ -7,6 +7,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Collections;
+
+import com.eza.spicyex.lyrics.reading.DefaultCanonicalLineBuilder;
+import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
+import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
+import com.eza.spicyex.lyrics.reading.ReadingModels.ParagraphProvenance;
+import com.eza.spicyex.lyrics.reading.ReadingModels.ParsedLine;
+import com.eza.spicyex.lyrics.reading.ReadingModels.SourceSpan;
 
 /**
  * Android port of Spicy fork romanization behavior.
@@ -370,236 +378,30 @@ public final class SpicyRomanizer {
     }
 
     public static KoreanSyllableSource buildKoreanSyllableSource(List<SyllableSegment> syllables) {
-        KoreanSyllableSource rawSpaced = buildKoreanRawWhitespaceSyllableSource(syllables);
-        if (rawSpaced != null) return rawSpaced;
-        if (allSingleHangulSyllableSegments(syllables)) return buildContinuousKoreanSyllableSource(syllables);
-        KoreanSyllableSource leading = buildKoreanSyllableSource(syllables, true);
-        KoreanSyllableSource trailing = buildKoreanSyllableSource(syllables, false);
-        KoreanSyllableSource spaced = buildSpacedKoreanSyllableSource(syllables);
-        KoreanSyllableSource smart = buildSmartKoreanSyllableSource(syllables);
-        KoreanSyllableSource compactBest = scoreKoreanLineSpacing(trailing.text) < scoreKoreanLineSpacing(leading.text) ? trailing : leading;
-        if (looksWordLevel(syllables) && smart.text.contains(" ")) return smart;
-        return scoreKoreanLineSpacing(spaced.text) + 8 < scoreKoreanLineSpacing(compactBest.text) ? spaced : compactBest;
-    }
-
-    private static KoreanSyllableSource buildKoreanRawWhitespaceSyllableSource(List<SyllableSegment> syllables) {
-        if (syllables == null || syllables.isEmpty()) return null;
-        boolean hasRawWhitespace = false;
-        for (SyllableSegment seg : syllables) {
-            String raw = rawKoreanSegmentText(seg);
-            if (containsWhitespace(raw)) {
-                hasRawWhitespace = true;
-                break;
-            }
+        if (syllables == null || syllables.isEmpty()) {
+            return new KoreanSyllableSource("", Collections.emptyList());
         }
-        if (!hasRawWhitespace) return null;
-
-        StringBuilder lineText = new StringBuilder();
-        ArrayList<Integer> pieceStarts = new ArrayList<>();
-        for (SyllableSegment seg : syllables) {
-            pieceStarts.add(-1);
-            String raw = rawKoreanSegmentText(seg);
-            if (raw == null || raw.isEmpty()) continue;
-            pieceStarts.set(pieceStarts.size() - 1, lineText.codePointCount(0, lineText.length()));
-            lineText.append(raw);
-        }
-        return new KoreanSyllableSource(normalizeKoreanBuiltText(normalizeKoreanMixedScriptSpacing(lineText.toString())), pieceStarts);
-    }
-
-    private static String rawKoreanSegmentText(SyllableSegment seg) {
-        if (seg == null) return "";
-        return seg.sourceText == null || seg.sourceText.isEmpty() ? seg.text : seg.sourceText;
-    }
-
-    private static boolean containsWhitespace(String text) {
-        if (text == null) return false;
-        for (int i = 0; i < text.length(); ) {
-            int cp = text.codePointAt(i);
-            if (Character.isWhitespace(cp)) return true;
-            i += Character.charCount(cp);
-        }
-        return false;
-    }
-
-    private static boolean allSingleHangulSyllableSegments(List<SyllableSegment> syllables) {
-        if (syllables == null || syllables.isEmpty()) return false;
-        boolean saw = false;
-        int textCount = 0;
-        int boundaryCount = 0;
-        for (SyllableSegment seg : syllables) {
-            if (seg == null || seg.text == null || seg.text.isEmpty()) continue;
-            if (seg.text.codePointCount(0, seg.text.length()) != 1) return false;
-            if (!isHangul(seg.text.codePointAt(0))) return false;
-            textCount++;
-            if (!seg.partOfWord) boundaryCount++;
-            saw = true;
-        }
-        // TTML syllable spans can be all single Hangul chars while still carrying real word
-        // boundaries via IsPartOfWord/trailing-space-derived flags. Only force continuous text
-        // when flags are uniformly uninformative, not when some spans mark boundaries.
-        if (boundaryCount > 0 && boundaryCount < textCount) return false;
-        return saw;
-    }
-
-    private static KoreanSyllableSource buildContinuousKoreanSyllableSource(List<SyllableSegment> syllables) {
-        StringBuilder lineText = new StringBuilder();
-        ArrayList<Integer> pieceStarts = new ArrayList<>();
+        List<SourceSpan> spans = new ArrayList<>();
         for (int index = 0; index < syllables.size(); index++) {
-            SyllableSegment seg = syllables.get(index);
-            pieceStarts.add(-1);
-            if (seg == null || seg.text == null || seg.text.isEmpty()) continue;
-            pieceStarts.set(index, lineText.codePointCount(0, lineText.length()));
-            lineText.append(seg.text.trim());
+            SyllableSegment segment = syllables.get(index);
+            String text = segment == null ? "" : segment.text;
+            String raw = segment == null || segment.sourceText == null || segment.sourceText.isEmpty()
+                    ? text : segment.sourceText;
+            Boolean providerFlag = segment == null ? null : segment.providerPartOfWord;
+            if (providerFlag == null && segment != null) providerFlag = segment.partOfWord;
+            spans.add(new SourceSpan(String.valueOf(index), raw, text,
+                    segment == null ? 0L : segment.startMs,
+                    segment == null ? 0L : segment.endMs,
+                    providerFlag, null));
         }
-        return new KoreanSyllableSource(lineText.toString(), pieceStarts);
-    }
-
-    private static KoreanSyllableSource buildKoreanSyllableSource(List<SyllableSegment> syllables, boolean leadingBoundary) {
-        StringBuilder lineText = new StringBuilder();
+        ParsedLine parsed = new ParsedLine("korean-syllable-source", "", spans, null,
+                ParagraphProvenance.UNAVAILABLE, Collections.emptyMap());
+        CanonicalLine canonical = new DefaultCanonicalLineBuilder().build(parsed);
         ArrayList<Integer> pieceStarts = new ArrayList<>();
-        for (int index = 0; index < syllables.size(); index++) {
-            SyllableSegment seg = syllables.get(index);
-            pieceStarts.add(-1);
-            if (seg == null || seg.text == null || seg.text.isEmpty()) continue;
-            if (leadingBoundary && lineText.length() > 0 && !seg.partOfWord) lineText.append(' ');
-            pieceStarts.set(index, lineText.codePointCount(0, lineText.length()));
-            lineText.append(seg.text.trim());
-            if (!leadingBoundary && index < syllables.size() - 1 && !seg.partOfWord) lineText.append(' ');
+        for (CanonicalSpanMapping mapping : canonical.spanMappings) {
+            pieceStarts.add(mapping.canonicalRange.startCp);
         }
-        String source = lineText.toString()
-                .replaceAll("\\s+([,.;:!?])", "$1")
-                .replaceAll("([,.;:!?])(?=\\S)", "$1 ")
-                .replaceAll("\\s+", " ")
-                .trim();
-        return new KoreanSyllableSource(source, pieceStarts);
-    }
-
-    private static KoreanSyllableSource buildSpacedKoreanSyllableSource(List<SyllableSegment> syllables) {
-        StringBuilder lineText = new StringBuilder();
-        ArrayList<Integer> pieceStarts = new ArrayList<>();
-        for (int index = 0; index < syllables.size(); index++) {
-            SyllableSegment seg = syllables.get(index);
-            pieceStarts.add(-1);
-            if (seg == null || seg.text == null || seg.text.isEmpty()) continue;
-            if (lineText.length() > 0) lineText.append(' ');
-            pieceStarts.set(index, lineText.codePointCount(0, lineText.length()));
-            lineText.append(seg.text.trim());
-        }
-        return new KoreanSyllableSource(normalizeKoreanBuiltText(normalizeKoreanMixedScriptSpacing(lineText.toString())), pieceStarts);
-    }
-
-    private static KoreanSyllableSource buildSmartKoreanSyllableSource(List<SyllableSegment> syllables) {
-        StringBuilder lineText = new StringBuilder();
-        ArrayList<Integer> pieceStarts = new ArrayList<>();
-        String previous = "";
-        for (int index = 0; index < syllables.size(); index++) {
-            SyllableSegment seg = syllables.get(index);
-            pieceStarts.add(-1);
-            String text = seg == null || seg.text == null ? "" : seg.text.trim();
-            if (text.isEmpty()) continue;
-
-            boolean previousIsLatin = hasLatin(previous);
-            boolean currentIsLatin = hasLatin(text);
-            boolean attachToPrevious = lineText.length() == 0
-                    || isPunctuationToken(text)
-                    || (isAllHangul(previous) && isAllHangul(text) && isKoreanSuffixLike(text));
-
-            if (!attachToPrevious || previousIsLatin || currentIsLatin) appendSpaceIfNeeded(lineText);
-            pieceStarts.set(index, lineText.codePointCount(0, lineText.length()));
-            lineText.append(text);
-            previous = text;
-        }
-        return new KoreanSyllableSource(normalizeKoreanBuiltText(normalizeKoreanMixedScriptSpacing(lineText.toString())), pieceStarts);
-    }
-
-    private static boolean looksWordLevel(List<SyllableSegment> syllables) {
-        for (SyllableSegment seg : syllables) {
-            String text = seg == null || seg.text == null ? "" : seg.text.trim();
-            if (text.isEmpty()) continue;
-            if (hasLatin(text) || text.codePointCount(0, text.length()) > 1) return true;
-        }
-        return false;
-    }
-
-    private static void appendSpaceIfNeeded(StringBuilder out) {
-        if (out.length() == 0) return;
-        int last = out.codePointBefore(out.length());
-        if (!Character.isWhitespace(last)) out.append(' ');
-    }
-
-    private static boolean hasLatin(String text) {
-        if (text == null) return false;
-        for (int i = 0; i < text.length(); ) {
-            int cp = text.codePointAt(i);
-            if ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || (cp >= 0x00C0 && cp <= 0x024F)) return true;
-            i += Character.charCount(cp);
-        }
-        return false;
-    }
-
-    private static boolean isPunctuationToken(String text) {
-        return ",".equals(text) || ".".equals(text) || ";".equals(text) || ":".equals(text)
-                || "!".equals(text) || "?".equals(text);
-    }
-
-    private static String normalizeKoreanMixedScriptSpacing(String text) {
-        if (text == null || text.isEmpty()) return "";
-        StringBuilder out = new StringBuilder();
-        int previous = -1;
-        for (int i = 0; i < text.length(); ) {
-            int cp = text.codePointAt(i);
-            if (out.length() > 0 && ((isHangul(previous) && isLatin(cp)) || (isLatin(previous) && isHangul(cp)))) {
-                appendSpaceIfNeeded(out);
-            }
-            out.appendCodePoint(cp);
-            previous = cp;
-            i += Character.charCount(cp);
-        }
-        return out.toString().replaceAll("([,.;:!?])(?=\\S)", "$1 ");
-    }
-
-    private static String normalizeKoreanBuiltText(String text) {
-        return (text == null ? "" : text)
-                .replaceAll("\\s+([,.;:!?])", "$1")
-                .replaceAll("([,.;:!?])(?=\\S)", "$1 ")
-                .replaceAll("\\s+", " ")
-                .trim();
-    }
-
-    private static boolean isLatin(int cp) {
-        return (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || (cp >= 0x00C0 && cp <= 0x024F);
-    }
-
-    private static int scoreKoreanLineSpacing(String text) {
-        if (text == null || text.isEmpty()) return 0;
-        int score = 0;
-        String[] tokens = text.split("\\s+");
-        for (String token : tokens) {
-            if (token == null || token.isEmpty()) continue;
-            if (!isAllHangul(token)) continue;
-            int chars = token.codePointCount(0, token.length());
-            if (chars == 1) score += 20;
-            if (isKoreanSuffixLike(token)) score += 12;
-        }
-        return score;
-    }
-
-    private static boolean isAllHangul(String text) {
-        for (int i = 0; i < text.length(); ) {
-            int cp = text.codePointAt(i);
-            if (!isHangul(cp)) return false;
-            i += Character.charCount(cp);
-        }
-        return true;
-    }
-
-    private static boolean isKoreanSuffixLike(String token) {
-        return "이".equals(token) || "가".equals(token) || "은".equals(token) || "는".equals(token)
-                || "을".equals(token) || "를".equals(token) || "도".equals(token) || "에".equals(token)
-                || "의".equals(token) || "로".equals(token) || "와".equals(token) || "과".equals(token)
-                || "만".equals(token) || "뿐".equals(token) || "요".equals(token) || "죠".equals(token)
-                || "지".equals(token) || "네".equals(token) || "군".equals(token) || "까".equals(token)
-                || "고".equals(token) || "게".equals(token) || "면서".equals(token);
+        return new KoreanSyllableSource(canonical.text, pieceStarts);
     }
 
     public static final class KoreanSyllableSource {
@@ -954,31 +756,7 @@ public final class SpicyRomanizer {
     }
 
     private static String romanizeKoreanReadable(String text) {
-        StringBuilder out = new StringBuilder();
-        StringBuilder run = new StringBuilder();
-        for (int i = 0; i < text.length(); ) {
-            int cp = text.codePointAt(i);
-            if (cp >= 0xAC00 && cp <= 0xD7A3) {
-                run.appendCodePoint(cp);
-            } else {
-                appendKoreanRun(out, run);
-                out.appendCodePoint(cp);
-            }
-            i += Character.charCount(cp);
-        }
-        appendKoreanRun(out, run);
-        return out.toString();
-    }
-
-    private static void appendKoreanRun(StringBuilder out, StringBuilder run) {
-        if (run.length() == 0) return;
-        boolean first = true;
-        for (String chunk : SpicyKoreanSpacing.splitRun(run.toString())) {
-            if (!first) out.append(' ');
-            out.append(romanizeKoreanRaw(chunk));
-            first = false;
-        }
-        run.setLength(0);
+        return romanizeKoreanRaw(text);
     }
 
     private static String romanizeKoreanRaw(String text) {

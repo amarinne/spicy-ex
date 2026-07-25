@@ -2,7 +2,9 @@ package com.eza.spicyex.lyrics;
 
 import static org.junit.Assert.assertEquals;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import org.junit.Test;
 
@@ -46,6 +48,7 @@ public class KoreanPronunciationTest {
     public void hAspirationAndElision() {
         assertEquals("joko", sound("좋고"));         // ㅎ + ㄱ → k
         assertEquals("joa", sound("좋아"));          // ㅎ + vowel → elided
+        assertEquals("anko", sound("않고"));         // ㄶ + ㄱ → ㄴ + ㅋ
     }
 
     @Test
@@ -54,15 +57,15 @@ public class KoreanPronunciationTest {
     }
 
     @Test
-    public void readablePhraseSpacing() {
-        assertEquals("annyeong haseyo", sound("안녕하세요"));
-        assertEquals("sarang haeyo", sound("사랑해요"));
-        assertEquals("bogo sipeo", sound("보고싶어"));
+    public void authoredSpacingIsNotRewrittenForReadability() {
+        assertEquals("annyeonghaseyo", sound("안녕하세요"));
+        assertEquals("saranghaeyo", sound("사랑해요"));
+        assertEquals("bogosipeo", sound("보고싶어"));
     }
 
     @Test
     public void realCorpusKoreanG2PContext() {
-        assertEquals("sumgyeojin tteusi nan gunggeum haeseo", sound("숨겨진 뜻이 난 궁금해서"));
+        assertEquals("sumgyeojin tteusi nan gunggeumhaeseo", sound("숨겨진 뜻이 난 궁금해서"));
         assertEquals("ireobeorin geu nunbit", sound("잃어버린 그 눈빛"));
         assertEquals("noajulge", sound("놓아줄게"));
         assertEquals("eopjji", sound("없지"));
@@ -74,7 +77,7 @@ public class KoreanPronunciationTest {
     public void fullLinePiecesPreserveSplitChunkPronunciation() {
         assertEquals(Arrays.asList("han", "gu", "geo"), SpicyKoreanG2P.romanizeSyllablePieces("한국어"));
         assertEquals(Arrays.asList("baeng", "ma"), SpicyKoreanG2P.romanizeSyllablePieces("백마"));
-        assertEquals(Arrays.asList("an", "nyeong", " ", "ha", "se", "yo"), SpicyKoreanG2P.romanizeReadablePieces("안녕하세요"));
+        assertEquals(Arrays.asList("an", "nyeong", "ha", "se", "yo"), SpicyKoreanG2P.romanizeReadablePieces("안녕하세요"));
     }
 
     @Test
@@ -94,9 +97,9 @@ public class KoreanPronunciationTest {
                 line,
                 line.text);
 
-        assertEquals("han", line.syllables.get(0).romanizedText);
-        assertEquals("gu", line.syllables.get(1).romanizedText);
-        assertEquals("geo", line.syllables.get(2).romanizedText);
+        assertEquals("han", line.readingRenderPlan.timedReadingUnits.get(0).text.trim());
+        assertEquals("-gu", line.readingRenderPlan.timedReadingUnits.get(1).text.trim());
+        assertEquals("geo", line.readingRenderPlan.timedReadingUnits.get(2).text.trim());
     }
 
     @Test
@@ -108,18 +111,18 @@ public class KoreanPronunciationTest {
                 new RomanizationOptions("", KoreanDisplayMode.WORD_TRANSLIT.value, false, "Russian", false),
                 doc, line, line.text);
 
-        assertEquals("han-", line.syllables.get(0).romanizedText);
-        assertEquals("guk-", line.syllables.get(1).romanizedText);
-        assertEquals("eo", line.syllables.get(2).romanizedText);
+        assertEquals("han-", line.readingRenderPlan.timedReadingUnits.get(0).text.trim());
+        assertEquals("guk-", line.readingRenderPlan.timedReadingUnits.get(1).text.trim());
+        assertEquals("eo", line.readingRenderPlan.timedReadingUnits.get(2).text.trim());
 
         line = line("한국어", "한", "국", "어");
         LyricsLocalRomanizer.populateLocalSegmentRomanization(
                 new RomanizationOptions("", KoreanDisplayMode.RR_STANDARD.value, false, "Russian", false),
                 doc, line, line.text);
 
-        assertEquals("han", line.syllables.get(0).romanizedText);
-        assertEquals("gu", line.syllables.get(1).romanizedText);
-        assertEquals("geo", line.syllables.get(2).romanizedText);
+        assertEquals("han", line.readingRenderPlan.timedReadingUnits.get(0).text.trim());
+        assertEquals("gu", line.readingRenderPlan.timedReadingUnits.get(1).text.trim());
+        assertEquals("geo", line.readingRenderPlan.timedReadingUnits.get(2).text.trim());
     }
 
     @Test
@@ -131,14 +134,10 @@ public class KoreanPronunciationTest {
                 new RomanizationOptions("", KoreanDisplayMode.VN_PRONUNCIATION.value, false, "Russian", false),
                 doc, line, line.text);
 
-        assertEquals("gưdê", line.syllables.get(0).romanizedText);
-        assertEquals("amuron", line.syllables.get(1).romanizedText);
-        assertEquals("mal", line.syllables.get(2).romanizedText);
-        assertEquals("dô", line.syllables.get(3).romanizedText);
-        assertEquals("ha", line.syllables.get(4).romanizedText);
-        assertEquals("ji", line.syllables.get(5).romanizedText);
-        assertEquals("ma", line.syllables.get(6).romanizedText);
-        assertEquals("yô", line.syllables.get(7).romanizedText);
+        String[] expected = {"gưdê", "amuron", "mal", "dô", "ha", "ji", "ma", "yô"};
+        for (int index = 0; index < expected.length; index++) {
+            assertEquals(expected[index], line.readingRenderPlan.timedReadingUnits.get(index).text.trim());
+        }
     }
 
     @Test
@@ -151,14 +150,14 @@ public class KoreanPronunciationTest {
                 new RomanizationOptions("", KoreanDisplayMode.VN_PRONUNCIATION.value, false, "Russian", false),
                 koreanDoc(), line, line.text);
 
-        assertEquals("bamê", line.syllables.get(0).romanizedText);
-        assertEquals("muniga", line.syllables.get(1).romanizedText);
-        assertEquals("a", line.syllables.get(2).romanizedText);
+        assertEquals("bamê", line.readingRenderPlan.timedReadingUnits.get(0).text.trim());
+        assertEquals("muniga", line.readingRenderPlan.timedReadingUnits.get(1).text.trim());
+        assertEquals("a", line.readingRenderPlan.timedReadingUnits.get(2).text.trim());
     }
 
     @Test
     public void koreanSyllableBoundariesRestoreSpacingBeforeG2p() {
-        LyricsLine line = line("더이상기댈곳은필요없어", "더", "이상", "기댈", "곳은", "필요", "없어");
+        LyricsLine line = line("더 이상 기댈 곳은 필요 없어", "더", "이상", "기댈", "곳은", "필요", "없어");
         LyricsDocument doc = koreanDoc();
         RomanizationOptions opts = new RomanizationOptions("", KoreanDisplayMode.VN_PRONUNCIATION.value, false, "Russian", false);
 
@@ -177,19 +176,15 @@ public class KoreanPronunciationTest {
 
     @Test
     public void koreanWordLevelSpansRecoverSpacesWhenPartOfWordIsUnreliable() {
-        LyricsLine mixed = lineWithPartFlags("미련이아냐,그저Hardtoseeit", true,
+        LyricsLine mixed = lineWithPartFlags("미련이 아냐, 그저 Hard to see it", true,
                 "미련이", "아냐,", "그저", "Hard", "to", "see", "it");
-        assertEquals("미련이 아냐, 그저 Hard to see it",
-                SpicyRomanizer.buildKoreanSyllableSource(mixed.syllables).text);
         assertEquals("miryoni anya, gưjo Hard to see it",
                 LyricsLocalRomanizer.romanizeLine(
                         new RomanizationOptions("", KoreanDisplayMode.VN_PRONUNCIATION.value, false, "Russian", false),
                         koreanDoc(), mixed, mixed.text));
 
-        LyricsLine korean = lineWithPartFlags("처음부터잘못됐단걸", true,
+        LyricsLine korean = lineWithPartFlags("처음부터 잘못됐단 걸", true,
                 "처음부터", "잘못됐단", "걸");
-        assertEquals("처음부터 잘못됐단 걸",
-                SpicyRomanizer.buildKoreanSyllableSource(korean.syllables).text);
         assertEquals("choưmbuto jalmôt-ttwêt-ttan gol",
                 LyricsLocalRomanizer.romanizeLine(
                         new RomanizationOptions("", KoreanDisplayMode.VN_PRONUNCIATION.value, false, "Russian", false),
@@ -198,14 +193,14 @@ public class KoreanPronunciationTest {
 
     @Test
     public void koreanUnreliablePartFlagsKeepRomanizedWordSpaces() {
-        LyricsLine line = lineWithPartFlags("점점내모습이", true, "점점", "내", "모습이");
+        LyricsLine line = lineWithPartFlags("점점 내 모습이", true, "점점", "내", "모습이");
         RomanizationOptions opts = new RomanizationOptions("", KoreanDisplayMode.RR_STANDARD.value, false, "Russian", false);
 
         LyricsLocalRomanizer.populateLocalSegmentRomanization(opts, koreanDoc(), line, line.text);
 
-        assertEquals("jeomjeom ", line.syllables.get(0).romanizedText);
-        assertEquals("nae ", line.syllables.get(1).romanizedText);
-        assertEquals("moseubi", line.syllables.get(2).romanizedText);
+        assertEquals("jeomjeom", line.readingRenderPlan.timedReadingUnits.get(0).text.trim());
+        assertEquals("nae", line.readingRenderPlan.timedReadingUnits.get(1).text.trim());
+        assertEquals("moseubi", line.readingRenderPlan.timedReadingUnits.get(2).text.trim());
     }
 
     @Test
@@ -217,31 +212,78 @@ public class KoreanPronunciationTest {
         line.syllables.get(3).sourceText = "모";
         line.syllables.get(4).sourceText = "습";
         line.syllables.get(5).sourceText = "이";
-        line.syllables.get(0).partOfWord = true;
-        line.syllables.get(1).partOfWord = false;
-        line.syllables.get(2).partOfWord = false;
-        line.syllables.get(3).partOfWord = true;
-        line.syllables.get(4).partOfWord = true;
-        line.syllables.get(5).partOfWord = true;
+        line.syllables.get(0).providerPartOfWord = true;
+        line.syllables.get(1).providerPartOfWord = false;
+        line.syllables.get(2).providerPartOfWord = false;
+        line.syllables.get(3).providerPartOfWord = true;
+        line.syllables.get(4).providerPartOfWord = true;
+        line.syllables.get(5).providerPartOfWord = true;
         RomanizationOptions opts = new RomanizationOptions("", KoreanDisplayMode.RR_STANDARD.value, false, "Russian", false);
 
         assertEquals("점점 내 모습이", SpicyRomanizer.buildKoreanSyllableSource(line.syllables).text);
 
         LyricsLocalRomanizer.populateLocalSegmentRomanization(opts, koreanDoc(), line, line.text);
 
-        assertEquals("jeom", line.syllables.get(0).romanizedText);
-        assertEquals("jeom", line.syllables.get(1).romanizedText);
-        assertEquals("nae", line.syllables.get(2).romanizedText);
-        assertEquals("mo", line.syllables.get(3).romanizedText);
-        assertEquals("seu", line.syllables.get(4).romanizedText);
-        assertEquals("bi", line.syllables.get(5).romanizedText);
+        String[] expected = {"jeom", "jeom", "nae", "mo", "seu", "bi"};
+        for (int index = 0; index < expected.length; index++) {
+            assertEquals(expected[index], line.readingRenderPlan.timedReadingUnits.get(index).text.trim());
+        }
     }
 
     @Test
-    public void koreanSmartBoundariesStillJoinParticlesAndEndings() {
-        LyricsLine line = lineWithPartFlags("그대아무런말도하지마요", false,
+    public void completeProviderLineOwnsParticlesAndEndings() {
+        LyricsLine line = lineWithPartFlags("그대 아무런 말도 하지 마요", false,
                 "그대", "아무런", "말", "도", "하", "지", "마", "요");
-        assertEquals("그대 아무런 말도 하지 마요", SpicyRomanizer.buildKoreanSyllableSource(line.syllables).text);
+        assertEquals("geudae amureon maldo haji mayo",
+                LyricsLocalRomanizer.romanizeLine(
+                        new RomanizationOptions("", KoreanDisplayMode.RR_STANDARD.value, false, "Russian", false),
+                        koreanDoc(), line, line.text));
+    }
+
+    @Test
+    public void koreanHeartBurnPreservesAuthoredBoundariesAcrossTransports() {
+        assertAuthoredLine(new String[]{"그대 ", "아무런 ", "말", "도 ", "하", "지 ", "마", "요"},
+                "그대 아무런 말도 하지 마요", "geudae amureon maldo haji mayo");
+        assertAuthoredLine(new String[]{"이 ", "맘은 ", "여전", "히 ", "그대", "로", "예", "요"},
+                "이 맘은 여전히 그대로예요", "i mameun yeojeonhi geudaeroyeyo");
+        assertAuthoredLine(new String[]{"따가", "운 ", "햇살 ", "그 ", "아", "래 ", "우리"},
+                "따가운 햇살 그 아래 우리", "ttagaun haessal geu arae uri");
+        assertAuthoredLine(new String[]{"이 ", "분", "위기 ", "난 ", "좋아", "요"},
+                "이 분위기 난 좋아요", "i bunwigi nan joayo");
+        assertAuthoredLine(new String[]{"어떡", "해 ", "나 ", "숨이 ", "가", "빠져요"},
+                "어떡해 나 숨이 가빠져요", "eotteokae na sumi gappajeoyo");
+        assertAuthoredLine(new String[]{"열이 ", "올라", "요 ", "에", "오"},
+                "열이 올라요 에오", "yeori ollayo e-o");
+        assertAuthoredLine(new String[]{"뜨거워진 ", "온도 ", "탓", "일까", "요"},
+                "뜨거워진 온도 탓일까요", "tteugeowojin ondo tasilkkayo");
+        assertAuthoredLine(new String[]{"약이 ", "올라", "요 ", "에", "오"},
+                "약이 올라요 에오", "yagi ollayo e-o");
+        assertAuthoredLine(new String[]{"한 ", "번쯤은 ", "무", "너", "져", "줄", "게", "요"},
+                "한 번쯤은 무너져줄게요", "han beonjjeumeun muneojeojulgeyo");
+    }
+
+    private static void assertAuthoredLine(String[] rawSpans, String source, String display) {
+        List<SyllableSegment> raw = heartBurnSegments(rawSpans, true);
+        assertEquals(source, SpicyRomanizer.buildKoreanSyllableSource(raw).text);
+        assertEquals(display, SpicyRomanizer.romanizeKoreanSyllableLineForDisplay(
+                raw, KoreanDisplayMode.RR_PRONUNCIATION).display);
+
+        List<SyllableSegment> parserTrimmed = heartBurnSegments(rawSpans, false);
+        assertEquals(source, SpicyRomanizer.buildKoreanSyllableSource(parserTrimmed).text);
+        assertEquals(display, SpicyRomanizer.romanizeKoreanSyllableLineForDisplay(
+                parserTrimmed, KoreanDisplayMode.RR_PRONUNCIATION).display);
+    }
+
+    private static List<SyllableSegment> heartBurnSegments(String[] rawSpans, boolean preserveRawText) {
+        ArrayList<SyllableSegment> segments = new ArrayList<>();
+        for (String raw : rawSpans) {
+            SyllableSegment segment = seg(raw.trim());
+            segment.sourceText = preserveRawText ? raw : raw.trim();
+            segment.providerPartOfWord = !raw.endsWith(" ");
+            segment.partOfWord = !raw.endsWith(" ");
+            segments.add(segment);
+        }
+        return segments;
     }
 
     private static SyllableSegment seg(String text) {
@@ -269,6 +311,7 @@ public class KoreanPronunciationTest {
         line.text = text;
         for (String span : spans) {
             SyllableSegment seg = seg(span);
+            seg.providerPartOfWord = partOfWord;
             seg.partOfWord = partOfWord;
             line.syllables.add(seg);
         }

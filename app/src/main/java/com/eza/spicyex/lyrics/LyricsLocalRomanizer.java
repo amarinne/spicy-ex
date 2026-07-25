@@ -132,54 +132,10 @@ public final class LyricsLocalRomanizer {
     private static boolean populateKoreanSegments(LyricsLine line, RomanizationOptions opts) {
         if (line == null || isBlank(line.text) || line.syllables == null || line.syllables.isEmpty()) return false;
         KoreanDisplayMode mode = opts == null ? KoreanDisplayMode.RR_STANDARD : KoreanDisplayMode.fromSetting(opts.koreanMode);
-        SpicyRomanizer.KoreanSyllableSource source = SpicyRomanizer.buildKoreanSyllableSource(line.syllables);
-        List<String> pieces = SpicyRomanizer.romanizeKoreanDisplayPieces(source.text, mode);
-        if (pieces.isEmpty()) return false;
-        boolean changed = false;
-        for (int index = 0; index < line.syllables.size(); index++) {
-            SyllableSegment seg = line.syllables.get(index);
-            if (seg == null || isBlank(seg.text) || !isBlank(seg.romanizedText)) continue;
-            String segmentText = seg.text.trim();
-            if (segmentText.isEmpty()) continue;
-            int pieceStart = source.pieceStart(index);
-            int pieceCount = segmentText.codePointCount(0, segmentText.length());
-            if (pieceStart < 0 || pieceStart + pieceCount > pieces.size()) continue;
-            StringBuilder local = new StringBuilder();
-            for (int i = pieceStart; i < pieceStart + pieceCount; i++) local.append(pieces.get(i));
-            if (seg.partOfWord && (endsWithWhitespace(seg.text) || hasWhitespaceAfterSpan(source.text, pieceStart, pieceCount))) local.append(' ');
-            String value = seg.partOfWord ? trimLeading(local.toString()) : local.toString().trim();
-            if (!isBlank(value) && !value.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(value)) {
-                seg.romanizedText = value;
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    private static boolean endsWithWhitespace(String text) {
-        if (text == null || text.isEmpty()) return false;
-        int cp = text.codePointBefore(text.length());
-        return Character.isWhitespace(cp);
-    }
-
-    private static boolean hasWhitespaceAfterSpan(String text, int startCp, int countCp) {
-        if (isBlank(text) || startCp < 0 || countCp < 0) return false;
-        int cpCount = text.codePointCount(0, text.length());
-        int nextCp = startCp + countCp;
-        if (nextCp < 0 || nextCp >= cpCount) return false;
-        int nextIndex = text.offsetByCodePoints(0, nextCp);
-        return Character.isWhitespace(text.codePointAt(nextIndex));
-    }
-
-    private static String trimLeading(String text) {
-        if (text == null || text.isEmpty()) return "";
-        int start = 0;
-        while (start < text.length()) {
-            int cp = text.codePointAt(start);
-            if (!Character.isWhitespace(cp)) break;
-            start += Character.charCount(cp);
-        }
-        return text.substring(start);
+        line.readingRenderPlan = ReadingPlanFactory.korean(line, mode);
+        if (line.readingRenderPlan == null) return false;
+        clearSegmentRomanization(line);
+        return true;
     }
 
     public static void clearSegmentRomanization(LyricsLine line) {

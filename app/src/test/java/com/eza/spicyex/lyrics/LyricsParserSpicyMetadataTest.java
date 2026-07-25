@@ -174,6 +174,51 @@ public class LyricsParserSpicyMetadataTest {
         assertEquals("とてもきれいだった", doc.lines.get(0).text);
     }
 
+    @Test
+    public void parseSyllableLyricsDoesNotInventNativePersonCounterSpace() {
+        JsonArray content = new JsonArray();
+        content.add(numericPersonVocal("1"));
+        content.add(numericPersonVocal("2"));
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+
+        assertEquals("1人", doc.lines.get(0).text);
+        assertEquals("2人", doc.lines.get(1).text);
+    }
+
+    @Test
+    public void parseSyllableLyricsUsesTrailingEdgeProviderFlags() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("My", false, 1.0, 1.3));
+        syllables.add(syllable("Camoufla", true, 1.3, 1.7));
+        syllables.add(syllable("ge", false, 1.7, 2.0));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "My Camouflage");
+        lead.addProperty("StartTime", 1.0);
+        lead.addProperty("EndTime", 2.0);
+        lead.add("Syllables", syllables);
+        JsonObject vocal = new JsonObject();
+        vocal.addProperty("Type", "Vocal");
+        vocal.add("Lead", lead);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        JsonArray content = new JsonArray();
+        content.add(vocal);
+        lyrics.add("Content", content);
+
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+
+        assertEquals("My Camouflage", doc.lines.get(0).text);
+        assertTrue(doc.lines.get(0).syllables.get(0).boundaryAfter);
+        assertFalse(doc.lines.get(0).syllables.get(1).boundaryAfter);
+        assertFalse(doc.lines.get(0).syllables.get(2).boundaryAfter);
+    }
+
     private static JsonObject queryResponse(JsonObject result) {
         JsonObject query = new JsonObject();
         query.add("result", result);
@@ -255,6 +300,21 @@ public class LyricsParserSpicyMetadataTest {
         lyrics.addProperty("Type", "Syllable");
         lyrics.add("Content", content);
         return lyrics;
+    }
+
+    private static JsonObject numericPersonVocal(String digit) {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable(digit, false, 1.0, 1.5));
+        syllables.add(syllable("人", false, 1.5, 2.0));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", digit + "人");
+        lead.addProperty("StartTime", 1.0);
+        lead.addProperty("EndTime", 2.0);
+        lead.add("Syllables", syllables);
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        return item;
     }
 
     private static JsonObject syllable(String text, boolean partOfWord, double start, double end) {

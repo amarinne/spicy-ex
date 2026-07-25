@@ -38,9 +38,9 @@ final class SpicyKoreanG2P {
         CODA_ROMAN[21] = "ng"; // ㅇ
     }
 
-    private static final int NUC_UI = 19, NUC_I = 20;       // ㅢ, ㅣ
-    private static final int CODA_NONE = 0, CODA_G = 1, CODA_N = 4, CODA_D = 7, CODA_L = 8, CODA_M = 16, CODA_B = 17, CODA_NG = 21, CODA_H = 27;
-    private static final int ON_G = 0, ON_N = 2, ON_D = 3, ON_R = 5, ON_B = 7, ON_J = 12, ON_CH = 14, ON_K = 15, ON_T = 16, ON_P = 17, ON_H = 18, ON_NULL = 11, ON_S = 9, ON_SS = 10;
+    private static final int NUC_EO = 4, NUC_YEO = 6, NUC_UI = 19, NUC_I = 20; // ㅓ, ㅕ, ㅢ, ㅣ
+    private static final int CODA_NONE = 0, CODA_G = 1, CODA_N = 4, CODA_NH = 6, CODA_D = 7, CODA_L = 8, CODA_LH = 15, CODA_M = 16, CODA_B = 17, CODA_NG = 21, CODA_H = 27;
+    private static final int ON_G = 0, ON_N = 2, ON_D = 3, ON_R = 5, ON_B = 7, ON_J = 12, ON_JJ = 13, ON_CH = 14, ON_K = 15, ON_T = 16, ON_P = 17, ON_H = 18, ON_NULL = 11, ON_S = 9, ON_SS = 10;
 
     static String romanize(String text) {
         if (text == null) return null;
@@ -96,6 +96,7 @@ final class SpicyKoreanG2P {
         if ("눈빛".equals(word)) return "눈삗";
         if ("눈동자".equals(word)) return "눈똥자";
         if ("해돋이".equals(word)) return "해도지";
+        if ("햇살".equals(word)) return "해쌀";
         if ("색연필".equals(word)) return "생년필";
         if ("희미해져".equals(word)) return "히미해저";
         word = rewriteUi(word);
@@ -158,40 +159,7 @@ final class SpicyKoreanG2P {
     }
 
     static java.util.List<String> romanizeReadablePieces(String text) {
-        java.util.ArrayList<String> pieces = new java.util.ArrayList<>();
-        if (text == null) return pieces;
-        int n = text.length();
-        StringBuilder run = new StringBuilder();
-        for (int i = 0; i < n; ) {
-            int cp = text.codePointAt(i);
-            if (cp >= 0xAC00 && cp <= 0xD7A3) {
-                run.appendCodePoint(cp);
-            } else {
-                flushReadableRun(run, pieces);
-                pieces.add(new String(Character.toChars(cp)));
-            }
-            i += Character.charCount(cp);
-        }
-        flushReadableRun(run, pieces);
-        return pieces;
-    }
-
-    private static void flushReadableRun(StringBuilder run, java.util.List<String> out) {
-        if (run.length() == 0) return;
-        java.util.List<String> syllablePieces = romanizeSyllablePieces(run.toString());
-        int pieceIndex = 0;
-        java.util.List<String> chunks = SpicyKoreanSpacing.splitRun(run.toString());
-        boolean first = true;
-        for (String chunk : chunks) {
-            if (chunk == null || chunk.isEmpty()) continue;
-            if (!first) out.add(" ");
-            int pieceCount = chunk.codePointCount(0, chunk.length());
-            for (int i = 0; i < pieceCount && pieceIndex < syllablePieces.size(); i++) {
-                out.add(syllablePieces.get(pieceIndex++));
-            }
-            first = false;
-        }
-        run.setLength(0);
+        return romanizeSyllablePieces(text);
     }
 
     static java.util.List<String> romanizeSyllablePieces(String text) {
@@ -234,6 +202,12 @@ final class SpicyKoreanG2P {
     }
 
     private static void applyRules(java.util.ArrayList<int[]> run) {
+        for (int[] syl : run) {
+            // 표준발음법 제5항 다만 3: 져/쪄/쳐 are pronounced 저/쩌/처.
+            if (syl[1] == NUC_YEO && (syl[0] == ON_J || syl[0] == ON_JJ || syl[0] == ON_CH)) {
+                syl[1] = NUC_EO;
+            }
+        }
         for (int i = 0; i + 1 < run.size(); i++) {
             int[] cur = run.get(i);
             int[] nxt = run.get(i + 1);
@@ -263,6 +237,15 @@ final class SpicyKoreanG2P {
             }
 
             // --- before a consonant ---
+            if (coda == CODA_NH || coda == CODA_LH) {
+                cur[2] = coda == CODA_NH ? CODA_N : CODA_L;
+                if (onset == ON_G) { nxt[0] = ON_K; continue; }
+                if (onset == ON_D) { nxt[0] = ON_T; continue; }
+                if (onset == ON_B) { nxt[0] = ON_P; continue; }
+                if (onset == ON_J) { nxt[0] = ON_CH; continue; }
+                if (onset == ON_S) { nxt[0] = ON_SS; continue; }
+                coda = cur[2];
+            }
             int rep = codaRepresentative(coda);
 
             // ㅎ aspiration, both orders

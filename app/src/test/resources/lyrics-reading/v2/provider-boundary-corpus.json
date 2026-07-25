@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "id": "provider-boundary-corpus",
+  "capture": {
+    "camouflageTtmlSha256": "6d915f19c796c4bb7743f47fb9240518bc6b561f41029ea37ccfd5488d170003",
+    "spanTuple": ["rawText", "providerPartOfWord", "startMs", "endMs"]
+  },
+  "lines": [
+    {
+      "id": "camouflage-adapter-my",
+      "origin": "Camouflage provider adapter capture paired with raw TTML",
+      "displayText": "My Camouflage",
+      "spans": [["My", false, 0, 100], ["Camoufla", true, 100, 200], ["ge", false, 200, 300]],
+      "expected": {
+        "canonicalText": "My Camouflage",
+        "completeLineAccepted": true,
+        "boundaries": [[2, "inferred", "completeProviderLine"]],
+        "spanMappings": [[0, 2], [3, 11], [11, 13]],
+        "joins": [["boundary", "completeProviderLine"], ["attached", "completeProviderLineCompact"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "camouflage-raw-ttml-my",
+      "origin": "/home/eza/Downloads/Camouflage - aespa.ttml",
+      "displayText": "My Camouflage",
+      "spans": [["My ", null, 0, 100], ["Camou", null, 100, 200], ["fla", null, 200, 300], ["ge", null, 300, 400]],
+      "expected": {
+        "canonicalText": "My Camouflage",
+        "completeLineAccepted": true,
+        "boundaries": [[2, "explicitWhitespace", "rawEdgeWhitespace"]],
+        "spanMappings": [[0, 2], [3, 8], [8, 11], [11, 13]],
+        "joins": [["boundary", "rawEdgeWhitespace"], ["attached", "completeProviderLineCompact"], ["attached", "completeProviderLineCompact"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "japanese-packed-false",
+      "origin": "packed provider regression fixture",
+      "displayText": "とてもきれいだった",
+      "spans": [["とて", false, 0, 100], ["も", false, 100, 200], ["きれい", false, 200, 300], ["だっ", false, 300, 400], ["た", false, 400, 500]],
+      "expected": {
+        "canonicalText": "とてもきれいだった",
+        "completeLineAccepted": true,
+        "boundaries": [],
+        "spanMappings": [[0, 2], [2, 3], [3, 6], [6, 8], [8, 9]],
+        "joins": [["attached", "scriptFallback"], ["attached", "scriptFallback"], ["attached", "scriptFallback"], ["attached", "scriptFallback"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "numeric-person-one",
+      "origin": "mobile 1人 regression exception",
+      "displayText": "1人",
+      "spans": [["1", false, 0, 100], ["人", false, 100, 200]],
+      "expected": {
+        "canonicalText": "1人",
+        "completeLineAccepted": true,
+        "boundaries": [],
+        "spanMappings": [[0, 1], [1, 2]],
+        "joins": [["attached", "scriptFallback"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "numeric-person-two",
+      "origin": "mobile 2人 regression exception",
+      "displayText": "2人",
+      "spans": [["2", false, 0, 100], ["人", false, 100, 200]],
+      "expected": {
+        "canonicalText": "2人",
+        "completeLineAccepted": true,
+        "boundaries": [],
+        "spanMappings": [[0, 1], [1, 2]],
+        "joins": [["attached", "scriptFallback"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "raw-whitespace-wins",
+      "origin": "contradictory provider evidence fixture",
+      "displayText": "今年",
+      "spans": [["今 ", true, 0, 100], ["年", true, 100, 200]],
+      "expected": {
+        "canonicalText": "今 年",
+        "completeLineAccepted": true,
+        "boundaries": [[1, "explicitWhitespace", "rawEdgeWhitespace"]],
+        "spanMappings": [[0, 1], [2, 3]],
+        "joins": [["boundary", "rawEdgeWhitespace"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "packed-latin-japanese",
+      "origin": "packed go + Japanese boundary regression",
+      "displayText": "go君",
+      "spans": [["go", true, 0, 100], ["君", true, 100, 200]],
+      "expected": {
+        "canonicalText": "go 君",
+        "completeLineAccepted": true,
+        "boundaries": [[2, "script", "scriptFallback"]],
+        "spanMappings": [[0, 2], [3, 4]],
+        "joins": [["boundary", "scriptFallback"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "duplicate-source-text",
+      "origin": "stable sequential mapping regression",
+      "displayText": "重複 重複",
+      "spans": [["重複", false, 0, 100], ["重複", false, 100, 200]],
+      "expected": {
+        "canonicalText": "重複 重複",
+        "completeLineAccepted": true,
+        "boundaries": [[2, "inferred", "completeProviderLine"]],
+        "spanMappings": [[0, 2], [3, 5]],
+        "joins": [["boundary", "completeProviderLine"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "apostrophe-pieces",
+      "origin": "punctuation mapping fixture",
+      "displayText": "don't",
+      "spans": [["don", null, 0, 100], ["'", null, 100, 200], ["t", null, 200, 300]],
+      "expected": {
+        "canonicalText": "don't",
+        "completeLineAccepted": true,
+        "boundaries": [],
+        "spanMappings": [[0, 3], [3, 4], [4, 5]],
+        "joins": [["attached", "scriptFallback"], ["attached", "scriptFallback"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "astral-explicit-space",
+      "origin": "Unicode code-point mapping fixture",
+      "displayText": "😀 한국",
+      "spans": [["😀 ", null, 0, 100], ["한국", null, 100, 200]],
+      "expected": {
+        "canonicalText": "😀 한국",
+        "completeLineAccepted": true,
+        "boundaries": [[1, "explicitWhitespace", "rawEdgeWhitespace"]],
+        "spanMappings": [[0, 1], [2, 4]],
+        "joins": [["boundary", "rawEdgeWhitespace"]],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "invalid-complete-line",
+      "origin": "invalid provider alias rejection fixture",
+      "displayText": "wrong",
+      "spans": [["正", null, 0, 100], ["解", null, 100, 200]],
+      "expected": {
+        "canonicalText": "正解",
+        "completeLineAccepted": false,
+        "boundaries": [],
+        "spanMappings": [[0, 1], [1, 2]],
+        "joins": [["attached", "scriptFallback"]],
+        "diagnostics": ["invalidCompleteProviderLine"]
+      }
+    }
+  ]
+}
