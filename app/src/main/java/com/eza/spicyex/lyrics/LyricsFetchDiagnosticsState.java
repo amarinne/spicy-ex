@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.Diagnostics;
+
 import java.util.List;
 
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
@@ -7,7 +9,8 @@ import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 /** Session-local, privacy-safe snapshot of last lyric fetch arbitration. */
 public final class LyricsFetchDiagnosticsState {
     private static volatile Snapshot last = new Snapshot(
-            "none", "none", "Unknown", "", "", false, "unknown", false, "unknown", false);
+            "none", "none", "unknown", "", "Unknown", "", "", false,
+            "unknown", false, "unknown", false, 0, 0L);
 
     private LyricsFetchDiagnosticsState() {
     }
@@ -23,6 +26,8 @@ public final class LyricsFetchDiagnosticsState {
         last = new Snapshot(
                 safeStatus(sourceChosen),
                 joinCandidates(candidatesSeen),
+                chosen == null ? "unknown" : safeStatus(chosen.provider),
+                chosen == null ? "" : safeStatus(chosen.language),
                 chosen == null ? "Unknown" : safeStatus(chosen.type),
                 safeStatus(SpicyVersionProbeState.spicyVersionSent),
                 safeStatus(SpicyVersionProbeState.spicyLatestVersion),
@@ -30,7 +35,17 @@ public final class LyricsFetchDiagnosticsState {
                 status,
                 chosen != null && chosen.spicyPackedPayload,
                 chosen != null && chosen.spicyPoisoned ? poison : "ok",
-                cacheWrite);
+                cacheWrite,
+                candidatesSeen == null ? 0 : candidatesSeen.size(),
+                System.currentTimeMillis());
+        Diagnostics.event("lyrics_fetch", "provider_arbitration",
+                Diagnostics.context(
+                        "source", sourceChosen,
+                        "provider", chosen == null ? "unknown" : chosen.provider,
+                        "status", status,
+                        "language", chosen == null ? "" : chosen.language,
+                        "timingType", chosen == null ? "Unknown" : chosen.type,
+                        "cache", cacheWrite ? "write" : "no_write"));
     }
 
     public static Snapshot get() {
@@ -57,6 +72,8 @@ public final class LyricsFetchDiagnosticsState {
     public static final class Snapshot {
         public final String sourceChosen;
         public final String candidatesSeen;
+        public final String provider;
+        public final String language;
         public final String typeChosen;
         public final String spicyVersionSent;
         public final String spicyLatestVersion;
@@ -65,13 +82,18 @@ public final class LyricsFetchDiagnosticsState {
         public final boolean packedPayload;
         public final String poisonResult;
         public final boolean cacheWrite;
+        public final int candidateCount;
+        public final long recordedAtMs;
 
-        private Snapshot(String sourceChosen, String candidatesSeen, String typeChosen,
+        private Snapshot(String sourceChosen, String candidatesSeen, String provider, String language,
+                         String typeChosen,
                          String spicyVersionSent, String spicyLatestVersion, boolean tokenPresent,
                          String spicyQueryStatus, boolean packedPayload, String poisonResult,
-                         boolean cacheWrite) {
+                         boolean cacheWrite, int candidateCount, long recordedAtMs) {
             this.sourceChosen = sourceChosen;
             this.candidatesSeen = candidatesSeen;
+            this.provider = provider;
+            this.language = language;
             this.typeChosen = typeChosen;
             this.spicyVersionSent = spicyVersionSent;
             this.spicyLatestVersion = spicyLatestVersion;
@@ -80,6 +102,8 @@ public final class LyricsFetchDiagnosticsState {
             this.packedPayload = packedPayload;
             this.poisonResult = poisonResult;
             this.cacheWrite = cacheWrite;
+            this.candidateCount = candidateCount;
+            this.recordedAtMs = recordedAtMs;
         }
     }
 }

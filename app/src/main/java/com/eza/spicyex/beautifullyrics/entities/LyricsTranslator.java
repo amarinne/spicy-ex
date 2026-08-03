@@ -43,11 +43,11 @@ public final class LyricsTranslator {
 
     public static String maybeTranslateContent(Activity activity, String trackId, String type, String content) {
         SpotifyPlusConfig config = SpotifyPlusConfig.from(activity);
-        if (!config.getBoolean(Settings.TRANSLATION_ENABLED.key,
-                !"disabled".equalsIgnoreCase(config.get(Settings.TRANSLATION_BACKEND)))) return content;
+        if (!config.get(Settings.TRANSLATION_ENABLED)
+                || "disabled".equalsIgnoreCase(config.get(Settings.TRANSLATION_BACKEND))) return content;
         if (!config.showTranslationLyrics()) return content;
 
-        String backend = config.getString(SpotifyPlusConfig.KEY_TRANSLATION_BACKEND, "google_unofficial");
+        String backend = config.get(Settings.TRANSLATION_BACKEND);
         if (!"google_unofficial".equals(backend)) return content;
 
         try {

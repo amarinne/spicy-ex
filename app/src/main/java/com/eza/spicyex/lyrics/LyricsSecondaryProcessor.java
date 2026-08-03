@@ -54,7 +54,9 @@ public final class LyricsSecondaryProcessor {
             LyricsDocument snapshot,
             boolean showRomanization,
             RomanizationOptions opts,
+            String translationBackend,
             String targetLang,
+            String sourceLang,
             String effectiveSourceLang,
             CurrentGuard currentGuard,
             Callback callback
@@ -68,7 +70,8 @@ public final class LyricsSecondaryProcessor {
         List<Integer> romanNetworkWork = new ArrayList<>();
         List<Integer> translationWork = new ArrayList<>();
         final boolean wantRomanization = workerSnapshot.romanizationPending && showRomanization;
-        final boolean wantTranslation = workerSnapshot.translationPending;
+        final boolean wantTranslation = workerSnapshot.translationPending
+                && "google_unofficial".equalsIgnoreCase(translationBackend);
 
         if (wantRomanization) {
             for (int i = 0; i < workerSnapshot.lines.size(); i++) {
@@ -88,7 +91,8 @@ public final class LyricsSecondaryProcessor {
             for (int i = 0; i < workerSnapshot.lines.size(); i++) {
                 LyricsLine line = workerSnapshot.lines.get(i);
                 if (line == null || isBlank(line.text) || line.interlude) continue;
-                if (isBlank(line.translatedText)) {
+                if (isBlank(line.translatedText)
+                        && SpicyProcessing.flagsFor(line.text, sourceLang, targetLang).translationPending) {
                     translationWork.add(i);
                 }
             }
@@ -97,7 +101,7 @@ public final class LyricsSecondaryProcessor {
         if (localWork.isEmpty() && romanNetworkWork.isEmpty() && translationWork.isEmpty()) {
             LyricsProcessingPatch patch = flagsPatch(false, false, false,
                     workerSnapshot.includesRomanization || wantRomanization,
-                    workerSnapshot.includesTranslation || wantTranslation, 0);
+                    LyricsDocumentProcessor.hasDisplayedTranslation(workerSnapshot), 0);
             handler.post(() -> {
                 if (currentGuard == null || currentGuard.isCurrent(id, generation, snapshot)) {
                     patch.applyTo(snapshot);
@@ -117,7 +121,7 @@ public final class LyricsSecondaryProcessor {
                     wantTranslation,
                     wantRomanization || wantTranslation,
                     workerSnapshot.includesRomanization,
-                    workerSnapshot.includesTranslation,
+                    workerSnapshot.includesTranslation && !wantTranslation,
                     0);
 
             for (int index : localWork) {
@@ -155,7 +159,7 @@ public final class LyricsSecondaryProcessor {
             if (romanNetworkWork.isEmpty() && translationWork.isEmpty()) {
                 LyricsProcessingPatch finalPatch = flagsPatch(false, false, false,
                         workerSnapshot.includesRomanization || wantRomanization,
-                        workerSnapshot.includesTranslation || wantTranslation, changed.get());
+                        LyricsDocumentProcessor.hasDisplayedTranslation(workerSnapshot), changed.get());
                 int finalChanged = changed.get();
                 handler.post(() -> {
                     if (currentGuard == null || currentGuard.isCurrent(id, generation, snapshot)) {
@@ -186,6 +190,7 @@ public final class LyricsSecondaryProcessor {
             CountDownLatch latch = new CountDownLatch(romanNetworkWork.size());
             AtomicInteger done = new AtomicInteger();
             List<LyricsProcessingPatch.LinePatch> networkPatches = Collections.synchronizedList(new ArrayList<>());
+            Set<Integer> translatedIndices = Collections.synchronizedSet(new HashSet<>());
             for (int index : romanNetworkWork) {
                 googleWorkers.execute(() -> {
                     try {
@@ -238,7 +243,7 @@ public final class LyricsSecondaryProcessor {
                     && (currentGuard == null || currentGuard.isCurrent(id, generation, snapshot))) {
                 List<Integer> retryWork = translateBatchPass(
                         id, effectiveSourceLang, targetLang, workerSnapshot, translationWork,
-                        networkPatches, changed, true);
+                        networkPatches, translatedIndices, changed, true);
                 if (!retryWork.isEmpty() && (currentGuard == null || currentGuard.isCurrent(id, generation, snapshot))) {
                     handler.post(() -> {
                         if (currentGuard == null || currentGuard.isCurrent(id, generation, snapshot)) {
@@ -246,14 +251,19 @@ public final class LyricsSecondaryProcessor {
                         }
                     });
                     translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, retryWork,
-                            networkPatches, changed, false);
+                            networkPatches, translatedIndices, changed, false);
                 }
             }
 
             int finalChanged = changed.get();
+            boolean translationComplete = translationPassComplete(
+                    wantGoogleTranslate, translationWork, translatedIndices);
+            boolean includesTranslation = translationComplete
+                    && (LyricsDocumentProcessor.hasDisplayedTranslation(workerSnapshot)
+                    || !translatedIndices.isEmpty());
             LyricsProcessingPatch finalPatch = flagsPatch(false, false, false,
                     workerSnapshot.includesRomanization || wantGoogleRomanize,
-                    workerSnapshot.includesTranslation || wantGoogleTranslate,
+                    includesTranslation,
                     finalChanged);
             for (LyricsProcessingPatch.LinePatch patch : networkPatches) finalPatch.addLinePatch(patch);
             handler.post(() -> {
@@ -272,6 +282,7 @@ public final class LyricsSecondaryProcessor {
             LyricsDocument workerSnapshot,
             List<Integer> work,
             List<LyricsProcessingPatch.LinePatch> networkPatches,
+            Set<Integer> translatedIndices,
             AtomicInteger changed,
             boolean collectRetry
     ) {
@@ -295,10 +306,16 @@ public final class LyricsSecondaryProcessor {
                 LyricsProcessingPatch.LinePatch linePatch = new LyricsProcessingPatch.LinePatch(item.index);
                 linePatch.setTranslatedText(value);
                 networkPatches.add(linePatch);
+                translatedIndices.add(item.index);
                 changed.incrementAndGet();
             }
         }
         return retry;
+    }
+
+    static boolean translationPassComplete(boolean requested, List<Integer> work, Set<Integer> translatedIndices) {
+        return !requested || work == null || work.isEmpty()
+                || (translatedIndices != null && translatedIndices.containsAll(work));
     }
 
     private List<List<GoogleEnhancer.BatchLine>> translationBatches(LyricsDocument doc, List<Integer> work) {

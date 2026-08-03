@@ -16,6 +16,7 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.R;
 import com.eza.spicyex.References;
 import com.eza.spicyex.Settings;
@@ -432,8 +433,12 @@ final class LyricsActivityTakeoverHook {
             root.start();
             root.animate().alpha(1f).translationY(0f).setDuration(260).start();
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " mounted native Spicy renderer shell");
+            Diagnostics.event("renderer", "mount_state",
+                    Diagnostics.context("surface", "fullscreen", "mounted", "true"));
         } catch (Throwable t) {
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " mount failed: " + t);
+            Diagnostics.event("renderer", "mount_state", t,
+                    Diagnostics.context("surface", "fullscreen", "mounted", "false"));
         }
     }
 

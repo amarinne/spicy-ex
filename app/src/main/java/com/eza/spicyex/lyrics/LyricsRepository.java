@@ -27,9 +27,10 @@ public final class LyricsRepository {
     private static final String SPICY_QUERY_URL = "https://api.spicylyrics.org/query";
     private static final String SPICY_ORIGIN = "https://xpui.app.spotify.com";
     private static final String SPICY_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Spotify/1.2.63 Chrome/132.0.6834.210 Electron/34.3.1 Safari/537.36";
-    // Must track the current Spicy Lyrics client version — api.spicylyrics.org rejects outdated
-    // clients with a "please update spicy lyrics" payload (gated on client.version / SpicyLyrics-Version).
-    // Request schema (verified against Spikerko/spicy-lyrics 6.1.1 src/utils/API/Query.ts) is unchanged.
+    // Compatibility pin, not an upstream-release tracker. Upstream is 6.2.3 as of 2026-07-25,
+    // but the server still accepts 6.1.1. Bump only after live server acceptance changes or an
+    // update payload proves this version is rejected; 5.x was previously retired that way.
+    // The value is sent in both client.version and SpicyLyrics-Version.
     private static final String SPICY_VERSION = "6.1.1";
     private static final MediaType JSON = MediaType.parse("application/json");
     private static final int NATIVE_LYRICS_RETRY_LIMIT = 4;

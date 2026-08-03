@@ -113,12 +113,20 @@ is enabled.
 ## In-Spotify Settings
 
 - Settings panel inside Spotify.
+- English and Simplified Chinese settings/report UI. The `Interface language` row stays English so
+  it remains findable after a language change.
 - Controls grouped by lyrics, transliteration, translation, now-playing, text, animation, and
   background.
 - Cache actions:
   - clear translation cache
   - clear lyrics response cache
 - Status panel with last lyric state and build version.
+- User-triggered private problem reports with a 30-minute privacy-safe event capture, readable JSON
+  preview, public data-policy link, and a report ID for a separately opened formatted GitHub issue.
+- Reports may include the current track identity and bounded current lyric lines shown in preview.
+  They never include Spotify tokens, full logcat, LSPosed logs, or screenshots. Upload is manual and
+  is never performed in the background.
+- `app/translation/strings-template.xml` provides the complete XML key set for new translations.
 
 ## Installation And Distribution
 

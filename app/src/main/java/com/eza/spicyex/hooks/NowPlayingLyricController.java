@@ -120,6 +120,7 @@ final class NowPlayingLyricController {
                 || renderConfig.chineseTones != next.chineseTones
                 || renderConfig.cyrillicKeepSigns != next.cyrillicKeepSigns
                 || renderConfig.translationEnabled != next.translationEnabled
+                || !renderConfig.translationBackend.equals(next.translationBackend)
                 || !renderConfig.translationTarget.equals(next.translationTarget)
                 || renderConfig.translationBright != next.translationBright;
         renderConfig = next;

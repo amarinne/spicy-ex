@@ -366,12 +366,19 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     public static JapaneseReading analyzeJapaneseLine(String text, String fullSpacedRomaji) {
+        return analyzeJapaneseLine(text, fullSpacedRomaji, null);
+    }
+
+    static JapaneseReading analyzeJapaneseLine(
+            String text, String fullSpacedRomaji,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
         if (isBlank(text)) return null;
         NormalizedText normalized = normalizeWithOffsets(text);
         String sourceText = normalized.text;
         if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return null;
 
-        FinalizedAnalysis finalized = finalizeJapaneseAnalysis(normalized.rawText, sourceText, null, null);
+        FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
+                normalized.rawText, sourceText, null, explicitBoundaries);
         String romaji = buildRomaji(finalized.entries);
         if (isBlank(romaji) && !isBlank(fullSpacedRomaji)) romaji = fullSpacedRomaji;
         List<FuriganaSegment> furigana = buildFurigana(sourceText, finalized.entries);
@@ -678,7 +685,8 @@ public final class SpicyJapaneseChineseProcessor {
     private static FinalizedAnalysis finalizeJapaneseAnalysis(
             String rawSourceText, String sourceText, List<FuriganaSegment> providerFurigana,
             List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
-        return finalizeJapaneseAnalysis(rawSourceText, sourceText, analysisTextForJapanese(sourceText),
+        return finalizeJapaneseAnalysis(rawSourceText, sourceText,
+                analysisTextForJapanese(sourceText, explicitBoundaries),
                 providerFurigana, explicitBoundaries);
     }
 
@@ -688,6 +696,7 @@ public final class SpicyJapaneseChineseProcessor {
             List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
         List<Entry> entries = buildRawEntries(sourceText, analysisText);
         applyExplicitBoundaries(sourceText, entries, explicitBoundaries);
+        applyAnalyzerParityCorrections(entries);
         applyProductiveOverrides(entries);
         if (providerFurigana != null && !providerFurigana.isEmpty()) {
             applyProviderFuriganaOverrides(sourceText, entries, providerFurigana);
@@ -712,6 +721,23 @@ public final class SpicyJapaneseChineseProcessor {
         JapaneseReadingPolicyModels.ReadingContext context = buildReadingContext(
                 rawSourceText, sourceText, analysisText, entries, providerFurigana, explicitBoundaries);
         return new FinalizedAnalysis(sourceText, analysisText, entries, context, decisions, diagnostics);
+    }
+
+    /**
+     * Normalize a known Java/TypeScript UniDic lattice split without promoting tokenizer internals
+     * into language policy. Browser UniDic emits 上目/遣い; kuromoji-unidic 0.9 emits 上/目遣い.
+     * Both project to the reviewed product reading 上目=うわめ + 遣い=つかい.
+     */
+    private static void applyAnalyzerParityCorrections(List<Entry> entries) {
+        for (int i = 0; i + 1 < entries.size(); i++) {
+            Entry first = entries.get(i);
+            Entry second = entries.get(i + 1);
+            if (!"上".equals(first.surface) || !"目遣い".equals(second.surface)
+                    || !adjacentWithoutHardBoundary(first, second)) continue;
+            first.readingKana = "うわめ";
+            second.readingKana = "つかい";
+            first.readingReason = second.readingReason = "analyzer-parity:unidic-browser-tokenization";
+        }
     }
 
     private static void applyExplicitBoundaries(
@@ -742,9 +768,11 @@ public final class SpicyJapaneseChineseProcessor {
         }
         List<Entry> entries = new ArrayList<>();
         int charPos = 0;
+        boolean pendingWhitespace = false;
         for (Token token : tokens) {
             String surface = safe(token.getSurface());
-            boolean skippedWhitespace = false;
+            boolean skippedWhitespace = pendingWhitespace;
+            pendingWhitespace = false;
             if (!surface.isEmpty() && (charPos + surface.length() > analysisSource.length()
                     || !analysisSource.regionMatches(charPos, surface, 0, surface.length()))) {
                 while (charPos < analysisSource.length()
@@ -757,6 +785,11 @@ public final class SpicyJapaneseChineseProcessor {
             if (surface.isEmpty() || end > analysisSource.length()
                     || !analysisSource.regionMatches(charPos, surface, 0, surface.length())) {
                 return fallbackEntries(sourceText, analysisText, "tokenizer.incomplete-coverage");
+            }
+            if (surface.trim().isEmpty()) {
+                charPos = end;
+                pendingWhitespace = true;
+                continue;
             }
             Entry entry = new Entry();
             entry.analysisText = analysisText;
@@ -950,22 +983,50 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static AnalysisText analysisTextForJapanese(String sourceText) {
+        return analysisTextForJapanese(sourceText, null);
+    }
+
+    private static AnalysisText analysisTextForJapanese(
+            String sourceText,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
         if (isBlank(sourceText)) return new AnalysisText(sourceText, null);
+        java.util.HashSet<Integer> softWhitespace = new java.util.HashSet<>();
+        int codePointLength = sourceText.codePointCount(0, sourceText.length());
+        if (explicitBoundaries != null) for (JapaneseReadingPolicyModels.BoundaryEvidence boundary : explicitBoundaries) {
+            if (boundary == null || !"inferred-soft".equals(boundary.kind)
+                    || !"soft".equals(boundary.strength)) continue;
+            int codePointOffset = Math.max(0, Math.min(boundary.offset, codePointLength));
+            int cursor = sourceText.offsetByCodePoints(0, codePointOffset);
+            while (cursor > 0) {
+                int previous = sourceText.codePointBefore(cursor);
+                if (!Character.isWhitespace(previous)) break;
+                cursor -= Character.charCount(previous);
+                if (hasJapaneseBeforeAndAfter(sourceText, cursor, cursor + Character.charCount(previous))) {
+                    softWhitespace.add(cursor);
+                }
+            }
+        }
+        return buildJapaneseAnalysisText(sourceText, softWhitespace);
+    }
+
+    /**
+     * Package-compatible whitespace policy: canonical whitespace is authored and hard by default.
+     * Only adapter-declared inferred-soft whitespace is removed before analysis.
+     */
+    private static AnalysisText buildJapaneseAnalysisText(
+            String sourceText, java.util.Set<Integer> selectedWhitespace) {
         StringBuilder normalized = new StringBuilder();
         ArrayList<Integer> offsets = new ArrayList<>();
-        java.util.HashSet<Integer> boundaries = new java.util.HashSet<>();
-        boolean removedWhitespace = false;
         for (int i = 0; i < sourceText.length(); ) {
             int cp = sourceText.codePointAt(i);
             int len = Character.charCount(cp);
-            if (Character.isWhitespace(cp) && hasJapaneseBeforeAndAfter(sourceText, i, i + len)) {
-                removedWhitespace = true;
+            boolean internalWhitespace = Character.isWhitespace(cp)
+                    && hasJapaneseBeforeAndAfter(sourceText, i, i + len);
+            boolean remove = internalWhitespace
+                    && selectedWhitespace != null && selectedWhitespace.contains(i);
+            if (remove) {
                 i += len;
                 continue;
-            }
-            if (removedWhitespace) {
-                boundaries.add(normalized.length());
-                removedWhitespace = false;
             }
             normalized.appendCodePoint(cp);
             for (int j = 0; j < len; j++) offsets.add(i + j);
@@ -973,7 +1034,7 @@ public final class SpicyJapaneseChineseProcessor {
         }
         int[] map = new int[offsets.size()];
         for (int i = 0; i < offsets.size(); i++) map[i] = offsets.get(i);
-        return new AnalysisText(normalized.toString(), map, boundaries);
+        return new AnalysisText(normalized.toString(), map);
     }
 
     private static boolean hasJapaneseBeforeAndAfter(String text, int whitespaceStart, int whitespaceEnd) {
@@ -1393,7 +1454,8 @@ public final class SpicyJapaneseChineseProcessor {
         if ("っ".equals(entry.readingKana)) return "";
         // Rule-decided empty kana marks a merged numeric/counter member: no romaji of its own.
         if (entry.readingKana.isEmpty() && entry.ruleId != null) return "";
-        String romaji = romanizeKana(entry.readingKana, allowsForeignKanaContraction(entry.surface));
+        String projectionKana = isKatakanaOnly(entry.surface) ? entry.surface : entry.readingKana;
+        String romaji = romanizeKana(projectionKana, allowsForeignKanaContraction(entry.surface));
         return isBlank(romaji) ? entry.surface : romaji;
     }
 
@@ -1763,6 +1825,18 @@ public final class SpicyJapaneseChineseProcessor {
         for (int entryIndex = 0; entryIndex < entries.size(); entryIndex++) {
             Entry entry = entries.get(entryIndex);
             if (isBlank(entry.readingKana)) continue;
+            if (entryIndex + 1 < entries.size()) {
+                Entry next = entries.get(entryIndex + 1);
+                if ("上".equals(entry.surface) && "目遣い".equals(next.surface)
+                        && "うわめ".equals(entry.readingKana) && "つかい".equals(next.readingKana)
+                        && adjacentWithoutHardBoundary(entry, next)) {
+                    out.add(new FuriganaSegment(entry.start, entry.start + 1, "うわ"));
+                    out.add(new FuriganaSegment(entry.start + 1, entry.start + 2, "め"));
+                    out.add(new FuriganaSegment(entry.start + 2, entry.start + 3, "つか"));
+                    entryIndex += 1;
+                    continue;
+                }
+            }
             int groupEnd = readingGroupEnd(entries, entryIndex);
             if (groupEnd > entryIndex && shouldRenderGroupedNumericRuby(entries, entryIndex, groupEnd)) {
                 StringBuilder groupedKana = new StringBuilder();
@@ -2186,6 +2260,16 @@ public final class SpicyJapaneseChineseProcessor {
         for (int i = 0; i < value.length(); ) {
             int cp = value.codePointAt(i);
             if (!((cp >= 0x3040 && cp <= 0x30FF) || cp == 'ー')) return false;
+            i += Character.charCount(cp);
+        }
+        return true;
+    }
+
+    private static boolean isKatakanaOnly(String value) {
+        if (isBlank(value)) return false;
+        for (int i = 0; i < value.length(); ) {
+            int cp = value.codePointAt(i);
+            if (!((cp >= 0x30A0 && cp <= 0x30FF) || cp == 'ー')) return false;
             i += Character.charCount(cp);
         }
         return true;

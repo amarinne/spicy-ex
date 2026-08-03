@@ -7,9 +7,7 @@ import java.util.Locale;
 /**
  * Android port of Spicy fork text detection.
  *
- * Source-of-truth:
- * /home/eza/Projects/spicy-lyrics/src/utils/Lyrics/Fork/TextDetection.ts
- * /home/eza/Projects/spicy-lyrics/src/utils/Lyrics/ProcessLyrics.ts
+ * Ported from the desktop spicy-lyrics TextDetection and ProcessLyrics helpers.
  */
 public final class SpicyTextDetection {
     public enum Script {

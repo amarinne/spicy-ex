@@ -16,9 +16,14 @@ public class SettingsDefaultsTest {
         assertEquals("note", Settings.INTERLUDE_ICON.defaultValue);
         assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);
         assertFalse(Settings.HYPERGLOW_ENABLED.defaultValue);
+        assertEquals("system", Settings.UI_LANGUAGE.defaultValue);
 
         assertFalse(Settings.TRANSLITERATION_ENABLED.defaultValue);
         assertFalse(Settings.TRANSLATION_ENABLED.defaultValue);
+        assertEquals("google_unofficial", Settings.TRANSLATION_BACKEND.defaultValue);
+        assertEquals(Settings.INTERNAL, Settings.TRANSLATION_BACKEND.section);
+        assertEquals(2, Settings.TRANSLATION_BACKEND.allowedValues.size());
+        assertEquals("provider", Settings.TRANSLATION_BACKEND.coerce("provider"));
         assertFalse(Settings.NATIVE_SPICY_ROMANIZATION.defaultValue);
         assertFalse(Settings.NATIVE_SPICY_TRANSLATION.defaultValue);
 

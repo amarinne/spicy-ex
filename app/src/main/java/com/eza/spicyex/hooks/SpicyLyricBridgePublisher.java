@@ -11,6 +11,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 
 import com.eza.hyperglow.bridge.ISpicyLyricBridge;
+import com.eza.spicyex.Diagnostics;
 
 import de.robv.android.xposed.XposedBridge;
 
@@ -51,6 +52,9 @@ final class SpicyLyricBridgePublisher {
 
     synchronized void enable() {
         enabled = true;
+        Diagnostics.setHyperGlowBridgeStatus("connecting");
+        Diagnostics.event("hyperglow_bridge", "connection_state",
+                Diagnostics.context("status", "connecting"));
         connect();
     }
 
@@ -63,6 +67,9 @@ final class SpicyLyricBridgePublisher {
             if (!context.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
                 binding = false;
                 providerFallback = true;
+                Diagnostics.setHyperGlowBridgeStatus("provider_fallback");
+                Diagnostics.event("hyperglow_bridge", "connection_state",
+                        Diagnostics.context("status", "provider_fallback"));
                 XposedBridge.log("[SpotifyPlusBridge] bindService returned false");
                 publishPendingLocked();
             } else {
@@ -127,6 +134,9 @@ final class SpicyLyricBridgePublisher {
         bridge = null;
         binding = false;
         providerFallback = false;
+        Diagnostics.setHyperGlowBridgeStatus("disabled");
+        Diagnostics.event("hyperglow_bridge", "connection_state",
+                Diagnostics.context("status", "disabled"));
         unbindLocked();
     }
 
@@ -205,6 +215,9 @@ final class SpicyLyricBridgePublisher {
     private void callProvider(String method, Bundle payload) {
         try {
             context.getContentResolver().call(BRIDGE_URI, method, null, payload);
+            Diagnostics.setHyperGlowBridgeStatus("provider_connected");
+            Diagnostics.event("hyperglow_bridge", "publication_result",
+                    Diagnostics.context("result", "success", "status", "provider"));
             synchronized (this) {
                 if (enabled && providerFallback) {
                     providerFallback = false;
@@ -213,6 +226,9 @@ final class SpicyLyricBridgePublisher {
             }
         } catch (Throwable t) {
             log("provider call failed", t);
+            Diagnostics.setHyperGlowBridgeStatus("provider_failed");
+            Diagnostics.event("hyperglow_bridge", "publication_result", t,
+                    Diagnostics.context("result", "error", "status", "provider"));
             synchronized (this) {
                 if (enabled && providerFallback) {
                     providerFallback = false;
@@ -236,6 +252,9 @@ final class SpicyLyricBridgePublisher {
         binding = false;
         unbindLocked();
         log("bridge disconnected", cause);
+        Diagnostics.setHyperGlowBridgeStatus("disconnected");
+        Diagnostics.event("hyperglow_bridge", "connection_state", cause,
+                Diagnostics.context("status", "disconnected"));
         if (enabled) connect();
     }
 
@@ -260,6 +279,9 @@ final class SpicyLyricBridgePublisher {
                 stateReplayState.onConnectionOpened();
                 documentReplayState.onConnectionOpened();
                 bridge = ISpicyLyricBridge.Stub.asInterface(service);
+                Diagnostics.setHyperGlowBridgeStatus("connected");
+                Diagnostics.event("hyperglow_bridge", "connection_state",
+                        Diagnostics.context("status", "connected"));
                 XposedBridge.log("[SpotifyPlusBridge] connected");
                 publishPendingLocked();
             }
@@ -269,6 +291,7 @@ final class SpicyLyricBridgePublisher {
         public void onServiceDisconnected(ComponentName name) {
             synchronized (SpicyLyricBridgePublisher.this) {
                 bridge = null;
+                Diagnostics.setHyperGlowBridgeStatus("disconnected");
                 binding = SpicyBridgeReplayState.shouldAwaitAutomaticReconnect(bound);
                 if (!binding && enabled) connect();
             }

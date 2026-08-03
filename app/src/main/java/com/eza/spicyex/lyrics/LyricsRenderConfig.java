@@ -55,6 +55,7 @@ public final class LyricsRenderConfig {
     public final String cyrillicMode;
     public final boolean cyrillicKeepSigns;
     public final boolean translationEnabled;
+    public final String translationBackend;
     public final String translationTarget;
     public final boolean translationBright;
     public final int syncOffsetMs;
@@ -105,6 +106,7 @@ public final class LyricsRenderConfig {
             String cyrillicMode,
             boolean cyrillicKeepSigns,
             boolean translationEnabled,
+            String translationBackend,
             String translationTarget,
             boolean translationBright,
             int syncOffsetMs
@@ -154,6 +156,7 @@ public final class LyricsRenderConfig {
         this.cyrillicMode = safe(cyrillicMode);
         this.cyrillicKeepSigns = cyrillicKeepSigns;
         this.translationEnabled = translationEnabled;
+        this.translationBackend = safe(translationBackend);
         this.translationTarget = safe(translationTarget);
         this.translationBright = translationBright;
         this.syncOffsetMs = syncOffsetMs;
@@ -224,6 +227,7 @@ public final class LyricsRenderConfig {
                 defaultCy,
                 get(cfg, Settings.CYRILLIC_KEEP_SIGNS),
                 translationEnabled,
+                get(cfg, Settings.TRANSLATION_BACKEND),
                 get(cfg, Settings.TRANSLATION_TARGET),
                 "Bright".equals(get(cfg, Settings.TRANSLATION_BRIGHTNESS)),
                 get(cfg, Settings.SYNC_OFFSET_MS)
@@ -305,6 +309,7 @@ public final class LyricsRenderConfig {
                 cyrillicMode,
                 cyrillicKeepSigns,
                 translationEnabled,
+                translationBackend,
                 translationTarget,
                 translationBright,
                 syncOffsetMs
@@ -321,10 +326,8 @@ public final class LyricsRenderConfig {
 
     private static boolean translationEnabled(SpotifyPlusConfig config) {
         if (config == null) return Settings.TRANSLATION_ENABLED.defaultValue;
-        return config.getBoolean(
-                Settings.TRANSLATION_ENABLED.key,
-                !"disabled".equalsIgnoreCase(config.get(Settings.TRANSLATION_BACKEND))
-        );
+        return config.get(Settings.TRANSLATION_ENABLED)
+                && !"disabled".equalsIgnoreCase(config.get(Settings.TRANSLATION_BACKEND));
     }
 
     private static boolean shouldAutoReduceMotion(Context context) {
@@ -448,6 +451,7 @@ public final class LyricsRenderConfig {
                     || adaptiveSectioningChanged
                     || fontChanged;
             needsTranslationReprocess = oldValue.translationEnabled != next.translationEnabled
+                    || changed(oldValue.translationBackend, next.translationBackend)
                     || changed(oldValue.translationTarget, next.translationTarget);
             needsTimingOnly = oldValue.syncOffsetMs != next.syncOffsetMs;
 

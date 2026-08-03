@@ -10,12 +10,14 @@ configuration, automatic GitHub issues, cookies, or embedded intake credentials.
 - Spicy EX, Spotify, Android, device, build, locale, flavor, and Xposed metadata.
 - Privacy-safe lyric-fetch status, provider/language/timing labels, feature availability, HyperGlow
   bridge status, and allowlisted settings.
+- Current song title, artist, album, Spotify track URI, and bounded current
+  original/transliterated/translated lyric lines when available.
 - If you explicitly run capture: bounded operation events with timestamp, component, operation,
   exception class, and allowlisted context.
 
 ## Never included
 
-- Lyrics, song titles, artists, albums, track URIs, artwork identifiers, URLs, or response bodies.
+- Artwork identifiers, arbitrary URLs, or provider response bodies.
 - Spotify tokens, cookies, account details, Android ID, serial, IMEI, or Wi-Fi SSID.
 - Throwable messages, full logcat, LSPosed logs, screenshots, or arbitrary files.
 - Your source IP in the application or NocoDB report record. Network infrastructure may process it
@@ -33,8 +35,9 @@ contents from the intake endpoint.
 ## GitHub issues
 
 Opening GitHub creates a separate public draft containing your description, report ID, Spicy EX
-version/flavor, device model, and compatibility summary. Private captured events and settings are not
-added to the GitHub issue.
+version/flavor, device model, compatibility summary, song identity, provider, language, and timing
+type. Lyric text, private captured events, and settings are not added to the GitHub issue. Screenshots
+can be attached manually in GitHub when useful.
 
 To request deletion or redaction, open a Spicy EX issue with the report ID and requested action. Do
 not post additional private diagnostic data in GitHub.

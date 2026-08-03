@@ -9,6 +9,8 @@ public class LyricsLine {
     public String text = "";
     public String romanizedText = "";
     public String translatedText = "";
+    public String providerTranslatedText = "";
+    public String providerTranslationLanguage = "";
     public SpicyJapaneseChineseProcessor.JapaneseReading japaneseReading;
     public RenderPlan readingRenderPlan;
     public List<SyllableSegment> syllables = new ArrayList<>();
@@ -25,6 +27,8 @@ public class LyricsLine {
         copy.text = LyricsDocument.safe(source.text);
         copy.romanizedText = LyricsDocument.safe(source.romanizedText);
         copy.translatedText = LyricsDocument.safe(source.translatedText);
+        copy.providerTranslatedText = LyricsDocument.safe(source.providerTranslatedText);
+        copy.providerTranslationLanguage = LyricsDocument.safe(source.providerTranslationLanguage);
         copy.japaneseReading = source.japaneseReading;
         copy.readingRenderPlan = source.readingRenderPlan;
         copy.chineseMode = LyricsDocument.safe(source.chineseMode);

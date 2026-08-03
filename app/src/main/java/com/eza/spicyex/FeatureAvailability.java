@@ -19,10 +19,6 @@ public final class FeatureAvailability {
         return BuildConfig.APPLE_FONT_AVAILABLE;
     }
 
-    public static String unavailableSummary() {
-        return "Full build required";
-    }
-
     private static boolean hasClass(String name) {
         try {
             Class.forName(name, false, FeatureAvailability.class.getClassLoader());

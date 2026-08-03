@@ -174,11 +174,9 @@ public final class ProcessedLyricsCache {
     public static String processingContextKey(Context context) {
         if (context == null) return processingContextKey("off", "disabled", "en", "auto", "auto");
         SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
-        boolean translationEnabled = config.getBoolean(
-                Settings.TRANSLATION_ENABLED.key,
-                !"disabled".equalsIgnoreCase(config.get(Settings.TRANSLATION_BACKEND))
-        );
         String backend = config.get(Settings.TRANSLATION_BACKEND);
+        boolean translationEnabled = config.get(Settings.TRANSLATION_ENABLED)
+                && !"disabled".equalsIgnoreCase(backend);
         String target = config.get(Settings.TRANSLATION_TARGET);
         String sourceMode = config.get(Settings.SOURCE_LANGUAGE_MODE);
         String source = "manual".equalsIgnoreCase(sourceMode) ? config.get(Settings.SOURCE_LANGUAGE) : "auto";

@@ -27,8 +27,12 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 369
-        versionName "1.58.94-provider-boundary-v2+B369-20260724T1044Z"
+        versionCode 388
+        versionName "1.58.113-diagnostic-preview+B388-20260803T0514Z"
+        def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
+                .orElse("https://reports.eza.dpdns.org/v1/reports")
+                .get()
+        buildConfigField "String", "DIAGNOSTIC_INTAKE_URL", "\"${diagnosticIntakeUrl}\""
 
     }
 

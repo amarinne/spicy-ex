@@ -4,6 +4,7 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 
 import android.content.Context;
 
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.References;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
@@ -53,6 +54,8 @@ final class LyricsFetchCoordinator {
             int generation,
             NativeSpicyLyricsHook.LyricsResultCallback callback
     ) {
+        Diagnostics.event("lyrics_fetch", "request_started",
+                Diagnostics.context("enabled", "true"));
         NativeSpicyLyricsHook.dbg(
                 "fetchLyrics",
                 "start generation=" + generation + " track=" + (track == null ? "null" : safe(track.uri))
@@ -108,6 +111,11 @@ final class LyricsFetchCoordinator {
     }
 
     private void deliverSuccess(InFlightFetch operation, LyricsDocument document) {
+        Diagnostics.event("lyrics_fetch", "request_completed",
+                Diagnostics.context("result", "success",
+                        "provider", document == null ? "unknown" : document.provider,
+                        "language", document == null ? "" : document.language,
+                        "timingType", document == null ? "Unknown" : document.type));
         List<NativeSpicyLyricsHook.LyricsResultCallback> callbacks;
         synchronized (inFlightLock) {
             if (inFlight.get(operation.key) != operation) return;
@@ -130,6 +138,8 @@ final class LyricsFetchCoordinator {
     }
 
     private void deliverError(InFlightFetch operation, String error) {
+        Diagnostics.event("lyrics_fetch", "request_completed",
+                Diagnostics.context("result", "error"));
         List<NativeSpicyLyricsHook.LyricsResultCallback> callbacks;
         synchronized (inFlightLock) {
             if (inFlight.remove(operation.key) != operation) return;

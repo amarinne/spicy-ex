@@ -39,11 +39,23 @@ final class LatinLanguageGate {
 
     static boolean lineLooksNonTargetLatin(String compactText, String targetLang) {
         try {
-            Language detected = DETECTOR.detectLanguageOf(compactText);
-            String detectedIso2 = detected.getIsoCode639_1().toString().toLowerCase(java.util.Locale.ROOT);
+            String detectedIso2 = detectedIso2(compactText);
             return !detectedIso2.equalsIgnoreCase(targetLang);
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    static boolean lineLooksTargetLatin(String compactText, String targetLang) {
+        try {
+            return detectedIso2(compactText).equalsIgnoreCase(targetLang);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String detectedIso2(String compactText) {
+        Language detected = DETECTOR.detectLanguageOf(compactText);
+        return detected.getIsoCode639_1().toString().toLowerCase(java.util.Locale.ROOT);
     }
 }

@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics;
 
 import android.content.Context;
 
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 
@@ -42,12 +43,23 @@ public final class LyricsSecondaryProcessingSession {
 
         if (callback != null) callback.status("Enhancing " + label(snapshot) + "…");
         final String targetLang = config.get(Settings.TRANSLATION_TARGET);
+        final String backend = config.get(Settings.TRANSLATION_BACKEND);
+        final String sourceLanguage = "manual".equalsIgnoreCase(config.get(Settings.SOURCE_LANGUAGE_MODE))
+                ? config.get(Settings.SOURCE_LANGUAGE)
+                : snapshot.language;
         final String effectiveSourceLang = effectiveGoogleSourceLanguage(
                 config.get(Settings.SOURCE_LANGUAGE_MODE),
                 config.get(Settings.SOURCE_LANGUAGE));
+        Diagnostics.event("secondary_processing", "branch_started",
+                Diagnostics.context(
+                        "branch", label(snapshot),
+                        "language", effectiveSourceLang,
+                        "status", targetLang));
 
-        XposedBridge.log(logTag + " secondary processing start target=" + targetLang + " source=" + effectiveSourceLang);
-        processor.start(id, generation, snapshot, showRomanization, options, targetLang, effectiveSourceLang,
+        XposedBridge.log(logTag + " secondary processing start backend=" + backend
+                + " target=" + targetLang + " source=" + sourceLanguage);
+        processor.start(id, generation, snapshot, showRomanization, options, backend, targetLang,
+                sourceLanguage, effectiveSourceLang,
                 currentGuard,
                 new LyricsSecondaryProcessor.Callback() {
                     @Override
@@ -62,6 +74,9 @@ public final class LyricsSecondaryProcessingSession {
 
                     @Override
                     public void complete(String message, int changed) {
+                        Diagnostics.event("secondary_processing", "branch_completed",
+                                Diagnostics.context("result", "success",
+                                        "branch", label(snapshot)));
                         if (callback == null) return;
                         callback.complete(snapshot, message, changed);
                         LyricsDocumentProcessor.saveProcessedCache(context, snapshot, options, processingVersion);

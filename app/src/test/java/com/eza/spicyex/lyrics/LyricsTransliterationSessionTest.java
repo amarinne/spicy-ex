@@ -124,7 +124,7 @@ public class LyricsTransliterationSessionTest {
                 String.class, String.class, String.class, String.class, String.class, String.class, String.class,
                 String.class, String.class, String.class, String.class, String.class, String.class, String.class,
                 boolean.class, String.class, String.class, String.class, boolean.class,
-                boolean.class, String.class, boolean.class, int.class);
+                boolean.class, String.class, String.class, boolean.class, int.class);
         ctor.setAccessible(true);
         return ctor.newInstance(
                 false, true, true, false, true, true, 1f,
@@ -137,6 +137,6 @@ public class LyricsTransliterationSessionTest {
                 koreanModeConfig, defaultKoreanMode, koreanMode,
                 false,
                 "cycle", SpicyRomanizer.CYRILLIC_RUSSIAN, SpicyRomanizer.CYRILLIC_RUSSIAN, false,
-                true, "en", false, 0);
+                true, "google_unofficial", "en", false, 0);
     }
 }

@@ -8,6 +8,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.LiveLyricCardView;
 
 import java.util.ArrayDeque;
@@ -106,9 +107,13 @@ final class NowPlayingInjector {
                 alignment.postNext();
             }
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " live lyric card injected in " + activity.getClass().getName());
+            Diagnostics.event("renderer", "mount_state",
+                    Diagnostics.context("surface", "now_playing", "mounted", "true"));
             return true;
         } catch (Throwable t) {
             XposedBridge.log(NativeSpicyLyricsHook.TAG + " live card inject failed: " + t);
+            Diagnostics.event("renderer", "mount_state", t,
+                    Diagnostics.context("surface", "now_playing", "mounted", "false"));
             return false;
         }
     }

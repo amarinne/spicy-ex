@@ -35,6 +35,11 @@ public final class Settings {
     // groups by declaration order in ALL). Keep each section's settings contiguous.
 
     // --- Lyrics ---
+    public static final Setting<String> UI_LANGUAGE = stringSetting(
+            "settings_ui_language", LYRICS, "Interface language",
+            "system"
+    );
+
     public static final Setting<String> TAP_SEEK_MODE = enumSetting(
             "lyric_tap_seek_mode", LYRICS, "Tap lyric to seek",
             "Double tap",
@@ -271,6 +276,11 @@ public final class Settings {
             "lyrics_translation_enabled", TRANSLATION, "Translate lyrics", false
     );
 
+    public static final Setting<String> TRANSLATION_BACKEND = internalEnumSetting(
+            "lyrics_translation_backend", "Translation backend",
+            "google_unofficial", "google_unofficial", "provider"
+    );
+
     public static final Setting<String> TRANSLATION_TARGET = enumSetting(
             "lyrics_translation_target", TRANSLATION, "Target language",
             "en",
@@ -359,12 +369,6 @@ public final class Settings {
             "auto", "ja", "zh", "ko", "ru", "uk", "bg", "sr", "mk", "be",
             "el", "ar", "fa", "ur", "he", "th", "hi", "bn", "ta", "te",
             "ka", "hy", "am", "my", "km", "lo", "other"
-    );
-
-    public static final Setting<String> TRANSLATION_BACKEND = internalEnumSetting(
-            "lyrics_translation_backend", "Translation backend",
-            "google_unofficial",
-            "provider", "google_unofficial", "disabled"
     );
 
     public static final Setting<String> BACKGROUND_QUALITY = internalEnumSetting(
@@ -498,6 +502,10 @@ public final class Settings {
 
     private static Setting<String> enumSetting(String key, Section section, String label, String defaultValue, String... allowed) {
         return new StringSetting(key, section, label, defaultValue, Arrays.asList(allowed));
+    }
+
+    private static Setting<String> stringSetting(String key, Section section, String label, String defaultValue) {
+        return new StringSetting(key, section, label, defaultValue, null);
     }
 
     private static Setting<String> internalEnumSetting(String key, String label, String defaultValue, String... allowed) {

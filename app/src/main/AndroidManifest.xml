@@ -3,6 +3,7 @@
           xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
 
     <!-- Pure Xposed/LSPosed module: no launcher activity, no IPC. Settings live entirely inside the
          Spotify hook (the ⚙ panel writes Spotify-side prefs the hook reads directly), so this works

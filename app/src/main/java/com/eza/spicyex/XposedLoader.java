@@ -32,6 +32,7 @@ public class XposedLoader implements IXposedHookLoadPackage, IXposedHookZygoteIn
     @Override
     public void handleLoadPackage(LoadPackageParam lpparam) throws Throwable {
         if (!lpparam.packageName.equals("com.spotify.music")) return;
+        Diagnostics.markHookRuntimeActive();
         XposedBridge.log("[SpotifyPlus] Loading SpotifyPlus v" + MODULE_VERSION);
 
         if (bridge == null) {
@@ -98,10 +99,15 @@ public class XposedLoader implements IXposedHookLoadPackage, IXposedHookZygoteIn
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                 Context context = (Context) param.args[0];
+                Diagnostics.initialize(context);
+                Diagnostics.event("bootstrap", "application_attach",
+                        Diagnostics.context("process", Application.getProcessName()));
                 cleanUpCache(context);
 
                 // Native Spicy build: mount Android-native lyrics shell and keep Spotify internals as fallback/reference.
                 new NativeSpicyLyricsHook(context).init(lpparam, bridge);
+                Diagnostics.markHookBootstrapComplete();
+                Diagnostics.event("bootstrap", "hook_init_complete");
             }
         });
     }

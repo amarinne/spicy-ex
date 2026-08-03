@@ -22,7 +22,7 @@
     },
     {
       "id": "camouflage-raw-ttml-my",
-      "origin": "/home/eza/Downloads/Camouflage - aespa.ttml",
+      "origin": "Camouflage - aespa.ttml fixture",
       "displayText": "My Camouflage",
       "spans": [["My ", null, 0, 100], ["Camou", null, 100, 200], ["fla", null, 200, 300], ["ge", null, 300, 400]],
       "expected": {

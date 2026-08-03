@@ -31,9 +31,28 @@ public class JapaneseReadingTest {
         return r == null ? null : r.romaji;
     }
 
+    private static List<JapaneseReadingPolicyModels.BoundaryEvidence> softBoundaries(int... offsets) {
+        ArrayList<JapaneseReadingPolicyModels.BoundaryEvidence> boundaries = new ArrayList<>();
+        for (int offset : offsets) boundaries.add(new JapaneseReadingPolicyModels.BoundaryEvidence(
+                offset, "inferred-soft", "soft", "test-provider-fragment"));
+        return boundaries;
+    }
+
+    private static List<JapaneseReadingPolicyModels.BoundaryEvidence> softBoundary(int offset) {
+        return softBoundaries(offset);
+    }
+
+    private static SpicyJapaneseChineseProcessor.JapaneseReading analyzeSoftSplit(String line, int offset) {
+        return SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line, null, softBoundary(offset));
+    }
+
     private static List<String> furigana(String line) {
         SpicyJapaneseChineseProcessor.JapaneseReading r =
                 SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line, null);
+        return furigana(r);
+    }
+
+    private static List<String> furigana(SpicyJapaneseChineseProcessor.JapaneseReading r) {
         assertNotNull(r);
         ArrayList<String> out = new ArrayList<>();
         for (SpicyJapaneseChineseProcessor.FuriganaSegment f : r.furigana) {
@@ -152,6 +171,15 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void analyzerSpecificUwamezukaiSplitProjectsLikeBrowserUniDic() {
+        String source = "死ぬほど可愛い上目遣い なにがし法に触れるくらい";
+        assertEquals("shinu hodo kawaii uwame tsukai nanigashi hou ni fureru kurai", romaji(source));
+        assertTrue(furigana(source).contains("上=うわ"));
+        assertTrue(furigana(source).contains("目=め"));
+        assertTrue(furigana(source).contains("遣=つか"));
+    }
+
+    @Test
     public void lexicalOverridesStayPosGuarded() {
         // 私 as pronoun reads watashi (UniDic default is the formal watakushi).
         assertEquals("watashi wa utau", romaji("私は歌う"));
@@ -221,9 +249,9 @@ public class JapaneseReadingTest {
     @Test
     public void verbReadingSurvivesProviderSpacing() {
         assertEquals("koroshita", romaji("殺した"));
-        assertEquals("koroshita", romaji("殺 した"));
+        assertEquals("koroshita", analyzeSoftSplit("殺 した", 2).romaji);
         assertEquals("hibiku", romaji("響く"));
-        assertEquals("hibiku", romaji("響 く"));
+        assertEquals("hibiku", analyzeSoftSplit("響 く", 2).romaji);
     }
 
     @Test
@@ -264,11 +292,13 @@ public class JapaneseReadingTest {
 
     @Test
     public void furiganaOffsetsSurviveProviderSpacing() {
-        List<String> spacedYear = furigana("今 年 も早いね");
+        List<String> spacedYear = furigana(SpicyJapaneseChineseProcessor.analyzeJapaneseLine(
+                "今 年 も早いね", null, softBoundaries(2, 4)));
         assertTrue(spacedYear.contains("今 年=ことし"));
         assertFalse(spacedYear.contains("今 =ことし"));
 
-        assertEquals(Arrays.asList("残=ざん", "念=ねん"), furigana("残 念"));
+        assertEquals(Arrays.asList("残=ざん", "念=ねん"), furigana(
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine("残 念", null, softBoundary(2))));
     }
 
     @Test
@@ -330,7 +360,7 @@ public class JapaneseReadingTest {
     @Test
     public void debugSnapshotExposesDeterministicOracleStages() {
         SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot snapshot =
-                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("殺 した", null);
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("殺 した", null, softBoundary(2));
         assertEquals("殺 した", snapshot.displayText);
         assertEquals("殺した", snapshot.analysisText);
         assertEquals(3, snapshot.analysisToDisplayUtf16.length);
@@ -470,9 +500,9 @@ public class JapaneseReadingTest {
         assertEquals(Arrays.asList("hontou", "no", "koe", "wo", "hibikasete", "", "", "yo"), parts);
 
         assertEquals(Arrays.asList("koroshita", ""), SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(
-                "殺 した", Arrays.asList("殺", "した")));
+                analyzeSoftSplit("殺 した", 2), Arrays.asList("殺", "した")));
         assertEquals(Arrays.asList("hibiku", ""), SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(
-                "響 く", Arrays.asList("響", "く")));
+                analyzeSoftSplit("響 く", 2), Arrays.asList("響", "く")));
     }
 
     @Test
@@ -484,6 +514,8 @@ public class JapaneseReadingTest {
         line.syllables.add(segment("も"));
         line.syllables.add(segment("早い"));
         line.syllables.add(segment("ね"));
+        line.japaneseReading = SpicyJapaneseChineseProcessor.analyzeJapaneseLine(
+                line.text, null, softBoundaries(2, 4, 6, 9));
 
         LyricsLocalRomanizer.populateLocalSegmentRomanization(
                 new RomanizationOptions("pinyin", "Off", false, "Off", false), null, line, line.text);

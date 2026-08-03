@@ -5,6 +5,7 @@ public final class CurrentLyricState {
     public final String trackUri;
     public final String title;
     public final String artist;
+    public final String album;
     public final String backend;
     public final String language;
     public final String originalLine;
@@ -24,6 +25,7 @@ public final class CurrentLyricState {
             String trackUri,
             String title,
             String artist,
+            String album,
             String backend,
             String language,
             String originalLine,
@@ -40,6 +42,7 @@ public final class CurrentLyricState {
         this.trackUri = trackUri;
         this.title = title;
         this.artist = artist;
+        this.album = album;
         this.backend = backend;
         this.language = language;
         this.originalLine = originalLine;
@@ -75,6 +78,7 @@ public final class CurrentLyricState {
                 track.uri,
                 track.title,
                 track.artist,
+                track.album,
                 backend,
                 language,
                 safe(originalLine),
@@ -96,6 +100,7 @@ public final class CurrentLyricState {
                 old.trackUri,
                 old.title,
                 old.artist,
+                old.album,
                 old.backend,
                 old.language,
                 old.originalLine,
@@ -116,6 +121,7 @@ public final class CurrentLyricState {
                 track == null ? "" : track.uri,
                 track == null ? "" : track.title,
                 track == null ? "" : track.artist,
+                track == null ? "" : track.album,
                 safe(backend),
                 "",
                 "",
@@ -132,7 +138,7 @@ public final class CurrentLyricState {
     }
 
     private static CurrentLyricState empty() {
-        return new CurrentLyricState("", "", "", "", "", "", "", "", 0, 0, -1, false, 0, "idle", "");
+        return new CurrentLyricState("", "", "", "", "", "", "", "", "", 0, 0, -1, false, 0, "idle", "");
     }
 
 }

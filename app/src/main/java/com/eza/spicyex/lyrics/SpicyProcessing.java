@@ -9,8 +9,8 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  * Emits decisions only. Renderer/platform own presentation.
  */
 public final class SpicyProcessing {
-    // v18: canonical provider boundaries replace downstream IsPartOfWord interpretation.
-    public static final int PROCESSING_VERSION = 18;
+    // v19: target-compatible provider translations are separated from generated translations.
+    public static final int PROCESSING_VERSION = 19;
 
     private SpicyProcessing() {
     }
@@ -24,7 +24,7 @@ public final class SpicyProcessing {
         if (hasObviousNonTargetScript(text, targetLang)) return true;
         if ("en".equalsIgnoreCase(targetLang)) {
             if (SpicyTextDetection.hasRomanizableScript(text) || hasNonAsciiLatin(text)) return true;
-            if (looksLikeLatinLyricLine(text)) return true;
+            if (looksLikeLatinLyricLine(text)) return !looksClearlyEnglish(text);
             return lineLooksNonTargetLatin(text, targetLang);
         }
         return true;
@@ -59,8 +59,9 @@ public final class SpicyProcessing {
         ProcessingFlags flags = new ProcessingFlags();
         flags.processingVersion = PROCESSING_VERSION;
         flags.romanizationPending = hasRomanizationWorkQuick(text);
-        flags.translationPending = hasUsableSourceHint(sourceLang) && shouldTranslateLine(text, sourceLang, targetLang)
-                || hasTranslationWorkQuick(text, targetLang);
+        flags.translationPending = hasUsableSourceHint(sourceLang)
+                ? shouldTranslateLine(text, sourceLang, targetLang)
+                : hasTranslationWorkQuick(text, targetLang);
         flags.processingPending = flags.romanizationPending || flags.translationPending;
         if (!flags.processingPending) markProcessedWithoutBackground(flags);
         return flags;
@@ -100,6 +101,26 @@ public final class SpicyProcessing {
         return compact.length() >= 12 && compact.indexOf(' ') > 0;
     }
 
+    private static boolean looksClearlyEnglish(String text) {
+        String compact = text == null ? "" : text.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z'\\s]", " ").replaceAll("\\s+", " ").trim();
+        if (compact.isEmpty()) return false;
+        int matches = 0;
+        for (String word : compact.split(" ")) {
+            switch (word) {
+                case "i": case "you": case "the": case "this": case "that": case "is": case "are":
+                case "am": case "my": case "your": case "we": case "they": case "it": case "to":
+                case "and": case "of": case "in": case "for": case "with": case "know": case "song":
+                case "already": case "english": case "love": case "me": case "be": case "not":
+                    matches++;
+                    break;
+                default:
+                    break;
+            }
+        }
+        return matches >= 3;
+    }
+
     private static boolean isLatinTarget(String targetLang) {
         String target = safe(targetLang).toLowerCase(Locale.ROOT);
         return target.equals("en") || target.equals("es") || target.equals("fr") || target.equals("de")
@@ -134,9 +155,19 @@ public final class SpicyProcessing {
     }
 
     static String toIso2(String sourceLang) {
-        String source = safe(sourceLang).toLowerCase(Locale.ROOT);
+        String source = safe(sourceLang).trim().replace('_', '-').toLowerCase(Locale.ROOT);
         if (source.length() == 2) return source;
+        if (source.length() > 2 && source.charAt(2) == '-') return source.substring(0, 2);
         switch (source) {
+            case "english": return "en";
+            case "spanish": return "es";
+            case "french": return "fr";
+            case "german": return "de";
+            case "italian": return "it";
+            case "portuguese": return "pt";
+            case "japanese": return "ja";
+            case "korean": return "ko";
+            case "chinese": return "zh";
             case "eng": return "en";
             case "spa": return "es";
             case "fra":

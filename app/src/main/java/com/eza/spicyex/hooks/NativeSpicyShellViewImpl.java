@@ -1279,19 +1279,27 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (snapshot == null || snapshot.lines == null || snapshot.lines.isEmpty()) return;
 
         for (LyricsLine line : snapshot.lines) {
-            if (line != null) line.translatedText = "";
+            if (line == null) continue;
+            line.translatedText = "";
+            if (line.backgroundLines != null) {
+                for (com.eza.spicyex.lyrics.BackgroundLine background : line.backgroundLines) {
+                    if (background != null) background.translatedText = "";
+                }
+            }
         }
         for (AppliedLine row : snapshot.appliedLines) {
             if (row != null) row.translatedText = "";
         }
-        snapshot.includesTranslation = false;
-
-        SpicyProcessing.ProcessingFlags flags = SpicyProcessing.flagsFor(
-                LyricsDocumentProcessor.collectText(snapshot),
-                effectiveSourceLanguage(snapshot),
-                renderConfig.translationTarget
-        );
-        snapshot.translationPending = renderConfig.translationEnabled && flags.translationPending;
+        if (renderConfig.translationEnabled) {
+            com.eza.spicyex.lyrics.ProviderTranslationResolver.applyTranslations(
+                    snapshot, renderConfig.translationTarget);
+        }
+        snapshot.includesTranslation = renderConfig.translationEnabled
+                && LyricsDocumentProcessor.hasDisplayedTranslation(snapshot);
+        snapshot.translationPending = renderConfig.translationEnabled
+                && "google_unofficial".equalsIgnoreCase(renderConfig.translationBackend)
+                && LyricsDocumentProcessor.hasGeneratedTranslationWork(
+                snapshot, effectiveSourceLanguage(snapshot), renderConfig.translationTarget);
         snapshot.processingPending = snapshot.romanizationPending || snapshot.translationPending;
 
         rerenderKeepingPosition(reason + " ready");

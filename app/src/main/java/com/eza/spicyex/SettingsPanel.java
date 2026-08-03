@@ -20,6 +20,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
+import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
 import com.eza.spicyex.lyrics.LyricCaches;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
 
@@ -45,6 +46,8 @@ public final class SettingsPanel {
     // Static: survives panel re-opens within the process, so the panel never re-opens fully collapsed.
     private static final java.util.Set<String> expandedSections = new java.util.HashSet<>();
     private LinearLayout sectionsContainer;
+    private TextView panelTitle;
+    private SettingsUiStrings uiStrings;
 
     public SettingsPanel(Context context, SettingsStore store, java.util.function.BooleanSupplier isHalfSize,
                          Runnable onToggleSize, Runnable onClose) {
@@ -53,6 +56,7 @@ public final class SettingsPanel {
         this.isHalfSize = isHalfSize;
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
+        this.uiStrings = new SettingsUiStrings(context, store.get(Settings.UI_LANGUAGE));
     }
 
     /** Builds the card view; the host sizes/centers it. */
@@ -85,8 +89,8 @@ public final class SettingsPanel {
         LinearLayout header = new LinearLayout(context);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text("Spicy EX", 26, COL_TITLE, true);
-        header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        panelTitle = text(uiStrings.appName(), 26, COL_TITLE, true);
+        header.addView(panelTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         if (onToggleSize != null) {
             // ▴ = shrink to the top-anchored half panel, ▾ = grow back to full.
             TextView resize = headerButton(sizeGlyph(), null);
@@ -177,7 +181,8 @@ public final class SettingsPanel {
                 stepperRow(content, (Settings.IntegerSetting) setting);
             } else if (setting instanceof Settings.StringSetting) {
                 Settings.StringSetting s = (Settings.StringSetting) setting;
-                if (s.allowedValues == null || s.allowedValues.isEmpty()) textFieldRow(content, s);
+                if (setting == Settings.UI_LANGUAGE) selectorRow(content, s, uiStrings.availableUiLanguages());
+                else if (s.allowedValues == null || s.allowedValues.isEmpty()) textFieldRow(content, s);
                 else selectorRow(content, s);
             }
     }
@@ -190,7 +195,8 @@ public final class SettingsPanel {
 
     private boolean shouldRender(Settings.Setting<?> setting) {
         if (setting == Settings.TRANSLATION_TARGET || setting == Settings.TRANSLATION_BRIGHTNESS) {
-            return FeatureAvailability.translationAvailable() && store.get(Settings.TRANSLATION_ENABLED);
+            return FeatureAvailability.translationAvailable()
+                    && store.get(Settings.TRANSLATION_ENABLED);
         }
         if (setting == Settings.ALIGNED_PER_WORD_ROMAJI
                 || setting == Settings.JAPANESE_READING_MODE
@@ -226,7 +232,8 @@ public final class SettingsPanel {
     }
 
     private boolean shouldRebuildAfterChange(Settings.Setting<?> setting) {
-        return setting == Settings.TRANSLATION_ENABLED
+        return setting == Settings.UI_LANGUAGE
+                || setting == Settings.TRANSLATION_ENABLED
                 || setting == Settings.TRANSLITERATION_ENABLED
                 || setting == Settings.ENABLE_BACKGROUND
                 || setting == Settings.ANIMATION_STYLE
@@ -243,16 +250,19 @@ public final class SettingsPanel {
     }
 
     private void renderActions(LinearLayout content) {
-        actionRow(content, "Clear translation cache", v -> LyricCaches.clearGoogle(context));
-        actionRow(content, "Clear lyrics response cache", v -> LyricsResponseCache.clear(context));
-        actionRow(content, "Open GitHub", v -> openGithub());
+        actionRow(content, DiagnosticReportingDialog.reportProblemLabel(context, store),
+                v -> DiagnosticReportingDialog.show(context, store));
+        actionRow(content, uiStrings.get("settings_action_clear_translation_cache", "Clear translation cache"),
+                v -> LyricCaches.clearGoogle(context));
+        actionRow(content, uiStrings.get("settings_action_clear_lyrics_cache", "Clear lyrics response cache"),
+                v -> LyricsResponseCache.clear(context));
+        actionRow(content, uiStrings.get("settings_action_open_github", "Open GitHub"), v -> openGithub());
     }
 
     private void renderStatus(LinearLayout content) {
         CurrentLyricState s = CurrentLyricState.get();
-        String summary = "Last state: " + s.status
-                + "\nTrack: " + s.title
-                + "\nLine: " + s.originalLine;
+        String summary = uiStrings.format("settings_status_summary", "Last state: %1$s\nTrack: %2$s\nLine: %3$s",
+                s.status, s.title, s.originalLine);
         TextView state = text(summary, 12, COL_SUMMARY, false);
         state.setPadding(0, dp(4), 0, dp(2));
         content.addView(state);
@@ -263,26 +273,19 @@ public final class SettingsPanel {
 
     private void renderDiagnostics(LinearLayout content) {
         LyricsFetchDiagnosticsState.Snapshot s = LyricsFetchDiagnosticsState.get();
-        infoRow(content, "Source chosen", s.sourceChosen);
-        infoRow(content, "Candidates seen", s.candidatesSeen);
-        infoRow(content, "Type chosen", s.typeChosen);
-        infoRow(content, "Spicy version sent", emptyDash(s.spicyVersionSent));
-        infoRow(content, "Spicy latest version", emptyDash(s.spicyLatestVersion));
-        infoRow(content, "Token present", yesNo(s.tokenPresent));
-        infoRow(content, "Spicy query status", s.spicyQueryStatus);
-        infoRow(content, "Packed payload", yesNo(s.packedPayload));
-        infoRow(content, "Poison result", s.poisonResult);
-        infoRow(content, "Cache write", yesNo(s.cacheWrite));
+        infoRow(content, uiStrings.get("settings_diagnostic_source_chosen", "Source chosen"), s.sourceChosen);
+        infoRow(content, uiStrings.get("settings_diagnostic_candidates_seen", "Candidates seen"), s.candidatesSeen);
+        infoRow(content, uiStrings.get("settings_diagnostic_type_chosen", "Type chosen"), s.typeChosen);
+        infoRow(content, uiStrings.get("settings_diagnostic_spicy_version_sent", "Spicy version sent"), emptyDash(s.spicyVersionSent));
+        infoRow(content, uiStrings.get("settings_diagnostic_spicy_latest_version", "Spicy latest version"), emptyDash(s.spicyLatestVersion));
+        infoRow(content, uiStrings.get("settings_diagnostic_token_present", "Token present"), yesNo(s.tokenPresent));
+        infoRow(content, uiStrings.get("settings_diagnostic_spicy_query_status", "Spicy query status"), s.spicyQueryStatus);
+        infoRow(content, uiStrings.get("settings_diagnostic_packed_payload", "Packed payload"), yesNo(s.packedPayload));
+        infoRow(content, uiStrings.get("settings_diagnostic_poison_result", "Poison result"), s.poisonResult);
+        infoRow(content, uiStrings.get("settings_diagnostic_cache_write", "Cache write"), yesNo(s.cacheWrite));
     }
 
     // --- Rows ---
-
-    private void sectionLabel(LinearLayout content, String label) {
-        TextView view = text(label.toUpperCase(java.util.Locale.ROOT), 12, COL_ACCENT, true);
-        view.setLetterSpacing(0.08f);
-        view.setPadding(0, dp(18), 0, dp(6));
-        content.addView(view);
-    }
 
     private void sectionHeader(LinearLayout content, Settings.Section section, boolean expanded) {
         LinearLayout row = new LinearLayout(context);
@@ -292,7 +295,7 @@ public final class SettingsPanel {
         row.setPadding(dp(4), dp(8), dp(4), dp(8));
         row.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
 
-        TextView title = text(section.label, 14, COL_TITLE, true);
+        TextView title = text(uiStrings.section(section), 14, COL_TITLE, true);
         title.setAllCaps(true);
         title.setLetterSpacing(0.05f);
         row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -340,7 +343,7 @@ public final class SettingsPanel {
     private void switchRow(LinearLayout content, Settings.BooleanSetting setting) {
         LinearLayout row = newRow(content);
         boolean unavailable = unavailable(setting);
-        titleColumn(row, setting.label, unavailable ? FeatureAvailability.unavailableSummary() : null);
+        titleColumn(row, uiStrings.setting(setting), unavailable ? unavailableSummary() : null);
         GlossyToggle toggle = new GlossyToggle(context);
         toggle.setAccent(COL_ACCENT);
         toggle.setChecked(!unavailable && store.get(setting), false);
@@ -358,19 +361,23 @@ public final class SettingsPanel {
     }
 
     private void selectorRow(LinearLayout content, Settings.StringSetting setting) {
+        selectorRow(content, setting, setting.allowedValues);
+    }
+
+    private void selectorRow(LinearLayout content, Settings.StringSetting setting, java.util.List<String> values) {
         LinearLayout row = newRow(content);
         boolean unavailable = unavailable(setting);
-        TextView value = titleColumn(row, setting.label,
-                unavailable ? FeatureAvailability.unavailableSummary() : labelFor(setting, store.get(setting)));
+        TextView value = titleColumn(row, uiStrings.setting(setting),
+                unavailable ? unavailableSummary() : labelFor(setting, store.get(setting)));
         if (!unavailable) value.setTextColor(COL_ACCENT);
         row.addView(text("›", 22, COL_SECTION, false));
         row.setEnabled(!unavailable);
-        if (!unavailable) row.setOnClickListener(v -> showSelectorDialog(setting, value));
+        if (!unavailable) row.setOnClickListener(v -> showSelectorDialog(setting, values, value));
     }
 
     private void stepperRow(LinearLayout content, Settings.IntegerSetting setting) {
         LinearLayout row = newRow(content);
-        titleColumn(row, setting.label, stepperSummary(setting));
+        titleColumn(row, uiStrings.setting(setting), stepperSummary(setting));
 
         LinearLayout controls = new LinearLayout(context);
         controls.setOrientation(LinearLayout.HORIZONTAL);
@@ -457,7 +464,7 @@ public final class SettingsPanel {
         });
     }
 
-    private void showSelectorDialog(Settings.StringSetting setting, TextView valueView) {
+    private void showSelectorDialog(Settings.StringSetting setting, java.util.List<String> values, TextView valueView) {
         final Dialog dialog = new Dialog(context);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
 
@@ -470,12 +477,12 @@ public final class SettingsPanel {
         box.setBackground(bg);
         box.setPadding(0, dp(18), 0, dp(10));
 
-        TextView title = text(setting.label, 19, COL_TITLE, true);
+        TextView title = text(uiStrings.setting(setting), 19, COL_TITLE, true);
         title.setPadding(dp(22), 0, dp(22), dp(12));
         box.addView(title);
 
         String current = store.get(setting);
-        for (final String val : setting.allowedValues) {
+        for (final String val : values) {
             box.addView(selectorOptionRow(setting, val, val.equals(current), valueView, dialog));
         }
 
@@ -490,7 +497,7 @@ public final class SettingsPanel {
             window.setDimAmount(0.55f);
             int w = (int) (context.getResources().getDisplayMetrics().widthPixels * 0.82f);
             int maxH = (int) (context.getResources().getDisplayMetrics().heightPixels * 0.7f);
-            window.setLayout(w, setting.allowedValues.size() > 8 ? maxH : ViewGroup.LayoutParams.WRAP_CONTENT);
+            window.setLayout(w, values.size() > 8 ? maxH : ViewGroup.LayoutParams.WRAP_CONTENT);
         }
         dialog.show();
     }
@@ -525,6 +532,10 @@ public final class SettingsPanel {
         if (!unavailable) {
             optRow.setOnClickListener(v -> {
                 store.put(setting, value);
+                if (setting == Settings.UI_LANGUAGE) {
+                    uiStrings = new SettingsUiStrings(context, value);
+                    if (panelTitle != null) panelTitle.setText(uiStrings.appName());
+                }
                 valueView.setText(labelFor(setting, value));
                 dialog.dismiss();
                 if (shouldRebuildAfterChange(setting)) rebuildSections();
@@ -538,13 +549,17 @@ public final class SettingsPanel {
         boolean needsTransliteration = "Transliteration".equals(value) || "Both".equals(value);
         boolean needsTranslation = "Translation".equals(value) || "Both".equals(value);
         if (needsTransliteration && !FeatureAvailability.transliterationAvailable()) {
-            return FeatureAvailability.unavailableSummary();
+            return unavailableSummary();
         }
         if (needsTranslation && !FeatureAvailability.translationAvailable()) {
-            return FeatureAvailability.unavailableSummary();
+            return unavailableSummary();
         }
-        if (needsTransliteration && !store.get(Settings.TRANSLITERATION_ENABLED)) return "Enable transliteration";
-        if (needsTranslation && !store.get(Settings.TRANSLATION_ENABLED)) return "Enable translation";
+        if (needsTransliteration && !store.get(Settings.TRANSLITERATION_ENABLED)) {
+            return uiStrings.get("settings_enable_transliteration", "Enable transliteration");
+        }
+        if (needsTranslation && !store.get(Settings.TRANSLATION_ENABLED)) {
+            return uiStrings.get("settings_enable_translation", "Enable translation");
+        }
         return "";
     }
 
@@ -552,7 +567,7 @@ public final class SettingsPanel {
         LinearLayout row = newRow(content);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setGravity(Gravity.START);
-        row.addView(text(setting.label, 14, COL_SUMMARY, false));
+        row.addView(text(uiStrings.setting(setting), 14, COL_SUMMARY, false));
         EditText field = new EditText(context);
         field.setText(store.get(setting));
         field.setTextColor(COL_TITLE);
@@ -582,8 +597,10 @@ public final class SettingsPanel {
         row.addView(val, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
     }
 
-    private static String yesNo(boolean value) {
-        return value ? "yes" : "no";
+    private String yesNo(boolean value) {
+        return value
+                ? uiStrings.get("settings_yes", "yes")
+                : uiStrings.get("settings_no", "no");
     }
 
     private static String emptyDash(String value) {
@@ -608,10 +625,10 @@ public final class SettingsPanel {
     }
 
     /** Option label; magnitude-based selectors show the plain multiplier ("\u00d71.5") as the label. */
-    private static String labelFor(Settings.StringSetting setting, String value) {
+    private String labelFor(Settings.StringSetting setting, String value) {
         String mult = multiplierFor(setting.key, value);
         if (mult != null) return "\u00d7" + mult;
-        return displayLabel(value);
+        return uiStrings.option(setting, value);
     }
 
     // Mirror of LyricsShellSettings.lineSpacingMultiplier() / lyricsTextSizeMultiplier() — display only.
@@ -639,22 +656,10 @@ public final class SettingsPanel {
         return null;
     }
 
-    private static String displayLabel(String value) {
-        if (value == null || value.isEmpty()) return "";
-        if ("wordTranslit".equals(value)) return "Word-by-word transliteration";
-        if ("rrStandard".equals(value)) return "Standard Korean RR";
-        if ("rrPronunciation".equals(value)) return "Follow pronunciation (RR)";
-        if ("vnPronunciation".equals(value)) return "Follow pronunciation (VN)";
-        if ("furigana_romaji".equals(value)) return "Furigana + romaji";
-        String name = LANGUAGE_NAMES.get(value);
-        if (name != null) return name + " (" + value + ")";
-        String spaced = value.replace('_', ' ').replace('-', ' ').trim();
-        if (spaced.isEmpty()) return value;
-        return Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1);
-    }
-
-    private static String stepperSummary(Settings.IntegerSetting setting) {
-        if (setting == Settings.SYNC_OFFSET_MS) return "Positive shows lyrics earlier";
+    private String stepperSummary(Settings.IntegerSetting setting) {
+        if (setting == Settings.SYNC_OFFSET_MS) {
+            return uiStrings.get("settings_sync_offset_summary", "Positive shows lyrics earlier");
+        }
         return null;
     }
 
@@ -671,28 +676,8 @@ public final class SettingsPanel {
         return String.format(java.util.Locale.US, "%+.1fs", offsetMs / 1000f);
     }
 
-    private static final java.util.Map<String, String> LANGUAGE_NAMES = buildLanguageNames();
-
-    private static java.util.Map<String, String> buildLanguageNames() {
-        java.util.HashMap<String, String> m = new java.util.HashMap<>();
-        m.put("auto", "Auto-detect"); m.put("other", "Other");
-        m.put("en", "English"); m.put("es", "Spanish"); m.put("fr", "French");
-        m.put("de", "German"); m.put("it", "Italian"); m.put("pt", "Portuguese");
-        m.put("nl", "Dutch"); m.put("sv", "Swedish"); m.put("no", "Norwegian");
-        m.put("da", "Danish"); m.put("fi", "Finnish"); m.put("pl", "Polish");
-        m.put("cs", "Czech"); m.put("sk", "Slovak"); m.put("hu", "Hungarian");
-        m.put("ro", "Romanian"); m.put("el", "Greek"); m.put("tr", "Turkish");
-        m.put("uk", "Ukrainian"); m.put("ru", "Russian"); m.put("bg", "Bulgarian");
-        m.put("sr", "Serbian"); m.put("mk", "Macedonian"); m.put("be", "Belarusian");
-        m.put("ja", "Japanese"); m.put("ko", "Korean");
-        m.put("zh", "Chinese (Simplified)"); m.put("zh-TW", "Chinese (Traditional)");
-        m.put("th", "Thai"); m.put("vi", "Vietnamese"); m.put("id", "Indonesian");
-        m.put("ms", "Malay"); m.put("hi", "Hindi"); m.put("bn", "Bengali");
-        m.put("ta", "Tamil"); m.put("te", "Telugu"); m.put("ar", "Arabic");
-        m.put("he", "Hebrew"); m.put("fa", "Persian"); m.put("ur", "Urdu");
-        m.put("ka", "Georgian"); m.put("hy", "Armenian"); m.put("am", "Amharic");
-        m.put("my", "Burmese"); m.put("km", "Khmer"); m.put("lo", "Lao");
-        return m;
+    private String unavailableSummary() {
+        return uiStrings.get("settings_unavailable_full_build", "Full build required");
     }
 
     private TextView text(String value, int sp, int color, boolean bold) {

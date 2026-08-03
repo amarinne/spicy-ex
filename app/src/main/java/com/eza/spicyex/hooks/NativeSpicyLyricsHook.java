@@ -7,6 +7,7 @@ import android.app.Application;
 import android.content.Context;
 
 import com.eza.spicyex.BuildStamp;
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.References;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.LyricsDocument;
@@ -60,6 +61,8 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
 
     @Override
     protected void hook() {
+        Diagnostics.event("bootstrap", "hook_start",
+                Diagnostics.context("process", Application.getProcessName()));
         dbg("hook", "native Spicy renderer hook enabled version=" + BuildStamp.FULL);
         new AuthTokenCaptureHook(lpparm.classLoader).hook();
         new NativeLyricsCaptureHook(
@@ -78,8 +81,12 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             bridgeCoordinator = new SpicyLyricBridgeCoordinator(
                     lyricsSessionManager, applicationContext);
             bridgeCoordinator.start();
+            Diagnostics.event("bootstrap", "hook_ready",
+                    Diagnostics.context("result", "main_process"));
         } else {
             XposedBridge.log(TAG + " bridge skipped outside main Spotify process");
+            Diagnostics.event("bootstrap", "hook_ready",
+                    Diagnostics.context("result", "secondary_process"));
         }
     }
 

@@ -236,9 +236,11 @@ public final class LyricsParser implements LyricsRepository.Parser {
                     "TransliteratedText", "transliteratedText", "RomanizedText", "romanizedText");
             if (!isBlank(transliterated) && !transliterated.equals(line.text)) line.romanizedText = transliterated;
             String translated = joinSecondarySyllables(syllables, line.syllables,
+                    "ProviderTranslatedText", "providerTranslatedText",
                     "TranslatedText", "translatedText", "Translation", "translation");
-            if (!isBlank(translated) && !translated.equals(line.text)) line.translatedText = translated;
+            captureProviderTranslation(line, translated, providerTranslationLanguage(lead));
             line.backgroundLines = parseBackgroundLines(object);
+            applySecondaryText(line, lead);
             applySecondaryText(line, object);
             doc.lines.add(line);
         }
@@ -253,10 +255,10 @@ public final class LyricsParser implements LyricsRepository.Parser {
             line.romanizedText = providerRomanized;
         }
 
-        String translated = cleanInvisibles(Json.optString(object, "TranslatedText", "translatedText", "Translation", "translation"));
-        if (!isBlank(translated) && !translated.equals(line.text)) {
-            line.translatedText = translated;
-        }
+        String translated = cleanInvisibles(Json.optString(object,
+                "ProviderTranslatedText", "providerTranslatedText",
+                "TranslatedText", "translatedText", "Translation", "translation"));
+        captureProviderTranslation(line, translated, providerTranslationLanguage(object));
 
         line.japaneseReading = parseJapaneseReading(object);
     }
@@ -305,11 +307,37 @@ public final class LyricsParser implements LyricsRepository.Parser {
                     joinSecondarySyllables(syllables, line.syllables, "TransliteratedText", "transliteratedText"),
                     joinSecondarySyllables(syllables, line.syllables, "RomanizedText", "romanizedText")
             );
-            line.translatedText = joinSecondarySyllables(syllables, line.syllables,
-                    "TranslatedText", "translatedText", "Translation", "translation");
+            line.providerTranslatedText = firstNonBlank(
+                    cleanInvisibles(Json.optString(bg,
+                            "ProviderTranslatedText", "providerTranslatedText",
+                            "TranslatedText", "translatedText", "Translation", "translation")),
+                    joinSecondarySyllables(syllables, line.syllables,
+                            "ProviderTranslatedText", "providerTranslatedText",
+                            "TranslatedText", "translatedText", "Translation", "translation")
+            );
+            line.providerTranslationLanguage = providerTranslationLanguage(bg);
             out.add(line);
         }
         return out;
+    }
+
+    private static void captureProviderTranslation(LyricsLine line, String translated, String language) {
+        if (line == null) return;
+        String value = cleanInvisibles(translated);
+        if (isBlank(line.providerTranslatedText) && !isBlank(value) && !value.equals(line.text)) {
+            line.providerTranslatedText = value;
+        }
+        if (isBlank(line.providerTranslationLanguage) && !isBlank(language)) {
+            line.providerTranslationLanguage = language;
+        }
+    }
+
+    private static String providerTranslationLanguage(JsonObject object) {
+        if (object == null) return "";
+        return cleanInvisibles(Json.optString(object,
+                "ProviderTranslationLanguage", "providerTranslationLanguage",
+                "TranslatedTextLanguage", "translatedTextLanguage",
+                "TranslationLanguage", "translationLanguage"));
     }
 
     private static ParsedSyllableLine parseSyllableLine(JsonArray syllables, String providerLine,
