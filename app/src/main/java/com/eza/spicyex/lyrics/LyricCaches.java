@@ -20,11 +20,24 @@ public final class LyricCaches {
     private static final String PREFS_GOOGLE_CACHE = "SpotifyPlusNativeSpicyGoogleCache";
     private static final String PREFS_GOOGLE_CACHE_ORDER_KEY = "__cache_order";
     private static final String PREFS_PROCESSED_CACHE = "SpotifyPlusNativeSpicyProcessedCache";
+    /** Sound artifacts. Separate store so Meaning eviction can never drop a reading artifact. */
+    private static final String PREFS_SOUND_CACHE = "SpotifyPlusSoundArtifactCache";
+    /** Meaning artifacts. Separate store so a Sound contract bump never discards paid-for work. */
+    private static final String PREFS_MEANING_CACHE = "SpotifyPlusMeaningArtifactCache";
     private static final String PREFS_PROCESSED_CACHE_ORDER_KEY = "__cache_order";
     private static final int GOOGLE_CACHE_MAX_ENTRIES = 5000;
     private static final int PROCESSED_CACHE_MAX_ENTRIES = 24;
     private static final long PROCESSED_CACHE_MAX_BYTES = 4L * 1024L * 1024L;
     private static final long PROCESSED_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L;
+    // A track keeps one reading record per configuration, so switching back to a mode you have
+    // used before is instant instead of a re-derivation. That is the common case — people settle on
+    // a reading style — so the store is sized for several styles across a healthy set of tracks
+    // rather than made to hold one record per track. Sized here so those extra records cost other
+    // tracks nothing.
+    private static final int SOUND_CACHE_MAX_ENTRIES = 160;
+    private static final long SOUND_CACHE_MAX_BYTES = 8L * 1024L * 1024L;
+    private static final int MEANING_CACHE_MAX_ENTRIES = 96;
+    private static final long MEANING_CACHE_MAX_BYTES = 4L * 1024L * 1024L;
     private static final Object GOOGLE_CACHE_LOCK = new Object();
     private static final Object PROCESSED_CACHE_LOCK = new Object();
 
@@ -39,6 +52,40 @@ public final class LyricCaches {
     public static void clearProcessed(Context context) {
         if (context == null) return;
         context.getSharedPreferences(PREFS_PROCESSED_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+        context.getSharedPreferences(PREFS_SOUND_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+        context.getSharedPreferences(PREFS_MEANING_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+    }
+
+    /** Drops Sound artifacts only. A Sound contract change must not touch Meaning. */
+    public static void clearSoundArtifacts(Context context) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS_SOUND_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+    }
+
+    /** Drops Meaning artifacts only. A Meaning contract change must not touch Sound. */
+    public static void clearMeaningArtifacts(Context context) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS_MEANING_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+    }
+
+    public static String getSoundArtifact(Context context, String key) {
+        return getBoundedRecord(context, PREFS_SOUND_CACHE, key,
+                SOUND_CACHE_MAX_ENTRIES, SOUND_CACHE_MAX_BYTES);
+    }
+
+    public static void putSoundArtifact(Context context, String key, String value) {
+        putBoundedRecord(context, PREFS_SOUND_CACHE, key, value,
+                SOUND_CACHE_MAX_ENTRIES, SOUND_CACHE_MAX_BYTES);
+    }
+
+    public static String getMeaningArtifact(Context context, String key) {
+        return getBoundedRecord(context, PREFS_MEANING_CACHE, key,
+                MEANING_CACHE_MAX_ENTRIES, MEANING_CACHE_MAX_BYTES);
+    }
+
+    public static void putMeaningArtifact(Context context, String key, String value) {
+        putBoundedRecord(context, PREFS_MEANING_CACHE, key, value,
+                MEANING_CACHE_MAX_ENTRIES, MEANING_CACHE_MAX_BYTES);
     }
 
     public static String sourceLanguageForCache(String sourceLang) {
@@ -55,23 +102,16 @@ public final class LyricCaches {
         return "translate|" + safe(trackId) + "|" + sourceLanguageForCache(sourceLang) + "|" + safe(targetLang) + "|" + safe(text);
     }
 
-    public static String processedDocumentKey(int processingVersion, String trackId, String language, RomanizationOptions opts) {
-        return processedDocumentKey(processingVersion, trackId, language, opts, "");
+    private static String getBoundedRecord(Context context, String prefsName, String key) {
+        return getBoundedRecord(context, prefsName, key,
+                PROCESSED_CACHE_MAX_ENTRIES, PROCESSED_CACHE_MAX_BYTES);
     }
 
-    public static String processedDocumentKey(int processingVersion, String trackId, String language,
-                                              RomanizationOptions opts, String processingContextKey) {
-        return "processed-doc-v" + processingVersion
-                + "|reading-schema-v" + ProcessedLyricsCache.READING_SCHEMA_VERSION
-                + "|" + safe(trackId)
-                + "|" + sourceLanguageForCache(language)
-                + "|" + (opts == null ? RomanizationOptions.DEFAULTS : opts).cacheKey()
-                + "|" + safe(processingContextKey);
-    }
-
-    public static String getProcessedDocument(Context context, String key) {
+    private static String getBoundedRecord(Context context, String prefsName, String key,
+                                           int maxEntries, long maxBytes) {
+        if (context == null) return null;
         try {
-            SharedPreferences prefs = context.getSharedPreferences(PREFS_PROCESSED_CACHE, Context.MODE_PRIVATE);
+            SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
             String hashedKey = sha256(key);
             synchronized (PROCESSED_CACHE_LOCK) {
                 String value = prefs.getString(hashedKey, null);
@@ -79,7 +119,7 @@ public final class LyricCaches {
                 ProcessedCacheOrderUpdate update = boundedProcessedCacheOrder(
                         prefs.getString(PREFS_PROCESSED_CACHE_ORDER_KEY, ""), hashedKey,
                         value.getBytes(StandardCharsets.UTF_8).length, System.currentTimeMillis(),
-                        PROCESSED_CACHE_MAX_ENTRIES, PROCESSED_CACHE_MAX_BYTES, PROCESSED_CACHE_MAX_AGE_MS);
+                        maxEntries, maxBytes, PROCESSED_CACHE_MAX_AGE_MS);
                 SharedPreferences.Editor editor = prefs.edit();
                 for (String evicted : update.evictedKeys) editor.remove(evicted);
                 String nextOrder = update.evictedKeys.contains(hashedKey)
@@ -91,21 +131,27 @@ public final class LyricCaches {
                 return update.evictedKeys.contains(hashedKey) ? null : value;
             }
         } catch (Throwable t) {
-            Diagnostics.warn("LyricCaches", "getProcessedDocument", t);
+            Diagnostics.warn("LyricCaches", "getBoundedRecord", t);
             return null;
         }
     }
 
-    public static void putProcessedDocument(Context context, String key, String value) {
+    private static void putBoundedRecord(Context context, String prefsName, String key, String value) {
+        putBoundedRecord(context, prefsName, key, value,
+                PROCESSED_CACHE_MAX_ENTRIES, PROCESSED_CACHE_MAX_BYTES);
+    }
+
+    private static void putBoundedRecord(Context context, String prefsName, String key, String value,
+                                         int maxEntries, long maxBytes) {
         if (context == null || isBlank(value)) return;
         try {
-            SharedPreferences prefs = context.getSharedPreferences(PREFS_PROCESSED_CACHE, Context.MODE_PRIVATE);
+            SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
             String hashedKey = sha256(key);
             synchronized (PROCESSED_CACHE_LOCK) {
                 ProcessedCacheOrderUpdate update = boundedProcessedCacheOrder(
                         prefs.getString(PREFS_PROCESSED_CACHE_ORDER_KEY, ""), hashedKey,
                         value.getBytes(StandardCharsets.UTF_8).length, System.currentTimeMillis(),
-                        PROCESSED_CACHE_MAX_ENTRIES, PROCESSED_CACHE_MAX_BYTES, PROCESSED_CACHE_MAX_AGE_MS);
+                        maxEntries, maxBytes, PROCESSED_CACHE_MAX_AGE_MS);
                 SharedPreferences.Editor editor = prefs.edit();
                 if (update.evictedKeys.contains(hashedKey)) editor.remove(hashedKey);
                 else editor.putString(hashedKey, value);
@@ -118,8 +164,28 @@ public final class LyricCaches {
                 editor.putString(PREFS_PROCESSED_CACHE_ORDER_KEY, nextOrder).apply();
             }
         } catch (Throwable t) {
-            Diagnostics.warn("LyricCaches", "putProcessedDocument", t);
+            Diagnostics.warn("LyricCaches", "putBoundedRecord", t);
         }
+    }
+
+    /**
+     * Sound artifact key: canonical digest plus Sound configuration only. No translation backend,
+     * target language, or Meaning contract may appear here.
+     *
+     * <p>Keeping the configuration in the key means a track holds one record per reading style it
+     * has been shown in, so returning to a style is instant rather than a re-derivation. The store
+     * is sized for that; see {@code SOUND_CACHE_MAX_ENTRIES}.
+     */
+    public static String soundArtifactKey(String canonicalDigest, String soundConfigId) {
+        return "sound|" + safe(canonicalDigest) + "|" + safe(soundConfigId);
+    }
+
+    /**
+     * Meaning artifact key: canonical digest plus Meaning configuration only. No romanization
+     * option or reading contract may appear here.
+     */
+    public static String meaningArtifactKey(String canonicalDigest, String meaningConfigId) {
+        return "meaning|" + safe(canonicalDigest) + "|" + safe(meaningConfigId);
     }
 
     public static String getProcessingValue(Context context, int processingVersion, String key) {

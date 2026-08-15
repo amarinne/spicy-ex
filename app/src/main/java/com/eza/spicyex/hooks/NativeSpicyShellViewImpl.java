@@ -13,13 +13,14 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.sourceProviderLabel;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.topSystemPadding;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.trackIdFromUri;
 import static com.eza.spicyex.hooks.NativeRuntime.GOOGLE_PROCESSING_VERSION;
-import static com.eza.spicyex.hooks.NativeRuntime.GOOGLE_WORKERS;
 import static com.eza.spicyex.hooks.NativeRuntime.HTTP;
 import static com.eza.spicyex.hooks.NativeRuntime.LYRIC_ESTIMATED_ROW_HEIGHT_DP;
 import static com.eza.spicyex.hooks.NativeRuntime.LYRIC_FULL_RENDER_THRESHOLD;
 import static com.eza.spicyex.hooks.NativeRuntime.LYRIC_WINDOW_AFTER_ACTIVE;
 import static com.eza.spicyex.hooks.NativeRuntime.LYRIC_WINDOW_BEFORE_ACTIVE;
-import static com.eza.spicyex.hooks.NativeRuntime.PROCESSOR;
+import static com.eza.spicyex.hooks.NativeRuntime.MEANING_WORKERS;
+import static com.eza.spicyex.hooks.NativeRuntime.SOUND_PROCESSOR;
+import static com.eza.spicyex.hooks.NativeRuntime.SOUND_WORKERS;
 import static com.eza.spicyex.hooks.NativeRuntime.SCROLL_SETTLE_REMEASURE_DELAY_MS;
 import static com.eza.spicyex.hooks.NativeSpicyLyricsHook.TAG;
 import static com.eza.spicyex.hooks.NativeSpicyLyricsHook.dbg;
@@ -59,17 +60,17 @@ import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.LyricsFrameRenderer;
 import com.eza.spicyex.lyrics.LyricsLineVisualController;
 import com.eza.spicyex.lyrics.LyricsLine;
-import com.eza.spicyex.lyrics.LyricsLocalReprocessController;
 import com.eza.spicyex.lyrics.LyricsLocalRomanizer;
 import com.eza.spicyex.lyrics.LyricsPlaybackClock;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
+import com.eza.spicyex.lyrics.LyricsLocalReprocessController;
 import com.eza.spicyex.lyrics.LyricsRowMountController;
 import com.eza.spicyex.lyrics.LyricsRowViewFactory;
 import com.eza.spicyex.lyrics.LyricsScrollController;
 import com.eza.spicyex.lyrics.LyricsSecondaryProcessor;
-import com.eza.spicyex.lyrics.LyricsSecondaryProcessingSession;
 import com.eza.spicyex.lyrics.LyricsSecondaryRowUpdater;
 import com.eza.spicyex.lyrics.LyricsShellLifecycle;
+import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsShellSettings;
 import com.eza.spicyex.lyrics.LyricsSpaceView;
 import com.eza.spicyex.lyrics.LyricsSurfaceRowPlanner;
@@ -117,7 +118,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final LyricsTextFactory textFactory;
     private final LyricsRowViewFactory rowViewFactory;
     private final LyricsSecondaryProcessor secondaryProcessor;
-    private final LyricsSecondaryProcessingSession secondaryProcessingSession;
     private final LyricsSecondaryRowUpdater secondaryRowUpdater;
     private final LyricsLocalReprocessController localReprocessController;
     private final LyricsShellLifecycle shellLifecycle;
@@ -156,6 +156,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean scrollWindowRenderScheduled;
     private boolean showTranslation;
     private LyricsTransliterationSession transliterationSession;
+    private LyricsSessionManager.SessionSubscription sessionSubscription;
+    private LyricsSessionManager.LyricsRequest lyricRequest;
+    private final LyricsSurfaceDocumentGate documentGate = new LyricsSurfaceDocumentGate();
+    private final LyricsSessionManager.Listener sessionListener = new LyricsSessionManager.Listener() {
+        @Override public void onSessionChanged(LyricsSessionManager.Snapshot snapshot) {}
+
+        @Override public void onDocumentChanged(LyricsSessionManager.Snapshot snapshot,
+                                                LyricsDocument nextDocument) {
+            if (!running || snapshot == null || nextDocument == null) return;
+            prepareAndScheduleDocument(snapshot.trackUri, nextDocument);
+        }
+    };
     private LyricsRenderConfig renderConfig;
     private final SharedPreferences preferences;
     private boolean preferencesRegistered;
@@ -275,12 +287,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         this.lineVisualController = new LyricsLineVisualController(styleBatcher);
         this.textFactory = new LyricsTextFactory(activity, config);
         this.rowViewFactory = new LyricsRowViewFactory(activity, textFactory);
-        this.secondaryProcessor = new LyricsSecondaryProcessor(activity, HTTP, PROCESSOR, GOOGLE_WORKERS, handler, GOOGLE_PROCESSING_VERSION);
-        this.secondaryProcessingSession = new LyricsSecondaryProcessingSession(activity, config, secondaryProcessor, GOOGLE_PROCESSING_VERSION, TAG);
+        this.secondaryProcessor = new LyricsSecondaryProcessor(activity, HTTP, SOUND_PROCESSOR, SOUND_WORKERS,
+                MEANING_WORKERS, handler, GOOGLE_PROCESSING_VERSION);
         this.localReprocessController = new LyricsLocalReprocessController(secondaryProcessor);
         this.ambientController = new LyricsAmbientController(activity, HTTP, config);
         this.settingsDialogController = new LyricsSettingsDialogController(
-                activity, frameScheduler, ambientController, this::onSettingsClosed, TAG);
+                activity, frameScheduler, ambientController, host, this::onSettingsClosed, TAG);
         this.emptyStateController = new LyricsShellEmptyStateController(activity, config, textFactory);
         this.shellLifecycle = new LyricsShellLifecycle(activity, () -> {
             host.markExplicitLyricsExit(activity);
@@ -460,7 +472,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         dbgEnter("NativeSpicyShellView.start");
         if (running) return;
         running = true;
+        documentGate.start();
         registerPreferenceListener();
+        sessionSubscription = host.subscribeLyricsSession(sessionListener);
         shellLifecycle.start();
         playbackClock.reset("");
         updateState(1f / 60f);
@@ -470,6 +484,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     void stop() {
         dbgEnter("NativeSpicyShellView.stop");
         running = false;
+        documentGate.stop();
+        if (lyricRequest != null) lyricRequest.close();
+        lyricRequest = null;
+        if (sessionSubscription != null) sessionSubscription.close();
+        sessionSubscription = null;
         unregisterPreferenceListener();
         toggleSpinnerController.reset();
         shellLifecycle.stop();
@@ -692,31 +711,17 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void loadLyrics(SpotifyTrack track, String id) {
         dbg("NativeSpicyShellView.loadLyrics", "id=" + safe(id) + " track=" + (track == null ? "null" : safe(track.uri)));
+        if (lyricRequest != null) lyricRequest.close();
         loadingTrackId = id;
-        int generation = ++NativeSpicyLyricsHook.fetchGeneration;
-        RomanizationOptions loadOptions = romanizationOptions();
-        boolean loadRomanization = showRomanization();
-        host.fetchLyrics(track, new LyricsResultCallback() {
+        ++NativeSpicyLyricsHook.fetchGeneration;
+        lyricRequest = host.fetchLyrics(track, new LyricsResultCallback() {
             @Override
             public void onSuccess(LyricsDocument doc) {
-                LyricsDocumentProcessor.applyProcessedCache(activity.getApplicationContext(), doc,
-                        loadOptions, GOOGLE_PROCESSING_VERSION);
-                populateLocalSegmentRomanization(doc, loadRomanization, loadOptions);
-                LyricTimeline.applySyncedRows(doc);
-                handler.post(() -> {
-                    if (!running) return;
-                    if (generation < NativeSpicyLyricsHook.fetchGeneration && !id.equals(loadingTrackId)) return;
-                    SpotifyTrack current = host.getCurrentTrackSafely();
-                    String currentId = current == null ? "" : trackIdFromUri(current.uri);
-                    if (!id.equals(currentId)) {
-                        XposedBridge.log(TAG + " stale lyrics ignored id=" + id + " current=" + currentId);
-                        return;
-                    }
-                    document = doc;
-                    loadingTrackId = "";
-                    renderDocument(false);
-                    XposedBridge.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider=" + doc.provider + " type=" + doc.type + " lines=" + doc.lines.size());
-                });
+                if (!running || doc == null) return;
+                // One-shot delivery covers the synchronous existing-document case. The observer
+                // remains authoritative for later processing upgrades; the shared gate makes a
+                // following observer delivery supersede this candidate without a double render.
+                prepareAndScheduleDocument(track == null ? "" : track.uri, doc);
             }
 
             @Override
@@ -739,42 +744,51 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         });
     }
 
-    private void startSecondaryProcessing(String id, int generation) {
-        dbg("NativeSpicyShellView.startSecondaryProcessing", "id=" + safe(id) + " generation=" + generation);
-        LyricsDocument snapshot = document;
-        secondaryProcessingSession.start(id, generation, snapshot, showRomanization(), romanizationOptions(),
-                this::isCurrentProcessingResult,
-                new LyricsSecondaryProcessingSession.Callback() {
-                    @Override
-                    public void status(String message) {
-                        status.setText(message);
-                    }
-
-                    @Override
-                    public void rerender(LyricsDocument callbackSnapshot, String message) {
-                        // Local romanization is done (fast, on-device) — show it IMMEDIATELY without
-                        // waiting for the slower network translation (desktop renders these
-                        // independently). Use the INCREMENTAL refresh, NOT a full renderDocument:
-                        // the full rebuild is what reset scroll springs and janked in vC173, whereas
-                        // refreshSecondaryRows updates rows in place. Translation fills in at complete().
-                        if (!running || document != callbackSnapshot) return;
-                        refreshSecondaryRows(message);
-                    }
-
-                    @Override
-                    public void progress(LyricsDocument callbackSnapshot, String message) {
-                        // Coalesced: skip per-batch row refreshes (each can remount the window and
-                        // shift scroll). Status text only; the chip spinner reads the pending flags.
-                        if (!running || document != callbackSnapshot) return;
-                        if (!isBlank(message)) status.setText(message);
-                    }
-
-                    @Override
-                    public void complete(LyricsDocument callbackSnapshot, String message, int changed) {
-                        if (!running || document != callbackSnapshot) return;
-                        refreshSecondaryRows(message);
-                    }
-                });
+    private void prepareAndScheduleDocument(String trackUri, LyricsDocument doc) {
+        String id = trackIdFromUri(trackUri);
+        LyricsSurfaceDocumentGate.Candidate candidate = documentGate.offer(id);
+        ++NativeSpicyLyricsHook.fetchGeneration;
+        RomanizationOptions loadOptions = romanizationOptions();
+        boolean loadRomanization = showRomanization();
+        LyricsDocumentProcessor.applyProcessedCache(activity.getApplicationContext(), doc,
+                loadOptions, GOOGLE_PROCESSING_VERSION);
+        // The session's Sound artifact already carries span readings and the composer applies them.
+        // Only derive here for a document published before the Sound lane produced anything.
+        if (!LyricsDocumentProcessor.hasSpanReadings(doc)) {
+            populateLocalSegmentRomanization(doc, loadRomanization, loadOptions);
+        }
+        LyricTimeline.applySyncedRows(doc);
+        handler.post(() -> {
+            SpotifyTrack current = host.getCurrentTrackSafely();
+            String currentId = current == null ? "" : trackIdFromUri(current.uri);
+            if (!running || !documentGate.accepts(candidate, currentId)) {
+                if (running && !id.equals(currentId)) {
+                    XposedBridge.log(TAG + " stale lyrics ignored id=" + id + " current=" + currentId);
+                }
+                return;
+            }
+            // A derived-layer completion republishes the whole document. When the canonical base
+            // is unchanged, absorb only the new reading/translation text into the document already
+            // on screen: swapping the object would rebuild the timeline and reset the active row
+            // and scroll position mid-song.
+            LyricsDocument mounted = document;
+            if (mounted != null && LyricsDocumentProcessor.sameCanonicalBase(mounted, doc)) {
+                loadingTrackId = "";
+                if (LyricsDocumentProcessor.mergeDerivedLayers(mounted, doc)) {
+                    LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
+                    refreshSecondaryRows("");
+                } else {
+                    updateToggleVisuals();
+                }
+                return;
+            }
+            document = doc;
+            loadingTrackId = "";
+            LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
+            renderDocument(false);
+            XposedBridge.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider="
+                    + doc.provider + " type=" + doc.type + " lines=" + doc.lines.size());
+        });
     }
 
     private boolean isCurrentProcessingResult(String id, int generation, LyricsDocument snapshot) {
@@ -1215,7 +1229,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean loading = !loadingTrackId.isEmpty();
         boolean romanPending = showRomanization()
                 && romanToggle.getVisibility() == View.VISIBLE
-                && (loading || localReprocessController.isProcessing() || (document != null && document.romanizationPending));
+                && (loading || localReprocessController.isProcessing()
+                        || (document != null && document.romanizationPending));
         boolean translationPending = showTranslation()
                 && translationToggle.getVisibility() == View.VISIBLE
                 && (loading || (document != null && document.translationPending));
@@ -1259,7 +1274,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 new LyricsLocalReprocessController.Callback() {
                     @Override
                     public void complete(String completedReason, int changed) {
+                        // Always re-render: the chip also toggles reading visibility on and off,
+                        // which changes no text at all. A repaint gated on changed text would
+                        // leave that case showing the previous state.
                         rerenderKeepingPosition(completedReason + " ready");
+                        // Only a genuine mode change is worth the session's time. This surface owns
+                        // its own per-span reading projection and re-derives locally for immediate
+                        // feedback; telling the session moves now-playing and the HyperGlow bridge
+                        // to the same mode instead of leaving them on the previous one until the
+                        // next track. A visibility toggle is fullscreen-only, so it stays local.
+                        if (changed > 0) {
+                            host.refreshLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind.SOUND);
+                        }
                         XposedBridge.log(TAG + " local mode reprocess complete changed=" + changed + " reason=" + completedReason);
                     }
 
@@ -1278,46 +1304,23 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         LyricsDocument snapshot = document;
         if (snapshot == null || snapshot.lines == null || snapshot.lines.isEmpty()) return;
 
-        for (LyricsLine line : snapshot.lines) {
-            if (line == null) continue;
-            line.translatedText = "";
-            if (line.backgroundLines != null) {
-                for (com.eza.spicyex.lyrics.BackgroundLine background : line.backgroundLines) {
-                    if (background != null) background.translatedText = "";
-                }
-            }
-        }
-        for (AppliedLine row : snapshot.appliedLines) {
-            if (row != null) row.translatedText = "";
-        }
-        if (renderConfig.translationEnabled) {
-            com.eza.spicyex.lyrics.ProviderTranslationResolver.applyTranslations(
-                    snapshot, renderConfig.translationTarget);
-        }
-        snapshot.includesTranslation = renderConfig.translationEnabled
-                && LyricsDocumentProcessor.hasDisplayedTranslation(snapshot);
-        snapshot.translationPending = renderConfig.translationEnabled
-                && "google_unofficial".equalsIgnoreCase(renderConfig.translationBackend)
-                && LyricsDocumentProcessor.hasGeneratedTranslationWork(
-                snapshot, effectiveSourceLanguage(snapshot), renderConfig.translationTarget);
-        snapshot.processingPending = snapshot.romanizationPending || snapshot.translationPending;
-
+        // Drop the stale translations on this surface immediately so the change is visible, then
+        // hand the actual work to the session. The renderer never starts a provider run: that is
+        // what makes one settings change cost one run across fullscreen, now-playing, and the
+        // HyperGlow bridge instead of one per surface.
+        LyricsDocumentProcessor.resetMeaningLayer(activity.getApplicationContext(), snapshot);
         rerenderKeepingPosition(reason + " ready");
         if (snapshot.translationPending) {
-            startSecondaryProcessing(trackIdFromUri(lastUri), NativeSpicyLyricsHook.fetchGeneration);
+            host.refreshLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
         }
-    }
-
-    private String effectiveSourceLanguage(LyricsDocument snapshot) {
-        if (config != null && "manual".equalsIgnoreCase(config.get(Settings.SOURCE_LANGUAGE_MODE))) {
-            return config.get(Settings.SOURCE_LANGUAGE);
-        }
-        return snapshot == null ? "" : snapshot.language;
     }
 
     private boolean activeLineHasJapanese() {
         AppliedLine line = activeLine();
-        if (line != null && hasRomanizableScript(line.text)) return SpicyTextDetection.hasKana(line.text);
+        if (line != null && SpicyTextDetection.hasKana(line.text)) return true;
+        // A kanji-only line carries no kana, so on its own it reads as Chinese. Let the document
+        // decide instead: otherwise a Japanese song cycles the Chinese mode whenever the active
+        // line happens to have no kana in it, and the Japanese cycle appears to do nothing.
         return documentHasJapanese();
     }
 

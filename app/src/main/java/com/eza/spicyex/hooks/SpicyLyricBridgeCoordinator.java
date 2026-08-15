@@ -11,6 +11,8 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.LyricTimeline;
+import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsDocument;
 
 import java.util.UUID;
@@ -31,11 +33,15 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
     private LyricsDocument document;
     private long sequence;
     private long documentRevision;
+    /** What the bridge last handed the consumer; a republication matching it is skipped. */
+    private String publishedFingerprint = "";
     private long lastPublishAtMs;
     private int lastLineIndex = Integer.MIN_VALUE;
     private boolean lastPlaying;
     private String lastStatus = "";
     private boolean enabled;
+    private LyricsSessionManager.SessionSubscription subscription;
+    private LyricsSessionManager.PollingDemandLease pollingDemand;
 
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
             (sharedPreferences, key) -> {
@@ -62,12 +68,14 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
         enabled = nextEnabled;
         if (enabled) {
             publisher.enable();
-            sessionManager.addListener(this);
-            sessionManager.setBackgroundDemand(true);
+            subscription = sessionManager.subscribe(this);
+            pollingDemand = sessionManager.acquirePollingDemand();
             return;
         }
-        sessionManager.setBackgroundDemand(false);
-        sessionManager.removeListener(this);
+        if (pollingDemand != null) pollingDemand.close();
+        pollingDemand = null;
+        if (subscription != null) subscription.close();
+        subscription = null;
         int generation = lastSnapshot == null ? 0 : lastSnapshot.generation;
         publisher.clearAndDisconnect(producerId, generation);
         resetLocal();
@@ -83,6 +91,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
             document = null;
             sequence = 0L;
             documentRevision++;
+            publishedFingerprint = "";
             lastLineIndex = Integer.MIN_VALUE;
             lastPublishAtMs = 0L;
         }
@@ -123,8 +132,19 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
 
     private void publishDocument(LyricsSessionManager.Snapshot snapshot, LyricsDocument source) {
         LyricTimeline.applySyncedRows(source);
+        // This boundary cannot express a delta — the consumer receives a whole serialized document
+        // over IPC — so the saving available here is not republishing at all. A track produces
+        // several publications while the lanes settle, and a lane that had no work changes nothing
+        // a viewer would see.
+        String fingerprint = LyricsDocumentProcessor.publicationFingerprint(source);
+        if (fingerprint.equals(publishedFingerprint)) {
+            LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
+            return;
+        }
+        publishedFingerprint = fingerprint;
         LyricsDocument workerSnapshot = LyricsDocument.copyOf(source);
         if (workerSnapshot == null) return;
+        LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
         int generation = snapshot.generation;
         String trackUri = snapshot.trackUri;
         long revision = ++documentRevision;
@@ -140,8 +160,17 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                 metadata.putString("trackUri", trackUri);
                 metadata.putInt("compressedBytes", encoded.length);
                 handler.post(() -> {
-                    if (!enabled || lastSnapshot == null || generation != lastSnapshot.generation
-                            || revision != documentRevision || source != document) return;
+                    if (!shouldPublishSerializedDocument(
+                            enabled,
+                            lastSnapshot == null ? null : lastSnapshot.generation,
+                            generation,
+                            revision,
+                            documentRevision)) {
+                        XposedBridge.log("[SpotifyPlusBridge] document publication superseded"
+                                + " generation=" + generation + " revision=" + revision
+                                + " current=" + documentRevision);
+                        return;
+                    }
                     publisher.publishDocument(metadata, encoded);
                 });
             } catch (Exception e) {
@@ -149,6 +178,32 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                         + e.getClass().getSimpleName());
             }
         });
+    }
+
+    /**
+     * Whether a document serialized off the main thread may still be handed to the consumer.
+     *
+     * <p>The revision is the ordering authority: a newer publication bumps it, so a serialization
+     * it overtook is dropped here. The instance the payload was built from is deliberately not
+     * compared. A later notification always replaces the coordinator's document reference — the
+     * session publishes a fresh copy every time — but a notification whose content matched the last
+     * publication returns at the fingerprint check without bumping the revision. Comparing
+     * instances therefore discarded the only publication carrying new content whenever a lane
+     * finished with no changes inside the serialization window, and the fingerprint was already
+     * recorded as published, so nothing re-sent it. The consumer then ran the whole song with no
+     * timed document and its keepalive expired with the song-change lease.
+     */
+    static boolean shouldPublishSerializedDocument(
+            boolean enabled,
+            Integer sessionGeneration,
+            int documentGeneration,
+            long revision,
+            long currentRevision
+    ) {
+        return enabled
+                && sessionGeneration != null
+                && sessionGeneration == documentGeneration
+                && revision == currentRevision;
     }
 
     private void publish(LyricsSessionManager.Snapshot snapshot, AppliedLine line, int lineIndex) {
@@ -204,6 +259,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
         document = null;
         sequence = 0L;
         documentRevision++;
+        publishedFingerprint = "";
         lastPublishAtMs = 0L;
         lastLineIndex = Integer.MIN_VALUE;
         lastPlaying = false;

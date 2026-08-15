@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import static org.junit.Assert.assertSame;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -226,5 +227,29 @@ public class LyricTimelineTest {
         LyricTimeline.rebalanceStaticTimings(doc);
         assertEquals(1_000, doc.lines.get(0).startMs);
         assertEquals(2_000, doc.lines.get(0).endMs);
+    }
+
+    @Test
+    public void appliedRowsAbsorbDerivedTextWithoutReplanning() {
+        LyricsDocument doc = new LyricsDocument();
+        LyricsLine line = new LyricsLine();
+        line.text = "ichi";
+        line.startMs = 0L;
+        line.endMs = 1000L;
+        doc.lines.add(line);
+        LyricTimeline.applySyncedRows(doc);
+        AppliedLine row = doc.appliedLines.get(0);
+        assertEquals("", row.romanizedText);
+
+        line.romanizedText = "ichi-r";
+        line.translatedText = "one";
+
+        assertTrue(LyricTimeline.refreshAppliedDerivedText(doc));
+        assertSame("row identity must survive so timing and view state are kept",
+                row, doc.appliedLines.get(0));
+        assertEquals("ichi-r", row.romanizedText);
+        assertEquals("one", row.translatedText);
+        assertFalse("a second pass over unchanged text reports nothing",
+                LyricTimeline.refreshAppliedDerivedText(doc));
     }
 }

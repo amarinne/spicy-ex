@@ -1,6 +1,7 @@
 package com.eza.spicyex.lyrics;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -43,5 +44,22 @@ public class GoogleEnhancerTest {
         assertTrue(GoogleEnhancer.shouldDisplayTranslation("Алдадыңбы,", "did you cheat"));
         assertTrue(GoogleEnhancer.shouldDisplayTranslation("Больше не радуешь лучами,", "You no longer please with rays,"));
         assertTrue(GoogleEnhancer.shouldDisplayTranslation("中国", "China"));
+    }
+
+    @Test
+    public void laneIdentitySplitsTheRequestThrottle() {
+        assertEquals("SOUND", GoogleEnhancer.laneOf(tagged("SOUND#12")));
+        assertEquals("MEANING", GoogleEnhancer.laneOf(tagged("MEANING#13")));
+        // Two runs of the same lane share a throttle; the two lanes do not.
+        assertEquals(GoogleEnhancer.laneOf(tagged("SOUND#1")), GoogleEnhancer.laneOf(tagged("SOUND#99")));
+        assertNotEquals(GoogleEnhancer.laneOf(tagged("SOUND#1")), GoogleEnhancer.laneOf(tagged("MEANING#1")));
+        assertEquals("default", GoogleEnhancer.laneOf(tagged("")));
+        assertEquals("default", GoogleEnhancer.laneOf(null));
+    }
+
+    private static okhttp3.Request tagged(String tag) {
+        okhttp3.Request.Builder builder = new okhttp3.Request.Builder().url("https://example.invalid/").get();
+        if (tag != null) builder.tag(String.class, tag);
+        return builder.build();
     }
 }

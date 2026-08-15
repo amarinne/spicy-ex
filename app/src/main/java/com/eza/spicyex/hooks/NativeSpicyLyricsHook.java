@@ -11,6 +11,7 @@ import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.References;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.LyricsDocument;
+import com.eza.spicyex.lyrics.CacheClearKind;
 
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
@@ -77,6 +78,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         XposedBridge.log(TAG + " bridge init package=" + lpparm.packageName
                 + " loadProcess=" + lpparm.processName + " appProcess=" + processName);
         if (lpparm.packageName.equals(processName)) {
+            // At process start, not only on fullscreen open: a user who never opens the fullscreen
+            // screen would otherwise keep derived data from a retired cache epoch indefinitely.
+            DeployCacheCleaner.ensureCleared(applicationContext);
             lyricsSessionManager.start();
             bridgeCoordinator = new SpicyLyricBridgeCoordinator(
                     lyricsSessionManager, applicationContext);
@@ -142,8 +146,26 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         return playbackBridge.isPlayerActuallyPlaying();
     }
 
-    public void fetchLyrics(SpotifyTrack track, LyricsResultCallback callback) {
-        lyricsSessionManager.requestLyrics(track, callback);
+    @Override
+    public LyricsSessionManager.SessionSubscription subscribeLyricsSession(
+            LyricsSessionManager.Listener listener) {
+        return lyricsSessionManager.subscribe(listener);
+    }
+
+    @Override
+    public LyricsSessionManager.LyricsRequest fetchLyrics(
+            SpotifyTrack track, LyricsResultCallback callback) {
+        return lyricsSessionManager.requestLyrics(track, callback);
+    }
+
+    @Override
+    public void refreshLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        lyricsSessionManager.refreshLayer(layer);
+    }
+
+    @Override
+    public void clearLyricsCache(CacheClearKind kind) {
+        lyricsSessionManager.clearCache(kind);
     }
 
 

@@ -403,6 +403,12 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     public static JapaneseReading analyzeJapaneseLineWithProviderFurigana(String text, List<FuriganaSegment> furigana) {
+        return analyzeJapaneseLineWithProviderFurigana(text, furigana, null);
+    }
+
+    static JapaneseReading analyzeJapaneseLineWithProviderFurigana(
+            String text, List<FuriganaSegment> furigana,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
         if (isBlank(text) || furigana == null || furigana.isEmpty()) return null;
         NormalizedText normalized = normalizeWithOffsets(text);
         String sourceText = normalized.text;
@@ -410,7 +416,7 @@ public final class SpicyJapaneseChineseProcessor {
 
         List<FuriganaSegment> mappedFurigana = mapProviderFurigana(furigana, normalized);
         FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
-                normalized.rawText, sourceText, mappedFurigana, null);
+                normalized.rawText, sourceText, mappedFurigana, explicitBoundaries);
         return new JapaneseReading(sourceText, buildRomaji(finalized.entries),
                 buildFurigana(sourceText, finalized.entries, mappedFurigana), readingGroups(finalized.entries),
                 finalized.readingContext, finalized.readingDecisions, finalized.diagnostics);
@@ -1017,6 +1023,7 @@ public final class SpicyJapaneseChineseProcessor {
             String sourceText, java.util.Set<Integer> selectedWhitespace) {
         StringBuilder normalized = new StringBuilder();
         ArrayList<Integer> offsets = new ArrayList<>();
+        java.util.HashSet<Integer> boundaries = new java.util.HashSet<>();
         for (int i = 0; i < sourceText.length(); ) {
             int cp = sourceText.codePointAt(i);
             int len = Character.charCount(cp);
@@ -1025,6 +1032,7 @@ public final class SpicyJapaneseChineseProcessor {
             boolean remove = internalWhitespace
                     && selectedWhitespace != null && selectedWhitespace.contains(i);
             if (remove) {
+                boundaries.add(normalized.length());
                 i += len;
                 continue;
             }
@@ -1034,7 +1042,7 @@ public final class SpicyJapaneseChineseProcessor {
         }
         int[] map = new int[offsets.size()];
         for (int i = 0; i < offsets.size(); i++) map[i] = offsets.get(i);
-        return new AnalysisText(normalized.toString(), map);
+        return new AnalysisText(normalized.toString(), map, boundaries);
     }
 
     private static boolean hasJapaneseBeforeAndAfter(String text, int whitespaceStart, int whitespaceEnd) {

@@ -139,4 +139,48 @@ public class LyricsTransliterationSessionTest {
                 "cycle", SpicyRomanizer.CYRILLIC_RUSSIAN, SpicyRomanizer.CYRILLIC_RUSSIAN, false,
                 true, "google_unofficial", "en", false, 0);
     }
+
+    @Test
+    public void japaneseCycleWalksThreeModesThenTurnsOff() throws Exception {
+        // Seeded with the mode the user was last left on — the common case, and the one that used
+        // to collapse the whole cycle into an on/off toggle.
+        LyricsTransliterationSession session = new LyricsTransliterationSession(
+                false, cycleConfig(), SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI, null, null, null);
+
+        LyricsTransliterationSession.CycleResult result = session.cycle(true, false, false, false);
+        assertTrue(result.showRomanization);
+        assertEquals(SpotifyPlusConfig.JP_READING_FURIGANA_ONLY, session.japaneseReadingMode());
+
+        result = session.cycle(true, false, false, false);
+        assertTrue(result.showRomanization);
+        assertEquals(SpotifyPlusConfig.JP_READING_ROMAJI_ONLY, session.japaneseReadingMode());
+
+        result = session.cycle(true, false, false, false);
+        assertTrue(result.showRomanization);
+        assertEquals(SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI, session.japaneseReadingMode());
+
+        result = session.cycle(true, false, false, false);
+        assertFalse("the cycle closes by turning readings off", result.showRomanization);
+
+        result = session.cycle(true, false, false, false);
+        assertTrue("and re-enters at the first mode, not the last", result.showRomanization);
+        assertEquals(SpotifyPlusConfig.JP_READING_FURIGANA_ONLY, session.japaneseReadingMode());
+    }
+
+    @Test
+    public void cyrillicCycleWalksBothModesThenTurnsOff() throws Exception {
+        LyricsTransliterationSession session = new LyricsTransliterationSession(
+                false, cycleConfig(), null, null, null, SpicyRomanizer.CYRILLIC_UKRAINIAN);
+
+        LyricsTransliterationSession.CycleResult result = session.cycle(false, false, false, true);
+        assertTrue(result.showRomanization);
+        assertEquals(SpicyRomanizer.CYRILLIC_RUSSIAN, session.cyrillicMode());
+
+        result = session.cycle(false, false, false, true);
+        assertTrue(result.showRomanization);
+        assertEquals(SpicyRomanizer.CYRILLIC_UKRAINIAN, session.cyrillicMode());
+
+        result = session.cycle(false, false, false, true);
+        assertFalse(result.showRomanization);
+    }
 }

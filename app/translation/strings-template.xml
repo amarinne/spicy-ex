@@ -10,6 +10,8 @@
 <resources>
     <string name="app_name">Spicy EX</string>
     <string name="module_description">Spicy lyrics for Spotify.</string>
+    <string name="artwork_lyrics_close">Close artwork lyrics</string>
+    <string name="artwork_lyrics_expand">Open fullscreen lyrics</string>
     <!-- A locale file self-registers by overriding these two values, then overrides any panel strings below. -->
     <string name="settings_locale_code">en</string>
     <string name="settings_locale_name">English</string>
@@ -28,6 +30,7 @@
     <string name="settings_label_lyric_sync_offset_ms">Sync offset</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">Publish lyrics to HyperGlow</string>
     <string name="settings_label_lyrics_live_card_tap_mode">Tap card to open lyrics</string>
+    <string name="settings_label_lyrics_live_card_tap_target">Card tap target</string>
     <string name="settings_label_lyrics_live_card_weight">Lyric weight</string>
     <string name="settings_label_lyrics_live_card_text_size">Text size</string>
     <string name="settings_label_lyrics_live_card_text_size_custom">Custom size</string>
@@ -68,6 +71,8 @@
     <string name="settings_option_off">Off</string>
     <string name="settings_option_single_tap">Single tap</string>
     <string name="settings_option_double_tap">Double tap</string>
+    <string name="settings_option_fullscreen">Fullscreen</string>
+    <string name="settings_option_artwork">Artwork</string>
     <string name="settings_option_regular">Regular</string>
     <string name="settings_option_medium">Medium</string>
     <string name="settings_option_bold">Bold</string>
@@ -163,6 +168,7 @@
     <string name="settings_enable_translation">Enable translation</string>
     <string name="settings_sync_offset_summary">Positive shows lyrics earlier</string>
     <string name="settings_action_clear_translation_cache">Clear translation cache</string>
+    <string name="settings_action_clear_reading_cache">Clear transliteration cache</string>
     <string name="settings_action_clear_lyrics_cache">Clear lyrics response cache</string>
     <string name="settings_action_open_github">Open GitHub</string>
     <string name="settings_status_summary">Last state: %1$s\nTrack: %2$s\nLine: %3$s</string>

@@ -72,6 +72,12 @@ public final class Settings {
             "Off", "Single tap", "Double tap"
     );
 
+    public static final Setting<String> LIVE_CARD_TAP_TARGET = enumSetting(
+            "lyrics_live_card_tap_target", NOW_PLAYING, "Card tap target",
+            "Fullscreen",
+            "Fullscreen", "Artwork"
+    );
+
     public static final Setting<String> LIVE_CARD_WEIGHT = enumSetting(
             "lyrics_live_card_weight", NOW_PLAYING, "Lyric weight",
             "Medium",

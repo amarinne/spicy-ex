@@ -23,9 +23,15 @@ final class NativeRuntime {
             .readTimeout(HTTP_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(HTTP_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build();
-    static final ExecutorService PROCESSOR = Executors.newSingleThreadExecutor();
     static final ScheduledExecutorService LYRICS_IO = Executors.newScheduledThreadPool(2);
-    static final ExecutorService GOOGLE_WORKERS = Executors.newFixedThreadPool(4);
+    // Sound and Meaning get distinct bounded jobs. Neither lane may park the other's thread on
+    // network I/O, and cancelling one never starves the other.
+    /** Deterministic on-device reading work. Single-threaded: the romanizers are not reentrant. */
+    static final ExecutorService SOUND_PROCESSOR = Executors.newSingleThreadExecutor();
+    /** Reading fallback requests. Bounded fan-out; the lane executor never awaits these. */
+    static final ExecutorService SOUND_WORKERS = Executors.newFixedThreadPool(2);
+    /** Machine translation batches. Separate from every Sound thread. */
+    static final ExecutorService MEANING_WORKERS = Executors.newFixedThreadPool(2);
     static final int GOOGLE_PROCESSING_VERSION = SpicyProcessing.PROCESSING_VERSION + 2;
     static final int LYRIC_FULL_RENDER_THRESHOLD = 72;
     static final int LYRIC_WINDOW_BEFORE_ACTIVE = 18;

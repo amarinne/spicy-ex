@@ -12,6 +12,10 @@ public class SettingsDefaultsTest {
     @Test
     public void quietReadableDefaultsAreOptInForProcessing() {
         assertEquals("Karaoke fill", Settings.LIVE_CARD_ANIMATION.defaultValue);
+        assertEquals("Fullscreen", Settings.LIVE_CARD_TAP_TARGET.defaultValue);
+        assertEquals("lyrics_live_card_tap_target", Settings.LIVE_CARD_TAP_TARGET.key);
+        assertEquals(java.util.Arrays.asList("Fullscreen", "Artwork"),
+                Settings.LIVE_CARD_TAP_TARGET.allowedValues);
         assertEquals("spacious", Settings.LINE_SPACING.defaultValue);
         assertEquals("note", Settings.INTERLUDE_ICON.defaultValue);
         assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);

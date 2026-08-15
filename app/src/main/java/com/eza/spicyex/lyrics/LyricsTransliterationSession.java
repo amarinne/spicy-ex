@@ -98,8 +98,11 @@ public final class LyricsTransliterationSession {
     private void cycleJapanese() {
         if ("cycle".equals(japaneseModeConfig)) {
             if (!showRomanization) {
+                // Enter at the FIRST state of the chain below, unconditionally. Seeding the last
+                // state — or keeping whatever was persisted — collapses the cycle into an on/off
+                // toggle, because the next tap falls straight through to the closing else.
                 showRomanization = true;
-                if (isBlank(japaneseReadingMode)) japaneseReadingMode = SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI;
+                japaneseReadingMode = SpotifyPlusConfig.JP_READING_FURIGANA_ONLY;
             } else if (SpotifyPlusConfig.JP_READING_FURIGANA_ONLY.equals(japaneseReadingMode)) {
                 japaneseReadingMode = SpotifyPlusConfig.JP_READING_ROMAJI_ONLY;
             } else if (SpotifyPlusConfig.JP_READING_ROMAJI_ONLY.equals(japaneseReadingMode)) {
@@ -137,8 +140,9 @@ public final class LyricsTransliterationSession {
     private void cycleCyrillic() {
         if ("cycle".equals(cyrillicModeConfig)) {
             if (!showRomanization) {
+                // First state of the chain, unconditionally: see cycleJapanese.
                 showRomanization = true;
-                if (isBlank(cyrillicMode)) cyrillicMode = SpicyRomanizer.CYRILLIC_RUSSIAN;
+                cyrillicMode = SpicyRomanizer.CYRILLIC_RUSSIAN;
             } else if (SpicyRomanizer.CYRILLIC_RUSSIAN.equals(cyrillicMode)) {
                 cyrillicMode = SpicyRomanizer.CYRILLIC_UKRAINIAN;
             } else {

@@ -83,7 +83,18 @@ public final class SpicyJapaneseChineseProcessor {
         return null;
     }
 
+    static JapaneseReading analyzeJapaneseLine(String text, String fullSpacedRomaji,
+                                                List<JapaneseReadingPolicyModels.BoundaryEvidence> boundaries) {
+        return null;
+    }
+
     public static JapaneseReading analyzeJapaneseLineWithProviderFurigana(String text, List<FuriganaSegment> furigana) {
+        return null;
+    }
+
+    static JapaneseReading analyzeJapaneseLineWithProviderFurigana(
+            String text, List<FuriganaSegment> furigana,
+            List<JapaneseReadingPolicyModels.BoundaryEvidence> boundaries) {
         return null;
     }
 

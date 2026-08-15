@@ -43,7 +43,8 @@ public final class LyricsLocalRomanizer {
             }
             if (doc != null && isJapaneseLine(doc, line.text, fullText)) {
                 SpicyJapaneseChineseProcessor.JapaneseReading local =
-                        SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line.text, null);
+                        SpicyJapaneseChineseProcessor.analyzeJapaneseLine(
+                                line.text, null, japaneseAnalysisBoundaries(line));
                 if (local != null) {
                     boolean hasProviderFurigana = line.japaneseReading != null
                             && line.japaneseReading.furigana != null
@@ -51,7 +52,8 @@ public final class LyricsLocalRomanizer {
                     if (hasProviderFurigana) {
                         SpicyJapaneseChineseProcessor.JapaneseReading providerAware =
                                 SpicyJapaneseChineseProcessor.analyzeJapaneseLineWithProviderFurigana(
-                                line.text, line.japaneseReading.furigana);
+                                line.text, line.japaneseReading.furigana,
+                                japaneseAnalysisBoundaries(line));
                         if (providerAware != null) line.japaneseReading = providerAware;
                         String romaji = providerAware == null ? "" : providerAware.romaji;
                         if (!isBlank(romaji)) {
@@ -184,6 +186,81 @@ public final class LyricsLocalRomanizer {
 
     private static boolean isChineseLine(LyricsDocument doc, String text, String fullText) {
         return hanLineScript(doc, text, fullText) == SpicyTextDetection.Script.CHINESE;
+    }
+
+    /**
+     * Marks only provider-inferred Japanese gaps as removable from analyzer input.
+     *
+     * <p>Syllable lines already carry boundary provenance from the provider adapter. Line/static
+     * payloads have no span provenance, so two or more Japanese-internal gaps are treated as the
+     * provider's word-spacing convention; a lone gap remains authored/hard. Display text and all
+     * returned ranges stay in the original spaced coordinates.
+     */
+    static List<JapaneseReadingPolicyModels.BoundaryEvidence> japaneseAnalysisBoundaries(LyricsLine line) {
+        ArrayList<JapaneseReadingPolicyModels.BoundaryEvidence> out = new ArrayList<>();
+        if (line == null || isBlank(line.text)) return out;
+        if (line.syllables != null && !line.syllables.isEmpty()) {
+            for (int index = 0; index + 1 < line.syllables.size(); index++) {
+                SyllableSegment current = line.syllables.get(index);
+                SyllableSegment next = line.syllables.get(index + 1);
+                if (current == null || next == null || !current.boundaryAfter) continue;
+                String provenance = safe(current.boundaryProvenance);
+                if (!("providerFlagAfterSpan".equals(provenance)
+                        || "completeProviderLine".equals(provenance))) continue;
+                int offset = next.canonicalStartCp;
+                if (offset > 0) out.add(new JapaneseReadingPolicyModels.BoundaryEvidence(
+                        offset, "inferred-soft", "soft", current.spanId));
+            }
+            return out;
+        }
+
+        ArrayList<Integer> candidates = new ArrayList<>();
+        for (int utf16 = 0; utf16 < line.text.length();) {
+            int cp = line.text.codePointAt(utf16);
+            int len = Character.charCount(cp);
+            if (Character.isWhitespace(cp)) {
+                int end = utf16 + len;
+                while (end < line.text.length()) {
+                    int next = line.text.codePointAt(end);
+                    if (!Character.isWhitespace(next)) break;
+                    end += Character.charCount(next);
+                }
+                if (japaneseOnBothSides(line.text, utf16, end)) {
+                    candidates.add(line.text.codePointCount(0, end));
+                }
+                utf16 = end;
+                continue;
+            }
+            utf16 += len;
+        }
+        if (candidates.size() < 2) return out;
+        for (Integer offset : candidates) out.add(new JapaneseReadingPolicyModels.BoundaryEvidence(
+                offset, "inferred-soft", "soft", "lineJapaneseSpacing"));
+        return out;
+    }
+
+    private static boolean japaneseOnBothSides(String text, int start, int end) {
+        int before = -1;
+        for (int cursor = start; cursor > 0;) {
+            int cp = text.codePointBefore(cursor);
+            cursor -= Character.charCount(cp);
+            if (!Character.isWhitespace(cp)) { before = cp; break; }
+        }
+        int after = -1;
+        for (int cursor = end; cursor < text.length();) {
+            int cp = text.codePointAt(cursor);
+            cursor += Character.charCount(cp);
+            if (!Character.isWhitespace(cp)) { after = cp; break; }
+        }
+        return isJapaneseCodePoint(before) && isJapaneseCodePoint(after);
+    }
+
+    private static boolean isJapaneseCodePoint(int cp) {
+        if (cp < 0) return false;
+        Character.UnicodeScript script = Character.UnicodeScript.of(cp);
+        return script == Character.UnicodeScript.HAN
+                || script == Character.UnicodeScript.HIRAGANA
+                || script == Character.UnicodeScript.KATAKANA;
     }
 
     private static boolean isJapaneseLine(LyricsDocument doc, String text, String fullText) {

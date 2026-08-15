@@ -59,6 +59,19 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
+    public void artworkUsesSharedFullscreenSemanticsWithBoundedSurfacePadding() {
+        AppliedLine artwork = line("hello bright world");
+
+        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(
+                artwork, document(artwork), LyricsSurfaceRowPlanner.SurfacePolicy.artwork(null));
+
+        assertTrue(plan.options.wrapLongLines);
+        assertTrue(plan.options.horizontalSafetyPadding);
+        assertFalse(plan.options.showRomanization);
+        assertFalse(plan.options.showTranslation);
+    }
+
+    @Test
     public void fullscreenAndLiveCardShareSyntheticWordPlanning() {
         AppliedLine fullscreen = line("hello bright world");
         AppliedLine liveCard = line("hello bright world");

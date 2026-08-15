@@ -4,7 +4,7 @@ package com.eza.spicyex.hooks;
 final class LyricsSessionPolicy {
     private String trackUri = "";
     private int generation;
-    private boolean backgroundDemand;
+    private int pollingDemandCount;
 
     boolean adoptTrack(String nextTrackUri) {
         String next = nextTrackUri == null ? "" : nextTrackUri;
@@ -18,12 +18,23 @@ final class LyricsSessionPolicy {
         return candidateGeneration == generation && trackUri.equals(candidateTrackUri);
     }
 
-    void setBackgroundDemand(boolean enabled) {
-        backgroundDemand = enabled;
+    boolean acquirePollingDemand() {
+        pollingDemandCount++;
+        return pollingDemandCount == 1;
     }
 
-    boolean hasBackgroundDemand() {
-        return backgroundDemand;
+    boolean releasePollingDemand() {
+        if (pollingDemandCount == 0) return false;
+        pollingDemandCount--;
+        return pollingDemandCount == 0;
+    }
+
+    boolean hasPollingDemand() {
+        return pollingDemandCount > 0;
+    }
+
+    int pollingDemandCount() {
+        return pollingDemandCount;
     }
 
     String trackUri() {

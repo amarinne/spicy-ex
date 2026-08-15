@@ -17,6 +17,7 @@ final class LyricsSettingsDialogController {
     private final Activity activity;
     private final VsyncFrameScheduler frameScheduler;
     private final LyricsAmbientController ambientController;
+    private final LyricsHost host;
     private final Runnable onClosed;
     private final String logTag;
 
@@ -24,12 +25,14 @@ final class LyricsSettingsDialogController {
             Activity activity,
             VsyncFrameScheduler frameScheduler,
             LyricsAmbientController ambientController,
+            LyricsHost host,
             Runnable onClosed,
             String logTag
     ) {
         this.activity = activity;
         this.frameScheduler = frameScheduler;
         this.ambientController = ambientController;
+        this.host = host;
         this.onClosed = onClosed;
         this.logTag = logTag;
     }
@@ -45,7 +48,7 @@ final class LyricsSettingsDialogController {
             dialog.setContentView(new SettingsPanel(activity, new SettingsStore(activity), () -> halfMode, () -> {
                 halfMode = !halfMode;
                 applySize(window);
-            }, dialog::dismiss).build());
+            }, dialog::dismiss, host::clearLyricsCache).build());
             if (window != null) {
                 window.setBackgroundDrawable(new ColorDrawable(android.graphics.Color.TRANSPARENT));
                 applySize(window);

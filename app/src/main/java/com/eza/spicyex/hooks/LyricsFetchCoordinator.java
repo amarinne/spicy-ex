@@ -48,6 +48,21 @@ final class LyricsFetchCoordinator {
         return nativeLyricsSource;
     }
 
+    /** Retires any replayable provider operation for this track before an explicit source reload. */
+    void invalidate(SpotifyTrack track) {
+        String uri = track == null ? "" : safe(track.uri);
+        synchronized (inFlightLock) {
+            for (Map.Entry<String, InFlightFetch> entry : new ArrayList<>(inFlight.entrySet())) {
+                if (!entry.getKey().startsWith(uri + "|")) continue;
+                InFlightFetch operation = entry.getValue();
+                inFlight.remove(entry.getKey());
+                if (operation.expiry != null) operation.expiry.cancel(false);
+                operation.callbacks.clear();
+                operation.latest = null;
+            }
+        }
+    }
+
     void fetchLyrics(
             Context context,
             SpotifyTrack track,

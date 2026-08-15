@@ -15,9 +15,9 @@ public class LyricsProcessingPatchTest {
         doc.translationPending = true;
         doc.processingPending = true;
 
-        LyricsProcessingPatch patch = new LyricsProcessingPatch();
-        patch.includesRomanization = true;
-        patch.includesTranslation = true;
+        LyricsProcessingPatch patch = new LyricsProcessingPatch()
+                .setSoundFlags(false, true)
+                .setMeaningFlags(false, true);
         patch.changed = 2;
 
         LyricsProcessingPatch.LinePatch linePatch = new LyricsProcessingPatch.LinePatch(0);
@@ -48,7 +48,10 @@ public class LyricsProcessingPatchTest {
         doc.lines.get(0).syllables.add(segment("na", ""));
 
         LyricsProcessingPatch patch = new LyricsProcessingPatch();
-        patch.addLinePatch(LyricsProcessingPatch.fromLine(0, source, true, true));
+        patch.addLinePatch(LyricsProcessingPatch.soundLine(0, source));
+        LyricsProcessingPatch.LinePatch meaning = new LyricsProcessingPatch.LinePatch(0);
+        meaning.setTranslatedText(source.translatedText);
+        patch.addLinePatch(meaning);
         patch.applyTo(doc);
 
         LyricsLine target = doc.lines.get(0);

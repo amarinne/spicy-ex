@@ -121,7 +121,10 @@ final class LyricsActivityTakeoverHook {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
                 Activity activity = (Activity) param.thisObject;
-                if (!isLyricsFullscreenActivity(activity)) return;
+                if (!isLyricsFullscreenActivity(activity)) {
+                    if (nowPlayingInjector.consumeArtworkBack(activity)) param.setResult(null);
+                    return;
+                }
                 markExplicitLyricsExit(activity);
             }
         });

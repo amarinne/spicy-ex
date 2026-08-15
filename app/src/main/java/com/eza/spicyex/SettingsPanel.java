@@ -19,9 +19,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
-import com.eza.spicyex.lyrics.LyricCaches;
+import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
 
 /**
@@ -43,6 +42,7 @@ public final class SettingsPanel {
     private final java.util.function.BooleanSupplier isHalfSize;
     private final Runnable onToggleSize;
     private final Runnable onClose;
+    private final java.util.function.Consumer<CacheClearKind> onClearCache;
     // Static: survives panel re-opens within the process, so the panel never re-opens fully collapsed.
     private static final java.util.Set<String> expandedSections = new java.util.HashSet<>();
     private LinearLayout sectionsContainer;
@@ -50,12 +50,14 @@ public final class SettingsPanel {
     private SettingsUiStrings uiStrings;
 
     public SettingsPanel(Context context, SettingsStore store, java.util.function.BooleanSupplier isHalfSize,
-                         Runnable onToggleSize, Runnable onClose) {
+                         Runnable onToggleSize, Runnable onClose,
+                         java.util.function.Consumer<CacheClearKind> onClearCache) {
         this.context = context;
         this.store = store;
         this.isHalfSize = isHalfSize;
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
+        this.onClearCache = onClearCache;
         this.uiStrings = new SettingsUiStrings(context, store.get(Settings.UI_LANGUAGE));
     }
 
@@ -253,10 +255,16 @@ public final class SettingsPanel {
         actionRow(content, DiagnosticReportingDialog.reportProblemLabel(context, store),
                 v -> DiagnosticReportingDialog.show(context, store));
         actionRow(content, uiStrings.get("settings_action_clear_translation_cache", "Clear translation cache"),
-                v -> LyricCaches.clearGoogle(context));
+                v -> clearCache(CacheClearKind.TRANSLATION));
+        actionRow(content, uiStrings.get("settings_action_clear_reading_cache", "Clear transliteration cache"),
+                v -> clearCache(CacheClearKind.TRANSLITERATION));
         actionRow(content, uiStrings.get("settings_action_clear_lyrics_cache", "Clear lyrics response cache"),
-                v -> LyricsResponseCache.clear(context));
+                v -> clearCache(CacheClearKind.LYRICS_RESPONSE));
         actionRow(content, uiStrings.get("settings_action_open_github", "Open GitHub"), v -> openGithub());
+    }
+
+    private void clearCache(CacheClearKind kind) {
+        if (onClearCache != null) onClearCache.accept(kind);
     }
 
     private void renderStatus(LinearLayout content) {

@@ -413,6 +413,32 @@ public final class LyricsSurfaceRowPlanner {
                     cfg == null || cfg.adaptiveSectioningEnabled);
         }
 
+        /**
+         * Album-art overlay policy. Text semantics and timing stay on the shared row planner;
+         * the surface adapter only chooses the bounded row window that fits over the artwork.
+         */
+        public static SurfacePolicy artwork(LyricsRenderConfig config) {
+            LyricsRenderConfig cfg = config;
+            return new SurfacePolicy(
+                    cfg == null ? 1f : cfg.lineSpacingMultiplier,
+                    cfg != null && cfg.transliterationEnabled,
+                    cfg != null && cfg.translationEnabled,
+                    cfg == null ? "" : cfg.defaultJapaneseReadingMode,
+                    cfg != null && cfg.attachTransliterationToWords,
+                    cfg != null && cfg.lineSyncFillTopDown(),
+                    cfg != null && cfg.lineSyncFillSentence(),
+                    cfg != null && cfg.lineSyncFillWord(),
+                    cfg != null && cfg.interludeNoteIcon,
+                    cfg == null ? "Medium" : cfg.lyricWeight,
+                    cfg == null ? "spotify" : cfg.lyricsFont,
+                    cfg == null ? 1f : cfg.lyricsTextSizeMultiplier,
+                    cfg != null && cfg.translationBright,
+                    true,
+                    false,
+                    true,
+                    cfg == null || cfg.adaptiveSectioningEnabled);
+        }
+
         public static SurfacePolicy defaultPolicy() {
             return new SurfacePolicy(1f, false, false, "", false, false, false,
                     false, false, "Medium", "spotify", 1f, false, true, false);

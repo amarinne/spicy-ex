@@ -270,6 +270,48 @@ public final class LyricsShellSettings {
         return normalizeChineseMode(fallback);
     }
 
+    /**
+     * Korean reading mode actually in effect, honouring an in-progress cycle.
+     *
+     * <p>The fullscreen chip advances the cycle and writes the new mode to live preferences.
+     * {@link SpotifyPlusConfig} is a snapshot and does not see that write, so anything that must
+     * agree with what is on screen — including the session-owned Sound lane — has to read the
+     * preference directly, exactly as {@link #defaultChineseMode} does.
+     */
+    public String currentKoreanMode(String configuredMode) {
+        String configured = safe(configuredMode);
+        if (!"cycle".equals(configured)) return KoreanDisplayMode.valueOfSetting(configured);
+        String fallback = config == null
+                ? Settings.LAST_KOREAN_CYCLE_MODE.defaultValue
+                : config.get(Settings.LAST_KOREAN_CYCLE_MODE);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LAST_KOREAN_CYCLE_MODE.key)) {
+                return KoreanDisplayMode.valueOfSetting(
+                        prefs.getString(Settings.LAST_KOREAN_CYCLE_MODE.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return KoreanDisplayMode.valueOfSetting(fallback);
+    }
+
+    /** Cyrillic reading mode actually in effect, honouring an in-progress cycle. */
+    public String currentCyrillicMode(String configuredMode) {
+        String configured = safe(configuredMode);
+        if (!"cycle".equals(configured)) return configured;
+        String fallback = config == null
+                ? Settings.LAST_CYRILLIC_CYCLE_MODE.defaultValue
+                : config.get(Settings.LAST_CYRILLIC_CYCLE_MODE);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LAST_CYRILLIC_CYCLE_MODE.key)) {
+                return safe(prefs.getString(Settings.LAST_CYRILLIC_CYCLE_MODE.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return safe(fallback);
+    }
+
     /** "Spotlight" animation style = zoom + glow the active line/word, no gradient fill. */
     public boolean spotlightAnimation() {
         String fallback = config == null ? "" : config.get(Settings.ANIMATION_STYLE);

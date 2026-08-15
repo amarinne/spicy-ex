@@ -68,11 +68,11 @@ public class ProviderTranslationResolverTest {
 
     @Test
     public void failedOrPartialGeneratedPassIsNotComplete() {
-        assertFalse(LyricsSecondaryProcessor.translationPassComplete(true,
+        assertFalse(LyricsMeaningLane.translationPassComplete(true,
                 Arrays.asList(1, 2), new HashSet<>(Collections.singletonList(1))));
-        assertTrue(LyricsSecondaryProcessor.translationPassComplete(true,
+        assertTrue(LyricsMeaningLane.translationPassComplete(true,
                 Arrays.asList(1, 2), new HashSet<>(Arrays.asList(1, 2))));
-        assertTrue(LyricsSecondaryProcessor.translationPassComplete(false,
+        assertTrue(LyricsMeaningLane.translationPassComplete(false,
                 Arrays.asList(1, 2), Collections.emptySet()));
     }
 }

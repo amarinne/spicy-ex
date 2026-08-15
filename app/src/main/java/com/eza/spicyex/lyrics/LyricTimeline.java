@@ -210,6 +210,52 @@ public final class LyricTimeline {
         return false;
     }
 
+    /**
+     * Re-syncs already-planned rows with their source line's derived text.
+     *
+     * <p>Lets a surface absorb a reading or translation update without rebuilding the row plan, so
+     * timing, row identity, and any view state keyed to it survive. Background rows are skipped:
+     * they render a {@link BackgroundLine}, which a row does not keep a reference to.
+     *
+     * @return true when any row's displayed derived text changed
+     */
+    public static boolean refreshAppliedDerivedText(LyricsDocument doc) {
+        if (doc == null || doc.appliedLines.isEmpty()) return false;
+        boolean changed = false;
+        for (AppliedLine row : doc.appliedLines) {
+            if (row == null || row.dotLine || row.bgLine || row.sourceLine == null) continue;
+            String roman = LyricsDocument.safe(row.sourceLine.romanizedText);
+            String translated = LyricsDocument.safe(row.sourceLine.translatedText);
+            if (!roman.equals(row.romanizedText)) {
+                row.romanizedText = roman;
+                changed = true;
+            }
+            if (!translated.equals(row.translatedText)) {
+                row.translatedText = translated;
+                changed = true;
+            }
+            if (row.japaneseReading != row.sourceLine.japaneseReading) {
+                row.japaneseReading = row.sourceLine.japaneseReading;
+                changed = true;
+            }
+            if (row.readingRenderPlan != row.sourceLine.readingRenderPlan) {
+                row.readingRenderPlan = row.sourceLine.readingRenderPlan;
+                changed = true;
+            }
+            int spans = Math.min(row.words.size(), row.sourceLine.syllables.size());
+            for (int i = 0; i < spans; i++) {
+                SyllableSegment to = row.words.get(i);
+                SyllableSegment from = row.sourceLine.syllables.get(i);
+                if (to == null || from == null) continue;
+                String value = LyricsDocument.safe(from.romanizedText);
+                if (value.isEmpty() || value.equals(to.romanizedText)) continue;
+                to.romanizedText = value;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
     static AppliedLine createAppliedVocalRow(LyricsLine source, long startMs, long endMs) {
         AppliedLine row = new AppliedLine();
         row.sourceLine = source;

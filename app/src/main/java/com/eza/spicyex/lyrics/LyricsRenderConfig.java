@@ -175,9 +175,15 @@ public final class LyricsRenderConfig {
         String defaultCn = transliterationAvailable ? shell.defaultChineseMode(cn) : "";
         String kr = transliterationAvailable ? get(cfg, Settings.KOREAN_ROMANIZATION) : KoreanDisplayMode.RR_STANDARD.value;
         String defaultKr = "cycle".equals(kr) ? KoreanDisplayMode.RR_STANDARD.value : KoreanDisplayMode.valueOfSetting(kr);
-        String currentKr = "cycle".equals(kr) ? KoreanDisplayMode.valueOfSetting(get(cfg, Settings.LAST_KOREAN_CYCLE_MODE)) : defaultKr;
+        // Read the live preference, not the config snapshot: the fullscreen chip writes the cycled
+        // mode there, and every consumer — including the session-owned Sound lane — must agree with
+        // what is on screen.
+        String currentKr = transliterationAvailable ? shell.currentKoreanMode(kr) : defaultKr;
         String cy = transliterationAvailable ? get(cfg, Settings.CYRILLIC_MODE) : "Off";
-        String defaultCy = "cycle".equals(cy) ? SpicyRomanizer.CYRILLIC_RUSSIAN : cy;
+        String defaultCy = transliterationAvailable
+                ? shell.currentCyrillicMode(cy)
+                : ("cycle".equals(cy) ? SpicyRomanizer.CYRILLIC_RUSSIAN : cy);
+        if ("cycle".equals(defaultCy) || defaultCy.isEmpty()) defaultCy = SpicyRomanizer.CYRILLIC_RUSSIAN;
         boolean transliterationEnabled = transliterationAvailable && get(cfg, Settings.TRANSLITERATION_ENABLED);
         boolean translationEnabled = translationAvailable && translationEnabled(cfg);
 

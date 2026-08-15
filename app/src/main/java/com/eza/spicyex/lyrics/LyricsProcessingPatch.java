@@ -5,15 +5,34 @@ import java.util.List;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
-/** Main-thread patch for secondary processing changes computed off-thread. */
+/**
+ * Main-thread patch for derived-layer changes computed off-thread.
+ *
+ * <p>Flags are layer-scoped: a patch touches only the flags of the layer that produced it. The
+ * Sound and Meaning lanes run concurrently, so a Sound patch must never clear a Meaning flag or
+ * vice versa. {@code processingPending} is recomputed from both layer flags after every apply.
+ */
 public final class LyricsProcessingPatch {
     private final ArrayList<LinePatch> linePatches = new ArrayList<>();
-    public boolean romanizationPending;
-    public boolean translationPending;
-    public boolean processingPending;
-    public boolean includesRomanization;
-    public boolean includesTranslation;
+    private Boolean romanizationPending;
+    private Boolean translationPending;
+    private Boolean includesRomanization;
+    private Boolean includesTranslation;
     public int changed;
+
+    /** Declares the Sound layer's flags. Leaves Meaning flags untouched. */
+    public LyricsProcessingPatch setSoundFlags(boolean pending, boolean includes) {
+        romanizationPending = pending;
+        includesRomanization = includes;
+        return this;
+    }
+
+    /** Declares the Meaning layer's flags. Leaves Sound flags untouched. */
+    public LyricsProcessingPatch setMeaningFlags(boolean pending, boolean includes) {
+        translationPending = pending;
+        includesTranslation = includes;
+        return this;
+    }
 
     public void addLinePatch(LinePatch patch) {
         if (patch != null) linePatches.add(patch);
@@ -25,31 +44,29 @@ public final class LyricsProcessingPatch {
 
     public void applyTo(LyricsDocument document) {
         if (document == null) return;
-        document.romanizationPending = romanizationPending;
-        document.translationPending = translationPending;
-        document.processingPending = processingPending;
-        document.includesRomanization = includesRomanization;
-        document.includesTranslation = includesTranslation;
+        if (romanizationPending != null) document.romanizationPending = romanizationPending;
+        if (translationPending != null) document.translationPending = translationPending;
+        if (includesRomanization != null) document.includesRomanization = includesRomanization;
+        if (includesTranslation != null) document.includesTranslation = includesTranslation;
+        document.processingPending = document.romanizationPending || document.translationPending;
         for (LinePatch patch : linePatches) patch.applyTo(document);
     }
 
-    public static LinePatch fromLine(int index, LyricsLine line, boolean includeRomanized, boolean includeTranslated) {
+    /** Sound delta for one line: reading plan, legacy romaji fallback, and span readings. */
+    public static LinePatch soundLine(int index, LyricsLine line) {
         if (line == null) return null;
         LinePatch patch = new LinePatch(index);
-        if (includeRomanized) {
-            patch.readingRenderPlan = line.readingRenderPlan != null ? line.readingRenderPlan
-                    : ReadingPlanFactory.lineFallback(line, safe(line.romanizedText), "remoteFallback");
-            patch.romanizedText = patch.readingRenderPlan == null ? safe(line.romanizedText) : "";
-            patch.japaneseReading = line.japaneseReading;
-            patch.chineseMode = safe(line.chineseMode);
-            if (patch.readingRenderPlan == null) {
-                patch.syllableRomanizedText = new ArrayList<>();
-                for (SyllableSegment seg : line.syllables) {
-                    patch.syllableRomanizedText.add(seg == null ? "" : safe(seg.romanizedText));
-                }
+        patch.readingRenderPlan = line.readingRenderPlan != null ? line.readingRenderPlan
+                : ReadingPlanFactory.lineFallback(line, safe(line.romanizedText), "remoteFallback");
+        patch.romanizedText = patch.readingRenderPlan == null ? safe(line.romanizedText) : "";
+        patch.japaneseReading = line.japaneseReading;
+        patch.chineseMode = safe(line.chineseMode);
+        if (patch.readingRenderPlan == null) {
+            patch.syllableRomanizedText = new ArrayList<>();
+            for (SyllableSegment seg : line.syllables) {
+                patch.syllableRomanizedText.add(seg == null ? "" : safe(seg.romanizedText));
             }
         }
-        if (includeTranslated) patch.translatedText = safe(line.translatedText);
         return patch;
     }
 

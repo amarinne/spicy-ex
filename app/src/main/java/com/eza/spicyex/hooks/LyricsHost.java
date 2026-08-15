@@ -3,6 +3,7 @@ package com.eza.spicyex.hooks;
 import android.app.Activity;
 
 import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.lyrics.CacheClearKind;
 
 /**
  * The seam between the native lyrics shell view and its hosting Xposed hook.
@@ -29,5 +30,20 @@ interface LyricsHost {
     // expires shortly after the shell stops calling (teardown), which re-enables normal finish().
     void markLyricsKeepAlive(Activity activity);
 
-    void fetchLyrics(SpotifyTrack track, NativeSpicyLyricsHook.LyricsResultCallback callback);
+    LyricsSessionManager.SessionSubscription subscribeLyricsSession(
+            LyricsSessionManager.Listener listener);
+
+    LyricsSessionManager.LyricsRequest fetchLyrics(
+            SpotifyTrack track, NativeSpicyLyricsHook.LyricsResultCallback callback);
+
+    /**
+     * Asks the session to re-run one derived layer after its settings changed.
+     *
+     * The shell never starts provider work itself: the session is the only scheduler, so one
+     * settings change costs one run however many surfaces are open.
+     */
+    void refreshLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer);
+
+    /** Clears durable data and invalidates the matching live-session authority. */
+    void clearLyricsCache(CacheClearKind kind);
 }

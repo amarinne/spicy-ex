@@ -30,9 +30,16 @@ public final class GoogleEnhancer {
     private static final int GOOGLE_REQUEST_RETRIES = 1;
     private static final long GOOGLE_REQUEST_MIN_INTERVAL_MS = 150L;
     private static final long GOOGLE_REQUEST_RETRY_DELAY_MS = 1000L;
-    private static final Object GOOGLE_REQUEST_LOCK = new Object();
+    /**
+     * One throttle per lane, not one for the whole client.
+     *
+     * <p>A single global gate made the Sound and Meaning lanes queue behind each other even though
+     * they own separate executors, so translation waited on reading requests it has nothing to do
+     * with. Keying the throttle by lane keeps each lane's own request rate polite while letting the
+     * two run genuinely in parallel.
+     */
+    private static final Map<String, long[]> LANE_THROTTLES = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Pattern BATCH_MARKER_PATTERN = Pattern.compile("\\[\\[SPX_(\\d{3})\\]\\]");
-    private static long lastGoogleRequestAtMs = 0L;
 
     private GoogleEnhancer() {
     }
@@ -46,7 +53,8 @@ public final class GoogleEnhancer {
             String targetLang,
             String text,
             boolean needRomanize,
-            boolean needTranslate
+            boolean needTranslate,
+            String cancelTag
     ) {
         Enhancement result = new Enhancement();
         if (isBlank(text) || (!needRomanize && !needTranslate)) return result;
@@ -69,8 +77,7 @@ public final class GoogleEnhancer {
                 + "&tl=" + Uri.encode(target)
                 + "&dt=t" + (needRomanize ? "&dt=rm" : "")
                 + "&q=" + Uri.encode(text);
-        Request request = new Request.Builder().url(url).get().build();
-        String body = executeRequestBody(http, request);
+        String body = executeRequestBody(http, taggedRequest(url, cancelTag));
         if (isBlank(body)) {
             result.romanized = cachedRomanized == null ? "" : cachedRomanized;
             result.translated = cachedTranslated == null ? "" : cachedTranslated;
@@ -93,7 +100,8 @@ public final class GoogleEnhancer {
             String trackId,
             String sourceLang,
             String targetLang,
-            List<BatchLine> lines
+            List<BatchLine> lines,
+            String cancelTag
     ) {
         BatchResult result = new BatchResult();
         if (lines == null || lines.isEmpty()) return result;
@@ -124,8 +132,7 @@ public final class GoogleEnhancer {
                 + Uri.encode(source)
                 + "&tl=" + Uri.encode(target)
                 + "&dt=t&q=" + Uri.encode(query.toString());
-        Request request = new Request.Builder().url(url).get().build();
-        String body = executeRequestBody(http, request);
+        String body = executeRequestBody(http, taggedRequest(url, cancelTag));
         if (isBlank(body)) return result;
 
         Map<Integer, String> parsed = parseBatchTranslation(body);
@@ -143,10 +150,44 @@ public final class GoogleEnhancer {
         return result;
     }
 
+    /**
+     * Tags the call so a retired lane run can cancel it. Untagged calls stay uncancellable, which
+     * is why every lyric request goes through here.
+     */
+    private static Request taggedRequest(String url, String cancelTag) {
+        return new Request.Builder().url(url).get()
+                .tag(String.class, cancelTag == null ? "" : cancelTag)
+                .build();
+    }
+
+    /**
+     * Cancels every queued and running call carrying {@code cancelTag}. Called when a lane run is
+     * retired by a track, source, or configuration change, so an abandoned run stops costing
+     * requests instead of merely having its callback ignored.
+     */
+    public static int cancelTagged(OkHttpClient http, String cancelTag) {
+        if (http == null || cancelTag == null || cancelTag.isEmpty()) return 0;
+        int cancelled = 0;
+        for (okhttp3.Call call : http.dispatcher().queuedCalls()) {
+            if (cancelTag.equals(call.request().tag(String.class))) {
+                call.cancel();
+                cancelled++;
+            }
+        }
+        for (okhttp3.Call call : http.dispatcher().runningCalls()) {
+            if (cancelTag.equals(call.request().tag(String.class))) {
+                call.cancel();
+                cancelled++;
+            }
+        }
+        return cancelled;
+    }
+
     private static String executeRequestBody(OkHttpClient http, Request request) {
         if (http == null || request == null) return null;
+        String lane = laneOf(request);
         for (int attempt = 0; attempt <= GOOGLE_REQUEST_RETRIES; attempt++) {
-            throttleGoogleRequest();
+            throttleGoogleRequest(lane);
             try (Response response = http.newCall(request).execute()) {
                 if (response.isSuccessful() && response.body() != null) {
                     return response.body().string();
@@ -159,12 +200,22 @@ public final class GoogleEnhancer {
         return null;
     }
 
-    private static void throttleGoogleRequest() {
-        synchronized (GOOGLE_REQUEST_LOCK) {
+    /** Lane identity from the call tag: "SOUND#12" and "MEANING#13" throttle independently. */
+    static String laneOf(Request request) {
+        String tag = request == null ? null : request.tag(String.class);
+        if (tag == null || tag.isEmpty()) return "default";
+        int hash = tag.indexOf('#');
+        return hash <= 0 ? tag : tag.substring(0, hash);
+    }
+
+    private static void throttleGoogleRequest(String lane) {
+        long[] last = LANE_THROTTLES.computeIfAbsent(lane == null ? "default" : lane,
+                key -> new long[] {0L});
+        synchronized (last) {
             long now = SystemClock.elapsedRealtime();
-            long waitMs = lastGoogleRequestAtMs + GOOGLE_REQUEST_MIN_INTERVAL_MS - now;
+            long waitMs = last[0] + GOOGLE_REQUEST_MIN_INTERVAL_MS - now;
             if (waitMs > 0L) quietSleep(waitMs);
-            lastGoogleRequestAtMs = SystemClock.elapsedRealtime();
+            last[0] = SystemClock.elapsedRealtime();
         }
     }
 
