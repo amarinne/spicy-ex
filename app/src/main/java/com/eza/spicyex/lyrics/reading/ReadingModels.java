@@ -22,7 +22,15 @@ public final class ReadingModels {
     public enum BoundaryKind { EXPLICIT_WHITESPACE, PARAGRAPH, SCRIPT, INFERRED }
     public enum JoinRelation { ATTACHED, BOUNDARY, UNKNOWN }
     public enum ReadingUnitKind { TRANSFORMED, PASSTHROUGH, PUNCTUATION }
-    public enum ReadingProvenance { PROVIDER, LOCAL, REMOTE_FALLBACK }
+    /**
+     * Where a reading came from, which is also its authority.
+     *
+     * <p>Ordered by trust for the line-level slot: a deterministic engine ({@link #LOCAL},
+     * {@link #PROVIDER}) outranks {@link #AI}, which outranks {@link #REMOTE_FALLBACK}. A built
+     * engine is free, offline, and corpus-testable, so it keeps every line it covers; AI earns its
+     * place only where no engine has coverage.
+     */
+    public enum ReadingProvenance { PROVIDER, LOCAL, AI, REMOTE_FALLBACK }
 
     public static final class SourceSpan {
         public final String id;

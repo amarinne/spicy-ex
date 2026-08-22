@@ -25,6 +25,7 @@ public final class Settings {
     public static final Section TEXT = LYRICS_SCREEN;
     public static final Section ANIMATION = LYRICS_SCREEN;
     public static final Section BACKGROUND = LYRICS_SCREEN;
+    public static final Section AI = new Section("AI", "ai");
     public static final Section DEBUG = new Section("About & Diagnostics", "debug");
     public static final Section DISPLAY = TEXT;
     public static final Section INTERNAL = new Section("Internal", "internal");
@@ -37,7 +38,7 @@ public final class Settings {
     // --- Lyrics ---
     public static final Setting<String> UI_LANGUAGE = stringSetting(
             "settings_ui_language", LYRICS, "Interface language",
-            "system"
+            "en"
     );
 
     public static final Setting<String> TAP_SEEK_MODE = enumSetting(
@@ -302,7 +303,95 @@ public final class Settings {
             "Dimmed", "Bright"
     );
 
+    // --- AI ---
+    // One gate owns the whole family: off means no requests and no cached AI overlay, while every
+    // paid result stays exactly where it is, waiting to be switched back on.
+    public static final Setting<Boolean> AI_ENABLED = boolSetting(
+            "ai_enabled", AI, "AI features", false
+    );
+
+    public static final Setting<String> AI_PROVIDER = enumSetting(
+            "ai_provider", AI, "Provider",
+            "gemini",
+            "gemini", "openai", "custom"
+    );
+
+    public static final Setting<String> AI_TRANSLATION_MODE = enumSetting(
+            "ai_translation_mode", AI, "AI translation trigger",
+            "On demand", "On demand", "Always use AI"
+    );
+
+    public static final Setting<String> AI_TRANSLATION_PIPELINE = enumSetting(
+            "ai_translation_pipeline", AI, "AI translation pipeline",
+            "Google draft", "AI only", "Google draft"
+    );
+
+    public static final Setting<String> AI_PRONUNCIATION_MODE = enumSetting(
+            "ai_pronunciation_mode", AI, "AI pronunciation trigger",
+            "On demand", "On demand", "Always use AI"
+    );
+
+    public static final Setting<String> AI_PRONUNCIATION_SOURCE = enumSetting(
+            "ai_pronunciation_source", AI, "AI pronunciation pipeline",
+            "Layered", "Layered", "AI only"
+    );
+
+    public static final Setting<String> AI_BUTTON_BEHAVIOR = enumSetting(
+            "ai_button_behavior", AI, "Translation & transliteration buttons",
+            "Generate AI output, then toggle",
+            "Generate AI output, then toggle", "Toggle display only"
+    );
+
     // ===================== INTERNAL (fixed defaults, not shown) =====================
+
+    // Legacy composer-owned flag. New builds persist AI_TRANSLATION_PIPELINE; this remains only so
+    // an existing explicit choice can migrate without silently changing paid-request input.
+    public static final Setting<Boolean> AI_TRANSLATION_REFINE_GOOGLE = internalBoolSetting(
+            "ai_translation_refine_google", "Refine Google translation with AI", false
+    );
+
+    // Chosen explicitly by the owner from live discovery, never picked for them: a model swapped
+    // underneath would change output and quietly invalidate every paid result keyed to the old one.
+    public static final Setting<String> AI_MODEL = internalSetting(
+            "ai_model", "AI model", ""
+    );
+
+    /** Kept per provider choice: Custom and official OpenAI can legitimately use different keys/models. */
+    public static final Setting<String> AI_MODEL_GEMINI = internalSetting(
+            "ai_model_gemini", "Gemini AI model", ""
+    );
+
+    public static final Setting<String> AI_MODEL_OPENAI = internalSetting(
+            "ai_model_openai", "OpenAI AI model", ""
+    );
+
+    public static final Setting<String> AI_MODEL_CUSTOM = internalSetting(
+            "ai_model_custom", "Custom AI model", ""
+    );
+
+    public static final Setting<String> AI_INSTRUCTIONS_MEANING = internalSetting(
+            "ai_instructions_meaning", "AI translation instructions", ""
+    );
+
+    public static final Setting<String> AI_INSTRUCTIONS_SOUND = internalSetting(
+            "ai_instructions_sound", "AI pronunciation instructions", ""
+    );
+
+    // The active instruction may be one of the built-in presets. Keep the owner's custom text in
+    // a separate slot so switching presets never destroys prompt work they expect to find later.
+    public static final Setting<String> AI_CUSTOM_INSTRUCTIONS_MEANING = internalSetting(
+            "ai_custom_instructions_meaning", "Custom AI translation instructions", ""
+    );
+
+    public static final Setting<String> AI_CUSTOM_INSTRUCTIONS_SOUND = internalSetting(
+            "ai_custom_instructions_sound", "Custom AI pronunciation instructions", ""
+    );
+
+    // Normalized base URL for an OpenAI-compatible endpoint. Part of config identity, so switching
+    // endpoints cannot serve another endpoint's answers.
+    public static final Setting<String> AI_ENDPOINT = internalSetting(
+            "ai_endpoint", "AI endpoint", ""
+    );
 
     public static final Setting<String> DISPLAY_MODE = internalEnumSetting(
             "lyrics_display_mode", "Display mode",

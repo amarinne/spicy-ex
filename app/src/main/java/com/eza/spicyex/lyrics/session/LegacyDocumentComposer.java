@@ -36,7 +36,13 @@ public final class LegacyDocumentComposer {
         projected.includesTranslation = session.meaning.artifact != null && !session.meaning.artifact.isEmpty();
         projected.romanizationPending = session.sound.status == LayerStatus.PROCESSING;
         projected.translationPending = session.meaning.status == LayerStatus.PROCESSING;
+        projected.readingAiPending = projected.romanizationPending
+                && session.sound.authority == LayerAuthority.AI;
+        projected.translationAiPending = projected.translationPending
+                && session.meaning.authority == LayerAuthority.AI;
         projected.processingPending = projected.romanizationPending || projected.translationPending;
+        projected.readingAiFailureToken = session.sound.failure.detail;
+        projected.translationAiFailureToken = session.meaning.failure.detail;
         return projected;
     }
 
@@ -71,6 +77,19 @@ public final class LegacyDocumentComposer {
         // Row IDs are the only accepted address. An artifact that does not fully apply to the base
         // is not projected at all — no positional or count-only fallback.
         if (!artifact.appliesTo(session.base)) return;
+        // The control shows which of two answers the reader is looking at, so the authority has to
+        // survive the trip from artifact to document.
+        boolean fromAi = artifact.provenance != null
+                && artifact.provenance.authority == LayerAuthority.AI
+                && !artifact.isEmpty();
+        if (kind == LayerKind.SOUND) {
+            target.readingFromAi = fromAi;
+        } else {
+            target.translationFromAi = fromAi;
+            target.translationAiRefinedFromGoogle = fromAi
+                    && artifact instanceof MeaningArtifact
+                    && ((MeaningArtifact) artifact).refinedFromGoogle;
+        }
         for (LayerEntry entry : artifact.allEntries()) {
             int index = session.base.indexOfRow(entry.rowId());
             if (index < 0 || index >= target.lines.size()) continue;

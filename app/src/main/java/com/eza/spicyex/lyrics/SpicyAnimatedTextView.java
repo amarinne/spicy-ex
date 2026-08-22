@@ -28,6 +28,7 @@ public class SpicyAnimatedTextView extends TextView {
     private float shaderBrightness = Float.NaN;
     private float shaderOffset = Float.NaN;
     private boolean shaderVertical;
+    private boolean shaderRtl;
     private int shaderWidth = -1;
 
     // Words/letters use horizontal fill; line-level rows can switch to vertical fill by setting.
@@ -153,6 +154,7 @@ public class SpicyAnimatedTextView extends TextView {
     private Shader resolveShader(int extent) {
         boolean horizontalContainerSpace = !verticalGradient && containerGradientWidth > 0;
         boolean verticalContainerSpace = verticalGradient && containerGradientHeight > 0;
+        boolean horizontalRtl = !verticalGradient && getLayoutDirection() == LAYOUT_DIRECTION_RTL;
         int contentWidth = !horizontalContainerSpace && !verticalGradient && contentGradient ? contentWidthPx(extent) : extent;
         int shaderExtent = horizontalContainerSpace
                 ? containerGradientWidth
@@ -165,7 +167,8 @@ public class SpicyAnimatedTextView extends TextView {
                 && Math.abs(glow - shaderGlow) < 0.03f
                 && Math.abs(brightnessMultiplier - shaderBrightness) < 0.01f
                 && Math.abs(offset - shaderOffset) < 0.5f
-                && verticalGradient == shaderVertical) {
+                && verticalGradient == shaderVertical
+                && horizontalRtl == shaderRtl) {
             return cachedShader;
         }
         // Spicy CSS parity (Mixed.css): --gradient-alpha 0.85 (sung), --gradient-alpha-end 0.35
@@ -179,7 +182,16 @@ public class SpicyAnimatedTextView extends TextView {
                 : getPaddingLeft() - offset;
         float far = origin + shaderExtent;
         float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-        if (verticalGradient) { y0 = origin; y1 = far; } else { x0 = origin; x1 = far; }
+        if (verticalGradient) {
+            y0 = origin;
+            y1 = far;
+        } else if (horizontalRtl) {
+            x0 = far;
+            x1 = origin;
+        } else {
+            x0 = origin;
+            x1 = far;
+        }
         if (gradientPosition <= LyricAnimations.GRADIENT_UNSUNG + 0.5f) {
             cachedShader = new LinearGradient(x0, y0, x1, y1,
                     new int[]{unsungColor, unsungColor}, null, Shader.TileMode.CLAMP);
@@ -199,7 +211,14 @@ public class SpicyAnimatedTextView extends TextView {
         shaderWidth = shaderExtent;
         shaderOffset = offset;
         shaderVertical = verticalGradient;
+        shaderRtl = horizontalRtl;
         return cachedShader;
+    }
+
+    @Override
+    public void onRtlPropertiesChanged(int layoutDirection) {
+        super.onRtlPropertiesChanged(layoutDirection);
+        cachedShader = null;
     }
 
     private int contentWidthPx(int fallback) {

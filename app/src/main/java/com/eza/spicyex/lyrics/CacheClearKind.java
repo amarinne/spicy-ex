@@ -4,5 +4,6 @@ package com.eza.spicyex.lyrics;
 public enum CacheClearKind {
     TRANSLATION,
     TRANSLITERATION,
+    AI,
     LYRICS_RESPONSE
 }

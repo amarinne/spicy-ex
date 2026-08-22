@@ -9,11 +9,20 @@ Xiaomi HyperOS 3 lockscreen/AOD integration: [HyperGlow](https://github.com/amar
 
 </div>
 
+## What's new in v1.58.181
+- Rebuilt in-Spotify settings with a cleaner section layout, Lucide icons, status badges and smoother panel motion.
+- Introduced the new opt-in AI feature set: separate Meaning and Sound lanes for translation and pronunciation/transliteration.
+- New AI setup supports Gemini, official OpenAI and custom OpenAI-compatible providers with provider-scoped credentials, model checks and visible request status.
+- New layered results can show a Google preliminary result immediately, then let accepted AI translation or reading supersede it.
+- New review and cache handling lets accepted AI results be reused without re-running paid work.
+- Improved Arabic/Hebrew right-to-left and mixed-script lyric layout.
+
 ## Features
 - Full-screen synced lyrics — Spicy karaoke wash, per-word animation, interludes.
 - Live current line in the player, with a ♪ placeholder on no-lyric tracks.
 - Transliteration: Japanese (furigana / romaji / both), Chinese (pinyin / jyutping), Korean / Cyrillic / Greek — optionally per-word.
 - Google Translate.
+- New optional AI translation and pronunciation/transliteration features in Full.
 - In-Spotify settings; works even when Spotify itself has no lyrics.
 - [Read more](FEATURES_USER.md)
 

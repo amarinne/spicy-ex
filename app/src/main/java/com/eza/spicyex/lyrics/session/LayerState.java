@@ -76,6 +76,15 @@ public final class LayerState {
                 artifact, provenance, nextFailure);
     }
 
+    /** Lands a completed artifact and an orthogonal warning in one immutable transition. */
+    public LayerState settled(DerivedLayerArtifact nextArtifact, LayerFailure nextFailure) {
+        DerivedLayerArtifact landed = nextArtifact == null ? artifact : nextArtifact;
+        LayerState next = landed == null
+                ? dropped()
+                : withArtifact(LayerStatus.READY, landed, "");
+        return nextFailure != null && nextFailure.isFailure() ? next.failed(nextFailure) : next;
+    }
+
     /** Drops the artifact and all run identity, e.g. after an incompatible base or config change. */
     public LayerState dropped() {
         return absent(kind);

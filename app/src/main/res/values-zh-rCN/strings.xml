@@ -51,7 +51,6 @@
     <string name="settings_label_lyrics_translation_target">目标语言</string>
     <string name="settings_label_lyrics_translation_brightness">翻译亮度</string>
 
-    <string name="settings_option_system">跟随系统</string>
     <string name="settings_option_off">关闭</string>
     <string name="settings_option_single_tap">单击</string>
     <string name="settings_option_double_tap">双击</string>
@@ -147,6 +146,22 @@
     <string name="settings_enable_transliteration">请先启用转写</string>
     <string name="settings_enable_translation">请先启用翻译</string>
     <string name="settings_sync_offset_summary">正值会让歌词更早显示</string>
+    <string name="settings_panel_resize">调整设置面板大小</string>
+    <string name="settings_panel_close">关闭设置面板</string>
+    <string name="settings_stepper_decrease">减小%1$s</string>
+    <string name="settings_stepper_increase">增大%1$s</string>
+    <string name="settings_label_ai_translation_mode">AI 翻译触发</string>
+    <string name="settings_option_ai_translation_mode_on_demand">手动</string>
+    <string name="settings_option_ai_translation_mode_always_use_ai">自动</string>
+    <string name="settings_label_ai_translation_pipeline">AI 翻译流程</string>
+    <string name="settings_option_ai_translation_pipeline_ai_only">歌词 → AI</string>
+    <string name="settings_option_ai_translation_pipeline_google_draft">歌词 + Google 草稿 → AI</string>
+    <string name="settings_label_ai_pronunciation_mode">AI 读音触发</string>
+    <string name="settings_option_ai_pronunciation_mode_on_demand">手动</string>
+    <string name="settings_option_ai_pronunciation_mode_always_use_ai">自动补全缺失读音</string>
+    <string name="settings_label_ai_pronunciation_source">AI 读音流程</string>
+    <string name="settings_option_ai_pronunciation_source_layered">歌词 + Google 读音 → AI 优化</string>
+    <string name="settings_option_ai_pronunciation_source_ai_only">歌词 → AI 读音</string>
     <string name="settings_action_clear_translation_cache">清除翻译缓存</string>
     <string name="settings_action_clear_lyrics_cache">清除歌词响应缓存</string>
     <string name="settings_action_open_github">打开 GitHub</string>

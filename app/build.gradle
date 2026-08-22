@@ -7,19 +7,39 @@ android {
     compileSdk 35
 
     def keystorePath = System.getenv("SIGNING_KEYSTORE_FILE")
-    def storePassword = System.getenv("SIGNING_STORE_PASSWORD")
-    // Validate the release keystore up front. CI decodes it from a secret; a corrupt/missing secret
-    // makes it fail to load ("Tag number over 30 is not supported"), which hard-fails packageRelease.
-    // Fall back to debug signing so assembleRelease still produces an installable APK (CI stays green)
-    // until a valid keystore secret is provided.
+    def releaseStorePassword = System.getenv("SIGNING_STORE_PASSWORD")
+    def releaseKeyAlias = System.getenv("SIGNING_KEY_ALIAS")
+    def releaseKeyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+    // Release artifacts must retain one signing lineage. Validate the complete credential set, then
+    // fail packaging tasks instead of silently producing debug-signed APKs.
     def releaseKeystoreValid = false
-    if (keystorePath != null && new File(keystorePath).exists()) {
+    def releaseSigningError = "release signing credentials are missing"
+    if (keystorePath != null && !keystorePath.trim().isEmpty()
+            && releaseStorePassword != null && !releaseStorePassword.isEmpty()
+            && releaseKeyAlias != null && !releaseKeyAlias.trim().isEmpty()
+            && releaseKeyPassword != null && !releaseKeyPassword.isEmpty()
+            && new File(keystorePath).isFile()) {
         try {
             def ks = java.security.KeyStore.getInstance("JKS")
-            new File(keystorePath).withInputStream { ks.load(it, (storePassword ?: "").toCharArray()) }
+            new File(keystorePath).withInputStream { ks.load(it, releaseStorePassword.toCharArray()) }
+            def key = ks.getKey(releaseKeyAlias, releaseKeyPassword.toCharArray())
+            if (!(key instanceof java.security.PrivateKey) || ks.getCertificate(releaseKeyAlias) == null) {
+                throw new java.security.KeyStoreException("alias does not contain a private key and certificate")
+            }
             releaseKeystoreValid = true
+            releaseSigningError = ""
         } catch (Throwable t) {
-            logger.warn("SpicyEX: release keystore unusable (" + t.message + "); release build falls back to debug signing.")
+            releaseSigningError = "release signing credentials are unusable (" + t.class.simpleName + ")"
+        }
+    }
+
+    gradle.taskGraph.whenReady { graph ->
+        def packagesRelease = graph.allTasks.any { task ->
+            task.project == project && task.name.toLowerCase(java.util.Locale.ROOT)
+                    .matches("(assemble|package|bundle).*release.*")
+        }
+        if (packagesRelease && !releaseKeystoreValid) {
+            throw new GradleException("SpicyEX: ${releaseSigningError}; refusing to create release artifacts.")
         }
     }
 
@@ -27,8 +47,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 414
-        versionName "1.58.139-bridge-publication-race+B414-20260815T1902Z"
+        versionCode 456
+        versionName "1.58.181-separate-openai-key+B456-20260822T1125Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
@@ -63,16 +83,16 @@ android {
         release {
             if (releaseKeystoreValid) {
                 storeFile file(keystorePath)
-                storePassword storePassword
-                keyAlias System.getenv("SIGNING_KEY_ALIAS")
-                keyPassword System.getenv("SIGNING_KEY_PASSWORD")
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
             }
         }
     }
 
     buildTypes {
         release {
-            signingConfig releaseKeystoreValid ? signingConfigs.release : signingConfigs.debug
+            if (releaseKeystoreValid) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

@@ -93,13 +93,33 @@ public final class LyricsDocumentProcessor {
      */
     public static void applyProcessedCache(Context context, LyricsDocument doc, RomanizationOptions opts,
                                            int processingVersion) {
+        applyProcessedCache(context, doc, opts, processingVersion, false);
+    }
+
+    /**
+     * Restores legacy processed caches without overwriting an AI-authored layer already carried by
+     * a session publication. Render surfaces receive composed documents; their old cache pass may
+     * fill a missing layer, but must never replace the newer authority already in the document.
+     */
+    public static void applyProcessedCachePreservingAi(Context context, LyricsDocument doc,
+                                                       RomanizationOptions opts,
+                                                       int processingVersion) {
+        applyProcessedCache(context, doc, opts, processingVersion, true);
+    }
+
+    private static void applyProcessedCache(Context context, LyricsDocument doc,
+                                            RomanizationOptions opts, int processingVersion,
+                                            boolean preserveAi) {
         if (context == null || doc == null || doc.lines.isEmpty()) return;
         CanonicalBase base = canonicalBaseOf(doc);
         String sourceLanguage = effectiveSourceLanguage(SpotifyPlusConfig.from(context), doc.language);
-        ProcessedLyricsCache.Applied sound =
-                ProcessedLyricsCache.applySound(context, doc, base, soundConfigId(context, opts, sourceLanguage));
-        ProcessedLyricsCache.Applied meaning =
-                ProcessedLyricsCache.applyMeaning(context, doc, base, meaningConfigId(context));
+        ProcessedLyricsCache.Applied sound = shouldApplyCachedSound(doc, preserveAi)
+                ? ProcessedLyricsCache.applySound(context, doc, base,
+                soundConfigId(context, opts, sourceLanguage))
+                : ProcessedLyricsCache.Applied.NONE;
+        ProcessedLyricsCache.Applied meaning = shouldApplyCachedMeaning(doc, preserveAi)
+                ? ProcessedLyricsCache.applyMeaning(context, doc, base, meaningConfigId(context))
+                : ProcessedLyricsCache.Applied.NONE;
         if (sound.present) {
             doc.includesRomanization = true;
             if (sound.complete) doc.romanizationPending = false;
@@ -109,6 +129,14 @@ public final class LyricsDocumentProcessor {
             if (meaning.complete) doc.translationPending = false;
         }
         doc.processingPending = doc.romanizationPending || doc.translationPending;
+    }
+
+    static boolean shouldApplyCachedSound(LyricsDocument doc, boolean preserveAi) {
+        return doc != null && (!preserveAi || !doc.readingFromAi);
+    }
+
+    static boolean shouldApplyCachedMeaning(LyricsDocument doc, boolean preserveAi) {
+        return doc != null && (!preserveAi || !doc.translationFromAi);
     }
 
     /**
@@ -159,6 +187,34 @@ public final class LyricsDocumentProcessor {
         return false;
     }
 
+    public static boolean hasDisplayedSound(LyricsDocument doc) {
+        if (doc == null || doc.lines == null) return false;
+        for (LyricsLine line : doc.lines) {
+            if (line == null) continue;
+            if (line.readingRenderPlan != null
+                    && !safeText(line.readingRenderPlan.joinedDisplayText).isEmpty()) return true;
+            if (!safeText(line.romanizedText).isEmpty()) return true;
+        }
+        return false;
+    }
+
+    public static boolean hasDisplayedMeaning(LyricsDocument doc) {
+        if (doc == null || doc.lines == null) return false;
+        for (LyricsLine line : doc.lines) {
+            if (line != null && !safeText(line.translatedText).isEmpty()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Surface preparation may fill legacy per-span readings only while the Sound layer is absent.
+     * Whole-line AI/Google output deliberately has no span alignment; attempting to derive one can
+     * reject the guessed plan and clear the valid line-level text before it reaches rendering.
+     */
+    public static boolean needsSurfaceLocalRomanization(LyricsDocument doc) {
+        return doc != null && !hasDisplayedSound(doc) && !hasSpanReadings(doc);
+    }
+
     /**
      * True when two documents describe the same canonical source: same original text, timing, and
      * spans. Derived text is not part of the comparison.
@@ -198,6 +254,13 @@ public final class LyricsDocumentProcessor {
         target.romanizationPending = source.romanizationPending;
         target.translationPending = source.translationPending;
         target.processingPending = source.processingPending;
+        target.readingFromAi = source.readingFromAi;
+        target.translationFromAi = source.translationFromAi;
+        target.readingAiPending = source.readingAiPending;
+        target.translationAiPending = source.translationAiPending;
+        target.translationAiRefinedFromGoogle = source.translationAiRefinedFromGoogle;
+        target.readingAiFailureToken = safeText(source.readingAiFailureToken);
+        target.translationAiFailureToken = safeText(source.translationAiFailureToken);
         return changed;
     }
 
@@ -306,6 +369,9 @@ public final class LyricsDocumentProcessor {
         String sourceLang = effectiveSourceLanguage(
                 context == null ? null : SpotifyPlusConfig.from(context), doc.language);
         doc.includesRomanization = false;
+        doc.readingFromAi = false;
+        doc.readingAiPending = false;
+        doc.readingAiFailureToken = "";
         doc.romanizationPending = FeatureAvailability.transliterationAvailable()
                 && SpicyProcessing.flagsFor(fullText, sourceLang,
                         context == null ? "en" : SpotifyPlusConfig.from(context)
@@ -362,6 +428,10 @@ public final class LyricsDocumentProcessor {
                 && !"disabled".equalsIgnoreCase(backend);
         String target = config == null ? "en" : config.get(Settings.TRANSLATION_TARGET);
         doc.includesTranslation = enabled && hasDisplayedTranslation(doc);
+        doc.translationFromAi = false;
+        doc.translationAiPending = false;
+        doc.translationAiRefinedFromGoogle = false;
+        doc.translationAiFailureToken = "";
         doc.translationPending = enabled
                 && "google_unofficial".equalsIgnoreCase(backend)
                 && hasGeneratedTranslationWork(doc, effectiveSourceLanguage(config, doc.language), target);

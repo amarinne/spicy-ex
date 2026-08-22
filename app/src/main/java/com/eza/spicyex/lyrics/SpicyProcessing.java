@@ -16,7 +16,7 @@ public final class SpicyProcessing {
     }
 
     public static boolean hasRomanizationWorkQuick(String text) {
-        return SpicyTextDetection.hasRomanizableScript(text);
+        return SpicyTextDetection.hasNonLatinLetter(text);
     }
 
     public static boolean hasTranslationWorkQuick(String text, String targetLang) {

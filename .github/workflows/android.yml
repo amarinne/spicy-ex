@@ -37,6 +37,30 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: ./gradlew assembleLiteRelease assembleFullRelease
 
+      - name: Verify release APK signatures
+        env:
+          SIGNING_KEYSTORE_FILE: ${{ github.workspace }}/spicyex-release.jks
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+        run: |
+          expected=$(keytool -list -v \
+            -keystore "$SIGNING_KEYSTORE_FILE" \
+            -storepass "$SIGNING_STORE_PASSWORD" \
+            -alias "$SIGNING_KEY_ALIAS" \
+            | sed -n 's/^[[:space:]]*SHA256: //p' \
+            | tr -d ':' \
+            | tr '[:upper:]' '[:lower:]')
+          test -n "$expected"
+          for apk in \
+            app/build/outputs/apk/lite/release/app-lite-release.apk \
+            app/build/outputs/apk/full/release/app-full-release.apk
+          do
+            actual=$(apksigner verify --print-certs "$apk" \
+              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+              | tr '[:upper:]' '[:lower:]')
+            test "$actual" = "$expected"
+          done
+
       - name: Upload release APKs
         uses: actions/upload-artifact@v4
         with:

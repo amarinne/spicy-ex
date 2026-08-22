@@ -196,9 +196,22 @@ public final class ReadingPlanFactory {
         ReadingUnit unit = new ReadingUnit(new TextRange(0, CodePointRanges.length(canonical.text)), display,
                 ReadingUnitKind.TRANSFORMED, "line-fallback", Collections.emptyList());
         ReadingProvenance source = "remoteFallback".equals(provenance)
-                ? ReadingProvenance.REMOTE_FALLBACK : ReadingProvenance.PROVIDER;
+                ? ReadingProvenance.REMOTE_FALLBACK
+                : "ai".equals(provenance) ? ReadingProvenance.AI : ReadingProvenance.PROVIDER;
         return new DefaultRenderPlanBuilder().build(parsed, canonical, Collections.singletonList(
                 new ReadingAnnotation("Fallback", "line", source, Collections.singletonList(unit))));
+    }
+
+    /** True only when a plan contains reading work, not source-script passthrough timing. */
+    public static boolean hasTransformedReading(RenderPlan plan) {
+        if (plan == null || plan.readingUnits == null) return false;
+        for (ReadingUnit unit : plan.readingUnits) {
+            if (unit != null && unit.kind == ReadingUnitKind.TRANSFORMED
+                    && unit.text != null && !unit.text.trim().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String spanId(SyllableSegment segment, int index) {

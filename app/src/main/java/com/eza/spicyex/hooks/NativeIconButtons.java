@@ -27,9 +27,21 @@ final class NativeIconButtons {
             int sizeDp,
             int paddingDp
     ) {
+        ImageButton button = createRoundIconButton(context, (Drawable) null, description, sizeDp, paddingDp);
+        setModuleIcon(button, context, drawableRes);
+        return button;
+    }
+
+    static ImageButton createRoundIconButton(
+            Context context,
+            Drawable drawable,
+            String description,
+            int sizeDp,
+            int paddingDp
+    ) {
         ImageButton button = new ImageButton(context);
         button.setContentDescription(description);
-        setModuleIcon(button, context, drawableRes);
+        button.setImageDrawable(drawable);
         button.setColorFilter(Color.rgb(232, 232, 238));
         button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         button.setPadding(dp(paddingDp), dp(paddingDp), dp(paddingDp), dp(paddingDp));

@@ -39,6 +39,8 @@ public final class LyricsRowViewFactory {
 
     public LinearLayout build(AppliedLine line, Options options, RowHeightListener heightListener) {
         LinearLayout row = new LinearLayout(activity);
+        boolean rtlLine = isRtlLine(line);
+        applyLineDirection(row, rtlLine);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
         boolean wrapLongLines = options == null || options.wrapLongLines;
@@ -50,7 +52,7 @@ public final class LyricsRowViewFactory {
             if (line.oppositeAligned) leadingPadding = dp(18);
             else trailingPadding = dp(18);
         }
-        row.setPadding(leadingPadding, topClearancePx(dp(10), multiplier, 0f, false),
+        row.setPaddingRelative(leadingPadding, topClearancePx(dp(10), multiplier, 0f, false),
                 trailingPadding, Math.round(dp(13) * multiplier));
         row.setClickable(false);
         row.setClipChildren(false);
@@ -86,18 +88,18 @@ public final class LyricsRowViewFactory {
 
         boolean japaneseLine = isJapaneseLine(line);
         boolean chineseLine = !japaneseLine && SpicyTextDetection.itemChineseTest(line.text);
+        String readingText = displayReading(line);
         boolean showJapaneseFurigana = japaneseLine && options.showRomanization && options.showJapaneseFurigana;
         boolean showJapaneseRomaji = japaneseLine && options.showRomanization && options.showJapaneseRomaji
-                && line.readingRenderPlan != null;
-        boolean showChineseRomaji = chineseLine && options.showRomanization && line.readingRenderPlan != null;
-        String plannedReading = line.readingRenderPlan == null ? "" : line.readingRenderPlan.joinedDisplayText;
+                && !isBlank(readingText);
+        boolean showChineseRomaji = chineseLine && options.showRomanization && !isBlank(readingText);
         boolean showGenericRomaji = !japaneseLine && !chineseLine && options.showRomanization
-                && !isBlank(plannedReading);
+                && !isBlank(readingText);
 
         float sizeMultiplier = options == null ? 1f : options.textSizeMultiplier;
         LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(LyricVisuals.lyricTextSizeSp(line.text) * sizeMultiplier)));
         float baseTextPx = sp(LyricsLineViewState.baseTextSp(line));
-        row.setPadding(leadingPadding, topClearancePx(dp(10), multiplier, baseTextPx, showJapaneseFurigana),
+        row.setPaddingRelative(leadingPadding, topClearancePx(dp(10), multiplier, baseTextPx, showJapaneseFurigana),
                 trailingPadding, Math.round(dp(13) * multiplier));
         String weight = options == null ? "Medium" : options.lyricWeight;
         String font = options == null ? "spotify" : options.lyricsFont;
@@ -125,7 +127,6 @@ public final class LyricsRowViewFactory {
         }
 
         if (!line.bgLine && !showAlignedRomaji && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)) {
-            String readingText = plannedReading;
             SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, readingText, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)), textFactory.resolveTypefaceForText(readingText, false));
             roman.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
             roman.setMaxLines(wrapLongLines ? 3 : 1);
@@ -163,6 +164,14 @@ public final class LyricsRowViewFactory {
         return row;
     }
 
+    /** Plan text wins when aligned; AI and other whole-line readings use the legacy line slot. */
+    static String displayReading(AppliedLine line) {
+        if (line == null) return "";
+        String planned = line.readingRenderPlan == null
+                ? "" : LyricUtils.safe(line.readingRenderPlan.joinedDisplayText);
+        return isBlank(planned) ? LyricUtils.safe(line.romanizedText) : planned;
+    }
+
     private void buildSyllableWords(
             LinearLayout row,
             AppliedLine line,
@@ -172,6 +181,8 @@ public final class LyricsRowViewFactory {
     ) {
         boolean wrapLongLines = options == null || options.wrapLongLines;
         ViewGroup words = wrapLongLines ? new GlowFlexbox(activity) : new LinearLayout(activity);
+        boolean rtlLine = isRtlLine(line);
+        applyLineDirection(words, rtlLine);
         if (words instanceof FlexboxLayout) {
             FlexboxLayout flex = (FlexboxLayout) words;
             flex.setFlexDirection(FlexDirection.ROW);
@@ -181,7 +192,7 @@ public final class LyricsRowViewFactory {
         } else if (words instanceof LinearLayout) {
             LinearLayout linear = (LinearLayout) words;
             linear.setOrientation(LinearLayout.HORIZONTAL);
-            linear.setGravity(line.oppositeAligned ? Gravity.RIGHT : Gravity.LEFT);
+            linear.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
         }
         words.setClipToPadding(false);
         words.setClipChildren(false);
@@ -211,7 +222,7 @@ public final class LyricsRowViewFactory {
             ViewGroup.MarginLayoutParams wlp = words instanceof FlexboxLayout
                     ? new FlexboxLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (seg.boundaryAfter) wlp.rightMargin = dp(8);
+            if (seg.boundaryAfter) wlp.setMarginEnd(dp(8));
             words.addView(wordView, wlp);
             LyricsSyllableViewState.setWordView(seg, wordView);
             wordIndex++;
@@ -262,6 +273,7 @@ public final class LyricsRowViewFactory {
             float relativeStart = 0f;
             for (String text : letterTexts) {
                 SpicyAnimatedTextView letterView = new SpicyAnimatedTextView(activity);
+                applyTextDirection(letterView, seg.text);
                 letterView.setTextSize(LyricsLineViewState.baseTextSp(line));
                 letterView.setTextColor(color);
                 textFactory.applyLyricTypeface(letterView, text, weight, font);
@@ -283,6 +295,7 @@ public final class LyricsRowViewFactory {
 
         SpicyAnimatedTextView word = new SpicyAnimatedTextView(activity);
         CharSequence wordText = showJapaneseFurigana ? FuriganaText.buildWord(line, seg.text, wordStart) : seg.text;
+        applyTextDirection(word, seg.text);
         word.setTextSize(LyricsLineViewState.baseTextSp(line));
         word.setTextColor(color);
         textFactory.applyLyricTypeface(word, wordText, weight, font);
@@ -322,6 +335,7 @@ public final class LyricsRowViewFactory {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
         SpicyAnimatedTextView main = new SpicyAnimatedTextView(activity);
         CharSequence mainText = showJapaneseFurigana ? FuriganaText.build(line) : line.text;
+        applyTextDirection(main, line.text);
         main.setTextSize(LyricsLineViewState.baseTextSp(line));
         main.setTextColor(color);
         textFactory.applyLyricTypeface(main, mainText, weight, font);
@@ -415,6 +429,26 @@ public final class LyricsRowViewFactory {
         int scaledPadding = Math.max(0, Math.round(basePaddingPx * multiplier));
         return showRuby ? Math.max(scaledPadding, FuriganaText.rubyAscentReservationPx(baseTextPx))
                 : scaledPadding;
+    }
+
+    private static void applyLineDirection(View view, boolean rtl) {
+        view.setLayoutDirection(rtl ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR);
+        view.setTextDirection(rtl ? View.TEXT_DIRECTION_FIRST_STRONG_RTL : View.TEXT_DIRECTION_FIRST_STRONG_LTR);
+    }
+
+    static boolean isRtlLine(AppliedLine line) {
+        if (line == null) return false;
+        if (SpicyTextDetection.hasStrongDirection(line.text)) return SpicyTextDetection.isRtl(line.text);
+        for (SyllableSegment word : line.words) {
+            if (word != null && SpicyTextDetection.isRtl(word.text)) return true;
+        }
+        return false;
+    }
+
+    private static void applyTextDirection(TextView view, String text) {
+        view.setTextDirection(SpicyTextDetection.isRtl(text)
+                ? View.TEXT_DIRECTION_FIRST_STRONG_RTL
+                : View.TEXT_DIRECTION_FIRST_STRONG_LTR);
     }
 
     public interface RowHeightListener {

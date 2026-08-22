@@ -10,6 +10,8 @@ import com.eza.spicyex.lyrics.session.DerivedLayerArtifact;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
 import com.eza.spicyex.lyrics.session.SoundArtifact;
 import com.eza.spicyex.lyrics.session.LayerKind;
+import com.eza.spicyex.lyrics.session.LayerFailure;
+import com.eza.spicyex.lyrics.ai.AiSettings;
 
 import de.robv.android.xposed.XposedBridge;
 
@@ -52,6 +54,8 @@ public final class LyricsSecondaryProcessingSession {
             LyricsDocument snapshot,
             boolean showRomanization,
             RomanizationOptions options,
+            SoundArtifact displayedSound,
+            java.util.Set<LayerKind> explicitAiRequests,
             LyricsSecondaryProcessor.CurrentGuard currentGuard,
             Callback callback
     ) {
@@ -60,7 +64,14 @@ public final class LyricsSecondaryProcessingSession {
         }
         // No shared readiness gate: each lane decides for itself. A document that needs only a
         // translation still starts, and so does one that needs only readings.
-        if (!snapshot.romanizationPending && !snapshot.translationPending) {
+        AiSettings aiSettings = new AiSettings(context);
+        boolean aiMayHaveCachedMeaning = aiSettings.meaningLayerEnabled() && aiSettings.isEnabled()
+                && !aiSettings.modelName().isEmpty();
+        boolean aiMayHaveCachedSound = aiSettings.soundLayerEnabled() && aiSettings.isEnabled()
+                && !aiSettings.modelName().isEmpty();
+        boolean explicitAi = explicitAiRequests != null && !explicitAiRequests.isEmpty();
+        if (!snapshot.romanizationPending && !snapshot.translationPending
+                && !aiMayHaveCachedMeaning && !aiMayHaveCachedSound && !explicitAi) {
             return java.util.EnumSet.noneOf(LayerKind.class);
         }
 
@@ -81,8 +92,10 @@ public final class LyricsSecondaryProcessingSession {
 
         XposedBridge.log(logTag + " derived lanes start backend=" + backend
                 + " target=" + targetLang + " source=" + sourceLanguage);
-        return processor.start(id, generation, snapshot, showRomanization, options, backend, targetLang,
+        return processor.start(id, generation, snapshot, showRomanization, options, displayedSound,
+                backend, targetLang,
                 sourceLanguage, effectiveSourceLang,
+                explicitAiRequests,
                 currentGuard,
                 new LyricsSecondaryProcessor.Callback() {
                     @Override
@@ -97,10 +110,15 @@ public final class LyricsSecondaryProcessingSession {
 
                     @Override
                     public void complete(LayerKind layer, DerivedLayerArtifact artifact,
-                                         String message, int changed) {
+                                         LayerFailure failure, String message, int changed) {
                         Diagnostics.event("secondary_processing", "branch_completed",
-                                Diagnostics.context("result", "success", "branch", layer.name()));
-                        if (callback != null) callback.complete(layer, artifact, snapshot, message, changed);
+                                Diagnostics.context("result", failure != null && failure.isFailure()
+                                                ? "failure" : "success",
+                                        "branch", layer.name(),
+                                        "status", failure == null ? "" : failure.detail));
+                        if (callback != null) {
+                            callback.complete(layer, artifact, failure, snapshot, message, changed);
+                        }
                         persist(layer, artifact, snapshot, options);
                         XposedBridge.log(logTag + " " + layer.name().toLowerCase(java.util.Locale.ROOT)
                                 + " lane complete changed=" + changed + " lines=" + snapshot.lines.size());
@@ -143,7 +161,7 @@ public final class LyricsSecondaryProcessingSession {
                       String message);
         void progress(LyricsDocument snapshot, String message);
         /** Fires once per layer, in whichever order the two lanes settle. */
-        void complete(LayerKind layer, DerivedLayerArtifact artifact, LyricsDocument snapshot,
-                      String message, int changed);
+        void complete(LayerKind layer, DerivedLayerArtifact artifact, LayerFailure failure,
+                      LyricsDocument snapshot, String message, int changed);
     }
 }

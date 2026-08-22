@@ -299,7 +299,8 @@ public final class LiveLyricCardView extends LinearLayout {
                     ? (LinearLayout.LayoutParams) rawLp
                     : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             group.removeViewAt(i);
-            LineOverflowViewport viewport = new LineOverflowViewport(getContext(), line.oppositeAligned);
+            boolean rtl = LyricsRowViewFactory.isRtlLine(line);
+            LineOverflowViewport viewport = new LineOverflowViewport(getContext(), line.oppositeAligned, rtl);
             LinearLayout.LayoutParams viewportLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -344,7 +345,9 @@ public final class LiveLyricCardView extends LinearLayout {
             if (viewport != null) maxScroll = Math.max(maxScroll, viewport.maxScrollPx());
         }
         if (maxScroll <= 0f) return 0f;
-        return -maxScroll * scrollProgressAfterTransition(line, config, positionMs);
+        return LyricsOverflowGeometry.target(maxScroll,
+                scrollProgressAfterTransition(line, config, positionMs),
+                LyricsRowViewFactory.isRtlLine(line));
     }
 
     private String configKey(LyricsRenderConfig config) {
@@ -400,10 +403,12 @@ public final class LiveLyricCardView extends LinearLayout {
 
     private final class LineOverflowViewport extends FrameLayout {
         private final boolean oppositeAligned;
+        private final boolean rtl;
 
-        LineOverflowViewport(Context context, boolean oppositeAligned) {
+        LineOverflowViewport(Context context, boolean oppositeAligned, boolean rtl) {
             super(context);
             this.oppositeAligned = oppositeAligned;
+            this.rtl = rtl;
             setClipToPadding(true);
             setClipChildren(true);
         }
@@ -418,8 +423,9 @@ public final class LiveLyricCardView extends LinearLayout {
                 return;
             }
             float target = grouped
-                    ? clamp(groupTarget, -maxScroll, 0f)
-                    : -maxScroll * scrollProgressAfterTransition(line, config, positionMs);
+                    ? LyricsOverflowGeometry.clampTarget(groupTarget, maxScroll, rtl)
+                    : LyricsOverflowGeometry.target(maxScroll,
+                            scrollProgressAfterTransition(line, config, positionMs), rtl);
             child.setTranslationX(target);
         }
 
@@ -455,7 +461,7 @@ public final class LiveLyricCardView extends LinearLayout {
             if (child == null || child.getVisibility() == GONE) return;
             int width = right - left;
             int childWidth = child.getMeasuredWidth();
-            int childLeft = oppositeAligned ? Math.max(0, width - childWidth) : 0;
+            int childLeft = LyricsOverflowGeometry.childLeft(width, childWidth, oppositeAligned, rtl);
             child.layout(childLeft, 0, childLeft + childWidth, child.getMeasuredHeight());
         }
     }

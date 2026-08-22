@@ -97,6 +97,72 @@ public class LyricSessionContractTest {
     }
 
     @Test
+    public void refinedMeaningProjectsItsGoogleOriginAndRetainsRestoreArtifact() {
+        LyricSession session = session("hola");
+        String row0 = session.base.rows.get(0).rowId;
+        MeaningArtifact google = new MeaningArtifact(session.base.digest, MEANING_CONFIG,
+                new LayerProvenance(LayerAuthority.MACHINE, "google_unofficial", "google", 1L),
+                Collections.singletonList(new MeaningEntry(row0, "hello", "en")), false);
+        MeaningArtifact ai = new MeaningArtifact(session.base.digest, "ai-config",
+                new LayerProvenance(LayerAuthority.AI, "gemini", "prompt", "model", 2L),
+                Collections.singletonList(new MeaningEntry(row0, "Hello", "en")), false)
+                .withGoogleBaseline(google);
+        session = session.withMeaning(session.meaning.withArtifact(LayerStatus.READY, ai, ""));
+
+        LyricsDocument projected = LegacyDocumentComposer.compose(document("hola"), session);
+
+        assertTrue(projected.translationFromAi);
+        assertTrue(projected.translationAiRefinedFromGoogle);
+        assertEquals("hello", ai.googleBaseline().meaning(row0).text);
+    }
+
+    @Test
+    public void googleMeaningDisplaysWhileAiRunsThenAiSupersedesIt() {
+        LyricSession session = session("hola");
+        String row0 = session.base.rows.get(0).rowId;
+        MeaningArtifact google = new MeaningArtifact(session.base.digest, MEANING_CONFIG,
+                new LayerProvenance(LayerAuthority.MACHINE, "google_unofficial", "google", 1L),
+                Collections.singletonList(new MeaningEntry(row0, "hello", "en")), false);
+        MeaningArtifact ai = new MeaningArtifact(session.base.digest, "ai-config",
+                new LayerProvenance(LayerAuthority.AI, "gemini", "prompt", "model", 2L),
+                Collections.singletonList(new MeaningEntry(row0, "Hello there", "en")), false)
+                .withGoogleBaseline(google, false);
+
+        session = session.withMeaning(session.meaning.processing(
+                LayerAuthority.AI, MEANING_CONFIG, "", "run"));
+        session = session.withMeaning(session.meaning.withDelta(google, LayerStatus.PROCESSING));
+        LyricsDocument preliminary = LegacyDocumentComposer.compose(document("hola"), session);
+
+        assertEquals("hello", preliminary.lines.get(0).translatedText);
+        assertTrue(preliminary.translationAiPending);
+        assertFalse(preliminary.translationFromAi);
+
+        session = session.withMeaning(session.meaning.settled(ai, LayerFailure.NONE));
+        LyricsDocument completed = LegacyDocumentComposer.compose(document("hola"), session);
+
+        assertEquals("Hello there", completed.lines.get(0).translatedText);
+        assertTrue(completed.translationFromAi);
+        assertFalse(completed.translationAiPending);
+        assertFalse(completed.translationAiRefinedFromGoogle);
+        assertEquals("hello", ai.googleBaseline().meaning(row0).text);
+    }
+
+    @Test
+    public void emptyAiArtifactNeverClaimsVisibleAiOutput() {
+        LyricSession session = session("ichi");
+        SoundArtifact empty = new SoundArtifact(session.base.digest, "ai-config",
+                new LayerProvenance(LayerAuthority.AI, "gemini", "prompt", "model", 2L),
+                Collections.emptyList(), false);
+        session = session.withSound(
+                session.sound.withArtifact(LayerStatus.READY, empty, ""));
+
+        LyricsDocument projected = LegacyDocumentComposer.compose(document("ichi"), session);
+
+        assertFalse(projected.readingFromAi);
+        assertFalse(projected.includesRomanization);
+    }
+
+    @Test
     public void meaningConfigChangeDropsMeaningOnlyAndSoundConfigChangeDropsSoundOnly() {
         LyricSession session = session("ichi", "ni");
         String row0 = session.base.rows.get(0).rowId;
@@ -149,6 +215,55 @@ public class LyricSessionContractTest {
         assertEquals("one", ((MeaningArtifact) failed.artifact).meaning(row0).text);
         assertTrue(failed.hasArtifact());
         assertEquals("", failed.runId);
+    }
+
+    @Test
+    public void failedSettlementKeepsFallbackAndProjectsExactAiToken() {
+        LyricSession session = session("ichi");
+        String row0 = session.base.rows.get(0).rowId;
+        LayerState processing = readyMeaning(session, new MeaningEntry(row0, "one", "en"))
+                .processing(LayerAuthority.AI, MEANING_CONFIG, "credential-1", "run-ai");
+        LayerFailure failure = new LayerFailure(LayerFailure.Reason.TIMEOUT,
+                "delivery_unknown", 503);
+
+        LayerState settled = processing.settled(null, failure);
+        LyricSession failedSession = session.withMeaning(settled);
+        LyricsDocument projected = LegacyDocumentComposer.compose(document("ichi"), failedSession);
+
+        assertEquals(LayerStatus.CACHED, settled.status);
+        assertEquals("one", projected.lines.get(0).translatedText);
+        assertEquals("delivery_unknown", projected.translationAiFailureToken);
+        assertEquals("", projected.readingAiFailureToken);
+        assertFalse(projected.translationPending);
+    }
+
+    @Test
+    public void noWorkSettlementDoesNotBecomeGenericFailure() {
+        LayerState processing = LayerState.absent(LayerKind.MEANING)
+                .processing(LayerAuthority.AI, MEANING_CONFIG, "", "run-ai");
+
+        LayerState settled = processing.settled(null, LayerFailure.NONE);
+
+        assertEquals(LayerStatus.ABSENT, settled.status);
+        assertFalse(settled.failure.isFailure());
+    }
+
+    @Test
+    public void aiProcessingProjectsDistinctPendingStateWithoutAnArtifact() {
+        LyricSession session = session("ichi");
+        LayerState sound = LayerState.absent(LayerKind.SOUND)
+                .processing(LayerAuthority.AI, "sound-ai", "", "run-ai");
+        LayerState meaning = LayerState.absent(LayerKind.MEANING)
+                .processing(LayerAuthority.MACHINE, MEANING_CONFIG, "", "run-machine");
+
+        LyricsDocument projected = LegacyDocumentComposer.compose(document("ichi"),
+                session.withSound(sound).withMeaning(meaning));
+
+        assertTrue(projected.romanizationPending);
+        assertTrue(projected.translationPending);
+        assertTrue(projected.readingAiPending);
+        assertFalse(projected.translationAiPending);
+        assertFalse(projected.readingFromAi);
     }
 
     @Test

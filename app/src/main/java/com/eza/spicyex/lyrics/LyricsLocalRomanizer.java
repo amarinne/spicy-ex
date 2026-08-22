@@ -126,8 +126,17 @@ public final class LyricsLocalRomanizer {
                     ? local : "";
         }
         if (!isBlank(line.romanizedText)) {
-            line.readingRenderPlan = ReadingPlanFactory.timedLegacy(line, line.romanizedText, "LocalScript");
-            if (line.readingRenderPlan != null) clearSegmentRomanization(line);
+            com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan plan =
+                    ReadingPlanFactory.timedLegacy(line, line.romanizedText, "LocalScript");
+            if (ReadingPlanFactory.hasTransformedReading(plan)) {
+                line.readingRenderPlan = plan;
+                clearSegmentRomanization(line);
+            } else {
+                // Provider compatibility fields sometimes repeat the source script verbatim.
+                // A timed copy is still not a pronunciation and must not create a duplicate row.
+                line.readingRenderPlan = null;
+                line.romanizedText = "";
+            }
         }
     }
 
@@ -148,7 +157,8 @@ public final class LyricsLocalRomanizer {
     }
 
     public static boolean shouldGoogleRomanize(boolean showRomanization, LyricsLine line) {
-        if (!showRomanization || line == null || isBlank(line.text) || !SpicyTextDetection.hasRomanizableScript(line.text)) return false;
+        if (!showRomanization || line == null || isBlank(line.text)
+                || !SpicyTextDetection.hasNonLatinLetter(line.text)) return false;
         if (line.readingRenderPlan != null) return false;
         return isBlank(line.romanizedText) || SpicyTextDetection.hasRomanizableScript(line.romanizedText);
     }

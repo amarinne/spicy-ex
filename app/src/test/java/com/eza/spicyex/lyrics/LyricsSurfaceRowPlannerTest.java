@@ -12,8 +12,27 @@ import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TextRange;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
+import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
 public class LyricsSurfaceRowPlannerTest {
+    @Test
+    public void wholeLineAiReadingRemainsRenderableWithoutAPlan() {
+        AppliedLine line = line("ก็ไม่รู้");
+        line.romanizedText = "ko mai ru";
+
+        assertEquals("ko mai ru", LyricsRowViewFactory.displayReading(line));
+    }
+
+    @Test
+    public void alignedPlanReadingStillOutranksLegacyText() {
+        AppliedLine line = line("歌");
+        line.romanizedText = "stale";
+        line.readingRenderPlan = ReadingPlanFactory.lineFallback(
+                line.sourceLine, "uta", "remoteFallback");
+
+        assertEquals("uta", LyricsRowViewFactory.displayReading(line));
+    }
+
     @Test
     public void adaptiveSectioningIsPublicAndDefaultsOn() {
         assertEquals("lyric_adaptive_sectioning", Settings.ADAPTIVE_SECTIONING.key);

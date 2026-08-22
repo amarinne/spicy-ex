@@ -10,6 +10,8 @@ import android.graphics.drawable.Drawable;
 
 import androidx.swiperefreshlayout.widget.CircularProgressDrawable;
 
+import com.eza.spicyex.ui.ActionIconDrawable;
+
 /**
  * Toggle-chip progress spinner. We do NOT hand-draw the arc — this wraps androidx's
  * {@link CircularProgressDrawable} (the standard Material indeterminate refresh spinner used across
@@ -22,8 +24,14 @@ import androidx.swiperefreshlayout.widget.CircularProgressDrawable;
  * </ol>
  */
 public final class ChipSpinnerDrawable extends Drawable {
+    private static final int AI_GREEN = 0xFF1ED760;
+    private static final int AI_RUNNING_GRAY = 0xFF8E8E93;
+
     private final CircularProgressDrawable inner;
+    private final android.graphics.drawable.Drawable aiBadge;
     private boolean active;
+    private boolean aiActive;
+    private boolean aiOutput;
 
     private final Callback relay = new Callback() {
         @Override public void invalidateDrawable(Drawable who) { invalidateSelf(); }
@@ -34,9 +42,48 @@ public final class ChipSpinnerDrawable extends Drawable {
     public ChipSpinnerDrawable(Context context) {
         inner = new CircularProgressDrawable(context);
         inner.setStyle(CircularProgressDrawable.DEFAULT);
-        inner.setColorSchemeColors(0xFF1ED760); // Spotify accent green
+        inner.setColorSchemeColors(0xB3FFFFFF);
         inner.setStrokeCap(Paint.Cap.ROUND);
         inner.setCallback(relay);
+        aiBadge = new ActionIconDrawable(ActionIconDrawable.Kind.SPARKLE,
+                AI_GREEN, context.getResources().getDisplayMetrics().density);
+        updateAiBadgeTint();
+    }
+
+    /**
+     * Marks this control as currently showing AI output.
+     *
+     * <p>A green sparkle taken from the Spicy Lyrics mark, because the reader needs to know which
+     * of two possible answers they are looking at — a model's or an engine's — and the control is
+     * the only place that distinction belongs. During an AI request the same sparkle stays visible
+     * beside a green ring, distinct from the neutral ring used for local/provider processing.
+     */
+    public void setAiOutput(boolean value) {
+        if (value == aiOutput) return;
+        aiOutput = value;
+        updateAiBadgeTint();
+        invalidateSelf();
+    }
+
+    public boolean isAiOutput() {
+        return aiOutput;
+    }
+
+    /** Marks an in-flight AI request independently from ordinary layer processing. */
+    public void setAiActive(boolean value) {
+        if (value == aiActive) return;
+        aiActive = value;
+        inner.setColorSchemeColors(value ? AI_GREEN : 0xB3FFFFFF);
+        updateAiBadgeTint();
+        invalidateSelf();
+    }
+
+    public boolean isAiActive() {
+        return aiActive;
+    }
+
+    private void updateAiBadgeTint() {
+        if (aiBadge != null) aiBadge.setTint(aiActive ? AI_RUNNING_GRAY : AI_GREEN);
     }
 
     /** Start/stop the spinner. Idempotent — safe to call every frame. */
@@ -64,12 +111,23 @@ public final class ChipSpinnerDrawable extends Drawable {
         // Ring centered near the rim so it spins on the button edge.
         inner.setCenterRadius(size / 2f - stroke);
         inner.setBounds(bounds);
+        if (aiBadge != null) {
+            // A quarter-size mark on the lower-right rim, clear of the glyph underneath.
+            int badge = Math.max(1, Math.round(size * 0.42f));
+            int right = bounds.right;
+            int bottom = bounds.bottom;
+            aiBadge.setBounds(right - badge, bottom - badge, right, bottom);
+        }
     }
 
     @Override
     public void draw(Canvas canvas) {
-        if (!active) return;
-        inner.draw(canvas);
+        if (active) {
+            inner.draw(canvas);
+            if (aiActive && aiBadge != null) aiBadge.draw(canvas);
+            return;
+        }
+        if (aiOutput && aiBadge != null) aiBadge.draw(canvas);
     }
 
     @Override

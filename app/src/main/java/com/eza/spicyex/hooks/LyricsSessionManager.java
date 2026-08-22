@@ -30,6 +30,7 @@ import com.eza.spicyex.lyrics.session.LayerStatus;
 import com.eza.spicyex.lyrics.session.LegacyDocumentComposer;
 import com.eza.spicyex.lyrics.session.LyricSession;
 import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
+import com.eza.spicyex.lyrics.session.MeaningArtifact;
 
 import de.robv.android.xposed.XposedBridge;
 
@@ -123,7 +124,7 @@ final class LyricsSessionManager {
         SpotifyPlusConfig config = SpotifyPlusConfig.from(this.context);
         LyricsSecondaryProcessor processor = new LyricsSecondaryProcessor(
                 this.context, NativeRuntime.HTTP, NativeRuntime.SOUND_PROCESSOR,
-                NativeRuntime.SOUND_WORKERS, NativeRuntime.MEANING_WORKERS, handler,
+                NativeRuntime.SOUND_WORKERS, NativeRuntime.MEANING_WORKERS, NativeRuntime.AI_WORKERS, handler,
                 NativeRuntime.GOOGLE_PROCESSING_VERSION);
         secondaryProcessing = new LyricsSecondaryProcessingSession(
                 this.context, config, processor, NativeRuntime.GOOGLE_PROCESSING_VERSION,
@@ -407,6 +408,43 @@ final class LyricsSessionManager {
     }
 
     /**
+     * Explicit model action. Keeps the displayed artifact while the paid/reuse run settles.
+     *
+     * @return true when the requested layer accepted work
+     */
+    boolean requestAiLayer(LayerKind layer) {
+        if (layer == null || track == null || document == null || policy.trackUri().isEmpty()) {
+            return false;
+        }
+        if (layer == LayerKind.MEANING) {
+            LyricsDocumentProcessor.resetMeaningLayer(context, document);
+        } else {
+            LyricsDocumentProcessor.resetSoundLayer(context, document);
+        }
+        return startSharedProcessing(track, document, policy.generation(),
+                java.util.EnumSet.of(layer)).contains(layer);
+    }
+
+    /** Drops the accepted AI overlay and republishes the canonical baseline only. */
+    void restoreLayer(LayerKind layer) {
+        if (layer == null || document == null || session == null) return;
+        secondaryProcessing.cancelActive();
+        LayerState restored = LayerState.absent(layer);
+        if (layer == LayerKind.MEANING
+                && session.meaning.artifact instanceof MeaningArtifact) {
+            MeaningArtifact baseline = ((MeaningArtifact) session.meaning.artifact).googleBaseline();
+            if (baseline != null) {
+                restored = restored.withArtifact(LayerStatus.READY, baseline, "");
+            }
+        }
+        session = session.withLayer(layer, restored);
+        document = canonicalSource == null ? LyricsDocument.copyOf(document)
+                : LegacyDocumentComposer.compose(canonicalSource, session);
+        syncDocumentLayerFlags();
+        notifyDocument(snapshot(), document);
+    }
+
+    /**
      * Clears a user-selected cache as one live-session transaction.
      *
      * <p>Retiring the lanes before deleting storage prevents an already-running completion from
@@ -428,6 +466,19 @@ final class LyricsSessionManager {
                 LyricCaches.clearSoundArtifacts(context);
                 AIPaidArtifactCache.clearLayer(context, LayerKind.SOUND);
                 refreshLayer(LayerKind.SOUND);
+                break;
+            case AI:
+                AIPaidArtifactCache.clear(context);
+                secondaryProcessing.cancelActive();
+                if (session != null) {
+                    session = session.withLayer(LayerKind.MEANING, LayerState.absent(LayerKind.MEANING));
+                    session = session.withLayer(LayerKind.SOUND, LayerState.absent(LayerKind.SOUND));
+                }
+                if (document != null) {
+                    document = canonicalSource == null ? LyricsDocument.copyOf(document)
+                            : LegacyDocumentComposer.compose(canonicalSource, session);
+                    notifyDocument(snapshot(), document);
+                }
                 break;
             case LYRICS_RESPONSE:
                 LyricsResponseCache.clear(context);
@@ -462,10 +513,23 @@ final class LyricsSessionManager {
                 config.chineseTones, config.defaultCyrillicMode, config.cyrillicKeepSigns);
     }
 
-    private void startSharedProcessing(SpotifyTrack requestedTrack, LyricsDocument snapshot, int requestedGeneration) {
+    private void startSharedProcessing(SpotifyTrack requestedTrack, LyricsDocument snapshot,
+                                       int requestedGeneration) {
+        startSharedProcessing(requestedTrack, snapshot, requestedGeneration,
+                java.util.Collections.<LayerKind>emptySet());
+    }
+
+    private java.util.Set<LayerKind> startSharedProcessing(
+            SpotifyTrack requestedTrack, LyricsDocument snapshot, int requestedGeneration,
+            java.util.Set<LayerKind> explicitAiRequests) {
         LyricsRenderConfig config = renderConfig();
+        com.eza.spicyex.lyrics.session.SoundArtifact displayedSound = session != null
+                && session.sound.artifact instanceof com.eza.spicyex.lyrics.session.SoundArtifact
+                ? (com.eza.spicyex.lyrics.session.SoundArtifact) session.sound.artifact : null;
         java.util.Set<LayerKind> started = secondaryProcessing.start(snapshot.trackId, requestedGeneration, snapshot,
                 config.transliterationEnabled, romanizationOptions(config),
+                displayedSound,
+                explicitAiRequests,
                 (id, callbackGeneration, callbackSnapshot) -> callbackGeneration == policy.generation()
                         && callbackSnapshot == document
                         && requestedTrack.uri.equals(policy.trackUri()),
@@ -478,12 +542,18 @@ final class LyricsSessionManager {
                     }
                     @Override public void progress(LyricsDocument processed, String message) {}
                     @Override public void complete(LayerKind layer, DerivedLayerArtifact artifact,
+                                                   com.eza.spicyex.lyrics.session.LayerFailure failure,
                                                    LyricsDocument processed, String message, int changed) {
-                        adoptLayerArtifact(layer, artifact, processed, requestedGeneration);
+                        adoptLayerArtifact(layer, artifact, failure, processed, requestedGeneration);
                         publishProcessed(processed, requestedGeneration);
                     }
                 });
-        markLanesRunning(started, snapshot, config);
+        markLanesRunning(started, snapshot, config, explicitAiRequests);
+        // The initial document was published before the asynchronous lanes were started. Publish
+        // the processing transition too, otherwise surfaces never see the pending state and their
+        // chip indicators remain idle for the entire AI/network request.
+        if (!started.isEmpty()) publishProcessed(snapshot, requestedGeneration);
+        return started;
     }
 
     /**
@@ -494,12 +564,20 @@ final class LyricsSessionManager {
      * what lets publication stop reading flags off the mutable document.
      */
     private void markLanesRunning(java.util.Set<LayerKind> started, LyricsDocument snapshot,
-                                  LyricsRenderConfig config) {
+                                  LyricsRenderConfig config,
+                                  java.util.Set<LayerKind> explicitAiRequests) {
         if (session == null || started.isEmpty()) return;
+        com.eza.spicyex.lyrics.ai.AiSettings aiSettings =
+                new com.eza.spicyex.lyrics.ai.AiSettings(context);
         for (LayerKind layer : started) {
             LayerState state = session.layer(layer);
+            boolean explicitAi = explicitAiRequests != null && explicitAiRequests.contains(layer);
+            boolean automaticAi = aiSettings.canRequest() && (layer == LayerKind.SOUND
+                    ? aiSettings.pronunciationAutomatic() : aiSettings.translationAutomatic());
             session = session.withLayer(layer, state.processing(
-                    layer == LayerKind.SOUND ? LayerAuthority.DETERMINISTIC : LayerAuthority.MACHINE,
+                    explicitAi || automaticAi ? LayerAuthority.AI
+                            : layer == LayerKind.SOUND
+                            ? LayerAuthority.DETERMINISTIC : LayerAuthority.MACHINE,
                     layer == LayerKind.SOUND
                             ? LyricsDocumentProcessor.currentSoundConfigId(context, snapshot)
                             : LyricsDocumentProcessor.meaningConfigId(context),
@@ -517,12 +595,11 @@ final class LyricsSessionManager {
      * reproduce what the lanes wrote, so the two are compared and any divergence is counted.
      */
     private void adoptLayerArtifact(LayerKind layer, DerivedLayerArtifact artifact,
+                                    com.eza.spicyex.lyrics.session.LayerFailure failure,
                                     LyricsDocument processed, int requestedGeneration) {
         if (session == null || processed != document || requestedGeneration != policy.generation()) return;
         LayerState state = session.layer(layer);
-        session = session.withLayer(layer, artifact == null
-                ? LayerState.absent(layer)
-                : state.withArtifact(LayerStatus.READY, artifact, ""));
+        session = session.withLayer(layer, state.settled(artifact, failure));
         syncDocumentLayerFlags();
     }
 
@@ -591,7 +668,6 @@ final class LyricsSessionManager {
      */
     private LyricsDocument publishedProjection(LyricsDocument value) {
         if (session == null || canonicalSource == null || value == null) return value;
-        if (session.sound.artifact == null && session.meaning.artifact == null) return value;
         try {
             LyricsDocument composed = LegacyDocumentComposer.compose(canonicalSource, session);
             if (composed == null || composed.lines.size() != value.lines.size()) return value;

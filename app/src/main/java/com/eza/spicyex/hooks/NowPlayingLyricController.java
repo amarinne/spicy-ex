@@ -528,12 +528,13 @@ final class NowPlayingLyricController {
             try {
                 if (isProjectionStale(id, generation, revision)) return;
                 LyricsDocument nextCardDocument = doc;
-                LyricsDocumentProcessor.applyProcessedCache(activity.getApplicationContext(), nextCardDocument,
+                LyricsDocumentProcessor.applyProcessedCachePreservingAi(
+                        activity.getApplicationContext(), nextCardDocument,
                         fetchOptions, NativeRuntime.GOOGLE_PROCESSING_VERSION);
                 if (isProjectionStale(id, generation, revision)) return;
                 // Same as fullscreen: the composed document already carries span readings from the
                 // session's Sound artifact, so only derive when it does not.
-                if (!LyricsDocumentProcessor.hasSpanReadings(nextCardDocument)) {
+                if (LyricsDocumentProcessor.needsSurfaceLocalRomanization(nextCardDocument)) {
                     prepareSurfaceRomanization(nextCardDocument, fetchConfig, fetchOptions,
                             fetchConfig != null && (fetchConfig.transliterationEnabled
                                     || fetchConfig.liveCardShowTransliteration));

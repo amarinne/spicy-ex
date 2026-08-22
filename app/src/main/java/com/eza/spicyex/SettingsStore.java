@@ -31,6 +31,10 @@ public final class SettingsStore {
         return setting.coerce(value);
     }
 
+    public boolean contains(Settings.Setting<?> setting) {
+        return setting != null && prefs.contains(setting.key);
+    }
+
     public <T> void put(Settings.Setting<T> setting, T value) {
         SharedPreferences.Editor editor = prefs.edit();
         if (value instanceof Boolean) {

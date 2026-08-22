@@ -13,9 +13,20 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.eza.spicyex.lyrics.ai.AiCancelledException;
+import com.eza.spicyex.lyrics.ai.AiContract;
+import com.eza.spicyex.lyrics.ai.AiRunOutcome;
+import com.eza.spicyex.lyrics.ai.AiRunMonitor;
+import com.eza.spicyex.lyrics.ai.AiRequestLiveState;
+import com.eza.spicyex.lyrics.ai.AiRuntimeFailureLog;
+import com.eza.spicyex.lyrics.ai.AiSettings;
+import com.eza.spicyex.lyrics.ai.AiSignal;
+import com.eza.spicyex.lyrics.ai.AiSoundOverlay;
+import com.eza.spicyex.lyrics.ai.AiSoundRun;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
+import com.eza.spicyex.lyrics.session.LayerFailure;
 import com.eza.spicyex.lyrics.session.LayerKind;
 import com.eza.spicyex.lyrics.session.LayerProvenance;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
@@ -41,6 +52,10 @@ public final class LyricsSoundLane {
     private final OkHttpClient http;
     private final ExecutorService laneExecutor;
     private final ExecutorService networkWorkers;
+    /** AI gap-filling runs here, never on a reading thread. */
+    private final ExecutorService aiExecutor;
+    /** Cancels the AI pass in flight, if one was started. */
+    private volatile AiSignal aiSignal;
     private final Handler handler;
     private final int processingVersion;
     /** Retires earlier runs of this lane: only the newest sequence may publish. */
@@ -49,11 +64,13 @@ public final class LyricsSoundLane {
     private volatile String activeTag = "";
 
     public LyricsSoundLane(Context context, OkHttpClient http, ExecutorService laneExecutor,
-                           ExecutorService networkWorkers, Handler handler, int processingVersion) {
+                           ExecutorService networkWorkers, ExecutorService aiExecutor,
+                           Handler handler, int processingVersion) {
         this.context = context;
         this.http = http;
         this.laneExecutor = laneExecutor;
         this.networkWorkers = networkWorkers;
+        this.aiExecutor = aiExecutor == null ? networkWorkers : aiExecutor;
         this.handler = handler;
         this.processingVersion = processingVersion;
     }
@@ -68,7 +85,9 @@ public final class LyricsSoundLane {
             LyricsDocument snapshot,
             boolean showRomanization,
             RomanizationOptions opts,
+            SoundArtifact displayedSound,
             String effectiveSourceLang,
+            boolean explicitAiRequest,
             LyricsSecondaryProcessor.CurrentGuard currentGuard,
             LyricsSecondaryProcessor.Callback callback
     ) {
@@ -100,8 +119,15 @@ public final class LyricsSoundLane {
         retirePrevious(run);
 
         if (localWork.isEmpty() && networkWork.isEmpty()) {
+            AiSettings settings = new AiSettings(context);
+            boolean aiConfigured = settings.soundLayerEnabled() && settings.isConfigured();
+            if (aiConfigured) {
+                startAiGapFill(run, id, generation, snapshot, displayedSound, displayedSound, settings,
+                        explicitAiRequest || settings.pronunciationAutomatic(), currentGuard, callback);
+                return true;
+            }
             post(run, id, generation, snapshot, currentGuard,
-                    () -> callback.complete(LayerKind.SOUND, null, "", 0));
+                    () -> callback.complete(LayerKind.SOUND, null, LayerFailure.NONE, "", 0));
             return false;
         }
 
@@ -147,12 +173,12 @@ public final class LyricsSoundLane {
 
             if (networkWork.isEmpty()) {
                 finish(run, id, generation, snapshot, currentGuard, callback, entries,
-                        changed.get(), startedAtMs);
+                        changed.get(), startedAtMs, explicitAiRequest);
                 return;
             }
             runNetworkPass(run, id, generation, snapshot, workerSnapshot, showRomanization,
                     effectiveSourceLang, networkWork, locallyRomanized, changed, currentGuard,
-                    callback, entries, startedAtMs);
+                    callback, entries, startedAtMs, explicitAiRequest);
         });
         return true;
     }
@@ -168,7 +194,7 @@ public final class LyricsSoundLane {
             Set<Integer> locallyRomanized, AtomicInteger changed,
             LyricsSecondaryProcessor.CurrentGuard currentGuard,
             LyricsSecondaryProcessor.Callback callback, List<SoundEntry> entries,
-            long startedAtMs
+            long startedAtMs, boolean explicitAiRequest
     ) {
         final AtomicInteger remaining = new AtomicInteger(networkWork.size());
         final AtomicInteger done = new AtomicInteger();
@@ -205,7 +231,7 @@ public final class LyricsSoundLane {
                     }
                     if (remaining.decrementAndGet() == 0) {
                         finish(run, id, generation, snapshot, currentGuard, callback, entries,
-                                changed.get(), startedAtMs);
+                                changed.get(), startedAtMs, explicitAiRequest);
                     }
                 }
             });
@@ -258,13 +284,127 @@ public final class LyricsSoundLane {
     private void finish(DerivedLayerRun run, String id, int generation, LyricsDocument snapshot,
                         LyricsSecondaryProcessor.CurrentGuard currentGuard,
                         LyricsSecondaryProcessor.Callback callback, List<SoundEntry> entries,
-                        int changed, long startedAtMs) {
+                        int changed, long startedAtMs, boolean explicitAiRequest) {
         LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOUND_PROCESSED);
         LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.SOUND_PROCESSING,
                 SystemClock.elapsedRealtime() - startedAtMs);
-        post(run, id, generation, snapshot, currentGuard,
-                () -> callback.complete(LayerKind.SOUND, artifactOf(run, entries, false),
-                        "Enhanced " + changed + " reading fields", changed));
+        final SoundArtifact local = artifactOf(run, entries, false);
+        AiSettings settings = new AiSettings(context);
+        boolean aiConfigured = settings.soundLayerEnabled() && settings.isConfigured();
+        if (!aiConfigured) {
+            post(run, id, generation, snapshot, currentGuard,
+                    () -> callback.complete(LayerKind.SOUND, local, LayerFailure.NONE,
+                            "Enhanced " + changed + " reading fields", changed));
+            return;
+        }
+        // Keep deterministic/Google output visible while the model fills only its gaps. The final
+        // completion below clears the processing state whether AI succeeds, reuses, or declines.
+        if (local != null && !local.isEmpty()) {
+            post(run, id, generation, snapshot, currentGuard,
+                    () -> callback.rerender(LayerKind.SOUND, local,
+                            "Reading baseline ready"));
+        }
+        startAiGapFill(run, id, generation, snapshot, local, local, settings,
+                explicitAiRequest || settings.pronunciationAutomatic(), currentGuard, callback);
+    }
+
+    /**
+     * Fills whatever the engines could not read, and publishes again when it lands.
+     *
+     * <p>A second publication rather than a delayed first one: the deterministic reading is already
+     * correct for the rows it covers, and holding it back so an uncovered row can be filled would
+     * make every song with one gap feel as slow as a model call.
+     */
+    private void startAiGapFill(final DerivedLayerRun run, final String id, final int generation,
+                                final LyricsDocument snapshot, final SoundArtifact baseline,
+                                final SoundArtifact fallback,
+                                final AiSettings settings, final boolean allowProviderRequest,
+                                final LyricsSecondaryProcessor.CurrentGuard currentGuard,
+                                final LyricsSecondaryProcessor.Callback callback) {
+        final String orthography = AiContract.ORTHOGRAPHY_LATIN;
+        final AiSignal signal = new AiSignal();
+        aiSignal = signal;
+        if (allowProviderRequest) {
+            AiRequestLiveState.begin(LayerKind.SOUND, run.canonicalDigest(), run.tag);
+        }
+        final AiRunMonitor monitor = allowProviderRequest
+                ? (chunkId, attempt, payload) -> AiRequestLiveState.attempt(LayerKind.SOUND,
+                run.canonicalDigest(), run.tag, chunkId, attempt, payload)
+                : null;
+        aiExecutor.execute(new Runnable() {
+            @Override public void run() {
+                AiSoundRun.Result result;
+                LayerFailure aiFailure = LayerFailure.NONE;
+                try {
+                    if (!run.accepts(currentGuard, id, generation, snapshot)) return;
+                    result = AiSoundRun.run(context, settings, run.base, snapshot, baseline,
+                            orthography, settings.soundUsesBaseline(), allowProviderRequest, signal,
+                            monitor);
+                    if (result != null && result.outcome != null
+                            && result.outcome.kind == AiRunOutcome.Kind.FAILED) {
+                        aiFailure = result.outcome.failure;
+                        AiRequestLiveState.fail(LayerKind.SOUND, run.canonicalDigest(), run.tag,
+                                result.outcome.failureToken, result.outcome.failure.httpStatus,
+                                result.outcome.failureDetail);
+                        XposedBridge.log(TAG + " ai reading outcome=failed token="
+                                + result.outcome.failureToken + " status="
+                                + result.outcome.failure.httpStatus + " rule="
+                                + result.outcome.failureDetail);
+                    } else if (result != null && result.outcome != null
+                            && (result.outcome.kind == AiRunOutcome.Kind.COMPLETED
+                            || result.outcome.kind == AiRunOutcome.Kind.REUSED)) {
+                        XposedBridge.log(TAG + " ai reading outcome="
+                                + result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT)
+                                + " durable=" + result.outcome.durable);
+                    }
+                } catch (AiCancelledException cancelled) {
+                    AiRequestLiveState.cancel(LayerKind.SOUND, run.canonicalDigest(), run.tag);
+                    return;
+                } catch (Throwable failure) {
+                    XposedBridge.log(TAG + " ai reading failed: "
+                            + AiRuntimeFailureLog.describe(failure));
+                    result = null;
+                    aiFailure = new LayerFailure(LayerFailure.Reason.UNAVAILABLE,
+                            "runtime_unavailable", 0);
+                    AiRequestLiveState.fail(LayerKind.SOUND, run.canonicalDigest(), run.tag,
+                            "runtime_unavailable", 0, failure.getClass().getSimpleName());
+                }
+                AiRequestLiveState.complete(LayerKind.SOUND, run.canonicalDigest(), run.tag);
+                if (result == null || !result.hasArtifact()) {
+                    final LayerFailure finalFailure = aiFailure;
+                    post(run, id, generation, snapshot, currentGuard, new Runnable() {
+                        @Override public void run() {
+                            callback.complete(LayerKind.SOUND, fallback, finalFailure,
+                                    "AI reading unavailable", 0);
+                        }
+                    });
+                    return;
+                }
+                // Composed here rather than published alone: the overlay covers gaps only, and the
+                // rows the engines read must arrive in the same artifact that replaces theirs.
+                final SoundArtifact composed = new SoundArtifact(run.canonicalDigest(),
+                        run.configId(), result.artifact.provenance,
+                        AiSoundOverlay.compose(fallback == null ? null : entriesOf(fallback),
+                                entriesOf(result.artifact)), false);
+                final int filled = result.artifact.size();
+                post(run, id, generation, snapshot, currentGuard, new Runnable() {
+                    @Override public void run() {
+                        callback.complete(LayerKind.SOUND, composed, LayerFailure.NONE,
+                                "AI read " + filled + " lines", filled);
+                    }
+                });
+            }
+        });
+    }
+
+    private static List<SoundEntry> entriesOf(SoundArtifact artifact) {
+        List<SoundEntry> out = new ArrayList<>();
+        if (artifact == null) return out;
+        for (String rowId : artifact.rowIds()) {
+            SoundEntry entry = artifact.sound(rowId);
+            if (entry != null) out.add(entry);
+        }
+        return out;
     }
 
     /** Re-runs on-device readings only, e.g. after a romanization mode cycle. */
@@ -327,6 +467,9 @@ public final class LyricsSoundLane {
      * skipped track stops costing requests instead of merely having its callbacks ignored.
      */
     public void cancelActive() {
+        AiSignal signal = aiSignal;
+        aiSignal = null;
+        if (signal != null) signal.abort("track_change");
         laneSequence.incrementAndGet();
         String retired = activeTag;
         activeTag = "";

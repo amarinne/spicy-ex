@@ -29,6 +29,23 @@ public class LyricsDocument {
     public boolean translationPending;
     public boolean includesRomanization;
     public boolean includesTranslation;
+    /**
+     * Whether the reading and translation currently shown came from a model.
+     *
+     * <p>Provenance lives on the artifact, but the controls that need it read the document, so the
+     * composer stamps it here on the way through. Display state only: nothing decides what to run
+     * from these.
+     */
+    public boolean readingFromAi;
+    public boolean translationFromAi;
+    /** True only while the corresponding layer is actively running under AI authority. */
+    public boolean readingAiPending;
+    public boolean translationAiPending;
+    /** True when the displayed AI translation used Google Translate output as request input. */
+    public boolean translationAiRefinedFromGoogle;
+    /** Exact privacy-safe AI failure tokens for the current layer settlement, or empty. */
+    public String readingAiFailureToken = "";
+    public String translationAiFailureToken = "";
     public boolean detectedChinese;
     public final List<SpicyTextDetection.Script> detectedScripts = new ArrayList<>();
     public final List<LyricsLine> lines = new ArrayList<>();
@@ -58,6 +75,13 @@ public class LyricsDocument {
         copy.translationPending = source.translationPending;
         copy.includesRomanization = source.includesRomanization;
         copy.includesTranslation = source.includesTranslation;
+        copy.readingFromAi = source.readingFromAi;
+        copy.translationFromAi = source.translationFromAi;
+        copy.readingAiPending = source.readingAiPending;
+        copy.translationAiPending = source.translationAiPending;
+        copy.translationAiRefinedFromGoogle = source.translationAiRefinedFromGoogle;
+        copy.readingAiFailureToken = safe(source.readingAiFailureToken);
+        copy.translationAiFailureToken = safe(source.translationAiFailureToken);
         copy.detectedChinese = source.detectedChinese;
         copy.detectedScripts.addAll(source.detectedScripts);
         for (LyricsLine line : source.lines) copy.lines.add(LyricsLine.copyOf(line));

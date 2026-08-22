@@ -3,12 +3,14 @@ package com.eza.spicyex.hooks;
 import android.app.Activity;
 import android.app.Dialog;
 import android.graphics.drawable.ColorDrawable;
+import android.view.View;
 import android.view.Window;
 
 import com.eza.spicyex.SettingsPanel;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.beautifullyrics.entities.VsyncFrameScheduler;
 import com.eza.spicyex.lyrics.LyricsAmbientController;
+import com.eza.spicyex.ui.Motion;
 
 import de.robv.android.xposed.XposedBridge;
 
@@ -45,10 +47,26 @@ final class LyricsSettingsDialogController {
             Dialog dialog = new Dialog(activity);
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
             Window window = dialog.getWindow();
-            dialog.setContentView(new SettingsPanel(activity, new SettingsStore(activity), () -> halfMode, () -> {
-                halfMode = !halfMode;
-                applySize(window);
-            }, dialog::dismiss, host::clearLyricsCache).build());
+            final View[] panelRef = new View[1];
+            SettingsPanel panel = new SettingsPanel(activity, new SettingsStore(activity),
+                    () -> halfMode, () -> {
+                        halfMode = !halfMode;
+                        applySize(window);
+                    }, () -> Motion.exitCardThen(panelRef[0], dialog::isShowing, dialog::dismiss),
+                    host::clearLyricsCache);
+            final View panelView = panel.build();
+            panelRef[0] = panelView;
+            // Back routes through the animated exit; outside-tap keeps platform behavior
+            // (cancelability untouched, per motion-audit lifecycle contract).
+            dialog.setOnKeyListener((d, keyCode, event) -> {
+                if (keyCode == android.view.KeyEvent.KEYCODE_BACK
+                        && event.getAction() == android.view.KeyEvent.ACTION_UP) {
+                    Motion.exitCardThen(panelView, dialog::isShowing, dialog::dismiss);
+                    return true;
+                }
+                return false;
+            });
+            dialog.setContentView(panelView);
             if (window != null) {
                 window.setBackgroundDrawable(new ColorDrawable(android.graphics.Color.TRANSPARENT));
                 applySize(window);
@@ -58,6 +76,7 @@ final class LyricsSettingsDialogController {
                 onClosed.run();
             });
             dialog.show();
+            Motion.enterCard(panelView);
         } catch (Throwable t) {
             XposedBridge.log(logTag + " settings dialog failed: " + t);
         }

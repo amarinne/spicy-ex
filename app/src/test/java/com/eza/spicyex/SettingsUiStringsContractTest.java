@@ -5,6 +5,8 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -12,6 +14,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 
 public class SettingsUiStringsContractTest {
     @Test
@@ -20,11 +23,12 @@ public class SettingsUiStringsContractTest {
         assertTrue(names.contains("settings_locale_code"));
         assertTrue(names.contains("settings_locale_name"));
         String[] fixedPanelStrings = {
-                "settings_option_system",
                 "settings_unavailable_full_build",
                 "settings_enable_transliteration",
                 "settings_enable_translation",
                 "settings_sync_offset_summary",
+                "settings_panel_resize",
+                "settings_panel_close",
                 "settings_action_clear_translation_cache",
                 "settings_action_clear_lyrics_cache",
                 "settings_action_open_github",
@@ -43,6 +47,19 @@ public class SettingsUiStringsContractTest {
                 "settings_no"
         };
         for (String name : fixedPanelStrings) assertTrue("Missing " + name, names.contains(name));
+        String[] explicitAiModeLabels = {
+                "settings_option_ai_translation_mode_on_demand",
+                "settings_option_ai_translation_mode_always_use_ai",
+                "settings_option_ai_translation_pipeline_ai_only",
+                "settings_option_ai_translation_pipeline_google_draft",
+                "settings_option_ai_pronunciation_mode_on_demand",
+                "settings_option_ai_pronunciation_mode_always_use_ai",
+                "settings_option_ai_pronunciation_source_layered",
+                "settings_option_ai_pronunciation_source_ai_only"
+        };
+        for (String name : explicitAiModeLabels) {
+            assertTrue("Missing " + name, names.contains(name));
+        }
         Set<Settings.Section> sections = new HashSet<>();
         for (Settings.Setting<?> setting : Settings.ALL) {
             if (setting.section == Settings.INTERNAL) continue;
@@ -77,6 +94,17 @@ public class SettingsUiStringsContractTest {
         Set<String> expected = defaultStringNames();
         expected.addAll(stringNames("src/main/res/values/diagnostics.xml"));
         assertEquals(expected, stringNames("translation/strings-template.xml"));
+    }
+
+    @Test
+    public void injectedLyricsShellNeverResolvesModuleIdsAgainstSpotifyResources() throws Exception {
+        File source = new File("src/main/java/com/eza/spicyex/hooks/NativeSpicyShellViewImpl.java");
+        if (!source.isFile()) source = new File("app/" + source.getPath());
+        assertTrue(source.isFile());
+        String java = new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8);
+
+        assertFalse(java.contains("getString(R.string"));
+        assertFalse(java.contains("Toast.makeText(activity, R.string"));
     }
 
     private static Set<String> defaultStringNames() throws Exception {

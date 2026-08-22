@@ -31,6 +31,20 @@ public final class SpicyTextDetection {
         return false;
     }
 
+    /** True when text contains a letter that still needs a Latin reading, including Thai. */
+    public static boolean hasNonLatinLetter(String text) {
+        if (text == null || text.isEmpty()) return false;
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            if (Character.isLetter(cp)
+                    && Character.UnicodeScript.of(cp) != Character.UnicodeScript.LATIN) {
+                return true;
+            }
+            i += Character.charCount(cp);
+        }
+        return false;
+    }
+
     public static boolean hasResidualScript(String text) {
         if (text == null || text.isEmpty()) return false;
         for (int i = 0; i < text.length(); ) {
@@ -121,6 +135,51 @@ public final class SpicyTextDetection {
 
     public static boolean hasKana(String text) {
         return containsCodePoint(text, SpicyTextDetection::isKana);
+    }
+
+    /** Matches the desktop renderer's line contract: the first strong character owns direction. */
+    public static boolean isRtl(String text) {
+        if (text == null || text.isEmpty()) return false;
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            byte directionality = Character.getDirectionality(cp);
+            if (directionality == Character.DIRECTIONALITY_RIGHT_TO_LEFT
+                    || directionality == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC) {
+                return true;
+            }
+            if (directionality == Character.DIRECTIONALITY_LEFT_TO_RIGHT) return false;
+            i += Character.charCount(cp);
+        }
+        return false;
+    }
+
+    public static boolean hasStrongDirection(String text) {
+        if (text == null || text.isEmpty()) return false;
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            byte directionality = Character.getDirectionality(cp);
+            if (directionality == Character.DIRECTIONALITY_RIGHT_TO_LEFT
+                    || directionality == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC
+                    || directionality == Character.DIRECTIONALITY_LEFT_TO_RIGHT) {
+                return true;
+            }
+            i += Character.charCount(cp);
+        }
+        return false;
+    }
+
+    public static boolean containsRtl(String text) {
+        if (text == null || text.isEmpty()) return false;
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            byte directionality = Character.getDirectionality(cp);
+            if (directionality == Character.DIRECTIONALITY_RIGHT_TO_LEFT
+                    || directionality == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC) {
+                return true;
+            }
+            i += Character.charCount(cp);
+        }
+        return false;
     }
 
     private static void addIfPresent(List<Script> out, List<Script> present, Script script) {

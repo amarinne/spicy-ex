@@ -167,6 +167,50 @@ public class DerivedLaneIsolationTest {
                 Arrays.asList(1, 2), Collections.<Integer>emptySet()));
     }
 
+    @Test
+    public void surfaceCachePassNeverOverwritesAnAiAuthority() {
+        LyricsDocument aiSound = document("เพลง");
+        aiSound.readingFromAi = true;
+        LyricsDocument aiMeaning = document("เพลง");
+        aiMeaning.translationFromAi = true;
+
+        assertFalse(LyricsDocumentProcessor.shouldApplyCachedSound(aiSound, true));
+        assertTrue(LyricsDocumentProcessor.shouldApplyCachedMeaning(aiSound, true));
+        assertFalse(LyricsDocumentProcessor.shouldApplyCachedMeaning(aiMeaning, true));
+        assertTrue(LyricsDocumentProcessor.shouldApplyCachedSound(aiMeaning, true));
+        assertTrue(LyricsDocumentProcessor.shouldApplyCachedSound(aiSound, false));
+        assertTrue(LyricsDocumentProcessor.shouldApplyCachedMeaning(aiMeaning, false));
+    }
+
+    @Test
+    public void enabledLayerNeedsRealOutputBeforeItCanLookSelected() {
+        LyricsDocument doc = document("เพลง");
+
+        assertFalse(LyricsDocumentProcessor.hasDisplayedSound(doc));
+        assertFalse(LyricsDocumentProcessor.hasDisplayedMeaning(doc));
+
+        doc.lines.get(0).romanizedText = "phleng";
+        assertTrue(LyricsDocumentProcessor.hasDisplayedSound(doc));
+
+        doc.lines.get(0).translatedText = "song";
+        assertTrue(LyricsDocumentProcessor.hasDisplayedMeaning(doc));
+    }
+
+    @Test
+    public void surfacePreparationNeverReprocessesWholeLineAiOrGoogleSound() {
+        LyricsDocument bare = document("เมื่อรัก");
+        assertTrue(LyricsDocumentProcessor.needsSurfaceLocalRomanization(bare));
+
+        LyricsDocument wholeLine = document("เมื่อรัก");
+        wholeLine.lines.get(0).romanizedText = "muea rak";
+        wholeLine.readingFromAi = true;
+        assertFalse(LyricsDocumentProcessor.needsSurfaceLocalRomanization(wholeLine));
+
+        wholeLine.readingFromAi = false;
+        assertFalse("Google whole-line output has the same no-fake-alignment contract",
+                LyricsDocumentProcessor.needsSurfaceLocalRomanization(wholeLine));
+    }
+
     // --- in-place derived merge (keeps the mounted document) -----------------
 
     @Test
@@ -228,6 +272,53 @@ public class DerivedLaneIsolationTest {
         assertFalse(mounted.romanizationPending);
         assertTrue(mounted.translationPending);
         assertTrue(mounted.processingPending);
+    }
+
+    @Test
+    public void mergeCarriesAiProvenanceAndFailureWithoutLyricTextChange() {
+        LyricsDocument mounted = document("ichi");
+        LyricsDocument published = document("ichi");
+        published.readingFromAi = true;
+        published.translationFromAi = true;
+        published.readingAiPending = true;
+        published.translationAiPending = true;
+        published.translationAiRefinedFromGoogle = true;
+        published.readingAiFailureToken = "protocol_invalid";
+        published.translationAiFailureToken = "rate_limited";
+
+        assertFalse(LyricsDocumentProcessor.mergeDerivedLayers(mounted, published));
+
+        assertTrue(mounted.readingFromAi);
+        assertTrue(mounted.translationFromAi);
+        assertTrue(mounted.readingAiPending);
+        assertTrue(mounted.translationAiPending);
+        assertTrue(mounted.translationAiRefinedFromGoogle);
+        assertEquals("protocol_invalid", mounted.readingAiFailureToken);
+        assertEquals("rate_limited", mounted.translationAiFailureToken);
+    }
+
+    @Test
+    public void layerResetClearsStaleAiStatusWithItsOutput() {
+        LyricsDocument doc = document("ก็ไม่รู้");
+        doc.readingFromAi = true;
+        doc.translationFromAi = true;
+        doc.readingAiPending = true;
+        doc.translationAiPending = true;
+        doc.translationAiRefinedFromGoogle = true;
+        doc.readingAiFailureToken = "protocol_invalid";
+        doc.translationAiFailureToken = "rate_limited";
+
+        LyricsDocumentProcessor.resetSoundLayer(null, doc);
+        assertFalse(doc.readingFromAi);
+        assertFalse(doc.readingAiPending);
+        assertEquals("", doc.readingAiFailureToken);
+        assertTrue(doc.translationFromAi);
+
+        LyricsDocumentProcessor.resetMeaningLayer(null, doc);
+        assertFalse(doc.translationFromAi);
+        assertFalse(doc.translationAiPending);
+        assertFalse(doc.translationAiRefinedFromGoogle);
+        assertEquals("", doc.translationAiFailureToken);
     }
 
     @Test

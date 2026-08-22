@@ -12,6 +12,7 @@ import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
 import com.eza.spicyex.lyrics.reading.CodePointRanges;
 import com.eza.spicyex.lyrics.reading.DefaultRenderPlanBuilder;
+import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
@@ -380,6 +381,8 @@ public final class ProcessedLyricsCache {
                                     SpicyJapaneseChineseProcessor.JapaneseReading reading) {
         if (line == null || plan == null || !DefaultRenderPlanBuilder.validate(plan).valid) return false;
         String text = safe(line.text);
+        if (!ReadingPlanFactory.hasTransformedReading(plan)
+                || text.equals(safe(plan.joinedDisplayText))) return false;
         for (CanonicalSpanMapping source : plan.sourceUnits) {
             if (source == null || source.spanId == null || !CodePointRanges.isValid(text, source.canonicalRange)) return false;
         }

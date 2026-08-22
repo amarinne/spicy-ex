@@ -32,6 +32,15 @@ final class NativeRuntime {
     static final ExecutorService SOUND_WORKERS = Executors.newFixedThreadPool(2);
     /** Machine translation batches. Separate from every Sound thread. */
     static final ExecutorService MEANING_WORKERS = Executors.newFixedThreadPool(2);
+    /**
+     * AI generation, on its own thread and nobody else's.
+     *
+     * <p>A model call runs for tens of seconds against a 60s deadline. On a lane's own pool that
+     * would hold a worker the deterministic and machine passes need, so skipping tracks during a
+     * generation would stall readings that owe nothing to the network. Single-threaded because one
+     * paid run at a time per layer is already the contract, and two would just be two bills.
+     */
+    static final ExecutorService AI_WORKERS = Executors.newFixedThreadPool(2);
     static final int GOOGLE_PROCESSING_VERSION = SpicyProcessing.PROCESSING_VERSION + 2;
     static final int LYRIC_FULL_RENDER_THRESHOLD = 72;
     static final int LYRIC_WINDOW_BEFORE_ACTIVE = 18;

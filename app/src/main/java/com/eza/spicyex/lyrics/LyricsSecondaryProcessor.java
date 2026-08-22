@@ -6,7 +6,9 @@ import android.os.Handler;
 import java.util.concurrent.ExecutorService;
 
 import com.eza.spicyex.lyrics.session.DerivedLayerArtifact;
+import com.eza.spicyex.lyrics.session.LayerFailure;
 import com.eza.spicyex.lyrics.session.LayerKind;
+import com.eza.spicyex.lyrics.session.SoundArtifact;
 
 import okhttp3.OkHttpClient;
 
@@ -28,12 +30,14 @@ public final class LyricsSecondaryProcessor {
             ExecutorService soundExecutor,
             ExecutorService soundNetworkWorkers,
             ExecutorService meaningExecutor,
+            ExecutorService aiExecutor,
             Handler handler,
             int processingVersion
     ) {
         this.soundLane = new LyricsSoundLane(context, http, soundExecutor, soundNetworkWorkers,
+                aiExecutor, handler, processingVersion);
+        this.meaningLane = new LyricsMeaningLane(context, http, meaningExecutor, aiExecutor,
                 handler, processingVersion);
-        this.meaningLane = new LyricsMeaningLane(context, http, meaningExecutor, handler, processingVersion);
     }
 
     /**
@@ -49,21 +53,26 @@ public final class LyricsSecondaryProcessor {
             LyricsDocument snapshot,
             boolean showRomanization,
             RomanizationOptions opts,
+            SoundArtifact displayedSound,
             String translationBackend,
             String targetLang,
             String sourceLang,
             String effectiveSourceLang,
+            java.util.Set<LayerKind> explicitAiRequests,
             CurrentGuard currentGuard,
             Callback callback
     ) {
         java.util.Set<LayerKind> started = java.util.EnumSet.noneOf(LayerKind.class);
         if (snapshot == null || snapshot.lines.isEmpty()) return started;
-        if (soundLane.start(id, generation, snapshot, showRomanization, opts, effectiveSourceLang,
-                currentGuard, callback)) {
+        java.util.Set<LayerKind> explicit = explicitAiRequests == null
+                ? java.util.Collections.<LayerKind>emptySet() : explicitAiRequests;
+        if (soundLane.start(id, generation, snapshot, showRomanization, opts, displayedSound,
+                effectiveSourceLang,
+                explicit.contains(LayerKind.SOUND), currentGuard, callback)) {
             started.add(LayerKind.SOUND);
         }
         if (meaningLane.start(id, generation, snapshot, translationBackend, targetLang, sourceLang,
-                effectiveSourceLang, currentGuard, callback)) {
+                effectiveSourceLang, explicit.contains(LayerKind.MEANING), currentGuard, callback)) {
             started.add(LayerKind.MEANING);
         }
         return started;
@@ -105,7 +114,8 @@ public final class LyricsSecondaryProcessor {
          * @param artifact what the lane produced, addressed by canonical row ID; null when the
          *                 layer had nothing to show
          */
-        void complete(LayerKind layer, DerivedLayerArtifact artifact, String message, int changed);
+        void complete(LayerKind layer, DerivedLayerArtifact artifact, LayerFailure failure,
+                      String message, int changed);
     }
 
     public interface LocalCallback {

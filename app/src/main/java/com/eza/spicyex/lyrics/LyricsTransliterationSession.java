@@ -33,6 +33,21 @@ public final class LyricsTransliterationSession {
         return showRomanization;
     }
 
+    /** Explicit AI generation reveals its result without advancing any language mode cycle. */
+    public void setShowRomanization(boolean value) {
+        showRomanization = value;
+    }
+
+    /**
+     * A data-backed chip can look off while visibility is already requested and the layer is still
+     * empty. Starting generation from that state must not let the same click toggle visibility off
+     * before the result arrives.
+     */
+    public boolean keepVisibleForRequestedOutput(boolean outputRequested, boolean wasVisible,
+                                                 boolean hasDisplayedOutput) {
+        return outputRequested && (!wasVisible || !hasDisplayedOutput);
+    }
+
     public String japaneseReadingMode() {
         return japaneseReadingMode;
     }

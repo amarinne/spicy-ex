@@ -44,6 +44,16 @@ interface LyricsHost {
      */
     void refreshLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer);
 
+    /**
+     * Explicit owner action: reuse or generate AI for one layer, preserving what is displayed.
+     *
+     * @return true when that layer accepted work and will publish a settlement
+     */
+    boolean requestAiLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer);
+
+    /** Restores the canonical/Google baseline without scheduling another AI request. */
+    void restoreLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer);
+
     /** Clears durable data and invalidates the matching live-session authority. */
     void clearLyricsCache(CacheClearKind kind);
 }

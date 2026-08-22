@@ -12,6 +12,51 @@ import org.junit.Test;
 
 public class LyricsTransliterationSessionTest {
     @Test
+    public void explicitAiVisibilityDoesNotAdvanceTheCurrentMode() throws Exception {
+        LyricsTransliterationSession session = new LyricsTransliterationSession(
+                false,
+                cycleConfig(),
+                SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
+                SpotifyPlusConfig.CHINESE_MODE_JYUTPING,
+                KoreanDisplayMode.VN_PRONUNCIATION.value,
+                SpicyRomanizer.CYRILLIC_UKRAINIAN);
+
+        session.setShowRomanization(true);
+
+        assertTrue(session.showRomanization());
+        assertEquals(SpotifyPlusConfig.JP_READING_ROMAJI_ONLY, session.japaneseReadingMode());
+        assertEquals(SpotifyPlusConfig.CHINESE_MODE_JYUTPING, session.chineseMode());
+        assertEquals(KoreanDisplayMode.VN_PRONUNCIATION.value, session.koreanMode());
+        assertEquals(SpicyRomanizer.CYRILLIC_UKRAINIAN, session.cyrillicMode());
+    }
+
+    @Test
+    public void dataBackedChipClickKeepsLatentVisibilityOnWhileOutputIsRequested() throws Exception {
+        LyricsTransliterationSession session = new LyricsTransliterationSession(true, cycleConfig());
+
+        assertTrue(session.keepVisibleForRequestedOutput(true, true, false));
+        assertTrue(session.showRomanization());
+    }
+
+    @Test
+    public void generationFromAnActuallyOffChipLeavesVisibilityOn() throws Exception {
+        LyricsTransliterationSession session = new LyricsTransliterationSession(false, cycleConfig());
+
+        assertTrue(session.keepVisibleForRequestedOutput(true, false, true));
+    }
+
+    @Test
+    public void ordinaryChipClicksStillCycleWhenVisibilityOrOutputStateIsUnambiguous() throws Exception {
+        LyricsTransliterationSession off = new LyricsTransliterationSession(false, cycleConfig());
+        LyricsTransliterationSession visibleWithOutput =
+                new LyricsTransliterationSession(true, cycleConfig());
+
+        assertTrue(off.keepVisibleForRequestedOutput(true, false, false));
+        assertFalse(visibleWithOutput.keepVisibleForRequestedOutput(true, true, true));
+        assertFalse(visibleWithOutput.keepVisibleForRequestedOutput(false, true, false));
+    }
+
+    @Test
     public void koreanCycleRestoresLastModeWhenOpenedOff() throws Exception {
         LyricsTransliterationSession session = new LyricsTransliterationSession(
                 false,

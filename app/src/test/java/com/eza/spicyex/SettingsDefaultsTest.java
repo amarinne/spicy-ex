@@ -20,7 +20,8 @@ public class SettingsDefaultsTest {
         assertEquals("note", Settings.INTERLUDE_ICON.defaultValue);
         assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);
         assertFalse(Settings.HYPERGLOW_ENABLED.defaultValue);
-        assertEquals("system", Settings.UI_LANGUAGE.defaultValue);
+        assertEquals("en", Settings.UI_LANGUAGE.defaultValue);
+        assertEquals("Google draft", Settings.AI_TRANSLATION_PIPELINE.defaultValue);
 
         assertFalse(Settings.TRANSLITERATION_ENABLED.defaultValue);
         assertFalse(Settings.TRANSLATION_ENABLED.defaultValue);

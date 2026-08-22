@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The sparkle from ic_spicy_lyrics_page, on its own.
+
+  Taken from that mark's largest sparkle (path index 3) and normalized to a 24dp viewport by
+  translating (-16.25, -14.25) and scaling x3.2, so the AI indicator is visibly the same shape as
+  the app's own icon rather than a generic star.
+
+  Filled white and tinted at the use site, so one drawable serves every state colour.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11.551,0.4179C11.7056,0 12.297,0 12.4515,0.4179L15.3818,8.3373C15.4304,8.4685 15.5341,8.5722 15.6653,8.6208L23.5846,11.551C24.0026,11.7056 24.0026,12.297 23.5846,12.4515L15.6653,15.3818C15.5341,15.4304 15.4304,15.5341 15.3818,15.6653L12.4515,23.5846C12.297,24.0026 11.7056,24.0026 11.551,23.5846L8.6208,15.6653C8.5722,15.5341 8.4685,15.4304 8.3373,15.3818L0.4179,12.4515C0,12.297 0,11.7056 0.4179,11.551L8.3373,8.6208C8.4685,8.5722 8.5722,8.4685 8.6208,8.3373L11.551,0.4179Z" />
+</vector>

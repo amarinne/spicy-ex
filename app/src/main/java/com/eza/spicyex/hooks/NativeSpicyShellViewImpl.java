@@ -12,6 +12,7 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.sideSystemPadding;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.sourceProviderLabel;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.topSystemPadding;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.trackIdFromUri;
+import static com.eza.spicyex.hooks.NativeRuntime.AI_WORKERS;
 import static com.eza.spicyex.hooks.NativeRuntime.GOOGLE_PROCESSING_VERSION;
 import static com.eza.spicyex.hooks.NativeRuntime.HTTP;
 import static com.eza.spicyex.hooks.NativeRuntime.LYRIC_ESTIMATED_ROW_HEIGHT_DP;
@@ -46,10 +47,12 @@ import android.widget.TextView;
 
 import com.eza.spicyex.CurrentLyricState;
 import com.eza.spicyex.Settings;
+import com.eza.spicyex.SettingsUiStrings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.beautifullyrics.entities.VsyncFrameScheduler;
 import com.eza.spicyex.lyrics.AppliedLine;
+import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.ChipSpinnerDrawable;
 import com.eza.spicyex.lyrics.FrameStyleBatcher;
 import com.eza.spicyex.lyrics.GlyphIconDrawable;
@@ -96,6 +99,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final TextView title;
     private final TextView subtitle;
+    private final TextView readingAiFailureStatus;
+    private final TextView translationAiFailureStatus;
     private final TextView progress;
     private final TextView status;
     private final ImageButton romanToggle;
@@ -111,6 +116,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final LyricsSpaceView bottomVirtualSpacer;
     private final TextView sourceFooter;
     private final SpotifyPlusConfig config;
+    private final SettingsUiStrings uiStrings;
+    private final AiSettings aiSettings;
     private final FrameStyleBatcher styleBatcher;
     private final LyricsFrameRenderer frameRenderer;
     private final LyricsLineVisualController lineVisualController;
@@ -192,7 +199,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final ChipSpinnerDrawable romanSpinner;
     private final ChipSpinnerDrawable translationSpinner;
     private final LyricsToggleSpinnerController toggleSpinnerController;
-    private final GlyphIconDrawable romanGlyph = new GlyphIconDrawable("A", android.graphics.Typeface.DEFAULT_BOLD);
+    private final com.eza.spicyex.lyrics.ai.AiRequestFeedbackState soundAiFeedback =
+            new com.eza.spicyex.lyrics.ai.AiRequestFeedbackState();
+    private final com.eza.spicyex.lyrics.ai.AiRequestFeedbackState meaningAiFeedback =
+            new com.eza.spicyex.lyrics.ai.AiRequestFeedbackState();
+    private final GlyphIconDrawable romanGlyph = new GlyphIconDrawable(
+            "A", android.graphics.Typeface.DEFAULT_BOLD);
     private int lyricsTopInsetPx;
     private long lastLyricPositionMs = -1;
     private long lastDisplayedProgressSecond = Long.MIN_VALUE;
@@ -282,13 +294,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         this.toggleSpinnerController = new LyricsToggleSpinnerController(romanSpinner, translationSpinner);
         this.playbackClock = new LyricsPlaybackClock(host::readBestMeasuredProgressMs);
         this.config = SpotifyPlusConfig.from(activity);
+        this.uiStrings = new SettingsUiStrings(activity, config.get(Settings.UI_LANGUAGE));
+        this.aiSettings = new AiSettings(activity);
         this.styleBatcher = new FrameStyleBatcher(activity);
         this.frameRenderer = new LyricsFrameRenderer(activity, styleBatcher);
         this.lineVisualController = new LyricsLineVisualController(styleBatcher);
         this.textFactory = new LyricsTextFactory(activity, config);
         this.rowViewFactory = new LyricsRowViewFactory(activity, textFactory);
         this.secondaryProcessor = new LyricsSecondaryProcessor(activity, HTTP, SOUND_PROCESSOR, SOUND_WORKERS,
-                MEANING_WORKERS, handler, GOOGLE_PROCESSING_VERSION);
+                MEANING_WORKERS, AI_WORKERS, handler, GOOGLE_PROCESSING_VERSION);
         this.localReprocessController = new LyricsLocalReprocessController(secondaryProcessor);
         this.ambientController = new LyricsAmbientController(activity, HTTP, config);
         this.settingsDialogController = new LyricsSettingsDialogController(
@@ -345,6 +359,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 () -> cycleTransliterationMode(prefs),
                 () -> {
                     if (renderConfig != null && !renderConfig.translationEnabled) return;
+                    if (shouldGenerateAi(com.eza.spicyex.lyrics.session.LayerKind.MEANING)) {
+                        requestAiLayerWithFeedback(
+                                com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+                    }
                     showTranslation = !showTranslation;
                     prefs.edit().putBoolean(Settings.NATIVE_SPICY_TRANSLATION.key, showTranslation).apply();
                     updateToggleVisuals();
@@ -353,6 +371,30 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 () -> settingsDialogController.show());
         romanToggle = chrome.romanToggle;
         translationToggle = chrome.translationToggle;
+        romanToggle.setOnClickListener(v -> {
+            boolean wasVisible = showRomanization();
+            boolean hasDisplayedSound = hasLayerOutput(
+                    com.eza.spicyex.lyrics.session.LayerKind.SOUND);
+            boolean requestedOutput = shouldGenerateAi(
+                    com.eza.spicyex.lyrics.session.LayerKind.SOUND);
+            if (requestedOutput && !requestAiLayerWithFeedback(
+                    com.eza.spicyex.lyrics.session.LayerKind.SOUND)) {
+                return;
+            }
+            if (transliterationSession.keepVisibleForRequestedOutput(
+                    requestedOutput, wasVisible, hasDisplayedSound)) {
+                return;
+            }
+            cycleTransliterationMode(prefs);
+        });
+        romanToggle.setOnLongClickListener(v -> {
+            openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind.SOUND);
+            return true;
+        });
+        translationToggle.setOnLongClickListener(v -> {
+            openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+            return true;
+        });
         updateToggleVisuals();
 
         title = textFactory.createText(activity, "Waiting for Spotify track…", 18, Color.WHITE, textFactory.resolveTypeface(true));
@@ -372,6 +414,17 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         subtitleLp.topMargin = dp(0);
         contentColumn.addView(subtitle, subtitleLp);
+
+        readingAiFailureStatus = createAiFailureStatus(
+                com.eza.spicyex.lyrics.session.LayerKind.SOUND);
+        translationAiFailureStatus = createAiFailureStatus(
+                com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+        contentColumn.addView(readingAiFailureStatus,
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+        contentColumn.addView(translationAiFailureStatus,
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
 
         lyricsScroll = new ScrollView(activity);
         lyricsScroll.setFillViewport(false);
@@ -750,11 +803,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         ++NativeSpicyLyricsHook.fetchGeneration;
         RomanizationOptions loadOptions = romanizationOptions();
         boolean loadRomanization = showRomanization();
-        LyricsDocumentProcessor.applyProcessedCache(activity.getApplicationContext(), doc,
+        LyricsDocumentProcessor.applyProcessedCachePreservingAi(activity.getApplicationContext(), doc,
                 loadOptions, GOOGLE_PROCESSING_VERSION);
         // The session's Sound artifact already carries span readings and the composer applies them.
         // Only derive here for a document published before the Sound lane produced anything.
-        if (!LyricsDocumentProcessor.hasSpanReadings(doc)) {
+        if (LyricsDocumentProcessor.needsSurfaceLocalRomanization(doc)) {
             populateLocalSegmentRomanization(doc, loadRomanization, loadOptions);
         }
         LyricTimeline.applySyncedRows(doc);
@@ -777,13 +830,17 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 if (LyricsDocumentProcessor.mergeDerivedLayers(mounted, doc)) {
                     LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
                     refreshSecondaryRows("");
-                } else {
-                    updateToggleVisuals();
                 }
+                observeAiRequestFeedback(mounted);
+                // Provenance and failure state can change without changing displayed lyric text.
+                // Refresh controls after every same-base publication so a failed paid request is
+                // never hidden merely because Google/deterministic fallback stayed on screen.
+                updateToggleVisuals();
                 return;
             }
             document = doc;
             loadingTrackId = "";
+            observeAiRequestFeedback(document);
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
             renderDocument(false);
             XposedBridge.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider="
@@ -1234,7 +1291,476 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean translationPending = showTranslation()
                 && translationToggle.getVisibility() == View.VISIBLE
                 && (loading || (document != null && document.translationPending));
-        toggleSpinnerController.update(renderConfig.toggleSpinnerEnabled, romanPending, translationPending);
+        boolean romanAiPending = soundAiFeedback.isPending(
+                document != null && document.readingAiPending)
+                && romanToggle.getVisibility() == View.VISIBLE;
+        boolean translationAiPending = meaningAiFeedback.isPending(
+                document != null && document.translationAiPending)
+                && translationToggle.getVisibility() == View.VISIBLE;
+        toggleSpinnerController.update(renderConfig.toggleSpinnerEnabled, romanPending,
+                translationPending,
+                hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.SOUND)
+                        && showRomanization(),
+                hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING)
+                        && showTranslation(),
+                romanAiPending, translationAiPending);
+    }
+
+    /** Desktop's primary-click policy, applied before the normal visibility toggle. */
+    private boolean shouldGenerateAi(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (document == null || isLayerBusy(layer)) return false;
+        AiSettings settings = aiSettings;
+        if (!settings.generateThenToggle() || !settings.canRequest()) return false;
+        return !hasAiLayerOutput(layer);
+    }
+
+    /** Desktop parity: secondary click opens review when AI output exists, otherwise the composer. */
+    private void openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        String failureToken = aiFailureToken(layer);
+        boolean hasAi = hasAiLayerOutput(layer);
+        com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot monitor =
+                aiRequestMonitor(layer);
+        com.eza.spicyex.lyrics.ai.AiLayerPanelPolicy.Destination destination =
+                com.eza.spicyex.lyrics.ai.AiLayerPanelPolicy.destination(
+                        isLayerBusy(layer), failureToken, hasAi);
+        if (destination == com.eza.spicyex.lyrics.ai.AiLayerPanelPolicy.Destination.RUNNING_STATUS) {
+            showLayerRunningStatus(layer, monitor);
+            return;
+        }
+        if (document == null) return;
+        if (destination == com.eza.spicyex.lyrics.ai.AiLayerPanelPolicy.Destination.FAILURE) {
+            com.eza.spicyex.ui.PanelDialog failed = new com.eza.spicyex.ui.PanelDialog(activity,
+                    aiLayerLabel(layer));
+            failed.paragraph(aiFailureInlineText(layer, failureToken));
+            appendAttemptMonitor(failed, monitor.current,
+                    uiText("lyrics_ai_failed_attempt_payload", "Failed attempt payload"));
+            appendAttemptMonitor(failed, monitor.previousFailure,
+                    uiText("lyrics_ai_previous_failed_attempt", "Previous failed attempt"));
+            if (hasAi) failed.paragraph(reviewText(layer));
+            failed.primary("delivery_unknown".equals(failureToken)
+                            ? uiText("lyrics_ai_retry_anyway", "Retry anyway")
+                            : uiText("lyrics_ai_retry", "Retry"),
+                    () -> requestAiRetry(layer, failureToken));
+            failed.secondary(hasAi ? restoreBaselineLabel(layer)
+                            : uiText("lyrics_ai_cancel", "Cancel"),
+                    hasAi ? () -> host.restoreLyricsLayer(layer) : null);
+            failed.show();
+            return;
+        }
+        if (destination == com.eza.spicyex.lyrics.ai.AiLayerPanelPolicy.Destination.REVIEW) {
+            com.eza.spicyex.ui.PanelDialog review = new com.eza.spicyex.ui.PanelDialog(activity,
+                    aiLayerLabel(layer))
+                    .closeIcon(uiText("lyrics_ai_close", "Close"));
+            review.paragraph(reviewText(layer));
+            appendAttemptMonitor(review, monitor.previousFailure,
+                    uiText("lyrics_ai_previous_failed_attempt", "Previous failed attempt"));
+            review.primary(uiText("lyrics_ai_refine_again", "Refine again…"),
+                    () -> openAiComposer(layer));
+            review.secondary(restoreBaselineLabel(layer),
+                    () -> host.restoreLyricsLayer(layer));
+            review.show();
+            return;
+        }
+        openAiComposer(layer);
+    }
+
+    private boolean isLayerBusy(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (!loadingTrackId.isEmpty()) return true;
+        if (layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND) {
+            return localReprocessController.isProcessing()
+                    || document != null && document.romanizationPending;
+        }
+        return document != null && document.translationPending;
+    }
+
+    private void showLayerRunningStatus(com.eza.spicyex.lyrics.session.LayerKind layer,
+                                        com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot initial) {
+        boolean aiRunning = document != null && (layer
+                == com.eza.spicyex.lyrics.session.LayerKind.SOUND
+                ? document.readingAiPending : document.translationAiPending);
+        String message;
+        if (aiRunning) {
+            message = layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND
+                    ? uiText("lyrics_ai_pronunciation_running",
+                    "AI pronunciation request is running for this song.")
+                    : uiText("lyrics_ai_translation_running",
+                    "AI translation request is running for this song.");
+        } else if (!loadingTrackId.isEmpty()) {
+            message = uiText("lyrics_ai_song_loading",
+                    "Lyrics for the current song are loading. AI controls will be available when ready.");
+        } else {
+            message = layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND
+                    ? uiText("lyrics_ai_pronunciation_processing",
+                    "Pronunciation is still processing for this song.")
+                    : uiText("lyrics_ai_translation_processing",
+                    "Translation is still processing for this song.");
+        }
+        final com.eza.spicyex.ui.PanelDialog status = new com.eza.spicyex.ui.PanelDialog(activity,
+                uiText("lyrics_ai_current_status", "Current status"));
+        status.paragraph(message);
+        final android.widget.TextView payload = aiRunning ? status.readOnlyBlock(
+                monitorText(initial == null ? null : initial.current)) : null;
+        appendAttemptMonitor(status, initial == null ? null : initial.previousFailure,
+                uiText("lyrics_ai_previous_failed_attempt", "Previous failed attempt"));
+        final Runnable[] refresh = new Runnable[1];
+        refresh[0] = () -> {
+            if (payload == null) return;
+            com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot latest =
+                    aiRequestMonitor(layer);
+            payload.setText(monitorText(latest.current));
+            if (status.isShowing() && isLayerBusy(layer)) {
+                handler.postDelayed(refresh[0], 250L);
+            }
+        };
+        status.onDismiss(() -> handler.removeCallbacks(refresh[0]));
+        status.secondary(uiText("lyrics_ai_close", "Close"), null);
+        status.show();
+        handler.post(refresh[0]);
+    }
+
+    private com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot aiRequestMonitor(
+            com.eza.spicyex.lyrics.session.LayerKind layer) {
+        String digest = document == null ? ""
+                : LyricsDocumentProcessor.canonicalBaseOf(document).digest;
+        return com.eza.spicyex.lyrics.ai.AiRequestLiveState.snapshot(layer, digest);
+    }
+
+    private String monitorText(com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt attempt) {
+        if (attempt == null || !attempt.hasPayload()) {
+            return uiText("lyrics_ai_preparing_payload", "Preparing request payload…");
+        }
+        return attempt.payload;
+    }
+
+    private void appendAttemptMonitor(com.eza.spicyex.ui.PanelDialog dialog,
+                                      com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt attempt,
+                                      String heading) {
+        if (dialog == null || attempt == null || !attempt.isFailure()) return;
+        StringBuilder summary = new StringBuilder(heading);
+        if (!attempt.failureToken.isEmpty()) summary.append(" · ").append(attempt.failureToken);
+        if (attempt.httpStatus > 0) summary.append(" · HTTP ").append(attempt.httpStatus);
+        if (!attempt.failureDetail.isEmpty()) summary.append(" · ").append(attempt.failureDetail);
+        dialog.paragraph(summary.toString());
+        if (attempt.hasPayload()) dialog.readOnlyBlock(attempt.payload);
+    }
+
+    private void openAiComposer(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        com.eza.spicyex.lyrics.ai.AiSettings settings =
+                new com.eza.spicyex.lyrics.ai.AiSettings(activity);
+        if (!settings.canRequest()) return;
+        com.eza.spicyex.ui.PanelDialog composer = new com.eza.spicyex.ui.PanelDialog(activity,
+                aiLayerLabel(layer)).closeIcon(uiText("lyrics_ai_close", "Close"));
+        composer.paragraph(layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                ? uiText("lyrics_ai_translation_prompt_help",
+                "Choose a preset or edit a custom prompt describing what the model should preserve, fix, or emphasize.")
+                : uiText("lyrics_ai_pronunciation_prompt_help",
+                "Choose a preset or edit a custom prompt for pronunciation, dialect, spelling, or mixed-language guidance."));
+
+        String activePrompt = settings.instructions(layer);
+        String matchingPreset = com.eza.spicyex.lyrics.ai.AiPresets.matchingName(layer, activePrompt);
+        String customPrompt = settings.customInstructions(layer);
+        if (customPrompt.isEmpty() && matchingPreset == null && !activePrompt.isEmpty()) {
+            customPrompt = activePrompt;
+        }
+        String[] presets = com.eza.spicyex.lyrics.ai.AiPresets.names(layer);
+        final String customLabel = uiText("lyrics_ai_custom_prompt", "Custom");
+        final String[] selected = new String[]{matchingPreset != null
+                ? matchingPreset : (!customPrompt.isEmpty() ? customLabel : presets[0])};
+        final String[] savedCustom = new String[]{customPrompt};
+        final android.widget.EditText[] field = new android.widget.EditText[1];
+        final android.widget.TextView[] selectedView = new android.widget.TextView[1];
+        final android.view.View[] editAction = new android.view.View[1];
+        final android.view.View[] saveAction = new android.view.View[1];
+
+        selectedView[0] = composer.selector(
+                uiText("lyrics_ai_prompt_preset", "Prompt preset"), selected[0],
+                uiText("lyrics_ai_choose_prompt_preset", "Choose prompt preset"),
+                () -> showAiPresetPicker(composer.selectorAnchor(selectedView[0]),
+                        layer, selected[0], customLabel, picked -> {
+                    selected[0] = picked;
+                    selectedView[0].setText(picked);
+                    boolean custom = customLabel.equals(picked);
+                    if (custom) field[0].setText(savedCustom[0]);
+                    field[0].setVisibility(custom ? VISIBLE : GONE);
+                    editAction[0].setVisibility(custom ? GONE : VISIBLE);
+                    saveAction[0].setVisibility(custom ? VISIBLE : GONE);
+                }));
+        field[0] = composer.multilineField(savedCustom[0]);
+        editAction[0] = composer.selectorAction(selectedView[0],
+                com.eza.spicyex.ui.ActionIconDrawable.Kind.EDIT,
+                uiText("lyrics_ai_edit_prompt", "Edit prompt"), () -> {
+                    String base = customLabel.equals(selected[0])
+                            ? savedCustom[0]
+                            : com.eza.spicyex.lyrics.ai.AiPresets.instructions(layer, selected[0]);
+                    selected[0] = customLabel;
+                    selectedView[0].setText(customLabel);
+                    field[0].setText(base);
+                    field[0].setVisibility(VISIBLE);
+                    editAction[0].setVisibility(GONE);
+                    saveAction[0].setVisibility(VISIBLE);
+                    field[0].requestFocus();
+                });
+        saveAction[0] = composer.selectorAction(selectedView[0],
+                com.eza.spicyex.ui.ActionIconDrawable.Kind.SAVE,
+                uiText("lyrics_ai_save_custom_prompt", "Save custom prompt"), () -> {
+                    savedCustom[0] = field[0].getText().toString();
+                    settings.setCustomInstructions(layer, savedCustom[0]);
+                    settings.setInstructions(layer, savedCustom[0]);
+                    android.widget.Toast.makeText(activity,
+                            uiText("lyrics_ai_custom_prompt_saved", "Custom prompt saved"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
+        boolean customSelected = customLabel.equals(selected[0]);
+        field[0].setVisibility(customSelected ? VISIBLE : GONE);
+        editAction[0].setVisibility(customSelected ? GONE : VISIBLE);
+        saveAction[0].setVisibility(customSelected ? VISIBLE : GONE);
+
+        final com.eza.spicyex.ui.PanelDialog.CheckChoice refineGoogle =
+                layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                        ? composer.checkbox(uiText("lyrics_ai_refine_google",
+                        "Use Google translation as AI draft"),
+                        settings.meaningUsesGoogleBaseline())
+                        : null;
+
+        composer.primary(uiText("lyrics_ai_run", "Run AI"), () -> {
+            String prompt;
+            if (customLabel.equals(selected[0])) {
+                prompt = field[0].getText().toString();
+                settings.setCustomInstructions(layer, prompt);
+            } else {
+                prompt = com.eza.spicyex.lyrics.ai.AiPresets.instructions(layer, selected[0]);
+            }
+            settings.setInstructions(layer, prompt);
+            if (refineGoogle != null) {
+                settings.setMeaningUsesGoogleBaseline(refineGoogle.isChecked());
+            }
+            requestAiLayerWithFeedback(layer);
+        });
+        composer.show();
+    }
+
+    private void showAiPresetPicker(android.view.View anchor,
+                                    com.eza.spicyex.lyrics.session.LayerKind layer,
+                                    String selected, String customLabel,
+                                    java.util.function.Consumer<String> onPick) {
+        java.util.List<String> choices = new java.util.ArrayList<>();
+        java.util.Collections.addAll(choices,
+                com.eza.spicyex.lyrics.ai.AiPresets.names(layer));
+        choices.add(customLabel);
+        com.eza.spicyex.ui.PanelPickerPopup.show(activity, anchor, choices, selected, onPick);
+    }
+
+    private TextView createAiFailureStatus(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        TextView view = textFactory.createText(activity, "", 12,
+                Color.rgb(255, 183, 77), textFactory.resolveTypeface(true));
+        view.setGravity(Gravity.CENTER);
+        view.setMaxLines(3);
+        view.setPadding(dp(16), dp(4), dp(16), dp(4));
+        view.setVisibility(GONE);
+        view.setOnClickListener(v -> requestAiRetry(layer, aiFailureToken(layer)));
+        return view;
+    }
+
+    private void updateAiFailureStatus() {
+        // The first visual refresh happens before the header text views are constructed.
+        if (readingAiFailureStatus == null || translationAiFailureStatus == null) return;
+        updateAiFailureStatus(readingAiFailureStatus,
+                com.eza.spicyex.lyrics.session.LayerKind.SOUND);
+        updateAiFailureStatus(translationAiFailureStatus,
+                com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+    }
+
+    private void updateAiFailureStatus(TextView view,
+                                       com.eza.spicyex.lyrics.session.LayerKind layer) {
+        String token = aiFailureToken(layer);
+        if (token.isEmpty()) {
+            view.setVisibility(GONE);
+            view.setText("");
+            return;
+        }
+        view.setText(aiFailureInlineText(layer, token));
+        view.setVisibility(VISIBLE);
+    }
+
+    private String aiFailureToken(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (document == null) return "";
+        return safe(layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                ? document.translationAiFailureToken : document.readingAiFailureToken);
+    }
+
+    private String aiLayerLabel(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        return layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                ? uiText("lyrics_ai_translation", "AI translation")
+                : uiText("lyrics_ai_pronunciation", "AI pronunciation");
+    }
+
+    /** An AI authority flag without any displayed row is stale state, not accepted output. */
+    private boolean hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        boolean marked = layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                ? document != null && document.translationFromAi
+                : document != null && document.readingFromAi;
+        return marked && hasLayerOutput(layer);
+    }
+
+    private boolean hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        return layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                ? LyricsDocumentProcessor.hasDisplayedMeaning(document)
+                : LyricsDocumentProcessor.hasDisplayedSound(document);
+    }
+
+    private String aiFailureInlineText(com.eza.spicyex.lyrics.session.LayerKind layer,
+                                       String token) {
+        String label = aiLayerLabel(layer);
+        if ("delivery_unknown".equals(token)) {
+            return uiFormat("lyrics_ai_delivery_unknown_inline",
+                    "%1$s status unknown. The request may have been billed. Tap to review.", label);
+        }
+        return uiFormat("lyrics_ai_failure_inline", "%1$s failed: %2$s. Tap to retry.",
+                label, aiFailureReason(token));
+    }
+
+    private String aiFailureReason(String token) {
+        switch (safe(token)) {
+            case "no_credential": return uiText("lyrics_ai_failure_no_credential", "No API key");
+            case "baseline_unavailable": return uiText("lyrics_ai_failure_baseline", "Baseline unavailable");
+            case "model_unavailable": return uiText("lyrics_ai_failure_model", "Model unavailable");
+            case "auth_rejected": return uiText("lyrics_ai_failure_auth", "API key rejected");
+            case "quota_exhausted": return uiText("lyrics_ai_failure_quota", "Quota exhausted");
+            case "rate_limited": return uiText("lyrics_ai_failure_rate_limit", "Rate limited");
+            case "protocol_invalid": return uiText("lyrics_ai_failure_protocol", "Invalid provider response");
+            case "request_rejected": return uiText("lyrics_ai_failure_request", "Request rejected");
+            case "provider_refused": return uiText("lyrics_ai_failure_refused", "Provider refused the request");
+            case "truncated": return uiText("lyrics_ai_failure_truncated", "Response truncated");
+            case "oversized": return uiText("lyrics_ai_failure_oversized", "Lyrics or response too large");
+            case "runtime_unavailable": return uiText("lyrics_ai_failure_runtime", "AI runtime unavailable");
+            default: return uiText("lyrics_ai_failure_generic", "Provider unavailable");
+        }
+    }
+
+    private void requestAiRetry(com.eza.spicyex.lyrics.session.LayerKind layer, String token) {
+        if (!"delivery_unknown".equals(token)) {
+            requestAiLayerWithFeedback(layer);
+            return;
+        }
+        com.eza.spicyex.ui.PanelDialog warning = new com.eza.spicyex.ui.PanelDialog(activity,
+                uiText("lyrics_ai_retry_warning_title", "Retry may duplicate a billed request"));
+        warning.paragraph(uiText("lyrics_ai_retry_warning",
+                "The previous request did not confirm delivery. It may already have been billed. Retry only if you accept that risk."));
+        warning.primary(uiText("lyrics_ai_retry_anyway", "Retry anyway"),
+                () -> requestAiLayerWithFeedback(layer));
+        warning.secondary(uiText("lyrics_ai_cancel", "Cancel"), null);
+        warning.show();
+    }
+
+    private boolean requestAiLayerWithFeedback(
+            com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND
+                && !showRomanization()) {
+            transliterationSession.setShowRomanization(true);
+            preferences.edit()
+                    .putBoolean(Settings.NATIVE_SPICY_ROMANIZATION.key, true)
+                    .apply();
+            refreshSecondaryRows("");
+        }
+        boolean started = host.requestAiLyricsLayer(layer);
+        String label = aiLayerLabel(layer);
+        if (!started) {
+            android.widget.Toast.makeText(activity,
+                    uiFormat("lyrics_ai_request_not_started",
+                            "%1$s request did not start. Lyrics or AI configuration may not be ready.",
+                            label), android.widget.Toast.LENGTH_LONG).show();
+            updateToggleVisuals();
+            return false;
+        }
+        aiFeedback(layer).started();
+        updateToggleVisuals();
+        android.widget.Toast.makeText(activity,
+                layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND
+                        ? uiText("lyrics_ai_pronunciation_running",
+                        "AI pronunciation request is running for this song.")
+                        : uiText("lyrics_ai_translation_running",
+                        "AI translation request is running for this song."),
+                android.widget.Toast.LENGTH_SHORT).show();
+        return true;
+    }
+
+    private com.eza.spicyex.lyrics.ai.AiRequestFeedbackState aiFeedback(
+            com.eza.spicyex.lyrics.session.LayerKind layer) {
+        return layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND
+                ? soundAiFeedback : meaningAiFeedback;
+    }
+
+    private void observeAiRequestFeedback(LyricsDocument value) {
+        if (value == null) return;
+        observeAiRequestFeedback(
+                com.eza.spicyex.lyrics.session.LayerKind.SOUND,
+                value.readingAiPending,
+                value.readingFromAi && LyricsDocumentProcessor.hasDisplayedSound(value),
+                safe(value.readingAiFailureToken));
+        observeAiRequestFeedback(
+                com.eza.spicyex.lyrics.session.LayerKind.MEANING,
+                value.translationAiPending,
+                value.translationFromAi && LyricsDocumentProcessor.hasDisplayedMeaning(value),
+                safe(value.translationAiFailureToken));
+    }
+
+    private void observeAiRequestFeedback(
+            com.eza.spicyex.lyrics.session.LayerKind layer,
+            boolean pending,
+            boolean hasAiOutput,
+            String failureToken) {
+        com.eza.spicyex.lyrics.ai.AiRequestFeedbackState.Outcome outcome =
+                aiFeedback(layer).observe(pending, hasAiOutput, failureToken);
+        if (outcome == com.eza.spicyex.lyrics.ai.AiRequestFeedbackState.Outcome.FAILED) {
+            android.widget.Toast.makeText(activity,
+                    aiFailureInlineText(layer, failureToken),
+                    android.widget.Toast.LENGTH_LONG).show();
+        } else if (outcome
+                == com.eza.spicyex.lyrics.ai.AiRequestFeedbackState.Outcome.NO_OUTPUT) {
+            android.widget.Toast.makeText(activity,
+                    uiFormat("lyrics_ai_request_no_output",
+                            "%1$s finished without usable output. Tap for status or retry.",
+                            aiLayerLabel(layer)),
+                    android.widget.Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String uiText(String name, String fallback) {
+        return uiStrings.get(name, fallback);
+    }
+
+    private String uiFormat(String name, String fallback, Object... args) {
+        return uiStrings.format(name, fallback, args);
+    }
+
+    private String restoreBaselineLabel(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                && document != null && document.translationAiRefinedFromGoogle) {
+            return uiText("lyrics_ai_restore_google", "Restore Google Translate");
+        }
+        return uiText("lyrics_ai_restore_baseline", "Restore baseline");
+    }
+
+    private String reviewText(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (document == null || document.lines == null) return "";
+        StringBuilder text = new StringBuilder();
+        if (layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING) {
+            text.append(document.translationAiRefinedFromGoogle
+                    ? uiText("lyrics_ai_refined_google",
+                    "AI refined the Google Translate version.")
+                    : uiText("lyrics_ai_from_source",
+                    "AI translated from the original lyrics.")).append("\n\n");
+        }
+        for (com.eza.spicyex.lyrics.LyricsLine line : document.lines) {
+            if (line == null || line.text == null || line.text.trim().isEmpty()) continue;
+            String output = layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                    ? line.translatedText
+                    : line.readingRenderPlan != null
+                    ? line.readingRenderPlan.joinedDisplayText : line.romanizedText;
+            if (output == null || output.trim().isEmpty()) continue;
+            text.append(line.text).append("\n→ ").append(output).append("\n\n");
+        }
+        return text.toString().trim();
     }
 
     @Override
@@ -1414,33 +1940,36 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return false;
     }
 
-    // Off  -> neutral "A" (chip rendered in the dim/disabled state by styleIconChip).
-    // On   -> the glyph for whatever script is on screen (あ / 拼·粤 / 가 / Я / Ω), shown in the
-    //         bright "enabled" state. Prefers the active line's script, falling back to the
-    //         document's dominant present script.
+    // Preserve script detection in the reading chip: あ / 拼·粤 / 한 / Я / Ω.
     private void updateRomanizationGlyph() {
-        romanGlyph.setGlowing(showRomanization());
+        romanGlyph.setGlowing(showRomanization()
+                && hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.SOUND));
         if (!showRomanization()) {
             romanGlyph.setGlyph("A");
             return;
         }
         String source = "";
-        if (document != null && followState.activeIndex() >= 0 && followState.activeIndex() < document.appliedLines.size()) {
+        if (document != null && followState.activeIndex() >= 0
+                && followState.activeIndex() < document.appliedLines.size()) {
             AppliedLine line = document.appliedLines.get(followState.activeIndex());
             if (line != null && !line.dotLine && !isBlank(line.text)) source = line.text;
         }
-        if (isBlank(source) && document != null) source = LyricsDocumentProcessor.collectText(document);
+        if (isBlank(source) && document != null) {
+            source = LyricsDocumentProcessor.collectText(document);
+        }
         romanGlyph.setGlyph(romanizationGlyphFor(source));
     }
 
     private String romanizationGlyphFor(String text) {
         String language = document == null ? "" : document.language;
-        List<SpicyTextDetection.Script> scripts = SpicyTextDetection.detectPresentScripts(text, language, "");
+        List<SpicyTextDetection.Script> scripts =
+                SpicyTextDetection.detectPresentScripts(text, language, "");
         if (!scripts.isEmpty()) {
             switch (scripts.get(0)) {
                 case JAPANESE: return "あ";
                 case CHINESE:
-                    return SpotifyPlusConfig.CHINESE_MODE_JYUTPING.equals(LyricsShellSettings.normalizeChineseMode(chineseMode())) ? "粤" : "拼";
+                    return SpotifyPlusConfig.CHINESE_MODE_JYUTPING.equals(
+                            LyricsShellSettings.normalizeChineseMode(chineseMode())) ? "粤" : "拼";
                 case KOREAN: return "한";
                 case CYRILLIC: return "Я";
                 case GREEK: return "Ω";
@@ -1453,11 +1982,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean jp = documentHasJapanese();
         boolean cn = documentHasChinese();
         boolean romanizable = documentHasRomanizableScript();
-        romanToggle.setVisibility(renderConfig.transliterationEnabled && romanizable ? View.VISIBLE : View.GONE);
+        boolean aiSoundAvailable = aiSettings.soundLayerEnabled() && aiSettings.isConfigured();
+        romanToggle.setVisibility(renderConfig.transliterationEnabled
+                && (romanizable || aiSoundAvailable) ? View.VISIBLE : View.GONE);
         updateRomanizationGlyph();
         romanToggle.setContentDescription(jp ? "Toggle Japanese reading" : cn ? "Toggle Chinese transliteration" : "Toggle transliteration");
-        textFactory.styleIconChip(romanToggle, showRomanization());
+        textFactory.styleIconChip(romanToggle, showRomanization()
+                && hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.SOUND));
         translationToggle.setVisibility(renderConfig.translationEnabled && documentHasTranslationCandidate() ? View.VISIBLE : View.GONE);
-        textFactory.styleIconChip(translationToggle, showTranslation());
+        textFactory.styleIconChip(translationToggle, showTranslation()
+                && hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING));
+        // A new track may settle while the frame scheduler sleeps. Sync authority badges here so
+        // the previous track's AI mark never survives on an empty current layer.
+        updateToggleSpinners();
+        updateAiFailureStatus();
     }
 }

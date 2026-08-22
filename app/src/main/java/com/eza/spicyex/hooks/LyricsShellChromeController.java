@@ -19,6 +19,7 @@ import com.eza.spicyex.R;
 import com.eza.spicyex.lyrics.ChipSpinnerDrawable;
 import com.eza.spicyex.lyrics.GlyphIconDrawable;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
+import com.eza.spicyex.ui.ActionIconDrawable;
 
 /** Builds the fullscreen shell's top chrome row. */
 final class LyricsShellChromeController {
@@ -74,9 +75,11 @@ final class LyricsShellChromeController {
         transLp.leftMargin = dp(landscape ? 6 : 8);
         header.addView(translationToggle, transLp);
 
-        ImageButton settingsButton = createRoundIconButton(activity, R.drawable.ic_spicy_romanization,
+        float density = activity.getResources().getDisplayMetrics().density;
+        int iconColor = Color.rgb(232, 232, 238);
+        ImageButton settingsButton = createRoundIconButton(activity,
+                new ActionIconDrawable(ActionIconDrawable.Kind.SETTINGS, iconColor, density),
                 "Spicy EX settings", chromeButtonDp, landscape ? 11 : 12);
-        settingsButton.setImageDrawable(new GlyphIconDrawable("⚙", android.graphics.Typeface.DEFAULT));
         settingsButton.setOnClickListener(v -> onSettings.run());
         LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(dp(chromeButtonDp), dp(chromeButtonDp));
         settingsLp.leftMargin = dp(landscape ? 6 : 8);

@@ -533,7 +533,7 @@ public final class DiagnosticReportingDialog {
     }
 
     private static SettingsUiStrings strings(Context context, SettingsStore settings) {
-        String language = settings == null ? "system" : settings.get(Settings.UI_LANGUAGE);
+        String language = settings == null ? "en" : settings.get(Settings.UI_LANGUAGE);
         return new SettingsUiStrings(context, language);
     }
 

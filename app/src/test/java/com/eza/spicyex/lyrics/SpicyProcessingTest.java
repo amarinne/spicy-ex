@@ -8,6 +8,16 @@ import static org.junit.Assert.assertTrue;
 
 public class SpicyProcessingTest {
     @Test
+    public void thaiNeedsPreliminaryRomanizationWork() {
+        assertTrue(SpicyProcessing.hasRomanizationWorkQuick("ฉันรักเธอ"));
+
+        LyricsLine line = new LyricsLine();
+        line.text = "ฉันรักเธอ";
+        assertTrue(LyricsLocalRomanizer.shouldGoogleRomanize(true, line));
+        assertFalse(LyricsLocalRomanizer.shouldGoogleRomanize(false, line));
+    }
+
+    @Test
     public void mapsIndicIso3LanguagesToIso2() {
         assertEquals("hi", SpicyProcessing.toIso2("hin"));
         assertEquals("pa", SpicyProcessing.toIso2("pan"));

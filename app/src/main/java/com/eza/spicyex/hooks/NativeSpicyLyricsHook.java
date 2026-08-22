@@ -164,6 +164,16 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     }
 
     @Override
+    public boolean requestAiLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        return lyricsSessionManager.requestAiLayer(layer);
+    }
+
+    @Override
+    public void restoreLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        lyricsSessionManager.restoreLayer(layer);
+    }
+
+    @Override
     public void clearLyricsCache(CacheClearKind kind) {
         lyricsSessionManager.clearCache(kind);
     }

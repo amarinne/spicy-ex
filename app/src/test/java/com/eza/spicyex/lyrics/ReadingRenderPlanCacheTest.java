@@ -45,4 +45,19 @@ public class ReadingRenderPlanCacheTest {
 
         assertFalse(ProcessedLyricsCache.validPlanForLine(line, plan, stale));
     }
+
+    @Test
+    public void cachedPlanRejectsTimedSourceScriptPassthrough() {
+        LyricsLine line = new LyricsLine();
+        line.text = "ก็ไม่รู้";
+        ReadingUnit unit = new ReadingUnit(new TextRange(0, 8), line.text,
+                ReadingUnitKind.PASSTHROUGH, "legacy-0", Collections.singletonList("s0"));
+        RenderPlan plan = new RenderPlan("line", Collections.singletonList(
+                new CanonicalSpanMapping("s0", new TextRange(0, 8))),
+                Collections.singletonList(unit), Collections.singletonList(
+                new TimedReadingUnit("s0", new TextRange(0, 8), line.text, "legacy-0")),
+                line.text, null);
+
+        assertFalse(ProcessedLyricsCache.validPlanForLine(line, plan, null));
+    }
 }

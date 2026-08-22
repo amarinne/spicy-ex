@@ -16,15 +16,24 @@ import java.util.Map;
 public final class SettingsUiStrings {
     private static final String MODULE_PACKAGE = "com.eza.spicyex";
 
+    private final Context hostContext;
     private final Resources moduleResources;
     private final Resources englishResources;
     private final Resources resources;
+    private final String selectedLanguage;
     private final Map<String, Integer> ids = new HashMap<>();
 
     public SettingsUiStrings(Context hostContext, String language) {
-        moduleResources = localizedModuleResources(hostContext, "system");
+        this.hostContext = hostContext;
+        selectedLanguage = resolveLanguage(hostContext, language);
+        moduleResources = localizedModuleResources(hostContext, "en");
         englishResources = localizedModuleResources(hostContext, "en");
-        resources = localizedModuleResources(hostContext, language);
+        resources = localizedModuleResources(hostContext, selectedLanguage);
+    }
+
+    /** Explicit persisted language after migrating the removed legacy "system" mode. */
+    public String selectedLanguage() {
+        return selectedLanguage;
     }
 
     public String appName() {
@@ -43,13 +52,13 @@ public final class SettingsUiStrings {
     }
 
     public String option(Settings.StringSetting setting, String value) {
-        if (setting == Settings.UI_LANGUAGE && !"system".equalsIgnoreCase(value)) {
+        if (setting == Settings.UI_LANGUAGE) {
             String localeName = localeName(value);
             if (!localeName.isEmpty()) return localeName;
         }
         String specific = SettingsUiResourceNames.option(setting == null ? "" : setting.key, value);
         String generic = SettingsUiResourceNames.option(value);
-        String fallback = fallbackOptionLabel(value);
+        String fallback = fallbackOptionLabel(setting, value);
         if (has(specific)) return get(specific, fallback);
         return get(generic, fallback);
     }
@@ -94,12 +103,11 @@ public final class SettingsUiStrings {
 
     public List<String> availableUiLanguages() {
         LinkedHashSet<String> languages = new LinkedHashSet<>();
-        languages.add("system");
         languages.add("en");
         if (moduleResources != null) {
             try {
                 for (String candidate : moduleResources.getAssets().getLocales()) {
-                    Resources localized = localizedResources(moduleResources, candidate);
+                    Resources localized = localizedModuleResources(hostContext, candidate);
                     String code = stringFrom(localized, "settings_locale_code");
                     if (!code.isEmpty() && sameLocale(candidate, code)) languages.add(code);
                 }
@@ -151,18 +159,36 @@ public final class SettingsUiStrings {
     }
 
     private String localeName(String language) {
-        return stringFrom(localizedResources(moduleResources, language), "settings_locale_name");
+        return stringFrom(localizedModuleResources(hostContext, language), "settings_locale_name");
     }
 
-    private static Resources localizedResources(Resources base, String language) {
-        if (base == null || language == null || language.isEmpty()) return base;
-        try {
-            Configuration configuration = new Configuration(base.getConfiguration());
-            configuration.setLocales(new LocaleList(Locale.forLanguageTag(normalizeLocaleTag(language))));
-            return new Resources(base.getAssets(), base.getDisplayMetrics(), configuration);
-        } catch (Throwable ignored) {
-            return base;
+    private static String resolveLanguage(Context hostContext, String storedLanguage) {
+        String requested = normalizeLocaleTag(storedLanguage);
+        if (requested.isEmpty() || "system".equalsIgnoreCase(requested)) {
+            requested = "en";
         }
+        if ("en".equalsIgnoreCase(Locale.forLanguageTag(requested).getLanguage())) return "en";
+
+        Resources base = localizedModuleResources(hostContext, "en");
+        if (base != null) {
+            try {
+                for (String candidate : base.getAssets().getLocales()) {
+                    Resources localized = localizedModuleResources(hostContext, candidate);
+                    String code = stringFrom(localized, "settings_locale_code");
+                    if (!code.isEmpty() && matchesSupportedLocale(requested, code)) return code;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return "en";
+    }
+
+    private static boolean matchesSupportedLocale(String requested, String supported) {
+        Locale left = Locale.forLanguageTag(normalizeLocaleTag(requested));
+        Locale right = Locale.forLanguageTag(normalizeLocaleTag(supported));
+        if (!left.getLanguage().equalsIgnoreCase(right.getLanguage())) return false;
+        return left.getCountry().isEmpty() || right.getCountry().isEmpty()
+                || left.getCountry().equalsIgnoreCase(right.getCountry());
     }
 
     private static String stringFrom(Resources resources, String name) {
@@ -191,10 +217,25 @@ public final class SettingsUiStrings {
         return value == null ? "" : value.replace('_', '-').replace("-r", "-");
     }
 
-    private static String fallbackOptionLabel(String value) {
+    private static String fallbackOptionLabel(Settings.StringSetting setting, String value) {
+        if (setting == Settings.AI_TRANSLATION_MODE) {
+            if ("On demand".equals(value)) return "Manual";
+            if ("Always use AI".equals(value)) return "Automatic";
+        }
+        if (setting == Settings.AI_TRANSLATION_PIPELINE) {
+            if ("AI only".equals(value)) return "Lyrics → AI";
+            if ("Google draft".equals(value)) return "Lyrics + Google draft → AI";
+        }
+        if (setting == Settings.AI_PRONUNCIATION_MODE) {
+            if ("On demand".equals(value)) return "Manual";
+            if ("Always use AI".equals(value)) return "Automatic gap fill";
+        }
+        if (setting == Settings.AI_PRONUNCIATION_SOURCE) {
+            if ("Layered".equals(value)) return "Lyrics + Google reading → AI refinement";
+            if ("AI only".equals(value)) return "Lyrics → AI reading";
+        }
         if (value == null || value.isEmpty()) return "";
         switch (value) {
-            case "system": return "System default";
             case "wordTranslit": return "Word-by-word transliteration";
             case "rrStandard": return "Standard Korean RR";
             case "rrPronunciation": return "Follow pronunciation (RR)";

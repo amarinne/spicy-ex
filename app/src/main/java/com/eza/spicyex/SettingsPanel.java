@@ -15,6 +15,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -22,6 +24,13 @@ import android.widget.TextView;
 import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
+import com.eza.spicyex.lyrics.GlyphIconDrawable;
+import com.eza.spicyex.ui.ActionIconDrawable;
+import com.eza.spicyex.ui.ActionIconDrawable.Kind;
+import com.eza.spicyex.ui.Motion;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Owns settings-panel view construction only.
@@ -37,6 +46,44 @@ public final class SettingsPanel {
     private static final int COL_SECTION = 0xFF8A8A90;
     private static final int COL_ACCENT = 0xFF1ED760;
 
+    private static final String TAG_HEADER_PREFIX = "hdr:";
+    private static final String TAG_CARD_PREFIX = "card:";
+
+    /** Leading icon per collapsible section (artifacts/settings-icon-plan.md §4). */
+    private static final Map<String, Kind> SECTION_ICONS = new HashMap<>();
+
+    static {
+        SECTION_ICONS.put("lyrics", Kind.AUDIO_LINES);
+        SECTION_ICONS.put("transliteration", Kind.BOOK_OPEN_TEXT);
+        SECTION_ICONS.put("translation", Kind.LANGUAGES);
+        SECTION_ICONS.put("now_playing", Kind.DISC_3);
+        SECTION_ICONS.put("lyrics_screen", Kind.FULLSCREEN);
+        SECTION_ICONS.put("ai", Kind.SPARKLES);
+        SECTION_ICONS.put("debug", Kind.ACTIVITY);
+    }
+
+    /** Recommended-tier leading icons per setting row; absent keys stay text-only. */
+    private static final Map<String, Object> ROW_LEADS = new HashMap<>();
+
+    static {
+        ROW_LEADS.put("settings_ui_language", Kind.GLOBE);
+        ROW_LEADS.put("lyric_sync_offset_ms", Kind.TIMER);
+        ROW_LEADS.put("lyrics_live_card_weight", Kind.BOLD);
+        ROW_LEADS.put("lyrics_weight", Kind.BOLD);
+        ROW_LEADS.put("lyrics_live_card_text_size", Kind.A_LARGE_SMALL);
+        ROW_LEADS.put("lyrics_text_size", Kind.A_LARGE_SMALL);
+        ROW_LEADS.put("line_spacing", Kind.ALIGN_VERTICAL_DISTRIBUTE_CENTER);
+        ROW_LEADS.put("lyrics_font", Kind.TYPE);
+        ROW_LEADS.put("lyric_interlude_icon", Kind.ELLIPSIS);
+        ROW_LEADS.put("lyrics_translation_enabled", Kind.LANGUAGES);
+        ROW_LEADS.put("lyrics_translation_target", Kind.ARROW_RIGHT_LEFT);
+        // Reading rows reuse the translit chip's script glyphs (GlyphIconDrawable).
+        ROW_LEADS.put("lyrics_japanese_reading_mode", "あ");
+        ROW_LEADS.put("lyrics_chinese_mode", "拼");
+        ROW_LEADS.put("lyrics_korean_romanization", "한");
+        ROW_LEADS.put("lyrics_cyrillic_mode", "Я");
+    }
+
     private final Context context;
     private final SettingsStore store;
     private final java.util.function.BooleanSupplier isHalfSize;
@@ -48,6 +95,9 @@ public final class SettingsPanel {
     private LinearLayout sectionsContainer;
     private TextView panelTitle;
     private SettingsUiStrings uiStrings;
+    private AiSettingsRows aiSettingsRows;
+    private android.widget.ScrollView scrollRoot;
+    private ImageView aiBadgeView;
 
     public SettingsPanel(Context context, SettingsStore store, java.util.function.BooleanSupplier isHalfSize,
                          Runnable onToggleSize, Runnable onClose,
@@ -58,19 +108,23 @@ public final class SettingsPanel {
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
         this.onClearCache = onClearCache;
-        this.uiStrings = new SettingsUiStrings(context, store.get(Settings.UI_LANGUAGE));
+        String storedLanguage = store.get(Settings.UI_LANGUAGE);
+        this.uiStrings = new SettingsUiStrings(context, storedLanguage);
+        if (!uiStrings.selectedLanguage().equals(storedLanguage)) {
+            store.put(Settings.UI_LANGUAGE, uiStrings.selectedLanguage());
+        }
     }
 
     /** Builds the card view; the host sizes/centers it. */
     public View build() {
         ScrollView scroll = new ScrollView(context);
-        scroll.setVerticalScrollBarEnabled(false);
-        GradientDrawable cardBg = new GradientDrawable();
+        scroll.setVerticalScrollBarEnabled(false);        GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(COL_CARD);
         cardBg.setCornerRadius(dp(26));
         cardBg.setStroke(dp(1), COL_CARD_BORDER);
         scroll.setBackground(cardBg);
         scroll.setClipToOutline(true);
+        scrollRoot = scroll;
 
         LinearLayout content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -94,16 +148,19 @@ public final class SettingsPanel {
         panelTitle = text(uiStrings.appName(), 26, COL_TITLE, true);
         header.addView(panelTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         if (onToggleSize != null) {
-            // ▴ = shrink to the top-anchored half panel, ▾ = grow back to full.
-            TextView resize = headerButton(sizeGlyph(), null);
-            resize.setOnClickListener(v -> {
+            // Chevrons up/down = collapse toward the top-anchored half panel; down/up = grow.
+            ImageButton resize = headerIconButton(resizeKind(),
+                    uiStrings.get("settings_panel_resize", "Resize settings panel"), v -> {
                 onToggleSize.run();
-                resize.setText(sizeGlyph());
+                ((ImageButton) v).setImageDrawable(
+                        new ActionIconDrawable(resizeKind(), COL_SUMMARY, density()));
             });
             header.addView(resize);
         }
         if (onClose != null) {
-            header.addView(headerButton("✕", v -> onClose.run()));
+            header.addView(headerIconButton(ActionIconDrawable.Kind.CLOSE,
+                    uiStrings.get("settings_panel_close", "Close settings panel"),
+                    v -> onClose.run()));
         }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -111,17 +168,34 @@ public final class SettingsPanel {
         content.addView(header, lp);
     }
 
-    private String sizeGlyph() {
-        return isHalfSize != null && isHalfSize.getAsBoolean() ? "▾" : "▴";
+    private ActionIconDrawable.Kind resizeKind() {
+        return isHalfSize != null && isHalfSize.getAsBoolean()
+                ? ActionIconDrawable.Kind.CHEVRONS_DOWN_UP
+                : ActionIconDrawable.Kind.CHEVRONS_UP_DOWN;
     }
 
-    /** Uniform 36dp centered icon button so header glyphs align regardless of their metrics. */
-    private TextView headerButton(String glyph, View.OnClickListener listener) {
-        TextView button = text(glyph, 18, COL_SUMMARY, false);
-        button.setGravity(Gravity.CENTER);
-        button.setIncludeFontPadding(false);
-        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
-        if (listener != null) button.setOnClickListener(listener);
+    private float density() {
+        return context.getResources().getDisplayMetrics().density;
+    }
+
+    private ImageButton headerIconButton(ActionIconDrawable.Kind icon, String contentDescription,
+                                         View.OnClickListener listener) {
+        ImageButton button = new ImageButton(context);
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        button.setImageDrawable(new ActionIconDrawable(icon, COL_SUMMARY,
+                context.getResources().getDisplayMetrics().density));
+        button.setContentDescription(contentDescription);
+        button.setTooltipText(contentDescription);
+        GradientDrawable circle = new GradientDrawable();
+        circle.setShape(GradientDrawable.OVAL);
+        circle.setColor(0x0DFFFFFF);
+        circle.setStroke(Math.max(1, dp(1)), 0x30FFFFFF);
+        GradientDrawable mask = new GradientDrawable();
+        mask.setShape(GradientDrawable.OVAL);
+        mask.setColor(Color.WHITE);
+        button.setBackground(new RippleDrawable(
+                ColorStateList.valueOf(0x24FFFFFF), circle, mask));
+        button.setOnClickListener(listener);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(36), dp(36));
         lp.leftMargin = dp(4);
         button.setLayoutParams(lp);
@@ -129,6 +203,16 @@ public final class SettingsPanel {
     }
 
     private void renderSections(LinearLayout content) {
+        if (aiAvailable()) aiRows().ensureInitialModelCheck();
+        for (java.util.Map.Entry<Settings.Section, java.util.List<Settings.Setting<?>>> entry
+                : groupVisibleSettings().entrySet()) {
+            renderSectionGroup(content, entry.getKey(), entry.getValue());
+        }
+        renderDebugGroup(content);
+    }
+
+    private java.util.LinkedHashMap<Settings.Section, java.util.List<Settings.Setting<?>>>
+            groupVisibleSettings() {
         java.util.LinkedHashMap<Settings.Section, java.util.List<Settings.Setting<?>>> grouped =
                 new java.util.LinkedHashMap<>();
         for (Settings.Setting<?> setting : Settings.ALL) {
@@ -141,27 +225,45 @@ public final class SettingsPanel {
             }
             items.add(setting);
         }
-        for (java.util.Map.Entry<Settings.Section, java.util.List<Settings.Setting<?>>> entry : grouped.entrySet()) {
-            Settings.Section section = entry.getKey();
-            java.util.List<Settings.Setting<?>> items = entry.getValue();
-            boolean expanded = expandedSections.contains(section.id);
-            sectionHeader(content, section, expanded);
-            if (!expanded) continue;
-            LinearLayout card = sectionCard(content);
-            for (Settings.Setting<?> setting : items) renderSetting(card, setting);
-        }
-        boolean debugExpanded = expandedSections.contains(Settings.DEBUG.id);
-        sectionHeader(content, Settings.DEBUG, debugExpanded);
-        if (debugExpanded) {
-            LinearLayout card = sectionCard(content);
-            renderActions(card);
-            renderStatus(card);
-            renderDiagnostics(card);
-        }
+        return grouped;
+    }
+
+    private void renderSectionGroup(LinearLayout content, Settings.Section section,
+                                    java.util.List<Settings.Setting<?>> items) {
+        appendSectionHeader(content, section, expandedSections.contains(section.id), -1);
+        if (!expandedSections.contains(section.id)) return;
+        // The AI section's remaining rows are not settings: a key that must not persist as it
+        // is typed, and a model list that has to be fetched before it can be offered.
+        appendSectionCard(content, section, items, -1);
+    }
+
+    private void renderDebugGroup(LinearLayout content) {
+        appendSectionHeader(content, Settings.DEBUG, expandedSections.contains(Settings.DEBUG.id), -1);
+        if (!expandedSections.contains(Settings.DEBUG.id)) return;
+        appendDebugCard(content, -1);
+    }
+
+    /** Card for a settings section; AI gets its non-setting rows appended after the settings. */
+    private void appendSectionCard(LinearLayout parent, Settings.Section section,
+                                   java.util.List<Settings.Setting<?>> items, int at) {
+        LinearLayout card = newCard();
+        card.setTag(TAG_CARD_PREFIX + section.id);
+        for (Settings.Setting<?> setting : items) renderSetting(card, setting);
+        if (section == Settings.AI && aiAvailable()) aiRows().render(card);
+        attachCard(parent, card, at);
+    }
+
+    private void appendDebugCard(LinearLayout parent, int at) {
+        LinearLayout card = newCard();
+        card.setTag(TAG_CARD_PREFIX + Settings.DEBUG.id);
+        renderActions(card);
+        renderStatus(card);
+        renderDiagnostics(card);
+        attachCard(parent, card, at);
     }
 
     /** Rounded container that visually groups an expanded section's rows. */
-    private LinearLayout sectionCard(LinearLayout content) {
+    private LinearLayout newCard() {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable bg = new GradientDrawable();
@@ -169,11 +271,79 @@ public final class SettingsPanel {
         bg.setCornerRadius(dp(14));
         card.setBackground(bg);
         card.setPadding(dp(10), dp(2), dp(10), dp(2));
+        return card;
+    }
+
+    private void attachCard(LinearLayout parent, LinearLayout card, int at) {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = dp(4);
-        content.addView(card, lp);
-        return card;
+        if (at < 0 || at >= parent.getChildCount()) parent.addView(card, lp);
+        else parent.addView(card, at, lp);
+    }
+
+    private int indexOfChildByTag(String tag) {
+        for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+            Object t = sectionsContainer.getChildAt(i).getTag();
+            if (tag.equals(t)) return i;
+        }
+        return -1;
+    }
+
+    // --- Anchor-preserving rebuilds ---
+    // scrollY alone orphans the reader's anchor when a section above folds; anchor on the
+    // first header/card boundary visible at viewport top instead.
+
+    private String anchorTag;
+    private int anchorDelta;
+
+    private void captureAnchor() {
+        anchorTag = null;
+        anchorDelta = 0;
+        if (scrollRoot == null || sectionsContainer == null) return;
+        int scrollY = scrollRoot.getScrollY();
+        int bottom = scrollY + Math.max(1, scrollRoot.getHeight());
+        int base = sectionsContainer.getTop();
+        for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+            View child = sectionsContainer.getChildAt(i);
+            if (!(child.getTag() instanceof String)) continue;
+            int absTop = base + child.getTop();
+            if (absTop >= scrollY && absTop < bottom) {
+                anchorTag = (String) child.getTag();
+                anchorDelta = absTop - scrollY;
+                return;
+            }
+        }
+        // Nothing starts inside the viewport: anchor on the last boundary above it.
+        for (int i = sectionsContainer.getChildCount() - 1; i >= 0; i--) {
+            View child = sectionsContainer.getChildAt(i);
+            if (!(child.getTag() instanceof String)) continue;
+            int absTop = base + child.getTop();
+            if (absTop <= scrollY) {
+                anchorTag = (String) child.getTag();
+                anchorDelta = absTop - scrollY; // ≤ 0
+                return;
+            }
+        }
+    }
+
+    private void restoreAnchor() {
+        restoreAnchorAndFallback();
+    }
+
+    private void restoreAnchorAndFallback() {
+        if (scrollRoot == null || sectionsContainer == null || anchorTag == null) return;
+        final String tag = anchorTag;
+        final int delta = anchorDelta;
+        scrollRoot.post(() -> {
+            for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+                View child = sectionsContainer.getChildAt(i);
+                if (!tag.equals(child.getTag())) continue;
+                scrollRoot.scrollTo(0,
+                        Math.max(0, sectionsContainer.getTop() + child.getTop() - delta));
+                return;
+            }
+        });
     }
 
     private void renderSetting(LinearLayout content, Settings.Setting<?> setting) {
@@ -191,11 +361,61 @@ public final class SettingsPanel {
 
     private void rebuildSections() {
         if (sectionsContainer == null) return;
+        captureAnchor();
+        aiBadgeView = null;
         sectionsContainer.removeAllViews();
         renderSections(sectionsContainer);
+        restoreAnchor();
+    }
+
+    /**
+     * Re-renders one section (header + card) in place instead of tearing down the whole panel.
+     * Gating toggles, selector picks and section folds land here; UI_LANGUAGE still takes the
+     * full path because every label changes. Anchor-preserving either way.
+     */
+    private void rebuildSection(Settings.Section target) {
+        if (sectionsContainer == null) return;
+        int headerIdx = indexOfChildByTag(TAG_HEADER_PREFIX + target.id);
+        if (headerIdx < 0) {
+            rebuildSections();
+            return;
+        }
+        captureAnchor();
+        int cardIdx = indexOfChildByTag(TAG_CARD_PREFIX + target.id);
+        boolean expanded = expandedSections.contains(target.id);
+        if (!expanded && (TAG_CARD_PREFIX + target.id).equals(anchorTag)) {
+            retargetAnchorToHeader(target);
+        }
+        // The card sits directly after its header, so one removal shifts the other onto headerIdx.
+        sectionsContainer.removeViewAt(headerIdx);
+        if (cardIdx >= 0) sectionsContainer.removeViewAt(headerIdx);
+        if (target == Settings.AI) aiBadgeView = null;
+        appendSectionHeader(sectionsContainer, target, expanded, headerIdx);
+        if (expanded) {
+            if (target == Settings.DEBUG) {
+                appendDebugCard(sectionsContainer, headerIdx + 1);
+            } else {
+                java.util.List<Settings.Setting<?>> items = groupVisibleSettings().get(target);
+                if (items == null || items.isEmpty()) {
+                    rebuildSections(); // defensive: rendered section without visible settings
+                    return;
+                }
+                appendSectionCard(sectionsContainer, target, items, headerIdx + 1);
+            }
+        }
+        restoreAnchor();
+    }
+
+    private void retargetAnchorToHeader(Settings.Section target) {
+        int headerIdx = indexOfChildByTag(TAG_HEADER_PREFIX + target.id);
+        if (headerIdx < 0 || scrollRoot == null) return;
+        View header = sectionsContainer.getChildAt(headerIdx);
+        anchorTag = TAG_HEADER_PREFIX + target.id;
+        anchorDelta = sectionsContainer.getTop() + header.getTop() - scrollRoot.getScrollY();
     }
 
     private boolean shouldRender(Settings.Setting<?> setting) {
+        if (setting == Settings.AI_ENABLED) return aiAvailable();
         if (setting == Settings.TRANSLATION_TARGET || setting == Settings.TRANSLATION_BRIGHTNESS) {
             return FeatureAvailability.translationAvailable()
                     && store.get(Settings.TRANSLATION_ENABLED);
@@ -233,8 +453,18 @@ public final class SettingsPanel {
         return true;
     }
 
-    private boolean shouldRebuildAfterChange(Settings.Setting<?> setting) {
-        return setting == Settings.UI_LANGUAGE
+    /** UI language rebuilds every label; dependency settings rebuild only their own section. */
+    private void onSettingChanged(Settings.Setting<?> setting) {
+        if (setting == Settings.UI_LANGUAGE) {
+            rebuildSections();
+        } else if (shouldRebuildSectionAfterChange(setting)) {
+            rebuildSection(setting.section);
+        }
+    }
+
+    private static boolean shouldRebuildSectionAfterChange(Settings.Setting<?> setting) {
+        return setting == Settings.AI_ENABLED
+                || setting == Settings.AI_PROVIDER
                 || setting == Settings.TRANSLATION_ENABLED
                 || setting == Settings.TRANSLITERATION_ENABLED
                 || setting == Settings.ENABLE_BACKGROUND
@@ -245,22 +475,71 @@ public final class SettingsPanel {
                 || setting == Settings.LIVE_CARD_TEXT_SIZE;
     }
 
+    /**
+     * Full-only. AI needs no on-device language packages, so nothing stops it running in Lite —
+     * which is exactly the problem: Lite would gain translation while its own capability flag says
+     * it has none. Until that flag is untangled, the family is not offered there.
+     */
+    private static boolean aiAvailable() {
+        return FeatureAvailability.translationAvailable();
+    }
+
     private boolean unavailable(Settings.Setting<?> setting) {
         return (setting == Settings.TRANSLITERATION_ENABLED && !FeatureAvailability.transliterationAvailable())
                 || (setting == Settings.TRANSLATION_ENABLED && !FeatureAvailability.translationAvailable())
                 || (setting == Settings.LYRICS_FONT && !FeatureAvailability.appleFontAvailable());
     }
 
+    // --- Icon helpers ---
+
+    /** Tinted lucide icon view; decorative by default (row text carries the meaning). */
+    private ImageView kindView(Kind kind, int color, int sizeDp) {
+        ImageView view = new ImageView(context);
+        view.setImageDrawable(new ActionIconDrawable(kind, color, density()));
+        int pad = dp(Math.max(2, 22 - sizeDp) / 4);
+        view.setPadding(pad, pad, pad, pad);
+        view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        return view;
+    }
+
+    private LinearLayout.LayoutParams leadParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(26), dp(26));
+        lp.rightMargin = dp(10);
+        return lp;
+    }
+
+    /** Inserts the row's leading icon at index 0 when one is mapped for this setting. */
+    private void applyRowLead(LinearLayout row, String key) {
+        Object lead = ROW_LEADS.get(key);
+        if (lead == null) return;
+        View iconView;
+        if (lead instanceof Kind) {
+            iconView = kindView((Kind) lead, COL_SECTION, 19);
+        } else {
+            ImageView glyph = new ImageView(context);
+            glyph.setImageDrawable(new GlyphIconDrawable(
+                    (String) lead, android.graphics.Typeface.DEFAULT_BOLD));
+            glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            iconView = glyph;
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(30), dp(38));
+        lp.rightMargin = dp(8);
+        row.addView(iconView, 0, lp);
+    }
+
     private void renderActions(LinearLayout content) {
-        actionRow(content, DiagnosticReportingDialog.reportProblemLabel(context, store),
+        actionRow(content, Kind.BUG,
+                DiagnosticReportingDialog.reportProblemLabel(context, store),
                 v -> DiagnosticReportingDialog.show(context, store));
-        actionRow(content, uiStrings.get("settings_action_clear_translation_cache", "Clear translation cache"),
+        actionRow(content, null, uiStrings.get("settings_action_clear_translation_cache", "Clear translation cache"),
                 v -> clearCache(CacheClearKind.TRANSLATION));
-        actionRow(content, uiStrings.get("settings_action_clear_reading_cache", "Clear transliteration cache"),
+        actionRow(content, null, uiStrings.get("settings_action_clear_reading_cache", "Clear transliteration cache"),
                 v -> clearCache(CacheClearKind.TRANSLITERATION));
-        actionRow(content, uiStrings.get("settings_action_clear_lyrics_cache", "Clear lyrics response cache"),
+        actionRow(content, null, uiStrings.get("settings_action_clear_ai_cache", "Clear AI results"),
+                v -> clearCache(CacheClearKind.AI));
+        actionRow(content, null, uiStrings.get("settings_action_clear_lyrics_cache", "Clear lyrics response cache"),
                 v -> clearCache(CacheClearKind.LYRICS_RESPONSE));
-        actionRow(content, uiStrings.get("settings_action_open_github", "Open GitHub"), v -> openGithub());
+        actionRow(content, Kind.EXTERNAL_LINK, uiStrings.get("settings_action_open_github", "Open GitHub"), v -> openGithub());
     }
 
     private void clearCache(CacheClearKind kind) {
@@ -295,31 +574,51 @@ public final class SettingsPanel {
 
     // --- Rows ---
 
-    private void sectionHeader(LinearLayout content, Settings.Section section, boolean expanded) {
+    private LinearLayout buildSectionHeader(Settings.Section section, boolean expanded) {
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight(dp(44));
         row.setPadding(dp(4), dp(8), dp(4), dp(8));
         row.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
+        row.setTag(TAG_HEADER_PREFIX + section.id);
+
+        Kind sectionIcon = SECTION_ICONS.get(section.id);
+        if (sectionIcon != null) {
+            ImageView sectionIconView = kindView(sectionIcon,
+                    section == Settings.AI && store.get(Settings.AI_ENABLED)
+                            ? COL_ACCENT : COL_SECTION, 18);
+            if (section == Settings.AI) aiBadgeView = sectionIconView;
+            row.addView(sectionIconView, leadParams());
+        }
 
         TextView title = text(uiStrings.section(section), 14, COL_TITLE, true);
         title.setAllCaps(true);
         title.setLetterSpacing(0.05f);
         row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView arrow = text(expanded ? "▾" : "▸", 16, COL_SECTION, false);
-        arrow.setGravity(Gravity.CENTER);
-        row.addView(arrow, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        row.addView(kindView(expanded ? Kind.CHEVRON_DOWN : Kind.CHEVRON_RIGHT, COL_SECTION, 16),
+                new LinearLayout.LayoutParams(dp(28), dp(28)));
         row.setOnClickListener(v -> {
-            if (expandedSections.contains(section.id)) expandedSections.remove(section.id);
-            else expandedSections.add(section.id);
-            rebuildSections();
+            boolean nowExpanded = !expandedSections.contains(section.id);
+            if (nowExpanded) expandedSections.add(section.id);
+            else expandedSections.remove(section.id);
+            rebuildSection(section);
         });
+        return row;
+    }
 
+    private void sectionHeader(LinearLayout content, Settings.Section section, boolean expanded) {
+        appendSectionHeader(content, section, expanded, -1);
+    }
+
+    private void appendSectionHeader(LinearLayout parent, Settings.Section section,
+                                     boolean expanded, int at) {
+        View row = buildSectionHeader(section, expanded);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.topMargin = dp(4);
-        content.addView(row, lp);
+        if (at < 0 || at >= parent.getChildCount()) parent.addView(row, lp);
+        else parent.addView(row, at, lp);
     }
 
     private LinearLayout newRow(LinearLayout content) {
@@ -352,6 +651,7 @@ public final class SettingsPanel {
         LinearLayout row = newRow(content);
         boolean unavailable = unavailable(setting);
         titleColumn(row, uiStrings.setting(setting), unavailable ? unavailableSummary() : null);
+        applyRowLead(row, setting.key);
         GlossyToggle toggle = new GlossyToggle(context);
         toggle.setAccent(COL_ACCENT);
         toggle.setChecked(!unavailable && store.get(setting), false);
@@ -361,7 +661,7 @@ public final class SettingsPanel {
         if (!unavailable) {
             toggle.setOnChangeListener(() -> {
                 store.put(setting, toggle.isChecked());
-                if (shouldRebuildAfterChange(setting)) rebuildSections();
+                onSettingChanged(setting);
             });
             row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked(), true));
         }
@@ -377,8 +677,10 @@ public final class SettingsPanel {
         boolean unavailable = unavailable(setting);
         TextView value = titleColumn(row, uiStrings.setting(setting),
                 unavailable ? unavailableSummary() : labelFor(setting, store.get(setting)));
+        applyRowLead(row, setting.key);
         if (!unavailable) value.setTextColor(COL_ACCENT);
-        row.addView(text("›", 22, COL_SECTION, false));
+        row.addView(kindView(Kind.CHEVRON_RIGHT, COL_SECTION, 18),
+                new LinearLayout.LayoutParams(dp(24), dp(30)));
         row.setEnabled(!unavailable);
         if (!unavailable) row.setOnClickListener(v -> showSelectorDialog(setting, values, value));
     }
@@ -391,10 +693,10 @@ public final class SettingsPanel {
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView minus = stepButton("-");
+        View minus = stepButton(false, setting);
         TextView value = text(formatStepper(setting, store.get(setting)), 15, COL_ACCENT, true);
         value.setGravity(Gravity.CENTER);
-        TextView plus = stepButton("+");
+        View plus = stepButton(true, setting);
 
         controls.addView(minus, new LinearLayout.LayoutParams(dp(36), dp(36)));
         LinearLayout.LayoutParams valueLp = new LinearLayout.LayoutParams(dp(74), dp(36));
@@ -410,15 +712,24 @@ public final class SettingsPanel {
         attachStepperTouch(plus, setting, value, setting.stepValue, pending, commit);
     }
 
-    private TextView stepButton(String label) {
-        TextView button = text(label, 20, COL_TITLE, true);
-        button.setGravity(Gravity.CENTER);
+    /** Pill button holding a lucide minus/plus; returns View — touch logic is view-agnostic. */
+    private View stepButton(boolean plus, Settings.IntegerSetting setting) {
+        ImageButton glyph = new ImageButton(context);
+        glyph.setImageDrawable(new ActionIconDrawable(plus ? Kind.PLUS : Kind.MINUS,
+                COL_TITLE, density()));
+        int pad = dp(8);
+        glyph.setPadding(pad, pad, pad, pad);
+        String description = uiStrings.format(
+                plus ? "settings_stepper_increase" : "settings_stepper_decrease",
+                plus ? "Increase %1$s" : "Decrease %1$s", uiStrings.setting(setting));
+        glyph.setContentDescription(description);
+        glyph.setTooltipText(description);
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(0x22FFFFFF);
         bg.setCornerRadius(dp(18));
         bg.setStroke(dp(1), COL_CARD_BORDER);
-        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), bg, null));
-        return button;
+        glyph.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), bg, null));
+        return glyph;
     }
 
     /**
@@ -435,7 +746,7 @@ public final class SettingsPanel {
         valueView.postDelayed(commit, 250L);
     }
 
-    private void attachStepperTouch(TextView button, Settings.IntegerSetting setting, TextView valueView, int delta,
+    private void attachStepperTouch(View button, Settings.IntegerSetting setting, TextView valueView, int delta,
                                     int[] pending, Runnable commit) {
         final int[] repeatCount = new int[]{0};
         final Runnable[] repeat = new Runnable[1];
@@ -445,6 +756,7 @@ public final class SettingsPanel {
             long delayMs = Math.max(45L, 130L - repeatCount[0] * 8L);
             button.postDelayed(repeat[0], delayMs);
         };
+        button.setOnClickListener(v -> adjustStepper(setting, valueView, delta, pending, commit));
         button.setOnTouchListener((v, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
@@ -458,7 +770,7 @@ public final class SettingsPanel {
                     v.postDelayed(repeat[0], 360L);
                     return true;
                 case MotionEvent.ACTION_UP:
-                    v.performClick();
+                    v.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED);
                     // fall through
                 case MotionEvent.ACTION_CANCEL:
                 case MotionEvent.ACTION_OUTSIDE:
@@ -491,13 +803,21 @@ public final class SettingsPanel {
 
         String current = store.get(setting);
         for (final String val : values) {
-            box.addView(selectorOptionRow(setting, val, val.equals(current), valueView, dialog));
+            box.addView(selectorOptionRow(setting, val, val.equals(current), valueView, dialog, box));
         }
 
         ScrollView scroll = new ScrollView(context);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.addView(box);
         dialog.setContentView(scroll);
+        dialog.setOnKeyListener((d, keyCode, event) -> {
+            if (keyCode == android.view.KeyEvent.KEYCODE_BACK
+                    && event.getAction() == android.view.KeyEvent.ACTION_UP) {
+                Motion.exitCardThen(box, dialog::isShowing, dialog::dismiss);
+                return true;
+            }
+            return false;
+        });
 
         Window window = dialog.getWindow();
         if (window != null) {
@@ -508,10 +828,11 @@ public final class SettingsPanel {
             window.setLayout(w, values.size() > 8 ? maxH : ViewGroup.LayoutParams.WRAP_CONTENT);
         }
         dialog.show();
+        Motion.enterCard(box);
     }
 
     private LinearLayout selectorOptionRow(Settings.StringSetting setting, String value, boolean selected,
-                                           TextView valueView, Dialog dialog) {
+                                           TextView valueView, Dialog dialog, LinearLayout card) {
         String unavailableReason = optionUnavailableReason(setting, value);
         boolean unavailable = !unavailableReason.isEmpty();
         LinearLayout optRow = new LinearLayout(context);
@@ -521,9 +842,15 @@ public final class SettingsPanel {
         optRow.setPadding(dp(22), dp(8), dp(22), dp(8));
         optRow.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22FFFFFF), null, new ColorDrawable(0xFFFFFFFF)));
 
-        TextView dot = text(selected ? "●" : "○", 15, selected ? COL_ACCENT : COL_SECTION, false);
-        dot.setPadding(0, 0, dp(16), 0);
-        optRow.addView(dot);
+        ImageView dot = new ImageView(context);
+        dot.setImageDrawable(new ActionIconDrawable(Kind.CIRCLE,
+                selected ? COL_ACCENT : COL_SECTION, density(), selected));
+        dot.setPadding(dp(4), dp(4), dp(4), dp(4));
+        dot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        dot.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(24), dp(24));
+        dotLp.rightMargin = dp(12);
+        optRow.addView(dot, dotLp);
         String optionLabel = labelFor(setting, value);
         if (unavailable) optionLabel = optionLabel + "  · " + unavailableReason;
         TextView label = text(optionLabel, 16, selected ? COL_ACCENT : COL_TITLE, false);
@@ -536,6 +863,8 @@ public final class SettingsPanel {
             optRow.addView(pv);
         }
         optRow.setEnabled(!unavailable);
+        optRow.setSelected(selected);
+        optRow.setFocusable(true);
         optRow.setAlpha(unavailable ? 0.48f : 1f);
         if (!unavailable) {
             optRow.setOnClickListener(v -> {
@@ -545,8 +874,10 @@ public final class SettingsPanel {
                     if (panelTitle != null) panelTitle.setText(uiStrings.appName());
                 }
                 valueView.setText(labelFor(setting, value));
-                dialog.dismiss();
-                if (shouldRebuildAfterChange(setting)) rebuildSections();
+                Motion.exitCardThen(card, dialog::isShowing, () -> {
+                    dialog.dismiss();
+                    onSettingChanged(setting);
+                });
             });
         }
         return optRow;
@@ -591,10 +922,88 @@ public final class SettingsPanel {
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
-    private void actionRow(LinearLayout content, String label, View.OnClickListener listener) {
+    private void actionRow(LinearLayout content, Kind lead, String label, View.OnClickListener listener) {
         LinearLayout row = newRow(content);
+        if (lead != null) row.addView(kindView(lead, COL_ACCENT, 19), leadParams());
         row.addView(text(label, 16, COL_ACCENT, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         row.setOnClickListener(listener);
+    }
+
+    /** Adapter giving the AI rows the panel's own row vocabulary, so they look like every other row. */
+    private AiSettingsRows aiRows() {
+        if (aiSettingsRows != null) return aiSettingsRows;
+        aiSettingsRows = new AiSettingsRows(context, new AiSettingsRows.Host() {
+            @Override public void info(LinearLayout content, String label, String value) {
+                infoRow(content, label, value);
+            }
+
+            @Override public void field(LinearLayout content, String label, String value,
+                                        View.OnClickListener listener,
+                                        AiSettingsRows.IconAction... actions) {
+                aiFieldRow(content, label, value, false, listener, actions);
+            }
+
+            @Override public void selector(LinearLayout content, String label, String value,
+                                           View.OnClickListener listener,
+                                           AiSettingsRows.IconAction... actions) {
+                aiFieldRow(content, label, value, true, listener, actions);
+            }
+
+            @Override public void rebuild() {
+                rebuildSection(Settings.AI);
+            }
+
+            @Override public void updateAiBadge(boolean live) {
+                if (aiBadgeView == null) {
+                    rebuildSection(Settings.AI);
+                    return;
+                }
+                aiBadgeView.setImageDrawable(new ActionIconDrawable(Kind.SPARKLES,
+                        store.get(Settings.AI_ENABLED) ? COL_ACCENT : COL_SECTION, density()));
+            }
+
+            @Override public String string(String name, String fallback) {
+                return uiStrings.get(name, fallback);
+            }
+        }, store);
+        return aiSettingsRows;
+    }
+
+    private void aiFieldRow(LinearLayout content, String label, String value, boolean selector,
+                            View.OnClickListener listener, AiSettingsRows.IconAction... actions) {
+        LinearLayout row = newRow(content);
+        TextView summary = titleColumn(row, label, value);
+        summary.setTextColor(COL_ACCENT);
+        if (actions != null) {
+            for (AiSettingsRows.IconAction action : actions) {
+                if (action == null) continue;
+                row.addView(aiIconButton(action));
+            }
+        }
+        if (selector) {
+            ImageView arrow = new ImageView(context);
+            arrow.setPadding(dp(6), dp(6), dp(6), dp(6));
+            arrow.setImageDrawable(new ActionIconDrawable(ActionIconDrawable.Kind.CHEVRON_RIGHT,
+                    COL_SECTION, context.getResources().getDisplayMetrics().density));
+            row.addView(arrow, new LinearLayout.LayoutParams(dp(28), dp(36)));
+        }
+        row.setOnClickListener(listener);
+    }
+
+    private ImageButton aiIconButton(AiSettingsRows.IconAction action) {
+        ImageButton button = new ImageButton(context);
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        button.setImageDrawable(new ActionIconDrawable(action.icon, COL_TITLE,
+                context.getResources().getDisplayMetrics().density));
+        button.setContentDescription(action.contentDescription);
+        button.setTooltipText(action.contentDescription);
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null,
+                new ColorDrawable(0xFFFFFFFF)));
+        button.setOnClickListener(action.listener);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(36), dp(36));
+        lp.leftMargin = dp(2);
+        button.setLayoutParams(lp);
+        return button;
     }
 
     private void infoRow(LinearLayout content, String label, String value) {
