@@ -13,6 +13,12 @@ import static org.junit.Assert.assertTrue;
 
 public class DiagnosticReportContractTest {
     @Test
+    public void aiFeaturesIsAFirstClassReportCategory() {
+        assertTrue(DiagnosticReportContract.validCategory("ai_features"));
+        assertFalse(DiagnosticReportContract.validCategory("ai"));
+    }
+
+    @Test
     public void reportIdUsesCrockfordEncodingOf128Bits() {
         byte[] bytes = new byte[16];
         bytes[15] = 1;
@@ -92,7 +98,8 @@ public class DiagnosticReportContractTest {
         root.addProperty("envelopeVersion", 1);
         root.addProperty("reportId", "R1-00000000000000000000000002");
         root.addProperty("product", "spicy_ex");
-        root.addProperty("productReportVersion", 2);
+        root.addProperty("productReportVersion",
+                DiagnosticReportContract.PRODUCT_REPORT_VERSION);
         root.addProperty("createdAtUtc", "2026-08-02T00:00:00Z");
         root.addProperty("category", "timing");
         root.addProperty("description", "Timing is late.");

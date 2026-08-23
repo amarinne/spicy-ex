@@ -11,6 +11,18 @@ import java.util.Arrays;
 
 public class LyricCachesTest {
     @Test
+    public void localWholeLineAuthorityBumpsTheReadingCacheIdentity() {
+        assertEquals(4, ProcessedLyricsCache.READING_SCHEMA_VERSION);
+        String options = RomanizationOptions.DEFAULTS.cacheKey();
+        String old = LayerConfigIds.sound(true, options, "ru", 3);
+        String current = LayerConfigIds.sound(true, options, "ru",
+                ProcessedLyricsCache.READING_SCHEMA_VERSION);
+
+        assertFalse("v3 line-fallback plans must not survive as current local coverage",
+                old.equals(current));
+    }
+
+    @Test
     public void cacheKeysNormalizeUnknownLanguageToAuto() {
         assertEquals("auto", LyricCaches.sourceLanguageForCache(null));
         assertEquals("auto", LyricCaches.sourceLanguageForCache("unknown"));
@@ -23,7 +35,7 @@ public class LyricCachesTest {
         String sound = LyricCaches.soundArtifactKey("digest-a",
                 LayerConfigIds.sound(true, RomanizationOptions.DEFAULTS.cacheKey(), "ja", 3));
         String meaning = LyricCaches.meaningArtifactKey("digest-a",
-                LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto"));
+                LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto", "google_draft"));
 
         assertTrue(sound.contains("digest-a"));
         assertTrue(meaning.contains("digest-a"));
@@ -74,9 +86,9 @@ public class LyricCachesTest {
     @Test
     public void translationTargetChangeLeavesTheSoundKeyIntact() {
         String english = LyricCaches.meaningArtifactKey("digest-a",
-                LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto"));
+                LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto", "google_draft"));
         String spanish = LyricCaches.meaningArtifactKey("digest-a",
-                LayerConfigIds.meaning(true, "google_unofficial", "es", "auto", "auto"));
+                LayerConfigIds.meaning(true, "google_unofficial", "es", "auto", "auto", "google_draft"));
 
         String soundConfig = LayerConfigIds.sound(true, RomanizationOptions.DEFAULTS.cacheKey(), "hin", 3);
         assertTrue(!english.equals(spanish));
@@ -86,9 +98,9 @@ public class LyricCachesTest {
 
     @Test
     public void meaningKeyTracksBackendTargetAndSourceModeOnly() {
-        String autoGoogle = LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto");
-        String manualGoogle = LayerConfigIds.meaning(true, "google_unofficial", "en", "manual", "hi");
-        String disabled = LayerConfigIds.meaning(false, "disabled", "en", "auto", "auto");
+        String autoGoogle = LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto", "google_draft");
+        String manualGoogle = LayerConfigIds.meaning(true, "google_unofficial", "en", "manual", "hi", "google_draft");
+        String disabled = LayerConfigIds.meaning(false, "disabled", "en", "auto", "auto", "google_draft");
 
         assertTrue(!autoGoogle.equals(manualGoogle));
         assertTrue(!autoGoogle.equals(disabled));

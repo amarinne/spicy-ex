@@ -4,7 +4,7 @@ import com.eza.spicyex.lyrics.session.LayerKind;
 
 import java.util.EnumMap;
 
-/** Process-local monitor data for the current and previous failed paid attempt per layer. */
+/** Process-local monitor data for recent paid attempts per layer. */
 public final class AiRequestLiveState {
     public enum Phase { NONE, PREPARING, RUNNING, COMPLETE, FAILED, CANCELLED }
 
@@ -38,10 +38,16 @@ public final class AiRequestLiveState {
 
         public final Attempt current;
         public final Attempt previousFailure;
+        public final Attempt lastSettled;
 
         private Snapshot(Attempt current, Attempt previousFailure) {
+            this(current, previousFailure, AttemptEmpty.VALUE);
+        }
+
+        private Snapshot(Attempt current, Attempt previousFailure, Attempt lastSettled) {
             this.current = current == null ? AttemptEmpty.VALUE : current;
             this.previousFailure = previousFailure == null ? AttemptEmpty.VALUE : previousFailure;
+            this.lastSettled = lastSettled == null ? AttemptEmpty.VALUE : lastSettled;
         }
     }
 
@@ -50,6 +56,7 @@ public final class AiRequestLiveState {
         String runId = "";
         Attempt current = AttemptEmpty.VALUE;
         Attempt previousFailure = AttemptEmpty.VALUE;
+        Attempt lastSettled = AttemptEmpty.VALUE;
     }
 
     private static final class AttemptEmpty {
@@ -88,18 +95,21 @@ public final class AiRequestLiveState {
         Entry entry = matching(layer, canonicalDigest, runId);
         if (entry == null) return;
         entry.current = new Attempt(Phase.FAILED, entry.current.payload, token, httpStatus, detail);
+        if (entry.current.hasPayload()) entry.lastSettled = entry.current;
     }
 
     public static synchronized void complete(LayerKind layer, String canonicalDigest, String runId) {
         Entry entry = matching(layer, canonicalDigest, runId);
         if (entry == null || entry.current.isFailure()) return;
         entry.current = new Attempt(Phase.COMPLETE, entry.current.payload, "", 0, "");
+        if (entry.current.hasPayload()) entry.lastSettled = entry.current;
     }
 
     public static synchronized void cancel(LayerKind layer, String canonicalDigest, String runId) {
         Entry entry = matching(layer, canonicalDigest, runId);
         if (entry == null) return;
         entry.current = new Attempt(Phase.CANCELLED, entry.current.payload, "", 0, "");
+        if (entry.current.hasPayload()) entry.lastSettled = entry.current;
     }
 
     public static synchronized Snapshot snapshot(LayerKind layer, String canonicalDigest) {
@@ -108,10 +118,32 @@ public final class AiRequestLiveState {
         if (entry == null || !nz(canonicalDigest).equals(entry.canonicalDigest)) {
             return Snapshot.EMPTY;
         }
-        return new Snapshot(entry.current, entry.previousFailure);
+        return new Snapshot(entry.current, entry.previousFailure, entry.lastSettled);
     }
 
-    static synchronized void clearForTest() {
+    /** Digest-independent recent state for an explicit user-triggered diagnostic report. */
+    public static synchronized Snapshot diagnosticSnapshot(LayerKind layer) {
+        Entry entry = layer == null ? null : ENTRIES.get(layer);
+        return entry == null ? Snapshot.EMPTY
+                : new Snapshot(entry.current, entry.previousFailure, entry.lastSettled);
+    }
+
+    /**
+     * The most recent failed attempt for a layer, whatever document it belonged to.
+     *
+     * <p>Digest-independent, so a diagnostic report can answer "why did AI fail last" without
+     * knowing which song was on screen when it did. The current attempt wins over the retained
+     * previous one; both are read-only views.
+     */
+    public static synchronized Attempt lastFailure(LayerKind layer) {
+        Entry entry = layer == null ? null : ENTRIES.get(layer);
+        if (entry == null) return AttemptEmpty.VALUE;
+        if (entry.current.isFailure()) return entry.current;
+        return entry.previousFailure.isFailure() ? entry.previousFailure : AttemptEmpty.VALUE;
+    }
+
+    /** Test hook: resets all live state. Public because report-factory tests run cross-package. */
+    public static synchronized void clearForTest() {
         ENTRIES.clear();
     }
 

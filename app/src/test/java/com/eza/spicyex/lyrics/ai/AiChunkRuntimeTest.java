@@ -10,6 +10,7 @@ import com.eza.spicyex.lyrics.session.LayerKind;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -21,7 +22,7 @@ import java.util.List;
 public class AiChunkRuntimeTest {
 
     private static final AiModelDescriptor MODEL = new AiModelDescriptor(
-            "fake-model", "1", 32_768, 1_000, Collections.singletonList("generateContent"));
+            "fake-model", "1", 32_768, 4_096, Collections.singletonList("generateContent"));
 
     private static final AiProviderConfig CONFIG = new AiProviderConfig(LayerKind.MEANING, null,
             "1", MODEL, "en", AiContract.PROMPT_VERSION, false);
@@ -110,12 +111,13 @@ public class AiChunkRuntimeTest {
     // --- terminal failures ---------------------------------------------------
 
     @Test
-    public void deliveryUnknownTruncationAndRefusalAreTerminalWithoutRetry() {
+    public void deliveryUnknownAndRefusalAreTerminalWithoutRetry() {
+        // Truncation is deliberately absent: with escalation headroom left it is a budget
+        // failure that retries once, and without headroom it is pinned by
+        // atruncationAtTheAbsoluteBoundIsTerminalWithoutAWastedCall above.
         List<Object[]> cases = new ArrayList<>();
         cases.add(new Object[]{FakeAiProvider.failure(AiProviderFailure.deliveryUnknown(
                 AiProviderFailure.Cause.NETWORK, 0)), AiFailureReason.DELIVERY_UNKNOWN});
-        cases.add(new Object[]{FakeAiProvider.body("{\"items\":[]}", AiUsage.of(1, 1),
-                AiFinishReason.LENGTH), AiFailureReason.TRUNCATED});
         cases.add(new Object[]{FakeAiProvider.body("{\"items\":[]}", AiUsage.of(1, 1),
                 AiFinishReason.SAFETY), AiFailureReason.PROVIDER_REFUSED});
         cases.add(new Object[]{FakeAiProvider.body("{\"items\":[]}", AiUsage.of(1, 1),
@@ -333,18 +335,181 @@ public class AiChunkRuntimeTest {
         AiChunkExecution result = AiChunkRuntime.executeChunk(args(provider, chunk(null)));
         assertTrue(result.ok);
         assertTrue(result.record.usageEstimated);
-        assertEquals("the configured output cap stands in for the missing figure",
-                Math.min(MODEL.outputTokenLimit, AiContract.MAX_CONFIGURED_OUTPUT_TOKENS),
+        assertEquals("the dispatched output budget stands in for the missing figure",
+                AiChunkRuntime.initialOutputBudget(chunk(null), CONFIG.callOutputTokens()),
                 result.record.outputTokens);
+    }
+
+    // --- row-level acceptance -------------------------------------------------
+
+    private static AiPlannedChunk twoRowChunk() {
+        AiChunkPlanner.Input input = new AiChunkPlanner.Input();
+        input.rows = Arrays.asList(
+                new AiLine("S0", AiLineClass.ORDINARY, AiSendDisposition.SENT, "hola", null,
+                        false, null, null),
+                new AiLine("S1", AiLineClass.ORDINARY, AiSendDisposition.SENT, "mundo", null,
+                        false, null, null));
+        input.target = "en";
+        input.model = MODEL;
+        return AiChunkPlanner.plan(input).chunks.get(0);
+    }
+
+    @Test
+    public void aValidRowIsKeptAndOnlyTheFailedRowIsReasked() {
+        FakeAiProvider provider = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[{\"id\":\"S0\",\"t\":\"hello\"}]}"),
+                FakeAiProvider.body("{\"items\":[{\"id\":\"S1\",\"t\":\"world\"}]}"));
+
+        AiChunkExecution result = AiChunkRuntime.executeChunk(args(provider, twoRowChunk()));
+
+        assertTrue(result.ok);
+        assertEquals(AiChunkRecord.Status.COMPLETE, result.record.status);
+        assertTrue(result.fallbackRowIds.isEmpty());
+        assertEquals(2, result.record.attempts);
+        assertEquals(1, result.record.repairs);
+        assertEquals("both rows land in the merged output", 2, result.items.size());
+        assertEquals("the re-ask carries exactly the failed row",
+                "{\"context\":{\"title\":null,\"artists\":[],\"album\":null},"
+                        + "\"target\":\"en\",\"items\":"
+                        + "[{\"id\":\"S1\",\"c\":\"ordinary\",\"v\":null,\"s\":\"mundo\"}]}",
+                provider.calls.get(1).requestJson);
+    }
+
+    @Test
+    public void arowThatFailsAgainFallsBackInsteadOfFailingTheChunk() {
+        FakeAiProvider provider = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[{\"id\":\"S0\",\"t\":\"hello\"},"
+                        + "{\"id\":\"S1\",\"t\":\"a / b\"}]}"),
+                FakeAiProvider.body("{\"items\":[{\"id\":\"S1\",\"t\":\"c / d\"}]}"));
+
+        AiChunkExecution result = AiChunkRuntime.executeChunk(args(provider, twoRowChunk()));
+
+        assertTrue("one bad row must not discard its billed neighbour", result.ok);
+        assertEquals(AiChunkRecord.Status.COMPLETED_FALLBACK, result.record.status);
+        assertEquals(Collections.singletonList("S1"), result.fallbackRowIds);
+        assertEquals(1, result.items.size());
+        assertEquals("S0", result.items.get(0).id);
+        assertEquals(2, provider.calls.size());
+        assertTrue(result.accountedTokens > 0);
+    }
+
+    @Test
+    public void anIdentityViolationStillRepairsTheWholeChunk() {
+        FakeAiProvider provider = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[{\"id\":\"S0\",\"t\":\"hello\"},"
+                        + "{\"id\":\"S9\",\"t\":\"intruder\"}]}"),
+                FakeAiProvider.body(answer("hola")));
+
+        AiChunkExecution result = AiChunkRuntime.executeChunk(args(provider, chunk(null)));
+
+        assertTrue(result.ok);
+        assertEquals("an unexpected id is a whole-response failure, so the full chunk is resent",
+                2, provider.calls.size());
+        assertEquals(chunk(null).requestJson, provider.calls.get(1).requestJson);
+        assertEquals(2, result.record.attempts);
+    }
+
+    // --- truncation and escalation -------------------------------------------
+
+    /**
+     * The dispatched cap is the ceiling, so a truncation has nowhere larger to go.
+     *
+     * <p>This replaces an assertion that a truncation retried at double the cap. That ladder only
+     * existed because the estimate was dispatched instead of the ceiling, and it made things worse
+     * on real documents: a 58-row song started at 2860, truncated, climbed to 5720, truncated
+     * again, and failed terminally without ever requesting the 8192 the endpoint allowed — one
+     * escalation exhausts the shared attempt budget.
+     */
+    @Test
+    public void aTruncationIsTerminalBecauseTheCapWasAlreadyTheCeiling() {
+        FakeAiProvider provider = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[]}", AiUsage.of(40, 900),
+                        AiFinishReason.LENGTH));
+
+        AiChunkExecution result = AiChunkRuntime.executeChunk(args(provider, chunk(null)));
+
+        assertFalse(result.ok);
+        assertEquals(AiFailureReason.TRUNCATED, result.failure.reason);
+        assertEquals("no second attempt at a cap that cannot grow", 1, provider.calls.size());
+        assertEquals(CONFIG.callOutputTokens(), provider.calls.get(0).config.maxOutputTokens);
+        assertEquals("the truncated attempt is still billed", 900, result.record.outputTokens);
+    }
+
+    @Test
+    public void atruncationAtTheAbsoluteBoundIsTerminalWithoutAWastedCall() {
+        AiModelDescriptor small = new AiModelDescriptor("small", "1", 32_768,
+                AiContract.MIN_CALL_OUTPUT_TOKENS, Collections.singletonList("generateContent"));
+        AiProviderConfig config = new AiProviderConfig(LayerKind.MEANING, null, "1", small,
+                "en", AiContract.PROMPT_VERSION, false);
+        FakeAiProvider provider = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[]}", AiUsage.of(10, 512),
+                        AiFinishReason.LENGTH));
+        AiChunkRuntime.Args args = args(provider, chunk(null));
+        args.config = config;
+
+        AiChunkExecution result = AiChunkRuntime.executeChunk(args);
+
+        assertFalse(result.ok);
+        assertEquals(AiFailureReason.TRUNCATED, result.failure.reason);
+        assertEquals("no headroom means no second bill", 1, provider.calls.size());
+        assertTrue(result.accountedTokens > 0);
+    }
+
+    /** A cap is a ceiling, not a charge: every call asks for the full bound it is allowed. */
+    @Test
+    public void everyCallDispatchesTheFullCeilingItIsAllowed() {
+        FakeAiProvider provider = new FakeAiProvider();
+
+        AiChunkRuntime.executeChunk(args(provider, chunk(null)));
+
+        assertEquals(CONFIG.callOutputTokens(), provider.calls.get(0).config.maxOutputTokens);
+        assertEquals(CONFIG.callOutputTokens(),
+                AiChunkRuntime.initialOutputBudget(chunk(null), CONFIG.callOutputTokens()));
     }
 
     @Test
     public void theOutputCapIsTheLowerOfTheContractAndTheModel() {
-        assertEquals(1_000, CONFIG.callOutputTokens());
+        assertEquals(4_096, CONFIG.callOutputTokens());
         AiModelDescriptor generous = new AiModelDescriptor("big", "1", 1_000_000, 65_536,
                 Collections.singletonList("generateContent"));
         AiProviderConfig config = new AiProviderConfig(LayerKind.MEANING, null, "1", generous,
                 "en", AiContract.PROMPT_VERSION, false);
         assertEquals(AiContract.MAX_CONFIGURED_OUTPUT_TOKENS, config.callOutputTokens());
+    }
+
+    /**
+     * The deadline has to outlast the work it is timing.
+     *
+     * <p>A flat minute expired while a reasoning model was still producing a full document, and a
+     * deadline that fires after dispatch is DELIVERY_UNKNOWN — possibly billed, never retried
+     * automatically, and the owner has to be asked. It scales with the budget now.
+     */
+    @Test
+    public void theCallDeadlineScalesWithTheOutputBudget() {
+        long small = AiContract.callDeadlineMs(AiContract.MIN_CALL_OUTPUT_TOKENS);
+        long full = AiContract.callDeadlineMs(AiContract.MAX_CONFIGURED_OUTPUT_TOKENS);
+
+        assertTrue("a bigger budget must be given longer", full > small);
+        assertTrue("a full budget must outlast the old flat minute", full > 60_000L);
+        assertEquals("and it stays bounded", AiContract.MAX_CALL_DEADLINE_MS, full);
+        assertTrue("a small budget still gets the base allowance",
+                small >= AiContract.CALL_DEADLINE_BASE_MS);
+    }
+
+    /**
+     * No transport timeout may bind before the deadline the runtime is enforcing.
+     *
+     * <p>A completion is not streamed, so the read timeout is a flat ceiling on generation time
+     * rather than a stall detector. When it sat below the deadline it was the real limit, and the
+     * failure it produced was DELIVERY_UNKNOWN rather than a deliberate cancellation.
+     */
+    @Test
+    public void noTransportTimeoutBindsBeforeTheRuntimeDeadline() {
+        long longest = AiContract.callDeadlineMs(AiContract.MAX_CONFIGURED_OUTPUT_TOKENS);
+
+        assertTrue("the derived deadline must never exceed the transport backstop",
+                longest <= AiContract.MAX_CALL_DEADLINE_MS);
+        assertTrue("a slow provider must get minutes, not one",
+                AiContract.callDeadlineMs(2_000) > 120_000L);
     }
 }

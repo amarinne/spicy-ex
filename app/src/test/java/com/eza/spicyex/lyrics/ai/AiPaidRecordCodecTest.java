@@ -51,6 +51,15 @@ public class AiPaidRecordCodecTest {
         failed.failure = new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
                 "id_set_mismatch:missing:r2#cc");
         record.putChunk("C1", failed);
+
+        AiChunkRecord replanned = new AiChunkRecord(Arrays.asList("r3#dd", "r4#ee"),
+                "{\"items\":[3,4]}");
+        replanned.status = AiChunkRecord.Status.REPLANNED;
+        replanned.attempts = 1;
+        replanned.inputTokens = 30;
+        replanned.outputTokens = 900;
+        replanned.failure = AiChunkFailure.of(AiFailureReason.TRUNCATED);
+        record.putChunk("C2", replanned);
         return record;
     }
 
@@ -104,6 +113,10 @@ public class AiPaidRecordCodecTest {
         assertEquals(AiChunkRecord.Status.FAILED, failed.status);
         assertEquals(AiFailureReason.PROTOCOL_INVALID, failed.failure.reason);
         assertEquals("id_set_mismatch:missing:r2#cc", failed.failure.detail);
+
+        AiChunkRecord replanned = back.chunk("C2");
+        assertEquals(AiChunkRecord.Status.REPLANNED, replanned.status);
+        assertEquals(AiFailureReason.TRUNCATED, replanned.failure.reason);
     }
 
     @Test
@@ -115,6 +128,8 @@ public class AiPaidRecordCodecTest {
         assertEquals(AiChunkRecord.Status.PENDING, back.chunk("C1").status);
         assertEquals(0, back.chunk("C1").attempts);
         assertNull(back.chunk("C1").failure);
+        assertEquals("replanning is resumed, not reopened as the original request",
+                AiChunkRecord.Status.REPLANNED, back.chunk("C2").status);
     }
 
     @Test

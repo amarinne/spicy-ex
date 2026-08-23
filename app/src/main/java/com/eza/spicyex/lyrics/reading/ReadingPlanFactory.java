@@ -193,10 +193,12 @@ public final class ReadingPlanFactory {
                 Collections.singletonList(new SourceSpan("line", line.text, line.text, line.startMs, line.endMs, false, null)),
                 null, ParagraphProvenance.UNAVAILABLE, Collections.emptyMap());
         CanonicalLine canonical = new DefaultCanonicalLineBuilder().build(parsed);
-        ReadingUnit unit = new ReadingUnit(new TextRange(0, CodePointRanges.length(canonical.text)), display,
-                ReadingUnitKind.TRANSFORMED, "line-fallback", Collections.emptyList());
-        ReadingProvenance source = "remoteFallback".equals(provenance)
-                ? ReadingProvenance.REMOTE_FALLBACK
+        boolean local = "local".equals(provenance);
+        ReadingUnit unit = new ReadingUnit(new TextRange(0, CodePointRanges.length(canonical.text)),
+                display, ReadingUnitKind.TRANSFORMED,
+                local ? "local-line-fallback" : "line-fallback", Collections.emptyList());
+        ReadingProvenance source = local ? ReadingProvenance.LOCAL
+                : "remoteFallback".equals(provenance) ? ReadingProvenance.REMOTE_FALLBACK
                 : "ai".equals(provenance) ? ReadingProvenance.AI : ReadingProvenance.PROVIDER;
         return new DefaultRenderPlanBuilder().build(parsed, canonical, Collections.singletonList(
                 new ReadingAnnotation("Fallback", "line", source, Collections.singletonList(unit))));

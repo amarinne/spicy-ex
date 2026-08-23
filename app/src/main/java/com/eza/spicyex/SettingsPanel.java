@@ -22,6 +22,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
+import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
 import com.eza.spicyex.lyrics.GlyphIconDrawable;
@@ -359,6 +360,17 @@ public final class SettingsPanel {
             }
     }
 
+    /**
+     * True when the AI star should be lit: the whole family is configured and could run now.
+     *
+     * <p>Falls back to the enable flag only before the AI rows exist, which is the one moment
+     * nothing can be asked about credentials.
+     */
+    private boolean aiReady() {
+        return aiSettingsRows != null ? aiSettingsRows.isReady()
+                : Boolean.TRUE.equals(store.get(Settings.AI_ENABLED));
+    }
+
     private void rebuildSections() {
         if (sectionsContainer == null) return;
         captureAnchor();
@@ -416,6 +428,9 @@ public final class SettingsPanel {
 
     private boolean shouldRender(Settings.Setting<?> setting) {
         if (setting == Settings.AI_ENABLED) return aiAvailable();
+        if (setting == Settings.AI_DEEPSEEK_REASONING) {
+            return AiSettings.PROVIDER_DEEPSEEK.equals(store.get(Settings.AI_PROVIDER));
+        }
         if (setting == Settings.TRANSLATION_TARGET || setting == Settings.TRANSLATION_BRIGHTNESS) {
             return FeatureAvailability.translationAvailable()
                     && store.get(Settings.TRANSLATION_ENABLED);
@@ -586,8 +601,7 @@ public final class SettingsPanel {
         Kind sectionIcon = SECTION_ICONS.get(section.id);
         if (sectionIcon != null) {
             ImageView sectionIconView = kindView(sectionIcon,
-                    section == Settings.AI && store.get(Settings.AI_ENABLED)
-                            ? COL_ACCENT : COL_SECTION, 18);
+                    section == Settings.AI && aiReady() ? COL_ACCENT : COL_SECTION, 18);
             if (section == Settings.AI) aiBadgeView = sectionIconView;
             row.addView(sectionIconView, leadParams());
         }
@@ -954,12 +968,14 @@ public final class SettingsPanel {
             }
 
             @Override public void updateAiBadge(boolean live) {
+                // The probe outcome is not what the star reports; setup completeness is. This is
+                // only the signal that something about the AI configuration may have moved.
                 if (aiBadgeView == null) {
                     rebuildSection(Settings.AI);
                     return;
                 }
                 aiBadgeView.setImageDrawable(new ActionIconDrawable(Kind.SPARKLES,
-                        store.get(Settings.AI_ENABLED) ? COL_ACCENT : COL_SECTION, density()));
+                        aiReady() ? COL_ACCENT : COL_SECTION, density()));
             }
 
             @Override public String string(String name, String fallback) {

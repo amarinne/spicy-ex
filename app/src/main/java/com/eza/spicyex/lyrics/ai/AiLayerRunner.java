@@ -67,44 +67,126 @@ public final class AiLayerRunner {
         record.reopenFailedChunks();
 
         boolean durable = true;
+        boolean anyChunkFellBack = false;
         for (AiPlannedChunk chunk : plan.chunks) {
-            AiChunkRecord previous = record.chunk(chunk.id);
-            if (previous != null && previous.isComplete()) continue;
-
-            if (args.signal != null && args.signal.isAborted()) {
-                return stop(store, config, record, args, durable, args.signal.reason());
+            ChunkRunResult result = runChunk(args, plannerInput(args), store, config, record, chunk,
+                    durable);
+            durable = result.durable;
+            anyChunkFellBack |= result.fellBack;
+            if (result.cancelReason != null) {
+                return stop(store, config, record, args, durable, result.cancelReason);
             }
+            if (result.failure != null) {
+                record.status = AiPaidRecord.Status.FAILED;
+                durable &= commit(store, config, record);
+                return AiRunOutcome.failed(record, result.failure, durable);
+            }
+        }
 
+        // A run whose every chunk is terminal is finished even when some rows fell back — display
+        // composes those rows from the baseline layer. The record deliberately does not become
+        // COMPLETE in that case: satisfies() stays strict, so a half-AI answer can never be reused
+        // as if it were a full one.
+        record.status = record.satisfies(plan) ? AiPaidRecord.Status.COMPLETE
+                : anyChunkFellBack ? AiPaidRecord.Status.PARTIAL : record.status;
+        durable &= commit(store, config, record);
+        return AiRunOutcome.completed(record, durable);
+    }
+
+    /** Result of one original or hierarchical child chunk. */
+    private static final class ChunkRunResult {
+        final boolean durable;
+        final boolean fellBack;
+        final AiChunkFailure failure;
+        final String cancelReason;
+
+        ChunkRunResult(boolean durable, boolean fellBack, AiChunkFailure failure,
+                       String cancelReason) {
+            this.durable = durable;
+            this.fellBack = fellBack;
+            this.failure = failure;
+            this.cancelReason = cancelReason;
+        }
+
+        static ChunkRunResult done(boolean durable, boolean fellBack) {
+            return new ChunkRunResult(durable, fellBack, null, null);
+        }
+    }
+
+    /**
+     * Runs one chunk, recursively replacing a true-ceiling truncation with smaller planned work.
+     * Every state transition is committed before moving on, so resume never repeats a parent or a
+     * completed child that was already billed.
+     */
+    private static ChunkRunResult runChunk(Args args, AiChunkPlanner.Input plannerInput,
+                                           AiRecordStore store, AiRunConfig config,
+                                           AiPaidRecord record, AiPlannedChunk chunk,
+                                           boolean durable) {
+        AiChunkRecord previous = record.chunk(chunk.id);
+        if (previous != null && previous.isTerminal()) {
+            return ChunkRunResult.done(durable,
+                    previous.status == AiChunkRecord.Status.COMPLETED_FALLBACK);
+        }
+        if (args.signal != null && args.signal.isAborted()) {
+            return new ChunkRunResult(durable, false, null, args.signal.reason());
+        }
+
+        if (previous == null || previous.status != AiChunkRecord.Status.REPLANNED) {
             AiChunkExecution execution;
             try {
                 execution = AiChunkRuntime.executeChunk(chunkArgs(args, chunk, previous));
             } catch (AiCancelledException cancelled) {
-                // Nothing new to record for this chunk — the attempt did not complete — but every
-                // chunk before it did, and those are already in the record.
-                return stop(store, config, record, args, durable, cancelled.reason);
+                return new ChunkRunResult(durable, false, null, cancelled.reason);
             }
 
             record.account(previous, execution.record);
-            record.putChunk(chunk.id, execution.record);
             record.lastAccessedAtMs = args.nowMs;
-
-            if (!execution.ok) {
-                record.status = AiPaidRecord.Status.FAILED;
+            if (!execution.ok && execution.failure.reason == AiFailureReason.TRUNCATED
+                    && chunk.items.size() > 1) {
+                execution.record.status = AiChunkRecord.Status.REPLANNED;
+                record.putChunk(chunk.id, execution.record);
+                record.status = AiPaidRecord.Status.PARTIAL;
                 durable &= commit(store, config, record);
-                return AiRunOutcome.failed(record, execution.failure, durable);
+                previous = execution.record;
+            } else {
+                record.putChunk(chunk.id, execution.record);
+                if (!execution.ok) return new ChunkRunResult(durable, false, execution.failure, null);
+                for (AiResponseItem item : execution.items) record.putItem(item.id, item.text);
+                boolean fellBack = !execution.fallbackRowIds.isEmpty();
+                record.status = AiPaidRecord.Status.PARTIAL;
+                durable &= commit(store, config, record);
+                return ChunkRunResult.done(durable, fellBack);
             }
-
-            for (AiResponseItem item : execution.items) record.putItem(item.id, item.text);
-            record.status = record.satisfies(plan)
-                    ? AiPaidRecord.Status.COMPLETE : AiPaidRecord.Status.PARTIAL;
-            // Written per chunk rather than once at the end: this is the write that makes a
-            // resumed run cheaper than a fresh one.
-            durable &= commit(store, config, record);
         }
 
-        record.status = AiPaidRecord.Status.COMPLETE;
+        List<AiPlannedChunk> children = AiChunkPlanner.replan(plannerInput, chunk);
+        if (children.isEmpty()) {
+            previous.status = AiChunkRecord.Status.FAILED;
+            previous.failure = AiChunkFailure.of(AiFailureReason.TRUNCATED);
+            record.putChunk(chunk.id, previous);
+            return new ChunkRunResult(durable, false, previous.failure, null);
+        }
+
+        boolean fellBack = false;
+        for (AiPlannedChunk child : children) {
+            ChunkRunResult childResult = runChunk(args, plannerInput, store, config, record, child,
+                    durable);
+            durable = childResult.durable;
+            fellBack |= childResult.fellBack;
+            if (childResult.cancelReason != null || childResult.failure != null) {
+                return new ChunkRunResult(durable, fellBack, childResult.failure,
+                        childResult.cancelReason);
+            }
+        }
+
+        AiChunkRecord completedParent = record.chunk(chunk.id).copy();
+        completedParent.status = fellBack ? AiChunkRecord.Status.COMPLETED_FALLBACK
+                : AiChunkRecord.Status.COMPLETE;
+        completedParent.failure = null;
+        record.putChunk(chunk.id, completedParent);
+        record.status = AiPaidRecord.Status.PARTIAL;
         durable &= commit(store, config, record);
-        return AiRunOutcome.completed(record, durable);
+        return ChunkRunResult.done(durable, fellBack);
     }
 
     private static AiRunOutcome stop(AiRecordStore store, AiRunConfig config, AiPaidRecord record,

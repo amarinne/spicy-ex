@@ -107,6 +107,21 @@ public final class AiText {
         return count;
     }
 
+    /** Splits on the literal {@code " / "} delimiter, keeping every segment including empties. */
+    public static java.util.List<String> splitSegments(String value) {
+        String text = nz(value);
+        java.util.List<String> out = new java.util.ArrayList<>();
+        int start = 0;
+        int at = text.indexOf(" / ");
+        while (at >= 0) {
+            out.add(text.substring(start, at));
+            start = at + 3;
+            at = text.indexOf(" / ", start);
+        }
+        out.add(text.substring(start));
+        return out;
+    }
+
     /**
      * True when the text carries a character no lyric row may contain: a line or paragraph
      * separator, or a C0/C1 control. These break the one-row-per-item shape the whole protocol

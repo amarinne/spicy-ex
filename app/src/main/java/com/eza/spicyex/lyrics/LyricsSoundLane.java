@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.ai.AiCancelledException;
 import com.eza.spicyex.lyrics.ai.AiContract;
 import com.eza.spicyex.lyrics.ai.AiRunOutcome;
@@ -23,6 +24,7 @@ import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.ai.AiSignal;
 import com.eza.spicyex.lyrics.ai.AiSoundOverlay;
 import com.eza.spicyex.lyrics.ai.AiSoundRun;
+import com.eza.spicyex.lyrics.ai.AiText;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
@@ -47,6 +49,8 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  */
 public final class LyricsSoundLane {
     private static final String TAG = "[SpotifyPlusSoundLane]";
+    /** Diagnostic-capture component for the AI side of this lane. */
+    private static final String AI_COMPONENT = "ai_sound";
 
     private final Context context;
     private final OkHttpClient http;
@@ -249,7 +253,7 @@ public final class LyricsSoundLane {
     private static void resolveReadingProjection(LyricsLine line) {
         if (line == null || line.readingRenderPlan != null) return;
         line.readingRenderPlan = ReadingPlanFactory.lineFallback(
-                line, safe(line.romanizedText), "remoteFallback");
+                line, safe(line.romanizedText), "local");
         if (line.readingRenderPlan != null) line.romanizedText = "";
     }
 
@@ -326,6 +330,8 @@ public final class LyricsSoundLane {
         aiSignal = signal;
         if (allowProviderRequest) {
             AiRequestLiveState.begin(LayerKind.SOUND, run.canonicalDigest(), run.tag);
+            Diagnostics.event(AI_COMPONENT, "request_started",
+                    Diagnostics.context("provider", settings.providerId()));
         }
         final AiRunMonitor monitor = allowProviderRequest
                 ? (chunkId, attempt, payload) -> AiRequestLiveState.attempt(LayerKind.SOUND,
@@ -346,6 +352,9 @@ public final class LyricsSoundLane {
                         AiRequestLiveState.fail(LayerKind.SOUND, run.canonicalDigest(), run.tag,
                                 result.outcome.failureToken, result.outcome.failure.httpStatus,
                                 result.outcome.failureDetail);
+                        recordAiOutcome("request_failed", "failed",
+                                result.outcome.failureToken,
+                                result.outcome.failure.httpStatus);
                         XposedBridge.log(TAG + " ai reading outcome=failed token="
                                 + result.outcome.failureToken + " status="
                                 + result.outcome.failure.httpStatus + " rule="
@@ -353,12 +362,16 @@ public final class LyricsSoundLane {
                     } else if (result != null && result.outcome != null
                             && (result.outcome.kind == AiRunOutcome.Kind.COMPLETED
                             || result.outcome.kind == AiRunOutcome.Kind.REUSED)) {
+                        recordAiOutcome("request_settled",
+                                result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT),
+                                "", 0);
                         XposedBridge.log(TAG + " ai reading outcome="
                                 + result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT)
                                 + " durable=" + result.outcome.durable);
                     }
                 } catch (AiCancelledException cancelled) {
                     AiRequestLiveState.cancel(LayerKind.SOUND, run.canonicalDigest(), run.tag);
+                    recordAiOutcome("request_settled", "cancelled", "", 0);
                     return;
                 } catch (Throwable failure) {
                     XposedBridge.log(TAG + " ai reading failed: "
@@ -368,6 +381,7 @@ public final class LyricsSoundLane {
                             "runtime_unavailable", 0);
                     AiRequestLiveState.fail(LayerKind.SOUND, run.canonicalDigest(), run.tag,
                             "runtime_unavailable", 0, failure.getClass().getSimpleName());
+                    recordAiOutcome("request_failed", "failed", "runtime_unavailable", 0);
                 }
                 AiRequestLiveState.complete(LayerKind.SOUND, run.canonicalDigest(), run.tag);
                 if (result == null || !result.hasArtifact()) {
@@ -395,6 +409,21 @@ public final class LyricsSoundLane {
                 });
             }
         });
+    }
+
+    /**
+     * One allowlisted diagnostic event for the AI side of this lane.
+     *
+     * <p>Only context keys already on the capture filter are used — {@code provider}, {@code
+     * result}, {@code reason}, and {@code status} — so nothing here can silently drop. Tokens name
+     * the failure; no lyric text, payload, or URL travels with them.
+     */
+    private void recordAiOutcome(String operation, String result, String reason, int httpStatus) {
+        Diagnostics.event(AI_COMPONENT, operation, Diagnostics.context(
+                "provider", new AiSettings(context).providerId(),
+                "result", result,
+                "reason", AiText.nz(reason),
+                "status", httpStatus > 0 ? String.valueOf(httpStatus) : ""));
     }
 
     private static List<SoundEntry> entriesOf(SoundArtifact artifact) {

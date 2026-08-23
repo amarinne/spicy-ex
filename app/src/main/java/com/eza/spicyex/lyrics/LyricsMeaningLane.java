@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.ai.AiCancelledException;
 import com.eza.spicyex.lyrics.ai.AiMeaningRun;
 import com.eza.spicyex.lyrics.ai.AiRunOutcome;
@@ -21,6 +22,7 @@ import com.eza.spicyex.lyrics.ai.AiRequestLiveState;
 import com.eza.spicyex.lyrics.ai.AiRuntimeFailureLog;
 import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.ai.AiSignal;
+import com.eza.spicyex.lyrics.ai.AiText;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
@@ -46,6 +48,8 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  */
 public final class LyricsMeaningLane {
     private static final String TAG = "[SpotifyPlusMeaningLane]";
+    /** Diagnostic-capture component for the AI side of this lane. */
+    private static final String AI_COMPONENT = "ai_meaning";
     private static final int TRANSLATION_BATCH_MAX_LINES = 100;
     private static final int TRANSLATION_BATCH_MAX_CHARS = 4500;
 
@@ -175,13 +179,22 @@ public final class LyricsMeaningLane {
         if (!retired.isEmpty()) provider.cancel(http, retired);
 
         // AI remains the display authority. The composer may optionally ask for a Google draft as
-        // request input; otherwise Meaning reads canonical source directly.
+        // request input; otherwise Meaning reads canonical source directly. Google preview is the
+        // third flow: raw-lyrics AI semantics plus an independent Google display job.
+        final AiSettings.MeaningFlow meaningFlow = aiSettings.meaningFlow();
         boolean aiConfigured = aiSettings.meaningLayerEnabled() && aiSettings.isEnabled()
                 && !aiSettings.modelName().isEmpty();
+        boolean aiAutomaticRequest = aiAutomatic && snapshot.translationPending;
         if (aiConfigured && (wanted || explicitAiRequest || aiAutomatic
                 || !snapshot.translationPending)) {
-            return startAiRun(run, id, generation, snapshot, workerSnapshot, work, targetLang,
-                    effectiveSourceLang, explicitAiRequest || aiAutomatic, currentGuard, callback);
+            if (meaningFlow == AiSettings.MeaningFlow.GOOGLE_PREVIEW) {
+                return startPreviewRun(run, id, generation, snapshot, workerSnapshot, work,
+                        backend, targetLang, sourceLang, effectiveSourceLang, explicitAiRequest,
+                        explicitAiRequest || aiAutomaticRequest, currentGuard, callback);
+            }
+            return startAiRun(run, id, generation, snapshot, workerSnapshot, work, backend,
+                    targetLang, sourceLang, effectiveSourceLang, explicitAiRequest,
+                    explicitAiRequest || aiAutomaticRequest, currentGuard, callback);
         }
 
         if (work.isEmpty()) {
@@ -252,8 +265,10 @@ public final class LyricsMeaningLane {
      */
     private boolean startAiRun(final DerivedLayerRun run, final String id, final int generation,
                                final LyricsDocument snapshot, final LyricsDocument workerSnapshot,
-                               final List<Integer> googleWork, final String targetLang,
+                               final List<Integer> googleWork, final String backend,
+                               final String targetLang, final String sourceLang,
                                final String effectiveSourceLang,
+                               final boolean explicitAiRequest,
                                final boolean allowProviderRequest,
                                final LyricsSecondaryProcessor.CurrentGuard currentGuard,
                                final LyricsSecondaryProcessor.Callback callback) {
@@ -262,24 +277,37 @@ public final class LyricsMeaningLane {
         if (!COALESCER.beginOrDefer(runIdentity, new Runnable() {
             @Override public void run() {
                 LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.COALESCED_RUN_JOINED);
+                // Re-enter rather than drop, exactly as the Google path does. By the time this
+                // runs the owner has written its record, so the replay settles from cache without
+                // a second billable call — and the request that was deferred is not lost.
+                start(id, generation, snapshot, backend, targetLang, sourceLang,
+                        effectiveSourceLang, explicitAiRequest, currentGuard, callback);
             }
         })) {
-            // Another surface already owns this exact run. Joining it costs one provider call
-            // between them instead of one each.
-            return false;
+            // Another surface — or the automatic run for this same song — already owns this exact
+            // work. An explicit request still counts as started: it is queued above and will
+            // settle when the owner finishes. Reporting it as "not started" is what told the user
+            // their configuration was broken when it was not.
+            return explicitAiRequest;
         }
 
         final AiSignal signal = new AiSignal();
         aiSignal = signal;
         if (allowProviderRequest) {
             AiRequestLiveState.begin(LayerKind.MEANING, run.canonicalDigest(), run.tag);
+            Diagnostics.event(AI_COMPONENT, "request_started",
+                    Diagnostics.context("provider", aiProviderId()));
         }
         final AiRunMonitor monitor = allowProviderRequest
                 ? (chunkId, attempt, payload) -> AiRequestLiveState.attempt(LayerKind.MEANING,
                 run.canonicalDigest(), run.tag, chunkId, attempt, payload)
                 : null;
         final long startedAtMs = SystemClock.elapsedRealtime();
-        aiExecutor.execute(new Runnable() {
+        // The coalescer key is claimed above, on this thread. If the executor refuses the task
+        // nothing would ever release it, and every later request for this song would be told the
+        // work is already in flight — forever, with no owner.
+        try {
+            aiExecutor.execute(new Runnable() {
             @Override public void run() {
                 AiMeaningRun.Result result = null;
                 LayerFailure aiFailure = LayerFailure.NONE;
@@ -288,7 +316,9 @@ public final class LyricsMeaningLane {
                 try {
                     if (!run.accepts(currentGuard, id, generation, snapshot)) return;
                     AiSettings settings = new AiSettings(context);
-                    refineGoogle = settings.meaningUsesGoogleBaseline();
+                    // Only Google draft refines. AI-only runs raw by contract; the preview flow
+                    // never enters this path.
+                    refineGoogle = settings.meaningFlow() == AiSettings.MeaningFlow.GOOGLE_DRAFT;
                     googleBaseline = refineGoogle
                             ? googleFallback(run, id, workerSnapshot, googleWork,
                             effectiveSourceLang, targetLang)
@@ -311,6 +341,9 @@ public final class LyricsMeaningLane {
                         AiRequestLiveState.fail(LayerKind.MEANING, run.canonicalDigest(), run.tag,
                                 result.outcome.failureToken, result.outcome.failure.httpStatus,
                                 result.outcome.failureDetail);
+                        recordAiOutcome("request_failed", "failed",
+                                result.outcome.failureToken,
+                                result.outcome.failure.httpStatus);
                         XposedBridge.log(TAG + " ai translation outcome=failed token="
                                 + result.outcome.failureToken + " status="
                                 + result.outcome.failure.httpStatus + " rule="
@@ -318,6 +351,9 @@ public final class LyricsMeaningLane {
                     } else if (result != null && result.outcome != null
                             && (result.outcome.kind == AiRunOutcome.Kind.COMPLETED
                             || result.outcome.kind == AiRunOutcome.Kind.REUSED)) {
+                        recordAiOutcome("request_settled",
+                                result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT),
+                                "", 0);
                         XposedBridge.log(TAG + " ai translation outcome="
                                 + result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT)
                                 + " durable=" + result.outcome.durable);
@@ -325,6 +361,7 @@ public final class LyricsMeaningLane {
                 } catch (AiCancelledException cancelled) {
                     // Expected on a track change; the run already stored whatever it had finished.
                     AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(), run.tag);
+                    recordAiOutcome("request_settled", "cancelled", "", 0);
                     return;
                 } catch (Throwable failure) {
                     XposedBridge.log(TAG + " ai translation failed: "
@@ -333,6 +370,7 @@ public final class LyricsMeaningLane {
                             "runtime_unavailable", 0);
                     AiRequestLiveState.fail(LayerKind.MEANING, run.canonicalDigest(), run.tag,
                             "runtime_unavailable", 0, failure.getClass().getSimpleName());
+                    recordAiOutcome("request_failed", "failed", "runtime_unavailable", 0);
                 } finally {
                     COALESCER.finish(runIdentity);
                 }
@@ -362,8 +400,212 @@ public final class LyricsMeaningLane {
                     }
                 });
             }
-        });
+            });
+        } catch (RuntimeException notDispatched) {
+            COALESCER.finish(runIdentity);
+            AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(), run.tag);
+            XposedBridge.log(TAG + " ai translation not dispatched: "
+                    + notDispatched.getClass().getSimpleName());
+            return false;
+        }
         return true;
+    }
+
+    /**
+     * The Google preview flow: two independent children under one parent run contract.
+     *
+     * <p>Google is display-only work on the lane executor, so it can never queue behind an AI
+     * request. The AI request carries canonical raw lyrics only — {@code googleBaseline=null},
+     * {@code refineGoogle=false} — which makes it share the plain Meaning paid-record identity
+     * and prompt version with AI-only mode. {@link MeaningPreviewRace} owns which settlement may
+     * reach the screen; this method owns exactly-once coalescer release, at-most-one preliminary
+     * rerender, and the single completion.
+     *
+     * <p>An exact complete paid cache hit is probed with a read-only lookup before any Google
+     * work: a warm answer needs no preview, so the Google child withdraws without a network call.
+     */
+    private boolean startPreviewRun(final DerivedLayerRun run, final String id, final int generation,
+                                    final LyricsDocument snapshot, final LyricsDocument workerSnapshot,
+                                    final List<Integer> googleWork, final String backend,
+                                    final String targetLang, final String sourceLang,
+                                    final String effectiveSourceLang,
+                                    final boolean explicitAiRequest,
+                                    final boolean allowProviderRequest,
+                                    final LyricsSecondaryProcessor.CurrentGuard currentGuard,
+                                    final LyricsSecondaryProcessor.Callback callback) {
+        final LayerRunIdentity runIdentity = new LayerRunIdentity(safe(id), generation, 1,
+                run.canonicalDigest(), LayerKind.MEANING, run.configId(), "", run.tag);
+        if (!COALESCER.beginOrDefer(runIdentity, new Runnable() {
+            @Override public void run() {
+                LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.COALESCED_RUN_JOINED);
+                // Same re-entry contract as the other flows: the deferred request replays once
+                // the owner has written its record and settles from cache instead of re-billing.
+                start(id, generation, snapshot, backend, targetLang, sourceLang,
+                        effectiveSourceLang, explicitAiRequest, currentGuard, callback);
+            }
+        })) {
+            return explicitAiRequest;
+        }
+
+        final MeaningPreviewRace race = new MeaningPreviewRace();
+        final AiSignal signal = new AiSignal();
+        aiSignal = signal;
+        if (allowProviderRequest) {
+            AiRequestLiveState.begin(LayerKind.MEANING, run.canonicalDigest(), run.tag);
+            Diagnostics.event(AI_COMPONENT, "request_started",
+                    Diagnostics.context("provider", aiProviderId()));
+        }
+        final AiRunMonitor monitor = allowProviderRequest
+                ? (chunkId, attempt, payload) -> AiRequestLiveState.attempt(LayerKind.MEANING,
+                run.canonicalDigest(), run.tag, chunkId, attempt, payload)
+                : null;
+
+        // Google display child. Lane executor, immediately; it shares the parent's run guard and
+        // cancellation tag but never the AI executor's queue.
+        try {
+            laneExecutor.execute(new Runnable() {
+                @Override public void run() {
+                    MeaningArtifact google = null;
+                    try {
+                        if (!run.accepts(currentGuard, id, generation, snapshot)) return;
+                        // Warm paid answer -> no preview needed. allowProviderRequest=false is
+                        // the read-only path: complete records are served from store, anything
+                        // else is refused without a call, so this cannot bill or double-request.
+                        AiMeaningRun.Result warm = AiMeaningRun.run(context,
+                                new AiSettings(context), run.base, workerSnapshot, null, false,
+                                targetLang, false, null, null);
+                        if (!warm.hasArtifact()) {
+                            google = googleFallback(run, id, workerSnapshot, googleWork,
+                                    effectiveSourceLang, targetLang);
+                        }
+                    } catch (Throwable failure) {
+                        XposedBridge.log(TAG + " preview google failed: "
+                                + failure.getClass().getSimpleName());
+                    }
+                    final MeaningArtifact preliminary = race.preliminaryFor(google);
+                    if (preliminary == null) return;
+                    post(run, id, generation, snapshot, currentGuard, new Runnable() {
+                        @Override public void run() {
+                            if (!race.mayPublishPreliminary(preliminary)) return;
+                            callback.rerender(LayerKind.MEANING, preliminary,
+                                    "Showing Google translation while AI works");
+                        }
+                    });
+                }
+            });
+        } catch (RuntimeException notDispatched) {
+            // No Google child will settle: the race falls through to whatever the raw-AI child
+            // decides, exactly as if Google had failed.
+            XposedBridge.log(TAG + " preview google not dispatched: "
+                    + notDispatched.getClass().getSimpleName());
+        }
+
+        final long startedAtMs = SystemClock.elapsedRealtime();
+        // The coalescer key is claimed above, on this thread; the AI side is its only owner and
+        // releases it in every terminal path below.
+        try {
+            aiExecutor.execute(new Runnable() {
+                @Override public void run() {
+                    AiMeaningRun.Result result = null;
+                    LayerFailure aiFailure = LayerFailure.NONE;
+                    try {
+                        if (!run.accepts(currentGuard, id, generation, snapshot)) return;
+                        // Raw lyrics only. Preview never sends a baseline and never reports
+                        // baseline_unavailable: Google here is display, not request input.
+                        result = AiMeaningRun.run(context, new AiSettings(context), run.base,
+                                workerSnapshot, null, false, targetLang,
+                                allowProviderRequest, signal, monitor);
+                        if (result != null && result.outcome != null
+                                && result.outcome.kind == AiRunOutcome.Kind.FAILED) {
+                            aiFailure = result.outcome.failure;
+                            AiRequestLiveState.fail(LayerKind.MEANING, run.canonicalDigest(),
+                                    run.tag, result.outcome.failureToken,
+                                    result.outcome.failure.httpStatus,
+                                    result.outcome.failureDetail);
+                            recordAiOutcome("request_failed", "failed",
+                                    result.outcome.failureToken,
+                                    result.outcome.failure.httpStatus);
+                            XposedBridge.log(TAG + " ai translation outcome=failed token="
+                                    + result.outcome.failureToken + " status="
+                                    + result.outcome.failure.httpStatus + " rule="
+                                    + result.outcome.failureDetail);
+                        } else if (result != null && result.outcome != null
+                                && (result.outcome.kind == AiRunOutcome.Kind.COMPLETED
+                                || result.outcome.kind == AiRunOutcome.Kind.REUSED)) {
+                            recordAiOutcome("request_settled",
+                                    result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT),
+                                    "", 0);
+                            XposedBridge.log(TAG + " ai translation outcome="
+                                    + result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT)
+                                    + " durable=" + result.outcome.durable);
+                        }
+                    } catch (AiCancelledException cancelled) {
+                        // Expected on a track change; the run already stored whatever it had.
+                        AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(),
+                                run.tag);
+                        recordAiOutcome("request_settled", "cancelled", "", 0);
+                        return;
+                    } catch (Throwable failure) {
+                        XposedBridge.log(TAG + " ai translation failed: "
+                                + AiRuntimeFailureLog.describe(failure));
+                        aiFailure = new LayerFailure(LayerFailure.Reason.UNAVAILABLE,
+                                "runtime_unavailable", 0);
+                        AiRequestLiveState.fail(LayerKind.MEANING, run.canonicalDigest(), run.tag,
+                                "runtime_unavailable", 0, failure.getClass().getSimpleName());
+                        recordAiOutcome("request_failed", "failed", "runtime_unavailable", 0);
+                    } finally {
+                        COALESCER.finish(runIdentity);
+                    }
+                    AiRequestLiveState.complete(LayerKind.MEANING, run.canonicalDigest(), run.tag);
+
+                    MeaningArtifact artifact = result == null ? null : result.artifact;
+                    // The preliminary was display-only: the paid record stays keyed to raw
+                    // lyrics, so no Google baseline is folded into the final artifact.
+                    final MeaningPreviewRace.Outcome outcome = race.onAiSettled(artifact,
+                            aiFailure);
+                    final int changed = outcome.artifact == null ? 0 : outcome.artifact.size();
+                    LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.MEANING_PROCESSED);
+                    LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.MEANING_PROCESSING,
+                            SystemClock.elapsedRealtime() - startedAtMs);
+                    post(run, id, generation, snapshot, currentGuard, new Runnable() {
+                        @Override public void run() {
+                            callback.complete(LayerKind.MEANING, outcome.artifact,
+                                    outcome.failure,
+                                    "AI translated " + changed + " lines", changed);
+                        }
+                    });
+                }
+            });
+        } catch (RuntimeException notDispatched) {
+            COALESCER.finish(runIdentity);
+            race.abandonAi();
+            AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(), run.tag);
+            // The same tag owns both children's calls, so this aborts the Google child too.
+            provider.cancel(http, run.tag);
+            XposedBridge.log(TAG + " preview ai translation not dispatched: "
+                    + notDispatched.getClass().getSimpleName());
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * One allowlisted diagnostic event for the AI side of this lane.
+     *
+     * <p>Only context keys already on the capture filter are used — {@code provider}, {@code
+     * result}, {@code reason}, and {@code status} — so nothing here can silently drop. Tokens name
+     * the failure; no lyric text, payload, or URL travels with them.
+     */
+    private void recordAiOutcome(String operation, String result, String reason, int httpStatus) {
+        Diagnostics.event(AI_COMPONENT, operation, Diagnostics.context(
+                "provider", aiProviderId(),
+                "result", result,
+                "reason", AiText.nz(reason),
+                "status", httpStatus > 0 ? String.valueOf(httpStatus) : ""));
+    }
+
+    private String aiProviderId() {
+        return new AiSettings(context).providerId();
     }
 
     private MeaningArtifact googleFallback(DerivedLayerRun run, String id,

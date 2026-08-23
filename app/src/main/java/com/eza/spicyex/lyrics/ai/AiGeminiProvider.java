@@ -93,7 +93,7 @@ public final class AiGeminiProvider implements AiProvider {
             String url = BASE_URL + "/models?pageSize=100"
                     + (pageToken.isEmpty() ? "" : "&pageToken=" + pageToken);
             AiHttp.Result result = transport.get(url, headers(key), signal,
-                    AiContract.MAX_RESPONSE_BYTES);
+                    AiContract.MAX_MODEL_LIST_BYTES);
             if (!result.ok()) return AiModelListResult.failed(failureOf(result));
 
             JsonObject body = objectOf(result.body);

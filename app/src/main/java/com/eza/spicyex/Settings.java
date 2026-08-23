@@ -313,7 +313,12 @@ public final class Settings {
     public static final Setting<String> AI_PROVIDER = enumSetting(
             "ai_provider", AI, "Provider",
             "gemini",
-            "gemini", "openai", "custom"
+            "gemini", "openai", "openrouter", "deepseek", "custom"
+    );
+
+    public static final Setting<String> AI_DEEPSEEK_REASONING = enumSetting(
+            "ai_deepseek_reasoning", AI, "DeepSeek reasoning",
+            "Low", "Off", "Low", "High", "Max"
     );
 
     public static final Setting<String> AI_TRANSLATION_MODE = enumSetting(
@@ -321,9 +326,13 @@ public final class Settings {
             "On demand", "On demand", "Always use AI"
     );
 
+    // Three Meaning display flows sharing one stored key: preview shows Google while a raw-lyrics
+    // AI request runs, draft sends Google to the model for refinement, AI-only never asks Google.
+    // "Google draft" stays the default until device comparison proves otherwise, and the two older
+    // values must keep coercing so an existing choice never silently changes paid-request input.
     public static final Setting<String> AI_TRANSLATION_PIPELINE = enumSetting(
-            "ai_translation_pipeline", AI, "AI translation pipeline",
-            "Google draft", "AI only", "Google draft"
+            "ai_translation_pipeline", AI, "AI translation flow",
+            "Google draft", "Google preview", "Google draft", "AI only"
     );
 
     public static final Setting<String> AI_PRONUNCIATION_MODE = enumSetting(
@@ -365,6 +374,14 @@ public final class Settings {
             "ai_model_openai", "OpenAI AI model", ""
     );
 
+    public static final Setting<String> AI_MODEL_OPENROUTER = internalSetting(
+            "ai_model_openrouter", "OpenRouter AI model", ""
+    );
+
+    public static final Setting<String> AI_MODEL_DEEPSEEK = internalSetting(
+            "ai_model_deepseek", "DeepSeek AI model", ""
+    );
+
     public static final Setting<String> AI_MODEL_CUSTOM = internalSetting(
             "ai_model_custom", "Custom AI model", ""
     );
@@ -391,6 +408,29 @@ public final class Settings {
     // endpoints cannot serve another endpoint's answers.
     public static final Setting<String> AI_ENDPOINT = internalSetting(
             "ai_endpoint", "AI endpoint", ""
+    );
+
+    // Last structured-output probe per provider scope: endpoint host, model name, measured output
+    // tokens, failure token. Written by the model test and the one-time readiness check; read by
+    // the planner to size the reasoning headroom. Never holds a credential.
+    public static final Setting<String> AI_PROBE_GEMINI = internalSetting(
+            "ai_probe_gemini", "Gemini AI probe", ""
+    );
+
+    public static final Setting<String> AI_PROBE_OPENAI = internalSetting(
+            "ai_probe_openai", "OpenAI AI probe", ""
+    );
+
+    public static final Setting<String> AI_PROBE_OPENROUTER = internalSetting(
+            "ai_probe_openrouter", "OpenRouter AI probe", ""
+    );
+
+    public static final Setting<String> AI_PROBE_DEEPSEEK = internalSetting(
+            "ai_probe_deepseek", "DeepSeek AI probe", ""
+    );
+
+    public static final Setting<String> AI_PROBE_CUSTOM = internalSetting(
+            "ai_probe_custom", "Custom AI probe", ""
     );
 
     public static final Setting<String> DISPLAY_MODE = internalEnumSetting(

@@ -43,6 +43,9 @@ public class LyricsDocument {
     public boolean translationAiPending;
     /** True when the displayed AI translation used Google Translate output as request input. */
     public boolean translationAiRefinedFromGoogle;
+    /** Model that produced the displayed AI output, from its provenance. Empty when not AI. */
+    public String readingAiModel = "";
+    public String translationAiModel = "";
     /** Exact privacy-safe AI failure tokens for the current layer settlement, or empty. */
     public String readingAiFailureToken = "";
     public String translationAiFailureToken = "";
@@ -80,6 +83,8 @@ public class LyricsDocument {
         copy.readingAiPending = source.readingAiPending;
         copy.translationAiPending = source.translationAiPending;
         copy.translationAiRefinedFromGoogle = source.translationAiRefinedFromGoogle;
+        copy.readingAiModel = source.readingAiModel;
+        copy.translationAiModel = source.translationAiModel;
         copy.readingAiFailureToken = safe(source.readingAiFailureToken);
         copy.translationAiFailureToken = safe(source.translationAiFailureToken);
         copy.detectedChinese = source.detectedChinese;

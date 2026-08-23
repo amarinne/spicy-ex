@@ -78,8 +78,7 @@ public final class AiChunkPlanner {
             if (previous != null && AiText.utf8Bytes(previous) > AiContract.MAX_TRANSLATED_ITEM_BYTES) {
                 throw new AiOversizedException("previous_item");
             }
-            sent.add(new Entry(new AiRequestItem(row.id, row.lineClass, row.voice, row.sourceText,
-                    previous), row.allowUnchanged));
+            addSent(sent, row, previous);
         }
 
         if (sent.isEmpty()) {
@@ -91,7 +90,8 @@ public final class AiChunkPlanner {
         for (Entry entry : sent) sentBytes += entry.item.sourceUtf8Bytes();
         if (sent.size() <= AiContract.SINGLE_CALL_MAX_ITEMS
                 && sentBytes <= AiContract.SINGLE_CALL_MAX_SOURCE_BYTES
-                && ceilHalf(sentBytes) <= AiContract.SINGLE_CALL_MAX_OUTPUT_TOKENS) {
+                && estimatedOutputTokens(sentBytes, sent.size(), input.model)
+                <= AiContract.SINGLE_CALL_MAX_OUTPUT_TOKENS) {
             try {
                 AiPlannedChunk single = createChunk("C0", context, sent, input, iteration);
                 return new AiChunkPlan(AiContract.CHUNK_PLAN_VERSION,
@@ -132,6 +132,52 @@ public final class AiChunkPlanner {
     }
 
     /**
+     * Re-plans one ceiling-truncated chunk into deterministic hierarchical children.
+     *
+     * <p>The tighter output estimate is derived rather than guessed: keep the reasoning allowance
+     * each new call must pay, then halve the failed chunk's remaining visible/envelope payload.
+     * Greedy enumeration under that bound preserves order and stable resume IDs. A single item is
+     * indivisible and returns no children, leaving truncation terminal.
+     */
+    static List<AiPlannedChunk> replan(Input input, AiPlannedChunk failed) {
+        if (failed == null || failed.items.size() < 2) return Collections.emptyList();
+
+        int reasoning = reasoningAllowance(input.model);
+        int payload = Math.max(1, failed.estimatedOutputTokens - reasoning);
+        int tighterOutputTokens = reasoning + (payload + 1) / 2;
+        List<Entry> entries = entriesOf(failed);
+        List<AiPlannedChunk> children = new ArrayList<>();
+        List<Entry> current = new ArrayList<>();
+
+        for (Entry entry : entries) {
+            List<Entry> candidate = new ArrayList<>(current);
+            candidate.add(entry);
+            AiPlannedChunk candidateChunk = createChunk("probe", failed.context, candidate, input,
+                    false);
+            if (!current.isEmpty()
+                    && candidateChunk.estimatedOutputTokens > tighterOutputTokens) {
+                children.add(createChunk(failed.id + "." + children.size(), failed.context,
+                        current, input, false));
+                current = new ArrayList<>();
+            }
+            current.add(entry);
+        }
+        if (!current.isEmpty()) {
+            children.add(createChunk(failed.id + "." + children.size(), failed.context,
+                    current, input, false));
+        }
+        return children.size() < 2 ? Collections.<AiPlannedChunk>emptyList() : children;
+    }
+
+    private static List<Entry> entriesOf(AiPlannedChunk chunk) {
+        List<Entry> entries = new ArrayList<>(chunk.items.size());
+        for (AiRequestItem item : chunk.items) {
+            entries.add(new Entry(item, chunk.allowUnchangedIds.contains(item.id)));
+        }
+        return entries;
+    }
+
+    /**
      * The probe the boundary rule is defined by: a candidate chunk is only allowed if the request
      * it would produce actually fits the transport bound and the model's limits. Counting items and
      * source bytes alone would let a long steering note or a large baseline push the real request
@@ -144,6 +190,46 @@ public final class AiChunkPlanner {
             return true;
         } catch (AiOversizedException tooBig) {
             return false;
+        }
+    }
+
+    /**
+     * Adds one row to the send list, pre-split into one item per {@code " / "} segment.
+     *
+     * <p>This is what retired the delimiter rule: a model cannot disobey a count it never sees.
+     * Segment items carry derived ids ({@link AiContract#segmentId}), the validator rejoins them
+     * in order, and everything downstream stays row-addressed. The split is deterministic, so
+     * boundaries and cache identity do not drift between runs.
+     *
+     * <p>The source decides the segmentation, and a baseline that disagrees is dropped for that
+     * row rather than allowed to suppress the split. Google output routinely merges or drops
+     * {@code " / "} boundaries, so making the split conditional on the baseline agreeing left the
+     * Google-draft and layered pipelines still sending joined rows — still required by the
+     * validator to preserve a delimiter count, with the sentence that used to ask for it now
+     * removed from the prompt. A rule that is enforced but no longer stated is worse than one that
+     * is stated: the model has no way to comply. Losing a baseline on those rows costs a refinement
+     * and nothing else, and a baseline whose segmentation contradicts the source was poor material
+     * for refining anyway.
+     */
+    private static void addSent(List<Entry> sent, AiLine row, String previous) {
+        List<String> sourceSegments = AiText.splitSegments(row.sourceText);
+        List<String> previousSegments = previous == null ? null
+                : AiText.splitSegments(previous);
+        if (previousSegments != null && previousSegments.size() != sourceSegments.size()) {
+            previousSegments = null;
+            previous = null;
+        }
+        boolean splits = sourceSegments.size() > 1;
+        if (!splits) {
+            sent.add(new Entry(new AiRequestItem(row.id, row.lineClass, row.voice,
+                    row.sourceText, previous), row.allowUnchanged));
+            return;
+        }
+        for (int index = 0; index < sourceSegments.size(); index++) {
+            sent.add(new Entry(new AiRequestItem(AiContract.segmentId(row.id, index),
+                    row.lineClass, row.voice, sourceSegments.get(index),
+                    previousSegments == null ? null : previousSegments.get(index)),
+                    row.allowUnchanged));
         }
     }
 
@@ -164,7 +250,8 @@ public final class AiChunkPlanner {
                         input.baselineRefinement);
 
         int requestBytes = AiText.utf8Bytes(systemPrompt) + AiText.utf8Bytes(json);
-        int estimatedOutputTokens = ceilHalf(sourceUtf8Bytes);
+        int estimatedOutputTokens = estimatedOutputTokens(sourceUtf8Bytes, items.size(),
+                input.model);
         int estimatedInputTokens = ceilHalf(requestBytes);
         AiModelLimits model = input.model;
         if (requestBytes > AiContract.MAX_REQUEST_BYTES
@@ -177,12 +264,43 @@ public final class AiChunkPlanner {
     }
 
     /**
-     * The output-token estimator: half the source bytes, rounded up. Deliberately crude and
-     * tokenizer-independent, so the same document plans identically on every model and the estimate
-     * changes only when the chunk plan version does.
+     * The output-token estimator: half the source bytes, rounded up, plus a reasoning headroom
+     * term. Deliberately crude and tokenizer-independent, so the same document plans identically
+     * on every model and the estimate changes only when the chunk plan version does.
+     *
+     * <p>The visible-output half ({@link #ceilHalf}) and the reasoning allowance
+     * ({@link AiContract#REASONING_OUTPUT_ALLOWANCE_TOKENS}, replaced by a probe-measured value
+     * when one exists) are separate terms on purpose: they fail differently, they cost
+     * differently, and keeping them apart keeps each one reviewable on its own.
      */
     static int ceilHalf(int bytes) {
         return (bytes + 1) / 2;
+    }
+
+    /** The full output estimate for {@code sourceUtf8Bytes} against the planned model. */
+    static int estimatedOutputTokens(int sourceUtf8Bytes, AiModelLimits model) {
+        return estimatedOutputTokens(sourceUtf8Bytes, 0, model);
+    }
+
+    /**
+     * @param itemCount rows in the response, each of which costs its own JSON envelope
+     */
+    static int estimatedOutputTokens(int sourceUtf8Bytes, int itemCount, AiModelLimits model) {
+        return ceilHalf(sourceUtf8Bytes)
+                + Math.max(0, itemCount) * AiContract.RESPONSE_ITEM_OVERHEAD_TOKENS
+                + reasoningAllowance(model);
+    }
+
+    /**
+     * The reasoning allowance in effect for {@code model}: the measured value when the descriptor
+     * carries one from the probe, otherwise the contract default.
+     */
+    static int reasoningAllowance(AiModelLimits model) {
+        if (model instanceof AiModelDescriptor) {
+            int measured = ((AiModelDescriptor) model).reasoningAllowanceTokens;
+            if (measured >= 0) return Math.min(measured, AiContract.MAX_CONFIGURED_OUTPUT_TOKENS);
+        }
+        return AiContract.REASONING_OUTPUT_ALLOWANCE_TOKENS;
     }
 
     private static final class Entry {

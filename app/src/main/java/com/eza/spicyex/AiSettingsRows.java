@@ -8,6 +8,7 @@ import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import com.eza.spicyex.lyrics.ai.AiCredentialStore;
+import com.eza.spicyex.lyrics.ai.AiLastProbe;
 import com.eza.spicyex.lyrics.ai.AiEndpoint;
 import com.eza.spicyex.lyrics.ai.AiGeminiProvider;
 import com.eza.spicyex.lyrics.ai.AiModelDescriptor;
@@ -127,8 +128,18 @@ final class AiSettingsRows {
                         v -> testModel()));
     }
 
-    boolean isLive() {
-        return AiModelLiveState.isLive(settings);
+    /**
+     * Whether the AI family is set up end to end: enabled, a key stored for this provider's own
+     * scope, a model chosen, and an address to send to.
+     *
+     * <p>State, not an event. The structured-output probe deliberately does not enter this: it runs
+     * once per configuration, it can fail for reasons that say nothing about setup — a rate limit,
+     * a momentary outage — and a one-shot result cannot answer "is AI ready" ten minutes later. A
+     * failing probe is reported where it is actionable, on the model row, not by unlighting the
+     * indicator for a setup that is complete.
+     */
+    boolean isReady() {
+        return settings.readiness() == AiSettings.Readiness.READY;
     }
 
     /** Runs one tiny liveness probe per provider/model configuration in this Spotify process. */
@@ -136,14 +147,18 @@ final class AiSettingsRows {
         if (!AiModelLiveState.begin(settings)) return;
         final Handler handler = new Handler(context.getMainLooper());
         new Thread(() -> {
-            boolean live = false;
+            AiModelProbe.Result outcome = null;
             try {
-                live = AiModelProbe.probe(settings, null).ok;
+                outcome = AiModelProbe.probe(settings, null);
             } catch (Throwable failure) {
                 XposedBridge.log("[SpotifyPlusAiSettings] initial model probe failed: "
                         + AiRuntimeFailureLog.describe(failure));
             }
-            final boolean result = live;
+            if (outcome != null) {
+                AiLastProbe.record(outcome);
+                settings.recordProbeOutcome(outcome);
+            }
+            final boolean result = outcome != null && outcome.ok;
             handler.post(() -> {
                 AiModelLiveState.finish(settings, result);
                 host.updateAiBadge(result);
@@ -264,6 +279,8 @@ final class AiSettingsRows {
         new Thread(() -> {
             try {
                 AiModelProbe.Result result = AiModelProbe.probe(settings, null);
+                AiLastProbe.record(result);
+                settings.recordProbeOutcome(result);
                 handler.post(() -> {
                     AiModelLiveState.finish(settings, result.ok);
                     if (result.ok) {
@@ -296,6 +313,12 @@ final class AiSettingsRows {
             case RATE_LIMITED: return host.string("settings_ai_rate_limited", "Rate limited");
             case QUOTA: return host.string("settings_ai_quota", "Quota exhausted");
             case DELIVERY_UNKNOWN: return host.string("settings_ai_no_response", "No response");
+            // Reaching the endpoint and refusing what it sent is not the same as never reaching it,
+            // and saying otherwise sends the owner to check their network and their key.
+            case OVERSIZED: return host.string("settings_ai_response_too_large",
+                    "Response too large");
+            case MODEL_UNAVAILABLE: return host.string("settings_ai_no_models",
+                    "No usable models for this key");
             default: return host.string("settings_ai_unreachable", "Could not reach provider");
         }
     }

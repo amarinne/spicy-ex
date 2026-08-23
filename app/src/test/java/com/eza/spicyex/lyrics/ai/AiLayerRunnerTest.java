@@ -150,6 +150,117 @@ public class AiLayerRunnerTest {
         assertEquals("id_set_mismatch:missing:r0", outcome.failureDetail);
     }
 
+    @Test
+    public void aChunkThatFinishesWithFallbacksIsTerminalButNeverReusableAsComplete() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        FakeAiProvider provider = new FakeAiProvider(
+                // r0 validates; r1 breaks the joined-row delimiter rule.
+                FakeAiProvider.body("{\"items\":[{\"id\":\"r0\",\"t\":\"line 0\"},"
+                        + "{\"id\":\"r1\",\"t\":\"a / b\"}]}"),
+                FakeAiProvider.body("{\"items\":[{\"id\":\"r1\",\"t\":\"c / d\"}]}"));
+
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(2), provider, store));
+
+        assertEquals(AiRunOutcome.Kind.COMPLETED, outcome.kind);
+        AiPaidRecord stored = store.peek(config());
+        assertEquals(AiPaidRecord.Status.PARTIAL, stored.status);
+        assertFalse("a half-AI record must never pass the reuse gate", stored.isComplete());
+
+        // A later visit re-plans but must not re-bill a single row.
+        FakeAiProvider secondVisit = new FakeAiProvider();
+        AiLayerRunner.run(args(rows(2), secondVisit, store));
+        assertTrue(secondVisit.calls.isEmpty());
+        assertEquals(AiPaidRecord.Status.PARTIAL, store.peek(config()).status);
+    }
+
+    @Test
+    public void aCeilingTruncationReplansAndKeepsTheBilledAttempt() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        FakeAiProvider provider = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[]}", AiUsage.of(40, 900),
+                        AiFinishReason.LENGTH));
+
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(8), provider, store));
+
+        assertEquals(AiRunOutcome.Kind.COMPLETED, outcome.kind);
+        assertEquals("one failed parent plus two smaller children", 3, provider.calls.size());
+        assertEquals(8, provider.calls.get(0).request.items.size());
+        assertEquals(4, provider.calls.get(1).request.items.size());
+        assertEquals(4, provider.calls.get(2).request.items.size());
+        assertEquals("the truncated output and both child answers stay counted",
+                920, outcome.record.outputTokens);
+        assertEquals(AiChunkRecord.Status.COMPLETE, outcome.record.chunk("C0").status);
+        assertTrue(outcome.record.chunk("C0.0").isComplete());
+        assertTrue(outcome.record.chunk("C0.1").isComplete());
+    }
+
+    @Test
+    public void aReplannedChildKeepsItsOwnTwoAttemptRepairBudget() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        FakeAiProvider provider = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[]}", AiUsage.of(40, 900),
+                        AiFinishReason.LENGTH),
+                FakeAiProvider.body("{\"items\":[]}"));
+
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(8), provider, store));
+
+        assertEquals(AiRunOutcome.Kind.COMPLETED, outcome.kind);
+        assertEquals("parent + child repair + repaired child + second child", 4,
+                provider.calls.size());
+        assertEquals(2, outcome.record.chunk("C0.0").attempts);
+        assertEquals(1, outcome.record.chunk("C0.0").repairs);
+    }
+
+    @Test
+    public void aReplannedResumeDoesNotResendTheParentOrACompletedChild() {
+        final AiSignal signal = new AiSignal();
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        FakeAiProvider first = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[]}", AiUsage.of(40, 900),
+                        AiFinishReason.LENGTH),
+                new FakeAiProvider.Step() {
+                    @Override public AiProviderResult answer(AiProviderRequest request,
+                                                             AiProviderConfig config,
+                                                             AiSignal callSignal) {
+                        AiProviderResult answer = AiProviderResult.ok(FakeAiProvider.echo(request),
+                                AiUsage.of(10, 10), AiFinishReason.STOP, 64L);
+                        signal.abort("track_change");
+                        return answer;
+                    }
+                });
+        AiLayerRunner.Args firstArgs = args(rows(8), first, store);
+        firstArgs.signal = signal;
+
+        AiRunOutcome stopped = AiLayerRunner.run(firstArgs);
+
+        assertEquals(AiRunOutcome.Kind.CANCELLED, stopped.kind);
+        assertEquals(2, first.calls.size());
+        assertEquals(AiChunkRecord.Status.REPLANNED, stopped.record.chunk("C0").status);
+        assertTrue(stopped.record.chunk("C0.0").isComplete());
+
+        FakeAiProvider resumedProvider = new FakeAiProvider();
+        AiRunOutcome resumed = AiLayerRunner.run(args(rows(8), resumedProvider, store));
+
+        assertEquals(AiRunOutcome.Kind.COMPLETED, resumed.kind);
+        assertEquals("only the unfinished sibling child is sent", 1, resumedProvider.calls.size());
+        assertEquals(4, resumedProvider.calls.get(0).request.items.size());
+        assertEquals(920, resumed.record.outputTokens);
+    }
+
+    @Test
+    public void aSingleItemCeilingTruncationRemainsTerminal() {
+        FakeAiProvider provider = new FakeAiProvider(
+                FakeAiProvider.body("{\"items\":[]}", AiUsage.of(10, 512),
+                        AiFinishReason.LENGTH));
+
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(1), provider,
+                new FakeAiRecordStore()));
+
+        assertEquals(AiRunOutcome.Kind.FAILED, outcome.kind);
+        assertEquals("truncated", outcome.failureToken);
+        assertEquals(1, provider.calls.size());
+    }
+
     // --- keeping what was bought --------------------------------------------
 
     @Test

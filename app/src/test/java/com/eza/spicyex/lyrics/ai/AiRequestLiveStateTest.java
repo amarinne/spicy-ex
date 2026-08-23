@@ -49,4 +49,25 @@ public class AiRequestLiveStateTest {
         assertEquals(AiRequestLiveState.Phase.PREPARING, snapshot.current.phase);
         assertFalse(snapshot.current.hasPayload());
     }
+
+    @Test
+    public void diagnosticSnapshotRetainsSuccessWhileNextRunIsPreparing() {
+        AiRequestLiveState.begin(LayerKind.MEANING, "doc", "complete");
+        AiRequestLiveState.attempt(LayerKind.MEANING, "doc", "complete",
+                "C0", 1, "successful payload");
+        AiRequestLiveState.complete(LayerKind.MEANING, "doc", "complete");
+        AiRequestLiveState.begin(LayerKind.MEANING, "doc", "preparing");
+
+        AiRequestLiveState.Snapshot snapshot =
+                AiRequestLiveState.diagnosticSnapshot(LayerKind.MEANING);
+        assertEquals(AiRequestLiveState.Phase.PREPARING, snapshot.current.phase);
+        assertEquals(AiRequestLiveState.Phase.COMPLETE, snapshot.lastSettled.phase);
+        assertTrue(snapshot.lastSettled.payload.contains("successful payload"));
+
+        AiRequestLiveState.fail(LayerKind.MEANING, "doc", "preparing",
+                "executor_rejected", 0, "");
+        snapshot = AiRequestLiveState.diagnosticSnapshot(LayerKind.MEANING);
+        assertEquals(AiRequestLiveState.Phase.FAILED, snapshot.current.phase);
+        assertEquals(AiRequestLiveState.Phase.COMPLETE, snapshot.lastSettled.phase);
+    }
 }

@@ -49,6 +49,30 @@ public class DiagnosticEventBufferTest {
     }
 
     @Test
+    public void aiLaneContextKeysPassTheFilterAndUnlistedKeysStillDrop() {
+        DiagnosticEventBuffer.Event event = DiagnosticEventBuffer.event(
+                10L,
+                "ai_meaning",
+                "request_failed",
+                null,
+                DiagnosticEventBuffer.context(
+                        "provider", "openai",
+                        "result", "failed",
+                        "reason", "truncated",
+                        "status", "400",
+                        "model", "test-model",
+                        "payload", "{\"items\":[{\"id\":\"S0\"}]}"));
+        DiagnosticEventBuffer.Result result = DiagnosticEventBuffer.append("", event);
+
+        assertTrue(result.jsonl.contains("\"provider\":\"openai\""));
+        assertTrue(result.jsonl.contains("\"result\":\"failed\""));
+        assertTrue(result.jsonl.contains("\"reason\":\"truncated\""));
+        assertTrue(result.jsonl.contains("\"status\":\"400\""));
+        assertFalse(result.jsonl.contains("model"));
+        assertFalse(result.jsonl.contains("items"));
+    }
+
+    @Test
     public void capturePolicyCoversRestartTimeoutAndDeduplication() {
         assertFalse(DiagnosticCapturePolicy.expired(100L, 200L, 300L, 400L, 1_000L));
         assertTrue(DiagnosticCapturePolicy.expired(100L, 200L, 300L, 1_200L, 1_000L));

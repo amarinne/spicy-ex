@@ -4,6 +4,7 @@
     <string name="diagnostic_category_missing_wrong">歌词缺失或错误</string>
     <string name="diagnostic_category_timing">时间轴</string>
     <string name="diagnostic_category_translation">翻译</string>
+    <string name="diagnostic_category_ai">AI 功能</string>
     <string name="diagnostic_category_transliteration">转写或罗马字</string>
     <string name="diagnostic_category_fullscreen">全屏渲染器</string>
     <string name="diagnostic_category_now_playing">正在播放卡片</string>
@@ -25,7 +26,7 @@
     <string name="diagnostic_capture_failed">无法开始捕获。</string>
     <string name="diagnostic_capture_cancelled">捕获已取消。</string>
     <string name="diagnostic_prepare_failed">无法准备报告。</string>
-    <string name="diagnostic_retention_notice">报告数据（包括当前歌曲和歌词证据）会保留，直到手动删除或脱敏。</string>
+    <string name="diagnostic_retention_notice">报告数据（包括当前歌曲、歌词证据和近期 AI 请求负载）会保留，直到手动删除或脱敏。</string>
     <string name="diagnostic_accept_retention">我了解保留政策，并希望上传此报告。</string>
     <string name="diagnostic_data_policy">诊断数据政策 ↗</string>
     <string name="diagnostic_accept_policy">我接受此政策。</string>

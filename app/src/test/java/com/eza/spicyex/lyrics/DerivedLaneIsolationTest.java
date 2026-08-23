@@ -35,7 +35,7 @@ public class DerivedLaneIsolationTest {
     private static final String SOUND_CONFIG =
             LayerConfigIds.sound(true, RomanizationOptions.DEFAULTS.cacheKey(), "ja", 3);
     private static final String MEANING_CONFIG =
-            LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto");
+            LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto", "google_draft");
 
     // --- layer-scoped patches ------------------------------------------------
 

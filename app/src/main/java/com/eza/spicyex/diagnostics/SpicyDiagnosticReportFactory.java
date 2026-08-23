@@ -14,6 +14,8 @@ import com.eza.spicyex.FeatureAvailability;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
+import com.eza.spicyex.lyrics.ai.AiEndpoint;
+import com.eza.spicyex.lyrics.session.LayerKind;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -29,6 +31,10 @@ import de.robv.android.xposed.XposedBridge;
 public final class SpicyDiagnosticReportFactory {
     private static final Gson GSON = new Gson();
     private static final Gson PRETTY_GSON = new GsonBuilder().setPrettyPrinting().create();
+    /** Verbatim probe exchange bound: the fixture is small, but the report ceiling is not. */
+    private static final int PROBE_TRACE_BYTES = 8 * 1024;
+    /** Per-attempt live request bound; six retained payloads still fit below the report ceiling. */
+    private static final int AI_REQUEST_PAYLOAD_BYTES = 24 * 1024;
 
     private SpicyDiagnosticReportFactory() {
     }
@@ -58,7 +64,8 @@ public final class SpicyDiagnosticReportFactory {
         root.addProperty("envelopeVersion", 1);
         root.addProperty("reportId", reportId);
         root.addProperty("product", "spicy_ex");
-        root.addProperty("productReportVersion", 2);
+        root.addProperty("productReportVersion",
+                DiagnosticReportContract.PRODUCT_REPORT_VERSION);
         root.addProperty("createdAtUtc", Instant.ofEpochMilli(createdAt).toString());
         root.addProperty("category", category);
         root.addProperty("description", description);
@@ -69,14 +76,15 @@ public final class SpicyDiagnosticReportFactory {
                 setupChecks);
         root.add("productMetadata", product);
         root.add("capture", captureMetadata(capture, createdAt));
-        root.add("rawDiagnostics", rawDiagnostics(settings, capture));
+        JsonObject ai = aiDiagnostics(context, settings);
+        root.add("rawDiagnostics", rawDiagnostics(settings, capture, ai));
         String json = GSON.toJson(root);
         if (containsForbiddenFields(root)
                 || DiagnosticReportContract.utf8Bytes(json) > DiagnosticReportContract.CLIENT_BODY_BYTES) {
             throw new IllegalArgumentException("diagnostic report too large");
         }
         return new Draft(reportId, category, description, json, issueTitle(category, reportId),
-                issueBody(description, reportId, product), setupChecks);
+                issueBody(description, reportId, product, ai), setupChecks);
     }
 
     private static JsonObject commonMetadata(Context context) {
@@ -225,8 +233,161 @@ public final class SpicyDiagnosticReportFactory {
         return object;
     }
 
+    /**
+     * The AI diagnostics block, beside {@code runtimeSettings} in the report.
+     *
+     * <p>Everything here is label or outcome: provider choice, endpoint host (never the full URL),
+     * model name, readiness, the structured-output probe verdict, and recent per-layer attempts.
+     * Each attempt names its phase and carries a bounded wire payload so success and failure can be
+     * compared. The API key is never read and provider response bodies remain excluded.
+     */
+    static JsonObject aiBlock(String providerChoice, boolean usesOpenAiWire, String endpointHost,
+                               String model, String readiness, String probeResultToken,
+                               com.eza.spicyex.lyrics.ai.AiModelProbe.Trace trace,
+                               com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot meaningState,
+                               com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot soundState) {
+        JsonObject ai = new JsonObject();
+        ai.addProperty("enabled", !"disabled".equals(readiness));
+        ai.addProperty("provider", boundedToken(providerChoice, 32));
+        if (usesOpenAiWire) {
+            ai.addProperty("endpointHost", bounded(endpointHost, 128));
+        }
+        ai.addProperty("model", bounded(model, 256));
+        ai.addProperty("readiness", boundedToken(readiness, 32));
+        if (!probeResultToken.isEmpty()) {
+            ai.addProperty("probe", boundedToken(probeResultToken, 96));
+        }
+        if (trace != null && trace != com.eza.spicyex.lyrics.ai.AiModelProbe.Trace.EMPTY
+                && (trace.hasRequest() || trace.hasResponse())) {
+            JsonObject exchange = new JsonObject();
+            exchange.addProperty("request",
+                    bounded(trace.request, PROBE_TRACE_BYTES));
+            exchange.addProperty("response",
+                    bounded(trace.response, PROBE_TRACE_BYTES));
+            exchange.addProperty("finish", boundedToken(
+                    trace.finish == null ? "" : trace.finish.name().toLowerCase(java.util.Locale.ROOT),
+                    32));
+            exchange.addProperty("httpStatus", Math.max(0, trace.httpStatus));
+            ai.add("probeTrace", exchange);
+        }
+        JsonArray meaningAttempts = attemptsJson(meaningState);
+        if (!meaningAttempts.isEmpty()) ai.add("meaningAttempts", meaningAttempts);
+        JsonArray soundAttempts = attemptsJson(soundState);
+        if (!soundAttempts.isEmpty()) ai.add("soundAttempts", soundAttempts);
+        JsonObject meaning = failureJson(lastFailure(meaningState));
+        if (meaning != null) ai.add("meaningFailure", meaning);
+        JsonObject sound = failureJson(lastFailure(soundState));
+        if (sound != null) ai.add("soundFailure", sound);
+        return ai;
+    }
+
+    private static JsonArray attemptsJson(
+            com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot state) {
+        JsonArray attempts = new JsonArray();
+        if (state == null) return attempts;
+        addAttempt(attempts, "current", state.current, null, null);
+        addAttempt(attempts, "last_settled", state.lastSettled, state.current, null);
+        addAttempt(attempts, "last_failure", state.previousFailure,
+                state.current, state.lastSettled);
+        return attempts;
+    }
+
+    private static void addAttempt(JsonArray attempts, String role,
+                                   com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt attempt,
+                                   com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt duplicateA,
+                                   com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt duplicateB) {
+        if (attempt == null || !attempt.hasPayload()
+                || attempt == duplicateA || attempt == duplicateB) return;
+        JsonObject json = new JsonObject();
+        json.addProperty("role", role);
+        json.addProperty("phase", attempt.phase.name().toLowerCase(java.util.Locale.ROOT));
+        json.addProperty("payload", bounded(attempt.payload, AI_REQUEST_PAYLOAD_BYTES));
+        if (attempt.isFailure()) {
+            json.addProperty("reason", boundedToken(attempt.failureToken, 96));
+            json.addProperty("status", Math.max(0, attempt.httpStatus));
+        }
+        attempts.add(json);
+    }
+
+    private static com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt lastFailure(
+            com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot state) {
+        if (state == null) return null;
+        return state.current.isFailure() ? state.current : state.previousFailure;
+    }
+
+    private static JsonObject failureJson(
+            com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt failure) {
+        if (failure == null || !failure.isFailure()) return null;
+        JsonObject json = new JsonObject();
+        json.addProperty("reason", boundedToken(failure.failureToken, 96));
+        json.addProperty("status", Math.max(0, failure.httpStatus));
+        return json;
+    }
+
+    /** Gathers the live AI state for {@link #aiBlock}; thin on purpose and untestable off-device. */
+    private static JsonObject aiDiagnostics(Context context, SettingsStore settings) {
+        com.eza.spicyex.lyrics.ai.AiSettings ai = new com.eza.spicyex.lyrics.ai.AiSettings(
+                settings, com.eza.spicyex.lyrics.ai.AiCredentialStore.create(context));
+        com.eza.spicyex.lyrics.ai.AiModelProbe.Result lastProbe =
+                com.eza.spicyex.lyrics.ai.AiLastProbe.get();
+        String durableToken = ai.lastProbeFailureToken();
+        String probeToken = !durableToken.isEmpty() ? durableToken
+                : lastProbe != null && lastProbe.ok ? "ok" : "";
+        return aiBlock(ai.providerChoice(), ai.usesOpenAiWire(),
+                AiEndpoint.hostOf(ai.endpoint()), ai.modelName(),
+                ai.readiness().name().toLowerCase(java.util.Locale.ROOT), probeToken,
+                lastProbe == null ? null : lastProbe.trace,
+                com.eza.spicyex.lyrics.ai.AiRequestLiveState.diagnosticSnapshot(LayerKind.MEANING),
+                com.eza.spicyex.lyrics.ai.AiRequestLiveState.diagnosticSnapshot(LayerKind.SOUND));
+    }
+
+    /**
+     * The one AI line for the public GitHub draft: setup labels plus the last known failure.
+     *
+     * <p>This is the path a public reporter actually uses — issue #5 arrived as four words and a
+     * screenshot because none of this existed. Lyric text never enters this line.
+     */
+    static String aiIssueLine(JsonObject ai) {
+        if (ai == null || !ai.has("provider")) return "";
+        StringBuilder line = new StringBuilder("- **AI:** provider=`")
+                .append(markdownText(ai.get("provider").getAsString())).append('`');
+        if (ai.has("endpointHost")) {
+            line.append(", host=`")
+                    .append(markdownText(ai.get("endpointHost").getAsString())).append('`');
+        }
+        if (ai.has("model")) {
+            line.append(", model=`").append(markdownText(ai.get("model").getAsString())).append('`');
+        }
+        if (ai.has("readiness")) {
+            line.append(", ready=`").append(markdownText(ai.get("readiness").getAsString()))
+                    .append('`');
+        }
+        if (ai.has("probe")) {
+            line.append(", last test=`").append(markdownText(ai.get("probe").getAsString()))
+                    .append('`');
+        }
+        appendLayerFailure(line, "meaning", ai);
+        appendLayerFailure(line, "pronunciation", ai);
+        return line.toString();
+    }
+
+    private static void appendLayerFailure(StringBuilder line, String layer, JsonObject ai) {
+        JsonObject failure = ai.has(layer + "Failure")
+                && ai.get(layer + "Failure").isJsonObject()
+                ? ai.getAsJsonObject(layer + "Failure") : null;
+        if (failure == null) return;
+        line.append(", ").append(layer).append(" last failed: `")
+                .append(markdownText(failure.has("reason")
+                        ? failure.get("reason").getAsString() : "unknown"));
+        if (failure.has("status") && failure.get("status").getAsInt() > 0) {
+            line.append(" (HTTP ").append(failure.get("status").getAsInt()).append(')');
+        }
+        line.append('`');
+    }
+
     private static JsonObject rawDiagnostics(SettingsStore settings,
-                                             DiagnosticCaptureStore.FinishedCapture capture) {
+                                             DiagnosticCaptureStore.FinishedCapture capture,
+                                             JsonObject ai) {
         JsonObject raw = new JsonObject();
         raw.addProperty("diagnosticEventsAndLogs", capture == null ? "" : capture.eventsJsonl);
         raw.addProperty("crashExcerpt", "");
@@ -241,6 +402,7 @@ public final class SpicyDiagnosticReportFactory {
         runtime.addProperty("nowPlayingCardEnabled", "true");
         runtime.addProperty("hyperGlowBridgeEnabled", String.valueOf(settings.get(Settings.HYPERGLOW_ENABLED)));
         raw.add("runtimeSettings", runtime);
+        raw.add("ai", ai);
         return raw;
     }
 
@@ -268,7 +430,8 @@ public final class SpicyDiagnosticReportFactory {
         return "[Spicy EX] " + categoryLabel(category) + " — " + reportId;
     }
 
-    private static String issueBody(String description, String reportId, JsonObject product) {
+    private static String issueBody(String description, String reportId, JsonObject product,
+                                    JsonObject ai) {
         StringBuilder body = new StringBuilder("## Description\n\n")
                 .append(description.trim()).append("\n\n")
                 .append("## Report details\n\n")
@@ -286,7 +449,8 @@ public final class SpicyDiagnosticReportFactory {
                 .append("`\n")
                 .append("- **HyperGlow bridge:** `")
                 .append(markdownText(product.get("hyperGlowBridgeStatus").getAsString()))
-                .append("`\n\n");
+                .append("`\n")
+                .append(aiIssueLine(ai)).append('\n').append('\n');
         JsonObject media = product.getAsJsonObject("currentMediaEvidence");
         if (media != null && media.has("present") && media.get("present").getAsBoolean()) {
             body.append("## Song evidence\n\n")
@@ -339,7 +503,8 @@ public final class SpicyDiagnosticReportFactory {
             if (containsForbiddenFields(root)) return null;
             if (root.get("envelopeVersion").getAsInt() != 1
                     || !"spicy_ex".equals(root.get("product").getAsString())
-                    || root.get("productReportVersion").getAsInt() != 2) return null;
+                    || root.get("productReportVersion").getAsInt()
+                    != DiagnosticReportContract.PRODUCT_REPORT_VERSION) return null;
             String reportId = root.get("reportId").getAsString();
             String category = root.get("category").getAsString();
             String description = root.get("description").getAsString();
@@ -348,8 +513,12 @@ public final class SpicyDiagnosticReportFactory {
                     || !DiagnosticReportContract.validDescription(description)) return null;
             JsonObject product = root.getAsJsonObject("productMetadata");
             SpicySetupCheckPolicy.Result setupChecks = setupChecksFromJson(product);
+            JsonObject ai = root.has("rawDiagnostics")
+                    && root.getAsJsonObject("rawDiagnostics").has("ai")
+                    && root.getAsJsonObject("rawDiagnostics").get("ai").isJsonObject()
+                    ? root.getAsJsonObject("rawDiagnostics").getAsJsonObject("ai") : null;
             return new Draft(reportId, category, description, json, issueTitle(category, reportId),
-                    issueBody(description, reportId, product), setupChecks);
+                    issueBody(description, reportId, product, ai), setupChecks);
         } catch (Throwable ignored) {
             return null;
         }

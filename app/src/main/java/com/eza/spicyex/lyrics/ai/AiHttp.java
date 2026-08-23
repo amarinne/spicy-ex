@@ -46,7 +46,18 @@ public final class AiHttp {
 
     /** Generous, because a long document legitimately takes a while and there is no fallback. */
     private static final int CONNECT_TIMEOUT_SECONDS = 15;
-    private static final int READ_TIMEOUT_SECONDS = 90;
+    /**
+     * Read timeout is the gap allowed between bytes — and a completion request is not streamed, so
+     * the provider sends nothing at all until it has finished generating.
+     *
+     * <p>That makes any read timeout a flat ceiling on generation time, and a ninety second one was
+     * a harder wall than the deadline it sat behind: a model still working at ninety-one seconds
+     * produced an IOException after dispatch, which is {@code DELIVERY_UNKNOWN} — possibly billed.
+     * It is pinned to the maximum deadline so the runtime's derived, budget-sized deadline is the
+     * only thing that decides when to stop waiting.
+     */
+    private static final int READ_TIMEOUT_SECONDS =
+            (int) (AiContract.MAX_CALL_DEADLINE_MS / 1000L);
     private static final int WRITE_TIMEOUT_SECONDS = 30;
 
     private static volatile OkHttpClient client;
@@ -95,7 +106,10 @@ public final class AiHttp {
                             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                             .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                             .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                            .callTimeout(AiContract.CALL_DEADLINE_MS, TimeUnit.MILLISECONDS)
+                            // The transport backstop must never fire before the per-call deadline the
+                            // runtime is enforcing, or a slow answer becomes DELIVERY_UNKNOWN here
+                            // instead of being cancelled deliberately there.
+                            .callTimeout(AiContract.MAX_CALL_DEADLINE_MS, TimeUnit.MILLISECONDS)
                             .retryOnConnectionFailure(false)
                             .build();
                     client = local;

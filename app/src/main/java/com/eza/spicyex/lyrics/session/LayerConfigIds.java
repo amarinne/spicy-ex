@@ -30,13 +30,21 @@ public final class LayerConfigIds {
                 + "|schema=" + readingSchemaVersion;
     }
 
+    /**
+     * @param meaningFlow selected Meaning display flow token ({@code AiSettings.MeaningFlow}) —
+     *                    a run/config identity input only; switching flow must retire an in-flight
+     *                    run and invalidate a projected preliminary artifact. It is deliberately
+     *                    absent from paid AI request identity, which preview and AI-only share.
+     */
     public static String meaning(boolean enabled, String backend, String targetLanguage,
-                                 String sourceLanguageMode, String sourceLanguage) {
+                                 String sourceLanguageMode, String sourceLanguage,
+                                 String meaningFlow) {
         return "meaning-v" + MEANING_CONTRACT_VERSION
                 + "|on=" + (enabled ? 1 : 0)
                 + "|backend=" + Digests.nz(backend)
                 + "|target=" + Digests.nz(targetLanguage)
                 + "|sourceMode=" + Digests.nz(sourceLanguageMode)
-                + "|source=" + Digests.nz(sourceLanguage);
+                + "|source=" + Digests.nz(sourceLanguage)
+                + "|flow=" + Digests.nz(meaningFlow);
     }
 }

@@ -12,12 +12,21 @@ configuration, automatic GitHub issues, cookies, or embedded intake credentials.
   bridge status, and allowlisted settings.
 - Current song title, artist, album, Spotify track URI, and bounded current
   original/transliterated/translated lyric lines when available.
+- If you use AI translation or AI pronunciation: your AI provider choice, the endpoint host (never
+  the full URL), model name, readiness state, the outcome of the built-in structured-output test
+  including its full request and response exchange, the last AI failure reason with its HTTP status,
+  and bounded recent AI translation/pronunciation request payloads with explicit success, failure,
+  running, or cancellation state. These payloads can contain lyric text and prompts. The API key and
+  provider response bodies are never included. The structured-output test uses a fixed internal
+  fixture; captured AI events carry only allowlisted tokens such as provider, status, reason, and
+  result.
 - If you explicitly run capture: bounded operation events with timestamp, component, operation,
   exception class, and allowlisted context.
 
 ## Never included
 
-- Artwork identifiers, arbitrary URLs, or provider response bodies.
+- Your API keys — not the Spicy EX key, not any provider key, in any form.
+- Artwork identifiers or arbitrary URLs.
 - Spotify tokens, cookies, account details, Android ID, serial, IMEI, or Wi-Fi SSID.
 - Throwable messages, full logcat, LSPosed logs, screenshots, or arbitrary files.
 - Your source IP in the application or NocoDB report record. Network infrastructure may process it
@@ -35,9 +44,10 @@ contents from the intake endpoint.
 ## GitHub issues
 
 Opening GitHub creates a separate public draft containing your description, report ID, Spicy EX
-version/flavor, device model, compatibility summary, song identity, provider, language, and timing
-type. Lyric text, private captured events, and settings are not added to the GitHub issue. Screenshots
-can be attached manually in GitHub when useful.
+version/flavor, device model, compatibility summary, song identity, provider, language, timing
+type, and an AI summary: provider choice, endpoint host, model name, readiness state, and the last
+AI failure reason. Lyric text, AI request payloads, and settings values are not added to the GitHub
+issue. Screenshots can be attached manually in GitHub when useful.
 
 To request deletion or redaction, open a Spicy EX issue with the report ID and requested action. Do
 not post additional private diagnostic data in GitHub.

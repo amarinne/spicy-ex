@@ -145,11 +145,202 @@ public class AiChunkPlannerTest {
     }
 
     @Test
-    public void estimatedOutputIsHalfTheSourceBytesRoundedUp() {
+    public void estimatedOutputIsHalfTheSourceBytesRoundedUpPlusTheReasoningAllowance() {
         AiPlannedChunk chunk = AiChunkPlanner.plan(
                 input(Collections.singletonList(ordinary("S0", "hello")), "en")).chunks.get(0);
         assertEquals(5, chunk.sourceUtf8Bytes);
-        assertEquals(3, chunk.estimatedOutputTokens);
+        assertEquals(AiChunkPlanner.ceilHalf(5)
+                        + AiContract.RESPONSE_ITEM_OVERHEAD_TOKENS
+                        + AiContract.REASONING_OUTPUT_ALLOWANCE_TOKENS,
+                chunk.estimatedOutputTokens);
+    }
+
+    @Test
+    public void theVisibleEstimateAndTheAllowanceStaySeparateTerms() {
+        assertEquals("the visible-output half is unchanged by the headroom work",
+                3, AiChunkPlanner.ceilHalf(5));
+        assertEquals("a plain limits object gets the contract default",
+                AiContract.REASONING_OUTPUT_ALLOWANCE_TOKENS,
+                AiChunkPlanner.reasoningAllowance(MODEL));
+        assertEquals("an unmeasured descriptor also gets the contract default",
+                AiContract.REASONING_OUTPUT_ALLOWANCE_TOKENS,
+                AiChunkPlanner.reasoningAllowance(new AiModelDescriptor("m", "1", 1, 1, null)));
+    }
+
+    @Test
+    public void aMeasuredReasoningModelReplacesTheDefaultAllowanceAndAShallowOneShrinksIt() {
+        AiModelDescriptor reasoner = new AiModelDescriptor("reasoner", "1", 32_768, 8_192,
+                Collections.singletonList("chat.completions"), 900);
+        assertEquals(900, AiChunkPlanner.reasoningAllowance(reasoner));
+
+        AiModelDescriptor shallow = new AiModelDescriptor("shallow", "1", 32_768, 8_192,
+                Collections.singletonList("chat.completions"), 24);
+        assertEquals(24, AiChunkPlanner.reasoningAllowance(shallow));
+        AiChunkPlanner.Input input = input(
+                Collections.singletonList(ordinary("S0", "hello")), "en");
+        input.model = shallow;
+        assertEquals(AiChunkPlanner.ceilHalf(5)
+                        + AiContract.RESPONSE_ITEM_OVERHEAD_TOKENS + 24,
+                AiChunkPlanner.plan(input).chunks.get(0).estimatedOutputTokens);
+    }
+
+    /**
+     * The reasoning allowance is bought once for the call; the item envelope is paid per row.
+     *
+     * <p>Both are separate from the source-text half, and conflating them is how the estimate came
+     * to under-count a lyric document: an id with an eight-hex digest and the surrounding JSON cost
+     * about the same for every row, and lyric lines are short and numerous enough that the envelope
+     * outweighs the text.
+     */
+    @Test
+    public void theHeadroomIsPerCallWhileTheItemEnvelopeIsPerRow() {
+        List<AiLine> rows = new ArrayList<>();
+        for (int i = 0; i < 8; i++) rows.add(ordinary("S" + i, "line " + i));
+        int sourceBytes = 0;
+        for (AiLine row : rows) sourceBytes += AiText.utf8Bytes(row.sourceText);
+
+        AiPlannedChunk chunk = AiChunkPlanner.plan(input(rows, "en")).chunks.get(0);
+
+        assertEquals(sourceBytes, chunk.sourceUtf8Bytes);
+        assertEquals(AiChunkPlanner.ceilHalf(sourceBytes)
+                        + 8 * AiContract.RESPONSE_ITEM_OVERHEAD_TOKENS
+                        + AiContract.REASONING_OUTPUT_ALLOWANCE_TOKENS,
+                chunk.estimatedOutputTokens);
+    }
+
+    /** For short lyric lines the envelope is the larger half, which is why omitting it truncated. */
+    @Test
+    public void theEnvelopeOutweighsTheTextForShortLyricLines() {
+        List<AiLine> rows = new ArrayList<>();
+        for (int i = 0; i < 40; i++) rows.add(ordinary("S" + i, "Bah ouais"));
+        int sourceBytes = 40 * AiText.utf8Bytes("Bah ouais");
+
+        assertTrue("envelope " + (40 * AiContract.RESPONSE_ITEM_OVERHEAD_TOKENS)
+                        + " must exceed text estimate " + AiChunkPlanner.ceilHalf(sourceBytes),
+                40 * AiContract.RESPONSE_ITEM_OVERHEAD_TOKENS
+                        > AiChunkPlanner.ceilHalf(sourceBytes));
+    }
+
+    @Test
+    public void aTruncatedChunkReplansDeterministicallyUnderADerivedTighterEstimate() {
+        List<AiLine> rows = new ArrayList<>();
+        for (int i = 0; i < 8; i++) rows.add(ordinary("S" + i, "line " + i));
+        AiChunkPlanner.Input input = input(rows, "en");
+        AiPlannedChunk failed = AiChunkPlanner.plan(input).chunks.get(0);
+
+        List<AiPlannedChunk> first = AiChunkPlanner.replan(input, failed);
+        List<AiPlannedChunk> second = AiChunkPlanner.replan(input, failed);
+
+        assertEquals(Arrays.asList("C0.0", "C0.1"), chunkIds(first));
+        assertEquals(Arrays.asList(4, 4), chunkSizes(first));
+        assertEquals(chunkIds(first), chunkIds(second));
+        assertEquals(chunkSizes(first), chunkSizes(second));
+        List<String> replannedIds = new ArrayList<>();
+        for (AiPlannedChunk child : first) {
+            replannedIds.addAll(child.itemIds());
+            assertTrue(child.estimatedOutputTokens < failed.estimatedOutputTokens);
+        }
+        assertEquals(failed.itemIds(), replannedIds);
+    }
+
+    @Test
+    public void aSingleItemTruncationCannotBeReplanned() {
+        AiChunkPlanner.Input input = input(
+                Collections.singletonList(ordinary("S0", "one indivisible row")), "en");
+        AiPlannedChunk failed = AiChunkPlanner.plan(input).chunks.get(0);
+
+        assertTrue(AiChunkPlanner.replan(input, failed).isEmpty());
+    }
+
+    private static List<String> chunkIds(List<AiPlannedChunk> chunks) {
+        List<String> out = new ArrayList<>();
+        for (AiPlannedChunk chunk : chunks) out.add(chunk.id);
+        return out;
+    }
+
+    private static List<Integer> chunkSizes(List<AiPlannedChunk> chunks) {
+        List<Integer> out = new ArrayList<>();
+        for (AiPlannedChunk chunk : chunks) out.add(chunk.items.size());
+        return out;
+    }
+
+    @Test
+    public void theSingleCallByteBudgetShrinksByTwiceTheAllowance() {
+        // Five 2,000-byte rows sit just inside the shrunken bound:
+        // ceilHalf(10000)+1024 <= 6144 keeps one call.
+        assertEquals(1, AiChunkPlanner.plan(input(rowsOfBytes(5, 2_000), "en")).chunks.size());
+
+        // Six such rows cross it and fall through to deterministic chunking.
+        assertTrue(AiChunkPlanner.plan(input(rowsOfBytes(6, 2_000), "en")).chunks.size() > 1);
+    }
+
+    private static List<AiLine> rowsOfBytes(int count, int bytesPerRow) {
+        List<AiLine> rows = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            StringBuilder text = new StringBuilder();
+            while (AiText.utf8Bytes(text.toString()) < bytesPerRow) text.append('a');
+            rows.add(ordinary("S" + i, text.toString()));
+        }
+        return rows;
+    }
+
+    @Test
+    public void aMultiSegmentRowIsSentAsOneItemPerSegmentWithDerivedIds() {
+        AiLine row = ordinary("r0#ab12", "\u6e90\u3044 / \u6e90\u306b / \u6e90\u3055");
+        List<AiRequestItem> items =
+                AiChunkPlanner.plan(input(Collections.singletonList(row), "en"))
+                        .chunks.get(0).items;
+
+        assertEquals(3, items.size());
+        assertEquals("r0#ab12~0", items.get(0).id);
+        assertEquals("\u6e90\u3044", items.get(0).source);
+        assertEquals("r0#ab12~1", items.get(1).id);
+        assertEquals("\u6e90\u306b", items.get(1).source);
+        assertEquals("r0#ab12~2", items.get(2).id);
+        assertFalse(items.get(2).source.contains(" / "));
+        assertEquals("the voice hint travels with every segment",
+                row.voice, items.get(1).voice);
+    }
+
+    /**
+     * The source decides the segmentation; the baseline never overrides it.
+     *
+     * <p>This replaces an assertion that a disagreeing baseline kept the joined row. That was the
+     * one path still sending a multi-segment row whole, so the validator still required a delimiter
+     * count that the prompt no longer asks for — and Google output disagrees often enough that the
+     * Google-draft and layered pipelines lived on that path.
+     */
+    @Test
+    public void theSourceDecidesSegmentationAndTheBaselineNeverOverridesIt() {
+        AiLine clean = AiLine.withBaseline("r0#ab12", "a / b", null, true, "x / y", "google");
+        AiChunkPlanner.Input cleanInput = input(Collections.singletonList(clean), "en");
+        cleanInput.useMeaningBaseline = true;
+        List<AiRequestItem> cleanItems =
+                AiChunkPlanner.plan(cleanInput).chunks.get(0).items;
+        assertEquals(2, cleanItems.size());
+        assertEquals("x", cleanItems.get(0).previous);
+        assertEquals("y", cleanItems.get(1).previous);
+
+        AiLine mismatched = AiLine.withBaseline("r0#ab12", "a / b", null, true,
+                "whole draft", "google");
+        AiChunkPlanner.Input mismatchedInput = input(Collections.singletonList(mismatched), "en");
+        mismatchedInput.useMeaningBaseline = true;
+        List<AiRequestItem> split = AiChunkPlanner.plan(mismatchedInput).chunks.get(0).items;
+        assertEquals(2, split.size());
+        assertEquals("a", split.get(0).source);
+        assertEquals("b", split.get(1).source);
+        for (AiRequestItem item : split) {
+            assertNull("a disagreeing baseline must not travel", item.previous);
+        }
+    }
+
+    @Test
+    public void segmentIdsNeverCollideWithRowIdsAndRoundTrip() {
+        assertEquals(-1, AiContract.segmentIndexOf("r0#ab12"));
+        assertEquals(2, AiContract.segmentIndexOf(AiContract.segmentId("r0#ab12", 2)));
+        assertEquals("r0#ab12", AiContract.rowIdOf(AiContract.segmentId("r0#ab12", 2)));
+        assertEquals("r0#ab12", AiContract.rowIdOf("r0#ab12"));
+        assertEquals(-1, AiContract.segmentIndexOf("r0#notasegment~x"));
     }
 
     // --- refusals -----------------------------------------------------------
@@ -263,5 +454,48 @@ public class AiChunkPlannerTest {
         List<Integer> out = new ArrayList<>();
         for (AiPlannedChunk chunk : plan.chunks) out.add(chunk.items.size());
         return out;
+    }
+
+    /**
+     * A baseline that segments differently from the source must not suppress the split.
+     *
+     * <p>Google output routinely merges or drops {@code " / "} boundaries. While the split was
+     * conditional on the baseline agreeing, those rows went out joined — and the validator still
+     * required a delimiter count the prompt had stopped asking for, so the Google-draft and layered
+     * pipelines carried an unstated rule no model could comply with.
+     */
+    @Test
+    public void aDisagreeingBaselineIsDroppedRatherThanSuppressingTheSplit() {
+        AiLine row = AiLine.withBaseline("M0", "one / two / three", null, false,
+                "google merged them all", "google");
+        AiChunkPlanner.Input input = input(Collections.singletonList(row), "en");
+        input.layer = LayerKind.MEANING;
+        input.useMeaningBaseline = true;
+        input.baselineRefinement = true;
+
+        List<AiRequestItem> items = AiChunkPlanner.plan(input).chunks.get(0).items;
+
+        assertEquals(3, items.size());
+        for (AiRequestItem item : items) {
+            assertTrue(item.id, item.id.startsWith("M0"));
+            assertEquals(1, AiText.segmentCount(item.source));
+            assertNull("a disagreeing baseline must not travel", item.previous);
+        }
+    }
+
+    /** A baseline that segments the same way still travels, one segment per item. */
+    @Test
+    public void anAgreeingBaselineIsSplitAlongsideTheSource() {
+        AiLine row = AiLine.withBaseline("M1", "one / two", null, false, "uno / dos", "google");
+        AiChunkPlanner.Input input = input(Collections.singletonList(row), "en");
+        input.layer = LayerKind.MEANING;
+        input.useMeaningBaseline = true;
+        input.baselineRefinement = true;
+
+        List<AiRequestItem> items = AiChunkPlanner.plan(input).chunks.get(0).items;
+
+        assertEquals(2, items.size());
+        assertEquals("uno", items.get(0).previous);
+        assertEquals("dos", items.get(1).previous);
     }
 }

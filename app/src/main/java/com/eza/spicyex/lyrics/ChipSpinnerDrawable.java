@@ -26,12 +26,14 @@ import com.eza.spicyex.ui.ActionIconDrawable;
 public final class ChipSpinnerDrawable extends Drawable {
     private static final int AI_GREEN = 0xFF1ED760;
     private static final int AI_RUNNING_GRAY = 0xFF8E8E93;
+    private static final int AI_FAILED_RED = 0xFFE91429;
 
     private final CircularProgressDrawable inner;
     private final android.graphics.drawable.Drawable aiBadge;
     private boolean active;
     private boolean aiActive;
     private boolean aiOutput;
+    private boolean aiFailed;
 
     private final Callback relay = new Callback() {
         @Override public void invalidateDrawable(Drawable who) { invalidateSelf(); }
@@ -82,8 +84,26 @@ public final class ChipSpinnerDrawable extends Drawable {
         return aiActive;
     }
 
+    /**
+     * Marks the last AI request for this control as failed. The sparkle turns red and stays red
+     * over any older accepted output, because the failure describes the latest operation; the
+     * review panel explains what remains on screen. Cleared by the next running or success state.
+     */
+    public void setAiFailed(boolean value) {
+        if (value == aiFailed) return;
+        aiFailed = value;
+        updateAiBadgeTint();
+        invalidateSelf();
+    }
+
+    public boolean isAiFailed() {
+        return aiFailed;
+    }
+
     private void updateAiBadgeTint() {
-        if (aiBadge != null) aiBadge.setTint(aiActive ? AI_RUNNING_GRAY : AI_GREEN);
+        if (aiBadge != null) {
+            aiBadge.setTint(aiFailed ? AI_FAILED_RED : aiActive ? AI_RUNNING_GRAY : AI_GREEN);
+        }
     }
 
     /** Start/stop the spinner. Idempotent — safe to call every frame. */
@@ -124,10 +144,10 @@ public final class ChipSpinnerDrawable extends Drawable {
     public void draw(Canvas canvas) {
         if (active) {
             inner.draw(canvas);
-            if (aiActive && aiBadge != null) aiBadge.draw(canvas);
+            if ((aiActive || aiFailed) && aiBadge != null) aiBadge.draw(canvas);
             return;
         }
-        if (aiOutput && aiBadge != null) aiBadge.draw(canvas);
+        if ((aiFailed || aiOutput) && aiBadge != null) aiBadge.draw(canvas);
     }
 
     @Override

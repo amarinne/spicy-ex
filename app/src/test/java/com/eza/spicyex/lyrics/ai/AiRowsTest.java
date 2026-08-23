@@ -71,6 +71,16 @@ public class AiRowsTest {
         return SoundEntry.plan(rowId, "romaji", plan);
     }
 
+    private static SoundEntry wholeLinePlan(String rowId, String display, String logicalGroup) {
+        ReadingUnit unit = new ReadingUnit(new TextRange(0, 1), display,
+                com.eza.spicyex.lyrics.reading.ReadingModels.ReadingUnitKind.TRANSFORMED,
+                logicalGroup, Collections.<String>emptyList());
+        RenderPlan plan = new RenderPlan(rowId, Collections.<CanonicalSpanMapping>emptyList(),
+                Collections.singletonList(unit), Collections.<TimedReadingUnit>emptyList(),
+                display, "");
+        return SoundEntry.plan(rowId, "Latin", plan);
+    }
+
     private static List<String> sentIds(List<AiLine> rows) {
         List<String> ids = new ArrayList<>();
         for (AiLine row : rows) if (row.isSent()) ids.add(row.id);
@@ -181,6 +191,32 @@ public class AiRowsTest {
 
         assertEquals("the covered row keeps what the engine produced",
                 Collections.singletonList(base.rows.get(1).rowId), sentIds(rows));
+    }
+
+    @Test
+    public void aLocalWholeLineCyrillicReadingIsNotSent() {
+        LyricsDocument document = document("Моя любовь");
+        CanonicalBase base = baseOf(document);
+        SoundArtifact existing = soundArtifact(base, wholeLinePlan(base.rows.get(0).rowId,
+                "Moya lyubov'", "local-line-fallback"));
+
+        List<AiLine> rows = AiRows.forSound(base, document, existing, LATIN, true);
+
+        assertTrue("the packaged Russian engine already covered this row", sentIds(rows).isEmpty());
+        assertFalse(AiRows.hasWork(rows));
+    }
+
+    @Test
+    public void aRemoteWholeLineFallbackInTheNormalLaneArtifactRemainsReplaceable() {
+        LyricsDocument document = document("Моя любовь");
+        CanonicalBase base = baseOf(document);
+        SoundArtifact existing = soundArtifact(base, wholeLinePlan(base.rows.get(0).rowId,
+                "Moya lyubov'", "line-fallback"));
+
+        AiLine row = AiRows.forSound(base, document, existing, LATIN, true).get(0);
+
+        assertTrue("remote fallback remains below AI authority", row.isSent());
+        assertEquals("Moya lyubov'", row.baselineText);
     }
 
     @Test

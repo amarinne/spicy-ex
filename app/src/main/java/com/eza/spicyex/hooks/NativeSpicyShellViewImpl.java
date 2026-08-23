@@ -99,8 +99,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final TextView title;
     private final TextView subtitle;
-    private final TextView readingAiFailureStatus;
-    private final TextView translationAiFailureStatus;
     private final TextView progress;
     private final TextView status;
     private final ImageButton romanToggle;
@@ -359,9 +357,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 () -> cycleTransliterationMode(prefs),
                 () -> {
                     if (renderConfig != null && !renderConfig.translationEnabled) return;
-                    if (shouldGenerateAi(com.eza.spicyex.lyrics.session.LayerKind.MEANING)) {
-                        requestAiLayerWithFeedback(
-                                com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+                    boolean wasVisible = showTranslation();
+                    boolean hasDisplayedMeaning = hasLayerOutput(
+                            com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+                    boolean requestedOutput = shouldGenerateAi(
+                            com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+                    if (requestedOutput && !requestAiLayerWithFeedback(
+                            com.eza.spicyex.lyrics.session.LayerKind.MEANING)) {
+                        return;
+                    }
+                    if (transliterationSession.keepVisibleForRequestedOutput(
+                            requestedOutput, wasVisible, hasDisplayedMeaning)) {
+                        return;
                     }
                     showTranslation = !showTranslation;
                     prefs.edit().putBoolean(Settings.NATIVE_SPICY_TRANSLATION.key, showTranslation).apply();
@@ -414,17 +421,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         subtitleLp.topMargin = dp(0);
         contentColumn.addView(subtitle, subtitleLp);
-
-        readingAiFailureStatus = createAiFailureStatus(
-                com.eza.spicyex.lyrics.session.LayerKind.SOUND);
-        translationAiFailureStatus = createAiFailureStatus(
-                com.eza.spicyex.lyrics.session.LayerKind.MEANING);
-        contentColumn.addView(readingAiFailureStatus,
-                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT));
-        contentColumn.addView(translationAiFailureStatus,
-                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT));
 
         lyricsScroll = new ScrollView(activity);
         lyricsScroll.setFillViewport(false);
@@ -1297,13 +1293,22 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean translationAiPending = meaningAiFeedback.isPending(
                 document != null && document.translationAiPending)
                 && translationToggle.getVisibility() == View.VISIBLE;
+        // A settled failure tints the affected sparkle red until a retry (running) or success
+        // replaces it. Gated on chip visibility like the other states; details stay available via
+        // the review panel, not a persistent notice.
+        boolean romanAiFailed = !romanAiPending
+                && !aiFailureToken(com.eza.spicyex.lyrics.session.LayerKind.SOUND).isEmpty()
+                && romanToggle.getVisibility() == View.VISIBLE;
+        boolean translationAiFailed = !translationAiPending
+                && !aiFailureToken(com.eza.spicyex.lyrics.session.LayerKind.MEANING).isEmpty()
+                && translationToggle.getVisibility() == View.VISIBLE;
         toggleSpinnerController.update(renderConfig.toggleSpinnerEnabled, romanPending,
                 translationPending,
                 hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.SOUND)
                         && showRomanization(),
                 hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING)
                         && showTranslation(),
-                romanAiPending, translationAiPending);
+                romanAiPending, translationAiPending, romanAiFailed, translationAiFailed);
     }
 
     /** Desktop's primary-click policy, applied before the normal visibility toggle. */
@@ -1320,9 +1325,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean hasAi = hasAiLayerOutput(layer);
         com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot monitor =
                 aiRequestMonitor(layer);
+        // A settled failure is not a run in progress, whatever the document's pending flag still
+        // says. Letting "busy" win routed a terminal truncation to the running-status dialog, which
+        // has no retry and no failed-attempt payload — the two things that failure needs.
+        boolean running = isLayerBusy(layer) && !monitor.current.isFailure();
         com.eza.spicyex.lyrics.ai.AiLayerPanelPolicy.Destination destination =
                 com.eza.spicyex.lyrics.ai.AiLayerPanelPolicy.destination(
-                        isLayerBusy(layer), failureToken, hasAi);
+                        running, failureToken, hasAi);
         if (destination == com.eza.spicyex.lyrics.ai.AiLayerPanelPolicy.Destination.RUNNING_STATUS) {
             showLayerRunningStatus(layer, monitor);
             return;
@@ -1403,11 +1412,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         appendAttemptMonitor(status, initial == null ? null : initial.previousFailure,
                 uiText("lyrics_ai_previous_failed_attempt", "Previous failed attempt"));
         final Runnable[] refresh = new Runnable[1];
+        // The payload is written once per attempt and then sits still for the length of the call.
+        // Re-setting identical text four times a second scrolled the block back to the top and
+        // dropped any selection, which made the one thing this dialog exists to show unreadable.
+        final String[] rendered = { payload == null ? null : payload.getText().toString() };
         refresh[0] = () -> {
             if (payload == null) return;
             com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot latest =
                     aiRequestMonitor(layer);
-            payload.setText(monitorText(latest.current));
+            String next = monitorText(latest.current);
+            if (!next.equals(rendered[0])) {
+                rendered[0] = next;
+                payload.setText(next);
+            }
             if (status.isShowing() && isLayerBusy(layer)) {
                 handler.postDelayed(refresh[0], 250L);
             }
@@ -1515,12 +1532,29 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         editAction[0].setVisibility(customSelected ? GONE : VISIBLE);
         saveAction[0].setVisibility(customSelected ? VISIBLE : GONE);
 
-        final com.eza.spicyex.ui.PanelDialog.CheckChoice refineGoogle =
-                layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
-                        ? composer.checkbox(uiText("lyrics_ai_refine_google",
-                        "Use Google translation as AI draft"),
-                        settings.meaningUsesGoogleBaseline())
-                        : null;
+        // Three Meaning flows share one stored key, so the composer edits the stored value
+        // directly instead of a boolean that can only express two of them. Reading goes through
+        // the store's schema coercion, so legacy installs keep their migrated choice.
+        final boolean meaningLayer = layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING;
+        final com.eza.spicyex.SettingsStore flowStore =
+                meaningLayer ? new com.eza.spicyex.SettingsStore(activity) : null;
+        final java.util.List<String> flowValues = meaningLayer
+                ? Settings.AI_TRANSLATION_PIPELINE.allowedValues
+                : java.util.Collections.<String>emptyList();
+        final String[] flowValue = {meaningLayer
+                ? flowStore.get(Settings.AI_TRANSLATION_PIPELINE) : ""};
+        final android.widget.TextView[] flowView = new android.widget.TextView[1];
+        if (meaningLayer) {
+            flowView[0] = composer.selector(
+                    uiText("settings_label_ai_translation_pipeline", "AI translation flow"),
+                    aiPipelineLabel(flowValue[0]),
+                    uiText("settings_label_ai_translation_pipeline", "AI translation flow"),
+                    () -> showAiPipelinePicker(composer.selectorAnchor(flowView[0]),
+                            flowValues, flowValue[0], picked -> {
+                                flowValue[0] = picked;
+                                flowView[0].setText(aiPipelineLabel(picked));
+                            }));
+        }
 
         composer.primary(uiText("lyrics_ai_run", "Run AI"), () -> {
             String prompt;
@@ -1531,12 +1565,32 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 prompt = com.eza.spicyex.lyrics.ai.AiPresets.instructions(layer, selected[0]);
             }
             settings.setInstructions(layer, prompt);
-            if (refineGoogle != null) {
-                settings.setMeaningUsesGoogleBaseline(refineGoogle.isChecked());
+            if (meaningLayer) {
+                flowStore.put(Settings.AI_TRANSLATION_PIPELINE, flowValue[0]);
             }
             requestAiLayerWithFeedback(layer);
         });
         composer.show();
+    }
+
+    private String aiPipelineLabel(String value) {
+        return uiStrings.option((Settings.StringSetting) Settings.AI_TRANSLATION_PIPELINE, value);
+    }
+
+    private void showAiPipelinePicker(android.view.View anchor,
+                                      java.util.List<String> values, String selected,
+                                      java.util.function.Consumer<String> onPick) {
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        for (String value : values) labels.add(aiPipelineLabel(value));
+        com.eza.spicyex.ui.PanelPickerPopup.show(activity, anchor, labels,
+                aiPipelineLabel(selected), pickedLabel -> {
+                    for (String value : values) {
+                        if (aiPipelineLabel(value).equals(pickedLabel)) {
+                            onPick.accept(value);
+                            return;
+                        }
+                    }
+                });
     }
 
     private void showAiPresetPicker(android.view.View anchor,
@@ -1548,38 +1602,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 com.eza.spicyex.lyrics.ai.AiPresets.names(layer));
         choices.add(customLabel);
         com.eza.spicyex.ui.PanelPickerPopup.show(activity, anchor, choices, selected, onPick);
-    }
-
-    private TextView createAiFailureStatus(com.eza.spicyex.lyrics.session.LayerKind layer) {
-        TextView view = textFactory.createText(activity, "", 12,
-                Color.rgb(255, 183, 77), textFactory.resolveTypeface(true));
-        view.setGravity(Gravity.CENTER);
-        view.setMaxLines(3);
-        view.setPadding(dp(16), dp(4), dp(16), dp(4));
-        view.setVisibility(GONE);
-        view.setOnClickListener(v -> requestAiRetry(layer, aiFailureToken(layer)));
-        return view;
-    }
-
-    private void updateAiFailureStatus() {
-        // The first visual refresh happens before the header text views are constructed.
-        if (readingAiFailureStatus == null || translationAiFailureStatus == null) return;
-        updateAiFailureStatus(readingAiFailureStatus,
-                com.eza.spicyex.lyrics.session.LayerKind.SOUND);
-        updateAiFailureStatus(translationAiFailureStatus,
-                com.eza.spicyex.lyrics.session.LayerKind.MEANING);
-    }
-
-    private void updateAiFailureStatus(TextView view,
-                                       com.eza.spicyex.lyrics.session.LayerKind layer) {
-        String token = aiFailureToken(layer);
-        if (token.isEmpty()) {
-            view.setVisibility(GONE);
-            view.setText("");
-            return;
-        }
-        view.setText(aiFailureInlineText(layer, token));
-        view.setVisibility(VISIBLE);
     }
 
     private String aiFailureToken(com.eza.spicyex.lyrics.session.LayerKind layer) {
@@ -1659,6 +1681,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             transliterationSession.setShowRomanization(true);
             preferences.edit()
                     .putBoolean(Settings.NATIVE_SPICY_ROMANIZATION.key, true)
+                    .apply();
+            refreshSecondaryRows("");
+        } else if (layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
+                && !showTranslation()) {
+            showTranslation = true;
+            preferences.edit()
+                    .putBoolean(Settings.NATIVE_SPICY_TRANSLATION.key, true)
                     .apply();
             refreshSecondaryRows("");
         }
@@ -1750,6 +1779,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     "AI refined the Google Translate version.")
                     : uiText("lyrics_ai_from_source",
                     "AI translated from the original lyrics.")).append("\n\n");
+        }
+        String model = layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND
+                ? document.readingAiModel : document.translationAiModel;
+        if (model != null && !model.isEmpty()) {
+            text.append(uiFormat("lyrics_ai_model_used", "Model: %1$s", model)).append("\n\n");
         }
         for (com.eza.spicyex.lyrics.LyricsLine line : document.lines) {
             if (line == null || line.text == null || line.text.trim().isEmpty()) continue;
@@ -1995,6 +2029,5 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // A new track may settle while the frame scheduler sleeps. Sync authority badges here so
         // the previous track's AI mark never survives on an empty current layer.
         updateToggleSpinners();
-        updateAiFailureStatus();
     }
 }

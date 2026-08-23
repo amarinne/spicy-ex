@@ -223,8 +223,9 @@ public final class SettingsUiStrings {
             if ("Always use AI".equals(value)) return "Automatic";
         }
         if (setting == Settings.AI_TRANSLATION_PIPELINE) {
-            if ("AI only".equals(value)) return "Lyrics → AI";
-            if ("Google draft".equals(value)) return "Lyrics + Google draft → AI";
+            if ("Google preview".equals(value)) return "Google preview + AI from lyrics";
+            if ("Google draft".equals(value)) return "Google draft → AI refinement";
+            if ("AI only".equals(value)) return "AI only (skip Google)";
         }
         if (setting == Settings.AI_PRONUNCIATION_MODE) {
             if ("On demand".equals(value)) return "Manual";

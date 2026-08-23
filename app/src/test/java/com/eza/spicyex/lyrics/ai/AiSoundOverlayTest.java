@@ -119,6 +119,20 @@ public class AiSoundOverlayTest {
     }
 
     @Test
+    public void alocalWholeLineFallbackIsDeterministicCoverage() {
+        LyricsLine line = new LyricsLine();
+        line.text = "Моя любовь";
+        line.startMs = 0L;
+        line.endMs = 2_000L;
+        RenderPlan local = ReadingPlanFactory.lineFallback(line, "Moya lyubov'", "local");
+
+        assertNotNull(local);
+        assertEquals("local-line-fallback", local.readingUnits.get(0).logicalGroupId);
+        assertTrue(AiSoundOverlay.hasDeterministicCoverage(
+                SoundEntry.plan("r0#aaaa", "Latin", local)));
+    }
+
+    @Test
     public void atimedAllPassthroughPlanIsNotDeterministicCoverage() {
         RenderPlan plan = timedPassthroughThaiPlan();
         assertNotNull(plan);

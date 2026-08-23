@@ -24,8 +24,8 @@ public class LyricSessionContractTest {
 
     private static final String SOUND_CONFIG = LayerConfigIds.sound(true, "cn=pinyin|kr=rr", "ja", 3);
     private static final String SOUND_CONFIG_KOREAN = LayerConfigIds.sound(true, "cn=pinyin|kr=mr", "ja", 3);
-    private static final String MEANING_CONFIG = LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto");
-    private static final String MEANING_CONFIG_ES = LayerConfigIds.meaning(true, "google_unofficial", "es", "auto", "auto");
+    private static final String MEANING_CONFIG = LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto", "google_draft");
+    private static final String MEANING_CONFIG_ES = LayerConfigIds.meaning(true, "google_unofficial", "es", "auto", "auto", "google_draft");
 
     // --- canonical identity -------------------------------------------------
 

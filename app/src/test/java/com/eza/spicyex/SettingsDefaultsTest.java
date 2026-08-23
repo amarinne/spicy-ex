@@ -21,7 +21,16 @@ public class SettingsDefaultsTest {
         assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);
         assertFalse(Settings.HYPERGLOW_ENABLED.defaultValue);
         assertEquals("en", Settings.UI_LANGUAGE.defaultValue);
+        // Default stays Google draft until device comparison proves another flow better; adding
+        // the preview experiment must not migrate either existing stored choice.
         assertEquals("Google draft", Settings.AI_TRANSLATION_PIPELINE.defaultValue);
+        assertEquals(java.util.Arrays.asList("Google preview", "Google draft", "AI only"),
+                Settings.AI_TRANSLATION_PIPELINE.allowedValues);
+        assertEquals("Google preview", Settings.AI_TRANSLATION_PIPELINE.coerce("Google preview"));
+        assertEquals("Google draft", Settings.AI_TRANSLATION_PIPELINE.coerce("Google draft"));
+        assertEquals("AI only", Settings.AI_TRANSLATION_PIPELINE.coerce("AI only"));
+        assertEquals("Layered", Settings.AI_PRONUNCIATION_SOURCE.allowedValues.get(0));
+        assertEquals("AI only", Settings.AI_PRONUNCIATION_SOURCE.allowedValues.get(1));
 
         assertFalse(Settings.TRANSLITERATION_ENABLED.defaultValue);
         assertFalse(Settings.TRANSLATION_ENABLED.defaultValue);

@@ -192,6 +192,7 @@
     <string name="diagnostic_category_missing_wrong">Missing or wrong lyrics</string>
     <string name="diagnostic_category_timing">Timing</string>
     <string name="diagnostic_category_translation">Translation</string>
+    <string name="diagnostic_category_ai">AI features</string>
     <string name="diagnostic_category_transliteration">Transliteration or romanization</string>
     <string name="diagnostic_category_fullscreen">Fullscreen renderer</string>
     <string name="diagnostic_category_now_playing">Now-playing card</string>
@@ -213,7 +214,7 @@
     <string name="diagnostic_capture_failed">Could not start capture.</string>
     <string name="diagnostic_capture_cancelled">Capture cancelled.</string>
     <string name="diagnostic_prepare_failed">Could not prepare the report.</string>
-    <string name="diagnostic_retention_notice">Report data, including current song and lyric evidence, is kept until manually deleted or redacted.</string>
+    <string name="diagnostic_retention_notice">Report data, including current song, lyric evidence, and recent AI request payloads, is kept until manually deleted or redacted.</string>
     <string name="diagnostic_accept_retention">I understand the retention policy and want to upload this report.</string>
     <string name="diagnostic_data_policy">Diagnostic data policy ↗</string>
     <string name="diagnostic_accept_policy">I accept the policy.</string>
@@ -281,6 +282,13 @@
     <string name="settings_label_ai_provider">Provider</string>
     <string name="settings_option_ai_provider_gemini">Gemini</string>
     <string name="settings_option_ai_provider_openai">OpenAI</string>
+    <string name="settings_option_ai_provider_openrouter">OpenRouter</string>
+    <string name="settings_option_ai_provider_deepseek">DeepSeek</string>
+    <string name="settings_label_ai_deepseek_reasoning">DeepSeek reasoning</string>
+    <string name="settings_option_ai_deepseek_reasoning_off">Off</string>
+    <string name="settings_option_ai_deepseek_reasoning_low">Low</string>
+    <string name="settings_option_ai_deepseek_reasoning_high">High</string>
+    <string name="settings_option_ai_deepseek_reasoning_max">Max</string>
     <string name="settings_ai_endpoint">Endpoint</string>
     <string name="settings_ai_endpoint_absent">Not set</string>
     <string name="settings_ai_action_set_endpoint">Set endpoint</string>
@@ -297,13 +305,15 @@
     <string name="settings_ai_quota">Quota exhausted</string>
     <string name="settings_ai_no_response">No response</string>
     <string name="settings_ai_unreachable">Could not reach provider</string>
+    <string name="settings_ai_response_too_large">Response too large</string>
     <string name="settings_option_ai_provider_custom">Custom (OpenAI-compatible)</string>
     <string name="settings_label_ai_translation_mode">AI translation trigger</string>
     <string name="settings_option_ai_translation_mode_on_demand">Manual</string>
     <string name="settings_option_ai_translation_mode_always_use_ai">Automatic</string>
-    <string name="settings_label_ai_translation_pipeline">AI translation pipeline</string>
-    <string name="settings_option_ai_translation_pipeline_ai_only">Lyrics → AI</string>
-    <string name="settings_option_ai_translation_pipeline_google_draft">Lyrics + Google draft → AI</string>
+    <string name="settings_label_ai_translation_pipeline">AI translation flow</string>
+    <string name="settings_option_ai_translation_pipeline_google_preview">Google preview + AI from lyrics</string>
+    <string name="settings_option_ai_translation_pipeline_ai_only">AI only (skip Google)</string>
+    <string name="settings_option_ai_translation_pipeline_google_draft">Google draft → AI refinement</string>
     <string name="settings_option_on_demand">On demand</string>
     <string name="settings_option_always_use_ai">Always use AI</string>
     <string name="settings_label_ai_pronunciation_mode">AI pronunciation trigger</string>
@@ -343,7 +353,6 @@
     <string name="lyrics_ai_save_custom_prompt">Save custom prompt</string>
     <string name="lyrics_ai_custom_prompt_saved">Custom prompt saved</string>
     <string name="lyrics_ai_run">Run AI</string>
-    <string name="lyrics_ai_refine_google">Refine Google Translate output</string>
     <string name="lyrics_ai_failure_inline">%1$s failed: %2$s. Tap to retry.</string>
     <string name="lyrics_ai_delivery_unknown_inline">%1$s status unknown. The request may have been billed. Tap to review.</string>
     <string name="lyrics_ai_failure_no_credential">No API key</string>
@@ -369,4 +378,5 @@
     <string name="lyrics_ai_restore_google">Restore Google Translate</string>
     <string name="lyrics_ai_refined_google">AI refined the Google Translate version.</string>
     <string name="lyrics_ai_from_source">AI translated from the original lyrics.</string>
+    <string name="lyrics_ai_model_used">Model: %1$s</string>
 </resources>

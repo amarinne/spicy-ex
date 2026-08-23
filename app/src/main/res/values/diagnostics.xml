@@ -4,6 +4,7 @@
     <string name="diagnostic_category_missing_wrong">Missing or wrong lyrics</string>
     <string name="diagnostic_category_timing">Timing</string>
     <string name="diagnostic_category_translation">Translation</string>
+    <string name="diagnostic_category_ai">AI features</string>
     <string name="diagnostic_category_transliteration">Transliteration or romanization</string>
     <string name="diagnostic_category_fullscreen">Fullscreen renderer</string>
     <string name="diagnostic_category_now_playing">Now-playing card</string>
@@ -25,7 +26,7 @@
     <string name="diagnostic_capture_failed">Could not start capture.</string>
     <string name="diagnostic_capture_cancelled">Capture cancelled.</string>
     <string name="diagnostic_prepare_failed">Could not prepare the report.</string>
-    <string name="diagnostic_retention_notice">Report data, including current song and lyric evidence, is kept until manually deleted or redacted.</string>
+    <string name="diagnostic_retention_notice">Report data, including current song, lyric evidence, and recent AI request payloads, is kept until manually deleted or redacted.</string>
     <string name="diagnostic_accept_retention">I understand the retention policy and want to upload this report.</string>
     <string name="diagnostic_data_policy">Diagnostic data policy ↗</string>
     <string name="diagnostic_accept_policy">I accept the policy.</string>

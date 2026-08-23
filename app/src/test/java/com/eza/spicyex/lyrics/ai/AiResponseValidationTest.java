@@ -26,6 +26,10 @@ public class AiResponseValidationTest {
         return new AiRequestItem(id, lineClass, null, source, null);
     }
 
+    private static AiRequestItem voicedItem(String id, AiVoiceHint voice, String source) {
+        return new AiRequestItem(id, AiLineClass.ORDINARY, voice, source, null);
+    }
+
     private static List<AiResponseItem> accept(String raw, List<AiRequestItem> requested) {
         return AiResponseValidator.validate(AiResponseReader.readItems(raw), requested);
     }
@@ -51,9 +55,12 @@ public class AiResponseValidationTest {
                 "```json\n{\"items\":[{\"id\":\"S1\",\"t\":\"Yeah\"},"
                         + "{\"id\":\"S0\",\"t\":\"hello\"}]}\n```", requested);
         assertEquals(2, accepted.size());
-        assertEquals("S1", accepted.get(0).id);
-        assertEquals("S0", accepted.get(1).id);
-        assertEquals("hello", accepted.get(1).text);
+        // Accepted rows follow the requested enumeration order, not the model's response order:
+        // the mapping travels in the ids, so output order is a deterministic property of the
+        // request rather than something the provider gets to choose.
+        assertEquals("S0", accepted.get(0).id);
+        assertEquals("hello", accepted.get(0).text);
+        assertEquals("S1", accepted.get(1).id);
     }
 
     @Test
@@ -142,6 +149,43 @@ public class AiResponseValidationTest {
                 Collections.singletonList(item("S0", AiLineClass.ORDINARY, "hola"));
         reject("{\"items\":[{\"id\":\"S0\",\"t\":\"   \"}]}", requested, "empty_ordinary:S0");
         reject("{\"items\":[{\"id\":\"S0\",\"t\":\"\\u00a0\"}]}", requested, "empty_ordinary:S0");
+    }
+
+    @Test
+    public void meaningMayNotCopyTheLayoutVoiceHintAsLyricText() {
+        List<AiRequestItem> requested = Collections.singletonList(
+                voicedItem("S0", AiVoiceHint.PRIMARY, "Overdose 君とふたり"));
+
+        reject("{\"items\":[{\"id\":\"S0\",\"t\":\"primary\"}]}", requested,
+                "voice_hint_echo:S0");
+    }
+
+    @Test
+    public void voiceHintEchoFailsOnlyItsRowSoTheRuntimeCanRepairIt() {
+        List<AiRequestItem> requested = Arrays.asList(
+                voicedItem("S0", AiVoiceHint.PRIMARY, "Overdose 君とふたり"),
+                voicedItem("S1", AiVoiceHint.PRIMARY, "甘いハッタリ"));
+        AiResponseValidator.Partition partition = AiResponseValidator.partition(
+                AiResponseReader.readItems("{\"items\":["
+                        + "{\"id\":\"S0\",\"t\":\"primary\"},"
+                        + "{\"id\":\"S1\",\"t\":\"Sweet bluff\"}]}"),
+                requested, LayerKind.MEANING, "en");
+
+        assertEquals(1, partition.accepted.size());
+        assertEquals("S1", partition.accepted.get(0).id);
+        assertEquals(1, partition.failed.size());
+        assertEquals("S0", partition.failed.get(0).rowId);
+        assertEquals("voice_hint_echo", partition.failed.get(0).token);
+    }
+
+    @Test
+    public void genuineSourceWordMatchingTheVoiceHintRemainsValid() {
+        List<AiRequestItem> requested = Collections.singletonList(
+                voicedItem("S0", AiVoiceHint.PRIMARY, "primary"));
+
+        assertEquals("primary",
+                accept("{\"items\":[{\"id\":\"S0\",\"t\":\"primary\"}]}", requested)
+                        .get(0).text);
     }
 
     @Test
@@ -249,5 +293,83 @@ public class AiResponseValidationTest {
         reject("{\"items\":[{\"id\":\"r0#aaaa\",\"t\":\"hello\"},"
                         + "{\"id\":\"r1#bbbb\",\"t\":\"bye\"}]}", requested,
                 "delimiter_mismatch:r0#aaaa");
+    }
+
+    // --- pre-split segments ---------------------------------------------------
+    //
+    // Multi-segment rows travel as one item per segment with derived ids and are rejoined here,
+    // so no model is ever asked to preserve a ' / ' count. These pin the rejoin.
+
+    private static AiRequestItem segment(String rowId, int index, String source) {
+        return new AiRequestItem(AiContract.segmentId(rowId, index), AiLineClass.ORDINARY, null,
+                source, null);
+    }
+
+    @Test
+    public void segmentsAreRejoinedInIndexOrderWhateverOrderTheyArriveIn() {
+        List<AiRequestItem> requested = Arrays.asList(
+                segment("r0#aaaa", 0, "\u591c\u304c\u660e\u3051\u308b"),
+                segment("r0#aaaa", 1, "\u9759\u304b\u306b"),
+                item("r1#bbbb", AiLineClass.ORDINARY, "adios"));
+        List<AiResponseItem> accepted = accept(
+                "{\"items\":[{\"id\":\"r1#bbbb\",\"t\":\"bye\"},"
+                        + "{\"id\":\"r0#aaaa~1\",\"t\":\"quietly\"},"
+                        + "{\"id\":\"r0#aaaa~0\",\"t\":\"night breaks\"}]}", requested);
+        assertEquals(2, accepted.size());
+        assertEquals("r0#aaaa", accepted.get(0).id);
+        assertEquals("night breaks / quietly", accepted.get(0).text);
+        assertEquals("r1#bbbb", accepted.get(1).id);
+    }
+
+    @Test
+    public void aMissingSegmentIsAMissingRowAndNamesTheRow() {
+        List<AiRequestItem> requested = Arrays.asList(
+                segment("r0#aaaa", 0, "hola"),
+                segment("r0#aaaa", 1, "mundo"));
+        reject("{\"items\":[{\"id\":\"r0#aaaa~0\",\"t\":\"hello\"}]}",
+                requested, "id_set_mismatch:missing:r0#aaaa");
+    }
+
+    @Test
+    public void aDuplicatedSegmentIsStillAWholeResponseFailure() {
+        List<AiRequestItem> requested = Collections.singletonList(segment("r0#aaaa", 0, "hola"));
+        reject("{\"items\":[{\"id\":\"r0#aaaa~0\",\"t\":\"hello\"},"
+                        + "{\"id\":\"r0#aaaa~0\",\"t\":\"hello again\"}]}",
+                requested, "id_set_mismatch:duplicate:r0#aaaa~0");
+    }
+
+    @Test
+    public void anEmptyMiddleSegmentSurvivesTheJoinButAnEmptyRowDoesNot() {
+        List<AiRequestItem> requested = Arrays.asList(
+                segment("r0#aaaa", 0, "hola"),
+                segment("r0#aaaa", 1, ""),
+                segment("r0#aaaa", 2, "mundo"));
+        assertEquals("hello /  / world",
+                accept("{\"items\":[{\"id\":\"r0#aaaa~0\",\"t\":\"hello\"},"
+                        + "{\"id\":\"r0#aaaa~1\",\"t\":\"\"},"
+                        + "{\"id\":\"r0#aaaa~2\",\"t\":\"world\"}]}", requested)
+                        .get(0).text);
+
+        List<AiRequestItem> blanked = Arrays.asList(
+                segment("r1#bbbb", 0, "hola"),
+                segment("r1#bbbb", 1, "mundo"));
+        reject("{\"items\":[{\"id\":\"r1#bbbb~0\",\"t\":\" \"},"
+                        + "{\"id\":\"r1#bbbb~1\",\"t\":\"\"}]}",
+                blanked, "empty_ordinary:r1#bbbb");
+    }
+
+    /**
+     * The read ceiling must not be lower than what the validator will accept, or a correct maximal
+     * response is refused as oversized before anything gets to judge it.
+     */
+    @org.junit.Test
+    public void theReadCeilingCanHoldEveryResponseTheValidatorWouldAccept() {
+        long largestAcceptable = (long) AiContract.SINGLE_CALL_MAX_ITEMS
+                * AiContract.MAX_TRANSLATED_ITEM_BYTES;
+
+        org.junit.Assert.assertTrue(
+                "read ceiling " + AiContract.MAX_RESPONSE_BYTES + " < acceptable "
+                        + largestAcceptable,
+                AiContract.MAX_RESPONSE_BYTES >= largestAcceptable);
     }
 }

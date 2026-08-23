@@ -50,6 +50,7 @@ public class SettingsUiStringsContractTest {
         String[] explicitAiModeLabels = {
                 "settings_option_ai_translation_mode_on_demand",
                 "settings_option_ai_translation_mode_always_use_ai",
+                "settings_option_ai_translation_pipeline_google_preview",
                 "settings_option_ai_translation_pipeline_ai_only",
                 "settings_option_ai_translation_pipeline_google_draft",
                 "settings_option_ai_pronunciation_mode_on_demand",
@@ -105,6 +106,35 @@ public class SettingsUiStringsContractTest {
 
         assertFalse(java.contains("getString(R.string"));
         assertFalse(java.contains("Toast.makeText(activity, R.string"));
+    }
+
+    @Test
+    public void zhLocaleCoversEveryAiStringSoTheAiPanelNeverFallsBackToEnglish() throws Exception {
+        Set<String> names = stringNames("src/main/res/values-zh-rCN/strings.xml");
+        int covered = 0;
+        for (String name : defaultStringNames()) {
+            if (!isAiPanelString(name)) continue;
+            assertTrue("zh-RN locale is missing " + name, names.contains(name));
+            covered++;
+        }
+        assertTrue("the AI string family was expected to be non-empty", covered > 100);
+    }
+
+    /**
+     * Every string the AI panel can render, by the four prefixes it actually uses.
+     *
+     * <p>The first version of this check covered {@code settings_ai_} and {@code lyrics_ai_} only,
+     * and reported the family complete while {@code Provider}, {@code Custom (OpenAI-compatible)},
+     * and the trigger labels still rendered in English on a zh device — they live under
+     * {@code settings_label_ai_} and {@code settings_option_ai_}. A filter that names the family
+     * narrower than the panel does is a filter that passes on a screen full of English.
+     */
+    private static boolean isAiPanelString(String name) {
+        return name.startsWith("settings_ai_")
+                || name.startsWith("lyrics_ai_")
+                || name.startsWith("settings_label_ai_")
+                || name.startsWith("settings_option_ai_")
+                || "settings_section_ai".equals(name);
     }
 
     private static Set<String> defaultStringNames() throws Exception {

@@ -40,8 +40,14 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  */
 public final class ProcessedLyricsCache {
     private static final String TAG = "[SpotifyPlusProcessedLyricsCache]";
-    /** Plan v2 stores one semantic reading authority; legacy strings are cache fallback only. */
-    public static final int READING_SCHEMA_VERSION = 3;
+    /**
+     * Reading-plan/cache identity.
+     *
+     * <p>v4 distinguishes deterministic local whole-line plans from replaceable remote fallbacks.
+     * v3 stored both as {@code line-fallback}, so keeping it would let cached Russian/Greek local
+     * readings be billed and overwritten by Sound AI after upgrade.
+     */
+    public static final int READING_SCHEMA_VERSION = 4;
     private static final int RECORD_SCHEMA_VERSION = 1;
     private static final Gson GSON = new Gson();
 

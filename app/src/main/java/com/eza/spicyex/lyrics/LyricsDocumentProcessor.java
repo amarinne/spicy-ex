@@ -5,6 +5,7 @@ import android.content.Context;
 import com.eza.spicyex.FeatureAvailability;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
+import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.Digests;
@@ -60,11 +61,15 @@ public final class LyricsDocumentProcessor {
                 && config != null && config.get(Settings.TRANSLATION_ENABLED)
                 && !"disabled".equalsIgnoreCase(backend);
         String sourceMode = config == null ? "auto" : config.get(Settings.SOURCE_LANGUAGE_MODE);
+        // The stored pipeline value passes Settings coercion first: an unknown value reads as the
+        // shipped default flow, so a downgrade can never keep a preview-shaped run identity.
+        String pipeline = config == null ? "" : config.get(Settings.AI_TRANSLATION_PIPELINE);
         return LayerConfigIds.meaning(enabled, backend,
                 config == null ? "en" : config.get(Settings.TRANSLATION_TARGET),
                 sourceMode,
                 "manual".equalsIgnoreCase(sourceMode) && config != null
-                        ? config.get(Settings.SOURCE_LANGUAGE) : "auto");
+                        ? config.get(Settings.SOURCE_LANGUAGE) : "auto",
+                AiSettings.MeaningFlow.ofStoredValue(pipeline).configToken());
     }
 
     public static CanonicalBase canonicalBaseOf(LyricsDocument doc) {
@@ -259,6 +264,8 @@ public final class LyricsDocumentProcessor {
         target.readingAiPending = source.readingAiPending;
         target.translationAiPending = source.translationAiPending;
         target.translationAiRefinedFromGoogle = source.translationAiRefinedFromGoogle;
+        target.readingAiModel = source.readingAiModel;
+        target.translationAiModel = source.translationAiModel;
         target.readingAiFailureToken = safeText(source.readingAiFailureToken);
         target.translationAiFailureToken = safeText(source.translationAiFailureToken);
         return changed;

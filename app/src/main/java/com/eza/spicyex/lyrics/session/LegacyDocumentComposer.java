@@ -82,10 +82,17 @@ public final class LegacyDocumentComposer {
         boolean fromAi = artifact.provenance != null
                 && artifact.provenance.authority == LayerAuthority.AI
                 && !artifact.isEmpty();
+        // Which model answered travels with the authority, for the same reason: the review panel
+        // reports what produced the output on screen, and the current setting is not that — it may
+        // have been changed since, and the cached answer is still the old model's.
+        String model = fromAi && artifact.provenance.modelId != null
+                ? artifact.provenance.modelId : "";
         if (kind == LayerKind.SOUND) {
             target.readingFromAi = fromAi;
+            target.readingAiModel = model;
         } else {
             target.translationFromAi = fromAi;
+            target.translationAiModel = model;
             target.translationAiRefinedFromGoogle = fromAi
                     && artifact instanceof MeaningArtifact
                     && ((MeaningArtifact) artifact).refinedFromGoogle;
