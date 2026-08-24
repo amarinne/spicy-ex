@@ -49,14 +49,18 @@ final class NativeIconButtons {
         button.setMinimumHeight(dp(sizeDp));
         button.setClickable(true);
         button.setFocusable(true);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(Color.argb(48, 255, 255, 255));
-        bg.setStroke(dp(1), Color.argb(52, 255, 255, 255));
-        button.setBackground(bg);
+        button.setBackground(createRoundButtonBackground());
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) button.setElevation(dp(8));
         applyPressScale(button);
         return button;
+    }
+
+    static GradientDrawable createRoundButtonBackground() {
+        GradientDrawable background = new GradientDrawable();
+        background.setShape(GradientDrawable.OVAL);
+        background.setColor(Color.argb(48, 255, 255, 255));
+        background.setStroke(dp(1), Color.argb(52, 255, 255, 255));
+        return background;
     }
 
     static void applyPressScale(View view) {

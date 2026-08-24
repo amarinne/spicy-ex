@@ -12,7 +12,8 @@ import com.eza.spicyex.lyrics.session.MeaningArtifact;
  *
  * <ul>
  *   <li>Google first, then AI — Google publishes once as preliminary, AI replaces it.</li>
- *   <li>AI first — late Google is ignored and can never regress the display.</li>
+ *   <li>AI success first — late Google is ignored and can never regress the display.</li>
+ *   <li>AI failure first — completion waits for Google, then publishes its fallback if usable.</li>
  *   <li>Google success then AI failure — Google remains visible; the failure still travels with
  *       the completion for review/diagnostics.</li>
  *   <li>Google failure never blocks AI: no preliminary is offered and the AI outcome decides.</li>
@@ -25,31 +26,38 @@ import com.eza.spicyex.lyrics.session.MeaningArtifact;
  */
 final class MeaningPreviewRace {
 
-    /** True once the AI child settled or failed to launch — Google may never publish after it. */
+    /** True once the AI child settled or failed to launch. */
     private boolean aiSettled;
     /** True once the Google child settled at all — it runs once, so there is no second chance. */
     private boolean googleSettled;
     private boolean googleSucceeded;
+    /** True once one child produced the final outcome; no later settlement may replace it. */
+    private boolean completionSettled;
     /** Guards the at-most-once preliminary publication. */
     private boolean preliminaryOffered;
     private MeaningArtifact googleArtifact;
+    private LayerFailure aiFailure = LayerFailure.NONE;
 
     /**
      * Settles the Google child.
      *
-     * @return the artifact to publish as the preliminary Google translation now, or null when
-     *         Google failed, already settled, already published, or the AI child has settled
-     *         (or was abandoned)
+     * @return a preliminary Google publication while AI is pending, a terminal fallback after AI
+     *         failed, or a no-op when this settlement must not reach the screen
      */
-    synchronized MeaningArtifact preliminaryFor(MeaningArtifact settled) {
-        if (aiSettled || googleSettled) return null;
+    synchronized Outcome onGoogleSettled(MeaningArtifact settled) {
+        if (googleSettled) return Outcome.none();
         googleSettled = true;
         boolean usable = settled != null && !settled.isEmpty();
         googleSucceeded = usable;
         googleArtifact = usable ? settled : null;
-        if (!usable || preliminaryOffered) return null;
+        if (completionSettled) return Outcome.none();
+        if (aiSettled) {
+            completionSettled = true;
+            return Outcome.complete(googleArtifact, aiFailure);
+        }
+        if (!usable || preliminaryOffered) return Outcome.none();
         preliminaryOffered = true;
-        return googleArtifact;
+        return Outcome.preliminary(googleArtifact);
     }
 
     /**
@@ -57,7 +65,7 @@ final class MeaningPreviewRace {
      * AI settles on another executor; in that ordering, Google must not render after completed AI.
      */
     synchronized boolean mayPublishPreliminary(MeaningArtifact offered) {
-        return !aiSettled && preliminaryOffered && googleArtifact == offered;
+        return !completionSettled && preliminaryOffered && googleArtifact == offered;
     }
 
     /**
@@ -66,6 +74,7 @@ final class MeaningPreviewRace {
      */
     synchronized void abandonAi() {
         aiSettled = true;
+        completionSettled = true;
     }
 
     /**
@@ -75,34 +84,48 @@ final class MeaningPreviewRace {
      * @param failure  the mapped AI failure, {@link LayerFailure#NONE} when there is none
      */
     synchronized Outcome onAiSettled(MeaningArtifact artifact, LayerFailure failure) {
+        if (aiSettled || completionSettled) return Outcome.none();
         aiSettled = true;
         if (artifact != null && !artifact.isEmpty()) {
-            return Outcome.replaceWith(artifact);
+            completionSettled = true;
+            return Outcome.complete(artifact, LayerFailure.NONE);
         }
+        aiFailure = failure == null ? LayerFailure.NONE : failure;
+        if (!googleSettled) return Outcome.none();
+        completionSettled = true;
         // A Google artifact that landed first stays visible; the AI failure still reports so the
         // review panel can explain why the screen shows Google while the sparkle reads red.
         if (googleSucceeded && googleArtifact != null) {
-            return Outcome.replaceWith(googleArtifact).withFailure(failure);
+            return Outcome.complete(googleArtifact, aiFailure);
         }
-        return Outcome.replaceWith(null).withFailure(failure);
+        return Outcome.complete(null, aiFailure);
     }
 
     /** The one final decision: what to fold into the session, and which failure to report. */
     static final class Outcome {
         final MeaningArtifact artifact;
         final LayerFailure failure;
+        final boolean terminal;
+        final boolean preliminary;
 
-        private Outcome(MeaningArtifact artifact, LayerFailure failure) {
+        private Outcome(MeaningArtifact artifact, LayerFailure failure, boolean terminal,
+                        boolean preliminary) {
             this.artifact = artifact;
             this.failure = failure == null ? LayerFailure.NONE : failure;
+            this.terminal = terminal;
+            this.preliminary = preliminary;
         }
 
-        static Outcome replaceWith(MeaningArtifact artifact) {
-            return new Outcome(artifact, LayerFailure.NONE);
+        static Outcome none() {
+            return new Outcome(null, LayerFailure.NONE, false, false);
         }
 
-        Outcome withFailure(LayerFailure next) {
-            return new Outcome(artifact, next);
+        static Outcome preliminary(MeaningArtifact artifact) {
+            return new Outcome(artifact, LayerFailure.NONE, false, true);
+        }
+
+        static Outcome complete(MeaningArtifact artifact, LayerFailure failure) {
+            return new Outcome(artifact, failure, true, false);
         }
     }
 }

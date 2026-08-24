@@ -2,9 +2,9 @@ package com.eza.spicyex.hooks;
 
 import static com.eza.spicyex.hooks.NativeLyricsUtils.dp;
 import static com.eza.spicyex.hooks.NativeIconButtons.applyPressScale;
+import static com.eza.spicyex.hooks.NativeIconButtons.createRoundButtonBackground;
 
 import android.app.Activity;
-import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -31,10 +31,7 @@ final class LyricsJumpToCurrentController {
         view.setTextSize(13);
         view.setAlpha(0f);
         view.setVisibility(View.GONE);
-        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setCornerRadius(dp(22));
-        bg.setColor(Color.argb(210, 36, 36, 36));
-        view.setBackground(bg);
+        view.setBackground(createRoundButtonBackground());
         view.setElevation(dp(8));
         applyPressScale(view);
         view.setOnClickListener(v -> {

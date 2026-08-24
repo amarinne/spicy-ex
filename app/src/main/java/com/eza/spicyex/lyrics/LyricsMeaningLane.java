@@ -459,6 +459,7 @@ public final class LyricsMeaningLane {
                 ? (chunkId, attempt, payload) -> AiRequestLiveState.attempt(LayerKind.MEANING,
                 run.canonicalDigest(), run.tag, chunkId, attempt, payload)
                 : null;
+        final long startedAtMs = SystemClock.elapsedRealtime();
 
         // Google display child. Lane executor, immediately; it shares the parent's run guard and
         // cancellation tag but never the AI executor's queue.
@@ -467,7 +468,12 @@ public final class LyricsMeaningLane {
                 @Override public void run() {
                     MeaningArtifact google = null;
                     try {
-                        if (!run.accepts(currentGuard, id, generation, snapshot)) return;
+                        if (!run.accepts(currentGuard, id, generation, snapshot)) {
+                            MeaningPreviewRace.Outcome retired = race.onGoogleSettled(null);
+                            completePreviewRun(run, id, generation, snapshot, currentGuard,
+                                    callback, runIdentity, retired);
+                            return;
+                        }
                         // Warm paid answer -> no preview needed. allowProviderRequest=false is
                         // the read-only path: complete records are served from store, anything
                         // else is refused without a call, so this cannot bill or double-request.
@@ -482,34 +488,47 @@ public final class LyricsMeaningLane {
                         XposedBridge.log(TAG + " preview google failed: "
                                 + failure.getClass().getSimpleName());
                     }
-                    final MeaningArtifact preliminary = race.preliminaryFor(google);
-                    if (preliminary == null) return;
-                    post(run, id, generation, snapshot, currentGuard, new Runnable() {
-                        @Override public void run() {
-                            if (!race.mayPublishPreliminary(preliminary)) return;
-                            callback.rerender(LayerKind.MEANING, preliminary,
-                                    "Showing Google translation while AI works");
-                        }
-                    });
+                    final MeaningPreviewRace.Outcome googleOutcome = race.onGoogleSettled(google);
+                    if (googleOutcome.preliminary) {
+                        final MeaningArtifact preliminary = googleOutcome.artifact;
+                        post(run, id, generation, snapshot, currentGuard, new Runnable() {
+                            @Override public void run() {
+                                if (!race.mayPublishPreliminary(preliminary)) return;
+                                callback.rerender(LayerKind.MEANING, preliminary,
+                                        "Showing Google translation while AI works");
+                            }
+                        });
+                    } else {
+                        completePreviewRun(run, id, generation, snapshot, currentGuard, callback,
+                                runIdentity, googleOutcome);
+                    }
                 }
             });
         } catch (RuntimeException notDispatched) {
             // No Google child will settle: the race falls through to whatever the raw-AI child
             // decides, exactly as if Google had failed.
+            MeaningPreviewRace.Outcome googleOutcome = race.onGoogleSettled(null);
+            completePreviewRun(run, id, generation, snapshot, currentGuard, callback,
+                    runIdentity, googleOutcome);
             XposedBridge.log(TAG + " preview google not dispatched: "
                     + notDispatched.getClass().getSimpleName());
         }
 
-        final long startedAtMs = SystemClock.elapsedRealtime();
-        // The coalescer key is claimed above, on this thread; the AI side is its only owner and
-        // releases it in every terminal path below.
+        // The coalescer key is claimed above, on this thread. The child that produces the race's
+        // terminal outcome releases it; cancellation and dispatch rejection release explicitly.
         try {
             aiExecutor.execute(new Runnable() {
                 @Override public void run() {
                     AiMeaningRun.Result result = null;
                     LayerFailure aiFailure = LayerFailure.NONE;
                     try {
-                        if (!run.accepts(currentGuard, id, generation, snapshot)) return;
+                        if (!run.accepts(currentGuard, id, generation, snapshot)) {
+                            race.abandonAi();
+                            AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(),
+                                    run.tag);
+                            COALESCER.finish(runIdentity);
+                            return;
+                        }
                         // Raw lyrics only. Preview never sends a baseline and never reports
                         // baseline_unavailable: Google here is display, not request input.
                         result = AiMeaningRun.run(context, new AiSettings(context), run.base,
@@ -544,6 +563,7 @@ public final class LyricsMeaningLane {
                         AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(),
                                 run.tag);
                         recordAiOutcome("request_settled", "cancelled", "", 0);
+                        COALESCER.finish(runIdentity);
                         return;
                     } catch (Throwable failure) {
                         XposedBridge.log(TAG + " ai translation failed: "
@@ -553,8 +573,6 @@ public final class LyricsMeaningLane {
                         AiRequestLiveState.fail(LayerKind.MEANING, run.canonicalDigest(), run.tag,
                                 "runtime_unavailable", 0, failure.getClass().getSimpleName());
                         recordAiOutcome("request_failed", "failed", "runtime_unavailable", 0);
-                    } finally {
-                        COALESCER.finish(runIdentity);
                     }
                     AiRequestLiveState.complete(LayerKind.MEANING, run.canonicalDigest(), run.tag);
 
@@ -563,22 +581,16 @@ public final class LyricsMeaningLane {
                     // lyrics, so no Google baseline is folded into the final artifact.
                     final MeaningPreviewRace.Outcome outcome = race.onAiSettled(artifact,
                             aiFailure);
-                    final int changed = outcome.artifact == null ? 0 : outcome.artifact.size();
                     LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.MEANING_PROCESSED);
                     LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.MEANING_PROCESSING,
                             SystemClock.elapsedRealtime() - startedAtMs);
-                    post(run, id, generation, snapshot, currentGuard, new Runnable() {
-                        @Override public void run() {
-                            callback.complete(LayerKind.MEANING, outcome.artifact,
-                                    outcome.failure,
-                                    "AI translated " + changed + " lines", changed);
-                        }
-                    });
+                    completePreviewRun(run, id, generation, snapshot, currentGuard, callback,
+                            runIdentity, outcome);
                 }
             });
         } catch (RuntimeException notDispatched) {
-            COALESCER.finish(runIdentity);
             race.abandonAi();
+            COALESCER.finish(runIdentity);
             AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(), run.tag);
             // The same tag owns both children's calls, so this aborts the Google child too.
             provider.cancel(http, run.tag);
@@ -587,6 +599,24 @@ public final class LyricsMeaningLane {
             return false;
         }
         return true;
+    }
+
+    /** Publishes the preview race's single terminal outcome; non-terminal settlements are no-ops. */
+    private void completePreviewRun(DerivedLayerRun run, String id, int generation,
+                                    LyricsDocument snapshot,
+                                    LyricsSecondaryProcessor.CurrentGuard currentGuard,
+                                    LyricsSecondaryProcessor.Callback callback,
+                                    LayerRunIdentity runIdentity,
+                                    MeaningPreviewRace.Outcome outcome) {
+        if (outcome == null || !outcome.terminal) return;
+        COALESCER.finish(runIdentity);
+        final int changed = outcome.artifact == null ? 0 : outcome.artifact.size();
+        post(run, id, generation, snapshot, currentGuard, new Runnable() {
+            @Override public void run() {
+                callback.complete(LayerKind.MEANING, outcome.artifact, outcome.failure,
+                        "AI translated " + changed + " lines", changed);
+            }
+        });
     }
 
     /**

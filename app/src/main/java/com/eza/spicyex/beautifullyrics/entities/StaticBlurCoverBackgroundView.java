@@ -14,10 +14,18 @@ public final class StaticBlurCoverBackgroundView extends FrameLayout implements 
     private static final int SOFT_COVER_PX = 96;
     private ImageView current;
     private ImageView previous;
+    private boolean forceDark;
 
-    public StaticBlurCoverBackgroundView(Context context) {
+    public StaticBlurCoverBackgroundView(Context context, boolean forceDark) {
         super(context);
         setBackgroundColor(Color.rgb(18, 16, 18));
+        this.forceDark = forceDark;
+    }
+
+    public void setForceDark(boolean forceDark) {
+        this.forceDark = forceDark;
+        applyCoverTone(current);
+        applyCoverTone(previous);
     }
 
     @Override
@@ -52,7 +60,7 @@ public final class StaticBlurCoverBackgroundView extends FrameLayout implements 
         current.setTranslationX(getWidth() <= 0 ? 0f : getWidth() * 0.08f);
         current.setScaleX(1.25f);
         current.setScaleY(1.25f);
-        current.setColorFilter(Color.argb(78, 255, 255, 255));
+        applyCoverTone(current);
         addView(current, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         current.animate().alpha(1f).translationX(0f).setDuration(850).start();
         if (previous != null) {
@@ -60,6 +68,13 @@ public final class StaticBlurCoverBackgroundView extends FrameLayout implements 
             old.animate().alpha(0f).translationX(-(getWidth() <= 0 ? 0f : getWidth() * 0.08f)).setDuration(850)
                     .withEndAction(() -> removeView(old)).start();
         }
+    }
+
+    private void applyCoverTone(ImageView cover) {
+        if (cover == null) return;
+        cover.setColorFilter(forceDark
+                ? Color.argb(166, 0, 0, 0)
+                : Color.argb(78, 255, 255, 255));
     }
 
     private static Bitmap downsampleCover(Bitmap art) {

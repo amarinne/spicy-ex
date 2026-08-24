@@ -82,8 +82,22 @@ public final class LyricsMeaningPreviewContractTest {
 
         assertTrue(preview.contains("COALESCER.finish(runIdentity);"));
         assertTrue(preview.contains("race.abandonAi();"));
+        assertTrue("AI abandonment must suppress Google before releasing deferred runs",
+                preview.contains("catch (RuntimeException notDispatched) { "
+                        + "race.abandonAi(); COALESCER.finish(runIdentity);"));
         assertTrue("a refused AI dispatch also aborts the Google child's calls",
                 preview.contains("provider.cancel(http, run.tag);"));
+    }
+
+    /** A retired Google child still settles the race so an earlier AI failure cannot leak the key. */
+    @Test
+    public void retiredGoogleChildReleasesAnAiFailureWaitingForIt() throws Exception {
+        String preview = previewBody(meaningLane().replaceAll("\\s+", " "));
+
+        assertTrue(preview.contains(
+                "MeaningPreviewRace.Outcome retired = race.onGoogleSettled(null);"));
+        assertTrue(preview.contains(
+                "callback, runIdentity, retired); return;"));
     }
 
     /** Legacy boolean migration maps to draft/AI-only only; an old install never gets preview. */

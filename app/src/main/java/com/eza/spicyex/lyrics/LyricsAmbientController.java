@@ -87,8 +87,12 @@ public final class LyricsAmbientController {
     public void applySettings(boolean enabled, boolean forceDark) {
         if (animatedParent != null && enabled && animatedBackground == null) {
             createAnimatedLayer(animatedParent, forceDark);
-        } else if (animatedBackground instanceof KawarpBackgroundView && forceDark != animatedForceDark) {
-            ((KawarpBackgroundView) animatedBackground).setForceDark(forceDark);
+        } else if (forceDark != animatedForceDark) {
+            if (animatedBackground instanceof KawarpBackgroundView) {
+                ((KawarpBackgroundView) animatedBackground).setForceDark(forceDark);
+            } else if (animatedBackground instanceof StaticBlurCoverBackgroundView) {
+                ((StaticBlurCoverBackgroundView) animatedBackground).setForceDark(forceDark);
+            }
             animatedForceDark = forceDark;
         }
         if (animatedBackground == null) return; // not attached this session — applies on next open
@@ -112,7 +116,7 @@ public final class LyricsAmbientController {
         try {
             animatedBackground = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
                     ? new KawarpBackgroundView(activity, forceDark)
-                    : new StaticBlurCoverBackgroundView(activity);
+                    : new StaticBlurCoverBackgroundView(activity, forceDark);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " ambient background unavailable: " + t);
             animatedBackground = null;
