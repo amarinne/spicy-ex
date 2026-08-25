@@ -70,6 +70,10 @@ public final class SpotifyPlusConfig {
         return hostPrefs.getString(key, defaultValue);
     }
 
+    public boolean contains(Settings.Setting<?> setting) {
+        return setting != null && hostPrefs.contains(setting.key);
+    }
+
     // --- High-level accessors ---
 
     public String lyricsDisplayMode() {

@@ -148,7 +148,7 @@ public final class ArtworkLyricsOverlayView extends FrameLayout {
             mountWindow(window);
         }
         if (mountedIndices.isEmpty()) return;
-        if ("Static".equalsIgnoreCase(document.type)) {
+        if (LyricsRenderMode.isStatic(document)) {
             frameRenderer.applyStatic(document, mountedIndices, rowsHost);
         } else {
             frameRenderer.applySynced(document, mountedIndices, rowsHost, renderConfig,
@@ -165,7 +165,7 @@ public final class ArtworkLyricsOverlayView extends FrameLayout {
 
     private void ensureMeasurements(long positionMs, int availableHeight) {
         if (document == null) return;
-        boolean staticDocument = "Static".equalsIgnoreCase(document.type);
+        boolean staticDocument = LyricsRenderMode.isStatic(document);
         int anchor = staticDocument ? 0
                 : LyricTimeline.findPrimaryActiveRow(document.appliedLines, positionMs);
         if (anchor < 0) return;

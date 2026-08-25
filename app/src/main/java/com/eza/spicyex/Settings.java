@@ -1,6 +1,7 @@
 package com.eza.spicyex;
 
 import com.eza.spicyex.lyrics.KoreanDisplayMode;
+import com.eza.spicyex.lyrics.LyricsBackgroundStyle;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -217,8 +218,12 @@ public final class Settings {
     );
 
     // --- Background ---
-    public static final Setting<Boolean> ENABLE_BACKGROUND = boolSetting(
-            "lyric_enable_background", BACKGROUND, "Animated background", false
+    public static final Setting<String> BACKGROUND_STYLE = enumSetting(
+            "lyric_background_style", BACKGROUND, "Background style",
+            LyricsBackgroundStyle.GRADIENT,
+            LyricsBackgroundStyle.GRADIENT,
+            LyricsBackgroundStyle.STATIC_TEXTURE,
+            LyricsBackgroundStyle.ANIMATED_TEXTURE
     );
 
     public static final Setting<Boolean> FORCE_DARK_BACKGROUND = boolSetting(
@@ -510,6 +515,11 @@ public final class Settings {
             "lyric_background_quality", "Render quality (background & blur)",
             "high",
             "high", "mid", "low", "superLow"
+    );
+
+    /** Removed user-facing boolean. Read only when migrating to {@link #BACKGROUND_STYLE}. */
+    public static final Setting<Boolean> ENABLE_BACKGROUND = internalBoolSetting(
+            "lyric_enable_background", "Legacy animated background", false
     );
 
     public static final Setting<Boolean> ENABLE_LINE_GRADIENT = internalBoolSetting(

@@ -66,7 +66,7 @@ final class MeaningPreviewRace {
         if (googleSettled) return Outcome.none();
         googleSettled = true;
         boolean usable = settled != null && !settled.isEmpty()
-                && (base == null || MeaningDisplaySelector.isComplete(
+                && (base == null || MeaningDisplaySelector.isUsable(
                         base, requiredRows, settled));
         googleSucceeded = usable;
         googleArtifact = usable ? settled : null;
@@ -108,7 +108,8 @@ final class MeaningPreviewRace {
         aiSettled = true;
         if (artifact != null && !artifact.isEmpty()) {
             MeaningArtifact selected = base == null ? artifact
-                    : MeaningDisplaySelector.select(base, requiredRows, artifact, googleArtifact);
+                    : MeaningDisplaySelector.selectWithFallback(
+                            base, requiredRows, artifact, googleArtifact);
             completionSettled = true;
             return Outcome.complete(selected, LayerFailure.NONE);
         }

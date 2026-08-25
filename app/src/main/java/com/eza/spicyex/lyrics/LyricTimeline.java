@@ -2,6 +2,8 @@ package com.eza.spicyex.lyrics;
 
 import java.util.List;
 
+import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
+
 /**
  * Pure timing normalization and renderer row planning, extracted from the native Spicy hook so
  * the logic is unit-testable. No Android types, no I/O.
@@ -83,7 +85,7 @@ public final class LyricTimeline {
         doc.appliedLines.clear();
         if (doc.lines == null || doc.lines.isEmpty()) return;
 
-        if ("Syllable".equalsIgnoreCase(doc.type) || "Line".equalsIgnoreCase(doc.type)) {
+        if (LyricsSourcePolicy.isSynced(doc.type)) {
             applyTimedRows(doc);
         } else {
             for (LyricsLine line : doc.lines) {

@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.ai.AiCancelledException;
 import com.eza.spicyex.lyrics.ai.AiMeaningRun;
+import com.eza.spicyex.lyrics.ai.AiLiveMonitor;
 import com.eza.spicyex.lyrics.ai.AiRunOutcome;
 import com.eza.spicyex.lyrics.ai.AiRunMonitor;
 import com.eza.spicyex.lyrics.ai.AiRequestLiveState;
@@ -54,6 +55,9 @@ public final class LyricsMeaningLane {
     private static final String AI_COMPONENT = "ai_meaning";
     private static final int TRANSLATION_BATCH_MAX_LINES = 100;
     private static final int TRANSLATION_BATCH_MAX_CHARS = 4500;
+    private static final int TRANSLATION_RETRY_MAX_LINES = 12;
+    private static final int TRANSLATION_RETRY_MAX_CHARS = 1200;
+    private static final int TRANSLATION_SINGLE_RESCUE_MAX_ROWS = 8;
 
     /**
      * A machine Meaning backend. Google is one peer behind this contract; nothing above the lane
@@ -221,6 +225,7 @@ public final class LyricsMeaningLane {
         laneExecutor.execute(() -> {
             AtomicInteger changed = new AtomicInteger();
             Set<Integer> translated = new HashSet<>();
+            GoogleRunStats googleStats = new GoogleRunStats(work == null ? 0 : work.size());
             // Collected as the lane works rather than read back off the document. Provider-supplied
             // translations are deliberately absent: they are canonical source data carried by the
             // base, not something this layer produced.
@@ -228,12 +233,20 @@ public final class LyricsMeaningLane {
             try {
                 if (!run.accepts(currentGuard, id, generation, snapshot)) return;
                 List<Integer> retry = translateBatchPass(id, effectiveSourceLang, targetLang,
-                        workerSnapshot, work, entries, translated, changed, true, run.tag, run);
+                        workerSnapshot, work, entries, translated, changed, true, run.tag, run,
+                        googleStats);
                 if (!retry.isEmpty() && run.accepts(currentGuard, id, generation, snapshot)) {
                     post(run, id, generation, snapshot, currentGuard,
                             () -> callback.progress("Retrying echoed translations... " + retry.size()));
                     translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, retry,
-                            entries, translated, changed, false, run.tag, run);
+                            entries, translated, changed, false, run.tag, run, googleStats);
+                }
+                List<Integer> rescue = untranslated(work, translated);
+                if (!rescue.isEmpty() && rescue.size() <= TRANSLATION_SINGLE_RESCUE_MAX_ROWS
+                        && run.accepts(currentGuard, id, generation, snapshot)) {
+                    translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, rescue,
+                            entries, translated, changed, false, run.tag, run, googleStats,
+                            1, 512);
                 }
             } catch (Throwable t) {
                 XposedBridge.log(TAG + " translation pass failed: " + t.getClass().getSimpleName());
@@ -243,6 +256,8 @@ public final class LyricsMeaningLane {
             }
 
             boolean complete = translated.containsAll(work);
+            logGoogleSettlement(googleStats, translated.size(), complete,
+                    SystemClock.elapsedRealtime() - startedAtMs);
             boolean includes = complete
                     && (LyricsDocumentProcessor.hasDisplayedTranslation(workerSnapshot) || !translated.isEmpty());
             int finalChanged = changed.get();
@@ -301,8 +316,7 @@ public final class LyricsMeaningLane {
                     Diagnostics.context("provider", aiProviderId()));
         }
         final AiRunMonitor monitor = allowProviderRequest
-                ? (chunkId, attempt, payload) -> AiRequestLiveState.attempt(LayerKind.MEANING,
-                run.canonicalDigest(), run.tag, chunkId, attempt, payload)
+                ? new AiLiveMonitor(LayerKind.MEANING, run.canonicalDigest(), run.tag)
                 : null;
         final long startedAtMs = SystemClock.elapsedRealtime();
         // The coalescer key is claimed above, on this thread. If the executor refuses the task
@@ -388,9 +402,13 @@ public final class LyricsMeaningLane {
                     googleBaseline = googleFallback(run, id, workerSnapshot, googleWork,
                             effectiveSourceLang, targetLang);
                 }
-                MeaningArtifact artifact = MeaningDisplaySelector.select(run.base,
-                        requiredRowIds(run.base, workerSnapshot, sourceLang, targetLang),
-                        aiArtifact, refineGoogle ? googleBaseline : null);
+                Set<String> requiredRows = requiredRowIds(
+                        run.base, workerSnapshot, sourceLang, targetLang);
+                MeaningArtifact artifact = refineGoogle
+                        ? MeaningDisplaySelector.selectWithFallback(
+                                run.base, requiredRows, aiArtifact, googleBaseline)
+                        : MeaningDisplaySelector.select(
+                                run.base, requiredRows, aiArtifact, null);
                 final MeaningArtifact finalArtifact = artifact;
                 final LayerFailure finalFailure = aiFailure;
                 final int changed = finalArtifact == null ? 0 : finalArtifact.size();
@@ -462,8 +480,7 @@ public final class LyricsMeaningLane {
                     Diagnostics.context("provider", aiProviderId()));
         }
         final AiRunMonitor monitor = allowProviderRequest
-                ? (chunkId, attempt, payload) -> AiRequestLiveState.attempt(LayerKind.MEANING,
-                run.canonicalDigest(), run.tag, chunkId, attempt, payload)
+                ? new AiLiveMonitor(LayerKind.MEANING, run.canonicalDigest(), run.tag)
                 : null;
         final long startedAtMs = SystemClock.elapsedRealtime();
         // Preview means Google reaches the display before a new or cached AI answer can replace it.
@@ -676,17 +693,31 @@ public final class LyricsMeaningLane {
                 : new ArrayList<>(work);
         Set<Integer> translated = new HashSet<>();
         AtomicInteger changed = new AtomicInteger();
+        GoogleRunStats stats = new GoogleRunStats(missing.size());
         if (!missing.isEmpty()) {
             try {
-                translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, missing,
-                        entries, translated, changed, false, run.tag, run);
+                List<Integer> retry = translateBatchPass(id, effectiveSourceLang, targetLang,
+                        workerSnapshot, missing, entries, translated, changed, true, run.tag, run,
+                        stats);
+                if (!retry.isEmpty() && run.isNewest()) {
+                    translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, retry,
+                            entries, translated, changed, false, run.tag, run, stats);
+                }
+                List<Integer> rescue = untranslated(missing, translated);
+                if (!rescue.isEmpty() && rescue.size() <= TRANSLATION_SINGLE_RESCUE_MAX_ROWS
+                        && run.isNewest()) {
+                    translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, rescue,
+                            entries, translated, changed, false, run.tag, run, stats, 1, 512);
+                }
             } catch (Throwable failure) {
                 XposedBridge.log(TAG + " google fallback failed: "
                         + failure.getClass().getSimpleName());
             }
         }
-        if (entries.isEmpty()) return null;
         boolean complete = missing.isEmpty() || translated.containsAll(missing);
+        logGoogleSettlement(stats, translated.size(), complete,
+                SystemClock.elapsedRealtime() - stats.startedAtMs);
+        if (entries.isEmpty()) return null;
         return new MeaningArtifact(run.canonicalDigest(), run.configId(),
                 new LayerProvenance(LayerAuthority.MACHINE, "google_unofficial", run.configId(),
                         System.currentTimeMillis()), entries, !complete);
@@ -697,9 +728,33 @@ public final class LyricsMeaningLane {
             List<Integer> work, List<MeaningEntry> entries, Set<Integer> translatedIndices,
             AtomicInteger changed, boolean collectRetry, String cancelTag, DerivedLayerRun run
     ) {
+        return translateBatchPass(id, sourceLang, targetLang, workerSnapshot, work, entries,
+                translatedIndices, changed, collectRetry, cancelTag, run, null);
+    }
+
+    private List<Integer> translateBatchPass(
+            String id, String sourceLang, String targetLang, LyricsDocument workerSnapshot,
+            List<Integer> work, List<MeaningEntry> entries, Set<Integer> translatedIndices,
+            AtomicInteger changed, boolean collectRetry, String cancelTag, DerivedLayerRun run,
+            GoogleRunStats stats
+    ) {
+        int maxLines = collectRetry ? TRANSLATION_BATCH_MAX_LINES : TRANSLATION_RETRY_MAX_LINES;
+        int maxChars = collectRetry ? TRANSLATION_BATCH_MAX_CHARS : TRANSLATION_RETRY_MAX_CHARS;
+        return translateBatchPass(id, sourceLang, targetLang, workerSnapshot, work, entries,
+                translatedIndices, changed, collectRetry, cancelTag, run, stats,
+                maxLines, maxChars);
+    }
+
+    private List<Integer> translateBatchPass(
+            String id, String sourceLang, String targetLang, LyricsDocument workerSnapshot,
+            List<Integer> work, List<MeaningEntry> entries, Set<Integer> translatedIndices,
+            AtomicInteger changed, boolean collectRetry, String cancelTag, DerivedLayerRun run,
+            GoogleRunStats stats, int maxLines, int maxChars
+    ) {
         List<Integer> retry = new ArrayList<>();
         if (workerSnapshot == null || work == null || work.isEmpty()) return retry;
-        for (List<GoogleEnhancer.BatchLine> batch : translationBatches(workerSnapshot, work)) {
+        for (List<GoogleEnhancer.BatchLine> batch
+                : translationBatches(workerSnapshot, work, maxLines, maxChars)) {
             if (batch.isEmpty()) continue;
             // Stop between batches as soon as this run is retired; the current call is cancelled
             // separately by whoever retired it.
@@ -707,6 +762,7 @@ public final class LyricsMeaningLane {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.MEANING_PROVIDER_CALL);
             GoogleEnhancer.BatchResult result = provider.translate(context, http, processingVersion,
                     id, sourceLang, targetLang, batch, cancelTag);
+            if (stats != null) stats.record(result);
             for (GoogleEnhancer.BatchLine item : batch) {
                 if (item == null || item.index < 0 || item.index >= workerSnapshot.lines.size()) continue;
                 LyricsLine line = workerSnapshot.lines.get(item.index);
@@ -732,6 +788,12 @@ public final class LyricsMeaningLane {
     }
 
     private List<List<GoogleEnhancer.BatchLine>> translationBatches(LyricsDocument doc, List<Integer> work) {
+        return translationBatches(doc, work, TRANSLATION_BATCH_MAX_LINES,
+                TRANSLATION_BATCH_MAX_CHARS);
+    }
+
+    private List<List<GoogleEnhancer.BatchLine>> translationBatches(
+            LyricsDocument doc, List<Integer> work, int maxLines, int maxChars) {
         List<List<GoogleEnhancer.BatchLine>> batches = new ArrayList<>();
         List<GoogleEnhancer.BatchLine> current = new ArrayList<>();
         int currentChars = 0;
@@ -741,8 +803,8 @@ public final class LyricsMeaningLane {
             if (line == null || isBlank(line.text)) continue;
             int lineChars = safe(line.text).length() + 14;
             if (!current.isEmpty()
-                    && (current.size() >= TRANSLATION_BATCH_MAX_LINES
-                    || currentChars + lineChars > TRANSLATION_BATCH_MAX_CHARS)) {
+                    && (current.size() >= Math.max(1, maxLines)
+                    || currentChars + lineChars > Math.max(128, maxChars))) {
                 batches.add(current);
                 current = new ArrayList<>();
                 currentChars = 0;
@@ -752,6 +814,57 @@ public final class LyricsMeaningLane {
         }
         if (!current.isEmpty()) batches.add(current);
         return batches.isEmpty() ? Collections.<List<GoogleEnhancer.BatchLine>>emptyList() : batches;
+    }
+
+    static List<Integer> untranslated(List<Integer> requested, Set<Integer> translated) {
+        List<Integer> missing = new ArrayList<>();
+        if (requested == null) return missing;
+        for (Integer index : requested) {
+            if (index != null && (translated == null || !translated.contains(index))) {
+                missing.add(index);
+            }
+        }
+        return missing;
+    }
+
+    private void logGoogleSettlement(GoogleRunStats stats, int translated, boolean complete,
+                                     long durationMs) {
+        if (stats == null) return;
+        String result = complete ? "complete" : translated > 0 ? "partial" : "empty";
+        String reason = safe(stats.lastReason);
+        if (complete && !reason.isEmpty()) reason = "recovered_" + reason;
+        XposedBridge.log(TAG + " google settled result=" + result
+                + " requested=" + stats.requested
+                + " translated=" + translated
+                + " cacheHits=" + stats.cacheHits.size()
+                + " networkAttempts=" + stats.networkAttempts
+                + " status=" + stats.lastStatus
+                + " reason=" + reason
+                + " durationMs=" + Math.max(0L, durationMs));
+    }
+
+    private static final class GoogleRunStats {
+        final int requested;
+        final long startedAtMs = SystemClock.elapsedRealtime();
+        final Set<Integer> cacheHits = new HashSet<>();
+        int networkAttempts;
+        int lastStatus;
+        String lastReason = "";
+
+        GoogleRunStats(int requested) {
+            this.requested = Math.max(0, requested);
+        }
+
+        void record(GoogleEnhancer.BatchResult result) {
+            if (result == null) {
+                lastReason = "null_result";
+                return;
+            }
+            cacheHits.addAll(result.cachedIndices);
+            networkAttempts += Math.max(0, result.networkAttempts);
+            if (result.httpStatus > 0) lastStatus = result.httpStatus;
+            if (!isBlank(result.failureReason)) lastReason = result.failureReason;
+        }
     }
 
 

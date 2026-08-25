@@ -25,7 +25,7 @@ public final class ArtworkLyricWindowPlanner {
                 || availableHeightPx <= 0) {
             return Window.empty();
         }
-        if ("Static".equalsIgnoreCase(document.type)) {
+        if (LyricsRenderMode.isStatic(document)) {
             return selectStatic(document.appliedLines.size(), availableHeightPx, rowHeightsPx);
         }
         int anchor = LyricTimeline.findPrimaryActiveRow(document.appliedLines, positionMs);

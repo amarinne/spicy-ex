@@ -9,12 +9,14 @@ import static org.junit.Assert.assertTrue;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
 import com.eza.spicyex.lyrics.session.LayerFailure;
 import com.eza.spicyex.lyrics.session.LayerProvenance;
+import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
 import com.eza.spicyex.lyrics.session.MeaningEntry;
 
 import org.junit.Test;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
 
 /**
  * The Google preview race table from the handover, settled one child at a time. Every row of the
@@ -48,6 +50,29 @@ public final class MeaningPreviewRaceTest {
         assertEquals("AI remains display authority", "ai text",
                 outcome.artifact.meaning("row-ai").text);
         assertEquals(LayerFailure.NONE, outcome.failure);
+    }
+
+    @Test
+    public void partialGoogleCoverageStillPublishesAsPreview() {
+        LyricsDocument document = new LyricsDocument();
+        LyricsLine first = new LyricsLine();
+        first.text = "один";
+        LyricsLine second = new LyricsLine();
+        second.text = "два";
+        document.lines.add(first);
+        document.lines.add(second);
+        CanonicalBase base = CanonicalBase.fromDocument("track", document);
+        MeaningArtifact partialGoogle = new MeaningArtifact(base.digest, "google-config",
+                new LayerProvenance(LayerAuthority.MACHINE, "google", "contract", 0L),
+                Collections.singletonList(new MeaningEntry(
+                        base.rows.get(0).rowId, "one", "en")), true);
+        MeaningPreviewRace race = new MeaningPreviewRace(base, new LinkedHashSet<>(
+                java.util.Arrays.asList(base.rows.get(0).rowId, base.rows.get(1).rowId)));
+
+        MeaningPreviewRace.Outcome preliminary = race.onGoogleSettled(partialGoogle);
+
+        assertTrue(preliminary.preliminary);
+        assertSame(partialGoogle, preliminary.artifact);
     }
 
     @Test

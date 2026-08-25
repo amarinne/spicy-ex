@@ -8,12 +8,12 @@ import android.net.Uri;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
+import com.eza.spicyex.FeatureAvailability;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.beautifullyrics.entities.AmbientBackgroundLayer;
 import com.eza.spicyex.beautifullyrics.entities.KawarpBackgroundView;
-import com.eza.spicyex.beautifullyrics.entities.StaticBlurCoverBackgroundView;
 
 import java.io.IOException;
 
@@ -47,6 +47,7 @@ public final class LyricsAmbientController {
     private volatile AmbientBackgroundLayer inFlightArtTarget;
     private volatile Call inFlightArtCall;
     private volatile android.graphics.Bitmap lastArtBitmap;
+    private boolean playing = true;
     private int[] currentPageColors;
     private ValueAnimator pageColorAnimator;
 
@@ -74,6 +75,7 @@ public final class LyricsAmbientController {
     }
 
     public void setPlaying(boolean playing) {
+        this.playing = playing;
         if (animatedBackground instanceof KawarpBackgroundView) {
             ((KawarpBackgroundView) animatedBackground).setPlaying(playing);
         }
@@ -81,21 +83,27 @@ public final class LyricsAmbientController {
 
     /** Apply the "Animated background" setting live: show+resume or hide+pause the layer. */
     public void applyEnabled(boolean enabled) {
-        applySettings(enabled, config == null || config.get(Settings.FORCE_DARK_BACKGROUND));
+        applySettings(enabled ? LyricsBackgroundStyle.ANIMATED_TEXTURE
+                        : LyricsBackgroundStyle.GRADIENT,
+                config == null || config.get(Settings.FORCE_DARK_BACKGROUND));
     }
 
-    public void applySettings(boolean enabled, boolean forceDark) {
+    public void applySettings(String style, boolean forceDark) {
+        String normalized = LyricsBackgroundStyle.normalize(style);
+        boolean enabled = LyricsBackgroundStyle.usesTexture(normalized);
+        boolean animated = LyricsBackgroundStyle.isAnimated(normalized);
         if (animatedParent != null && enabled && animatedBackground == null) {
-            createAnimatedLayer(animatedParent, forceDark);
+            createAnimatedLayer(animatedParent, forceDark, animated);
         } else if (forceDark != animatedForceDark) {
             if (animatedBackground instanceof KawarpBackgroundView) {
                 ((KawarpBackgroundView) animatedBackground).setForceDark(forceDark);
-            } else if (animatedBackground instanceof StaticBlurCoverBackgroundView) {
-                ((StaticBlurCoverBackgroundView) animatedBackground).setForceDark(forceDark);
             }
             animatedForceDark = forceDark;
         }
         if (animatedBackground == null) return; // not attached this session — applies on next open
+        if (animatedBackground instanceof KawarpBackgroundView) {
+            ((KawarpBackgroundView) animatedBackground).setMotionEnabled(animated);
+        }
         if (enabled) {
             animatedBackground.asView().setVisibility(android.view.View.VISIBLE);
             animatedBackground.resumeRendering();
@@ -105,18 +113,22 @@ public final class LyricsAmbientController {
         }
     }
 
-    public void attachAnimatedLayer(FrameLayout parent) {
+    public void attachAnimatedLayer(FrameLayout parent, String style, boolean forceDark) {
         animatedParent = parent;
-        if (parent == null || config == null || !config.get(Settings.ENABLE_BACKGROUND)) return;
-        createAnimatedLayer(parent, config.get(Settings.FORCE_DARK_BACKGROUND));
+        if (!FeatureAvailability.animatedBackgroundAvailable()) return;
+        if (parent == null || !LyricsBackgroundStyle.usesTexture(style)) return;
+        createAnimatedLayer(parent, forceDark, LyricsBackgroundStyle.isAnimated(style));
     }
 
-    private void createAnimatedLayer(FrameLayout parent, boolean forceDark) {
-        if (parent == null) return;
+    private void createAnimatedLayer(FrameLayout parent, boolean forceDark, boolean animated) {
+        // Guarded here as well as at the call sites: a pref persisted on a newer device (backup
+        // restore, shared prefs copy) must not resurrect the layer on hardware that cannot run it.
+        if (parent == null || !FeatureAvailability.animatedBackgroundAvailable()) return;
         try {
-            animatedBackground = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
-                    ? new KawarpBackgroundView(activity, forceDark)
-                    : new StaticBlurCoverBackgroundView(activity, forceDark);
+            KawarpBackgroundView background = new KawarpBackgroundView(activity, forceDark);
+            background.setPlaying(playing);
+            background.setMotionEnabled(animated);
+            animatedBackground = background;
         } catch (Throwable t) {
             XposedBridge.log(TAG + " ambient background unavailable: " + t);
             animatedBackground = null;

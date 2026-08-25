@@ -20,6 +20,7 @@ import com.eza.spicyex.lyrics.LyricsFetchErrors;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.LyricsLocalRomanizer;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
+import com.eza.spicyex.lyrics.LyricsRenderMode;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsShellLifecycle;
 import com.eza.spicyex.lyrics.RomanizationOptions;
@@ -94,6 +95,8 @@ final class NowPlayingLyricController {
     private long throttledTrackAtMs;
     private boolean throttledTrackInitialized;
     private boolean frameErrorLogged;
+    /** First publication after an activity resume replaces stale surface state in full. */
+    private volatile boolean authoritativeReplayRequired;
     private final AtomicLong projectionRevision = new AtomicLong();
     private NowPlayingArtworkTargetResolver.Kind lastStableArtworkTarget =
             NowPlayingArtworkTargetResolver.Kind.NONE;
@@ -197,6 +200,16 @@ final class NowPlayingLyricController {
     void start() {
         if (running) return;
         running = true;
+        // Fullscreen pauses this controller but leaves the injected card mounted. Spotify can
+        // detach/rebind parts of the Now Playing hierarchy while the fullscreen activity owns the
+        // window, and preference changes made there arrive while our listener is unregistered.
+        // Rebuild the retained row from the shared document on resume so secondary text cannot
+        // disappear merely because the active line index stayed unchanged across the handoff.
+        refreshConfig();
+        card.invalidateMountedContent();
+        lastFrameMs = 0L;
+        throttledTrackInitialized = false;
+        authoritativeReplayRequired = true;
         synchronizeTrackBeforeSubscription();
         registerPreferenceListener();
         sessionSubscription = hook.subscribeLyricsSession(sessionListener);
@@ -522,6 +535,7 @@ final class NowPlayingLyricController {
         if (!NowPlayingSessionGuard.matchesCurrentTrack(id, liveId, currentId)) return;
         int generation = snapshot.generation;
         long revision = projectionRevision.incrementAndGet();
+        final boolean replayRequired = authoritativeReplayRequired;
         LyricsRenderConfig fetchConfig = renderConfig;
         RomanizationOptions fetchOptions = romanizationOptions();
         NativeRuntime.LYRICS_IO.execute(() -> {
@@ -546,8 +560,13 @@ final class NowPlayingLyricController {
                 // track as the lanes settle, and the artwork overlay keeps its document identity.
                 LyricsDocument mountedCard = cardDocument;
                 LyricsDocument mountedArtwork = artworkDocument;
-                if (id.equals(loadedId) && mountedCard != null && mountedArtwork != null
-                        && LyricsDocumentProcessor.sameCanonicalBase(mountedCard, nextCardDocument)) {
+                if (NowPlayingSessionGuard.mayMergeMountedProjection(
+                        replayRequired,
+                        id.equals(loadedId),
+                        mountedCard != null,
+                        mountedArtwork != null,
+                        mountedCard != null && LyricsDocumentProcessor.sameCanonicalBase(
+                                mountedCard, nextCardDocument))) {
                     boolean cardChanged = LyricsDocumentProcessor.mergeDerivedLayers(mountedCard, nextCardDocument);
                     boolean artworkChanged =
                             LyricsDocumentProcessor.mergeDerivedLayers(mountedArtwork, nextCardDocument);
@@ -576,7 +595,8 @@ final class NowPlayingLyricController {
                 if (isProjectionStale(id, generation, revision)) return;
                 LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
                 handler.post(() -> commitProjectedDocument(
-                        id, generation, revision, nextCardDocument, nextArtworkDocument));
+                        id, generation, revision, nextCardDocument, nextArtworkDocument,
+                        replayRequired));
             } catch (Throwable t) {
                 handler.post(() -> {
                     if (!running || projectionRevision.get() != revision) return;
@@ -598,7 +618,8 @@ final class NowPlayingLyricController {
             int generation,
             long revision,
             LyricsDocument nextCardDocument,
-            LyricsDocument nextArtworkDocument
+            LyricsDocument nextArtworkDocument,
+            boolean authoritativeReplay
     ) {
         if (!running || revision != projectionRevision.get() || generation != observedGeneration) return;
         SpotifyTrack currentTrack = hook.getCurrentTrackSafely();
@@ -615,6 +636,7 @@ final class NowPlayingLyricController {
         failedId = "";
         cardDocument = nextCardDocument;
         artworkDocument = nextArtworkDocument;
+        if (authoritativeReplay) authoritativeReplayRequired = false;
         artworkOverlay.setDocument(artworkDocument, renderConfig);
         loadedId = id;
         lastIdx = Integer.MIN_VALUE;
@@ -657,8 +679,7 @@ final class NowPlayingLyricController {
     }
 
     private boolean isUnsyncedDocument(LyricsDocument doc) {
-        if (doc == null) return true;
-        return !"Line".equalsIgnoreCase(doc.type) && !"Syllable".equalsIgnoreCase(doc.type);
+        return LyricsRenderMode.isStatic(doc);
     }
 
     private static boolean isBlank(String value) {

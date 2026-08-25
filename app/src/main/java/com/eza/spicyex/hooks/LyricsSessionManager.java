@@ -143,7 +143,14 @@ final class LyricsSessionManager {
         if (!policy.trackUri().isEmpty()) {
             Snapshot snapshot = snapshot();
             listener.onSessionChanged(snapshot);
-            if (document != null) listener.onDocumentChanged(snapshot, LyricsDocument.copyOf(document));
+            // A resumed surface is a new subscriber. Replay the same composed projection used by
+            // normal publications; the mutable legacy document no longer carries lane artifacts.
+            // Sending it raw drops AI/Google Meaning while deterministic/local Sound can survive,
+            // which presents as translation disappearing after fullscreen exit.
+            if (document != null) {
+                listener.onDocumentChanged(
+                        snapshot, LyricsDocument.copyOf(publishedProjection(document)));
+            }
         }
         return record;
     }

@@ -10,7 +10,9 @@ import com.eza.spicyex.SpotifyPlusConfig;
 
 /** Immutable snapshot of renderer-affecting settings plus a small diff helper. */
 public final class LyricsRenderConfig {
+    public final String backgroundStyle;
     public final boolean backgroundEnabled;
+    public final boolean backgroundAnimated;
     public final boolean forceDarkBackground;
     public final boolean lineGradientEnabled;
     public final boolean spotlight;
@@ -61,7 +63,7 @@ public final class LyricsRenderConfig {
     public final int syncOffsetMs;
 
     private LyricsRenderConfig(
-            boolean backgroundEnabled,
+            String backgroundStyle,
             boolean forceDarkBackground,
             boolean lineGradientEnabled,
             boolean spotlight,
@@ -111,7 +113,9 @@ public final class LyricsRenderConfig {
             boolean translationBright,
             int syncOffsetMs
     ) {
-        this.backgroundEnabled = backgroundEnabled;
+        this.backgroundStyle = LyricsBackgroundStyle.normalize(backgroundStyle);
+        this.backgroundEnabled = LyricsBackgroundStyle.usesTexture(this.backgroundStyle);
+        this.backgroundAnimated = LyricsBackgroundStyle.isAnimated(this.backgroundStyle);
         this.forceDarkBackground = forceDarkBackground;
         this.lineGradientEnabled = lineGradientEnabled;
         this.spotlight = spotlight;
@@ -188,7 +192,8 @@ public final class LyricsRenderConfig {
         boolean translationEnabled = translationAvailable && translationEnabled(cfg);
 
         return new LyricsRenderConfig(
-                get(cfg, Settings.ENABLE_BACKGROUND),
+                FeatureAvailability.animatedBackgroundAvailable()
+                        ? LyricsBackgroundStyle.read(cfg) : LyricsBackgroundStyle.GRADIENT,
                 get(cfg, Settings.FORCE_DARK_BACKGROUND),
                 get(cfg, Settings.ENABLE_LINE_GRADIENT),
                 shell.spotlightAnimation(),
@@ -270,7 +275,7 @@ public final class LyricsRenderConfig {
                 ? "Left to right (word)"
                 : ("Karaoke fill".equals(liveCardAnimationMode) ? liveCardLineSyncFillMode : "Top to bottom");
         return new LyricsRenderConfig(
-                backgroundEnabled,
+                backgroundStyle,
                 forceDarkBackground,
                 !minimal,
                 spotlightCard,
@@ -465,7 +470,7 @@ public final class LyricsRenderConfig {
                     || adaptiveSectioningChanged || spacingChanged || fillChanged || japaneseModeConfigChanged
                     || oldValue.translationBright != next.translationBright;
             needsLocalReprocess = transliterationChanged || chineseModeConfigChanged || koreanChanged || chineseTonesChanged || cyrillicChanged;
-            needsBackgroundToggle = oldValue.backgroundEnabled != next.backgroundEnabled
+            needsBackgroundToggle = changed(oldValue.backgroundStyle, next.backgroundStyle)
                     || oldValue.forceDarkBackground != next.forceDarkBackground;
             needsToggleOnly = visualOnlyChanged;
             hasChanges = needsRowRemount || needsLocalReprocess || needsBackgroundToggle || needsToggleOnly

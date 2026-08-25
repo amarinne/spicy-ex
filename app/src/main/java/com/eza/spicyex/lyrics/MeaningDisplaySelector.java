@@ -15,32 +15,50 @@ final class MeaningDisplaySelector {
 
     static MeaningArtifact select(CanonicalBase base, Set<String> requiredRows,
                                   MeaningArtifact ai, MeaningArtifact google) {
+        return select(base, requiredRows, ai, google, false);
+    }
+
+    static MeaningArtifact selectWithFallback(CanonicalBase base, Set<String> requiredRows,
+                                              MeaningArtifact ai, MeaningArtifact google) {
+        return select(base, requiredRows, ai, google, true);
+    }
+
+    private static MeaningArtifact select(CanonicalBase base, Set<String> requiredRows,
+                                          MeaningArtifact ai, MeaningArtifact google,
+                                          boolean allowPartialFallback) {
         Set<String> required = requiredRows == null
                 ? Collections.<String>emptySet() : requiredRows;
         Candidate aiCandidate = Candidate.of(base, required, ai);
         Candidate googleCandidate = Candidate.of(base, required, google);
         if (aiCandidate.complete) return ai;
         if (googleCandidate.complete) return google;
+        if (allowPartialFallback) {
+            if (aiCandidate.coverage >= googleCandidate.coverage
+                    && aiCandidate.coverage > 0) return ai;
+            if (googleCandidate.coverage > 0) return google;
+        }
         return null;
     }
 
-    static boolean isComplete(CanonicalBase base, Set<String> requiredRows,
-                              MeaningArtifact artifact) {
+    static boolean isUsable(CanonicalBase base, Set<String> requiredRows,
+                            MeaningArtifact artifact) {
         Set<String> required = requiredRows == null
                 ? Collections.<String>emptySet() : requiredRows;
-        return Candidate.of(base, required, artifact).complete;
+        return Candidate.of(base, required, artifact).coverage > 0;
     }
 
     private static final class Candidate {
+        final int coverage;
         final boolean complete;
 
-        private Candidate(boolean complete) {
+        private Candidate(int coverage, boolean complete) {
+            this.coverage = coverage;
             this.complete = complete;
         }
 
         static Candidate of(CanonicalBase base, Set<String> required, MeaningArtifact artifact) {
             if (base == null || artifact == null || artifact.isEmpty() || !artifact.appliesTo(base)) {
-                return new Candidate(false);
+                return new Candidate(0, false);
             }
             int coverage = 0;
             for (String rowId : required) {
@@ -52,7 +70,7 @@ final class MeaningDisplaySelector {
                 }
                 coverage++;
             }
-            return new Candidate(!required.isEmpty()
+            return new Candidate(coverage, !required.isEmpty()
                     && !artifact.partial && coverage == required.size());
         }
     }

@@ -114,6 +114,58 @@ public final class PanelDialog {
         return view;
     }
 
+    /**
+     * A titled block that opens on tap and starts folded.
+     *
+     * <p>For content that is worth keeping but is not what the panel is for — long, and interesting
+     * only when something looks wrong. Folded, it costs one row; the panel still leads with its
+     * answer and its actions instead of opening on a wall of monospace.
+     *
+     * @return the body view, so a caller that refreshes live text can set it without re-adding
+     */
+    public TextView collapsible(String title, String value) {
+        final TextView content = text(value == null ? "" : value, 12f, COL_TITLE);
+        content.setTypeface(Typeface.MONOSPACE);
+        content.setTextIsSelectable(true);
+        content.setHorizontallyScrolling(false);
+        content.setPadding(dp(12), dp(12), dp(12), dp(12));
+        content.setBackground(rounded(COL_FIELD, COL_CARD_BORDER, 14));
+        content.setVisibility(View.GONE);
+
+        final LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(11), dp(10), dp(11));
+        row.setBackground(ripple(rounded(COL_FIELD, COL_CARD_BORDER, 14)));
+
+        TextView heading = text(title, 14f, COL_TITLE);
+        row.addView(heading, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        final ImageView chevron = new ImageView(context);
+        chevron.setPadding(dp(7), dp(7), dp(7), dp(7));
+        chevron.setImageDrawable(disclosure(false));
+        row.addView(chevron, new LinearLayout.LayoutParams(dp(32), dp(36)));
+
+        row.setOnClickListener(v -> {
+            boolean expanded = content.getVisibility() != View.VISIBLE;
+            content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            chevron.setImageDrawable(disclosure(expanded));
+            applyWindowSize();
+        });
+
+        add(row);
+        body.addView(content, matchWrap(8));
+        return content;
+    }
+
+    private Drawable disclosure(boolean expanded) {
+        return new ActionIconDrawable(
+                expanded ? ActionIconDrawable.Kind.CHEVRON_DOWN
+                        : ActionIconDrawable.Kind.CHEVRON_RIGHT,
+                COL_SUMMARY, context.getResources().getDisplayMetrics().density);
+    }
+
     /** Optional top-right close affordance, matching the injected settings panel header. */
     public PanelDialog closeIcon(String contentDescription) {
         if (closeButton != null) return this;
@@ -354,6 +406,20 @@ public final class PanelDialog {
         if (window == null) return;
         window.setBackgroundDrawable(new ColorDrawable(android.graphics.Color.TRANSPARENT));
         window.setDimAmount(0.62f);
+        applyWindowSize();
+        Motion.enterCard(root);
+    }
+
+    /**
+     * Fits the card to its content: wrap while it fits, scroll once it does not.
+     *
+     * <p>Re-run whenever the body's height changes rather than only at {@link #show()}, because a
+     * dialog that wrapped when it opened has no scroll weight, and a section unfolded afterwards
+     * would push its own end off the bottom of a window sized for the folded card.
+     */
+    private void applyWindowSize() {
+        Window window = dialog.getWindow();
+        if (window == null) return;
         int width = (int) (context.getResources().getDisplayMetrics().widthPixels * 0.92f);
         int maxHeight = (int) (context.getResources().getDisplayMetrics().heightPixels * 0.90f);
         root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
@@ -364,7 +430,6 @@ public final class PanelDialog {
         scrollParams.weight = constrained ? 1f : 0f;
         scroll.setLayoutParams(scrollParams);
         window.setLayout(width, constrained ? maxHeight : ViewGroup.LayoutParams.WRAP_CONTENT);
-        Motion.enterCard(root);
     }
 
     public boolean isShowing() {

@@ -43,11 +43,14 @@ public final class ProcessedLyricsCache {
     /**
      * Reading-plan/cache identity.
      *
+     * <p>v5 makes authoritative whole-line reading text a hard plan invariant. Older timed plans
+     * may concatenate isolated provider-span readings after phrase-aware alignment fails.
+     *
      * <p>v4 distinguishes deterministic local whole-line plans from replaceable remote fallbacks.
      * v3 stored both as {@code line-fallback}, so keeping it would let cached Russian/Greek local
      * readings be billed and overwritten by Sound AI after upgrade.
      */
-    public static final int READING_SCHEMA_VERSION = 4;
+    public static final int READING_SCHEMA_VERSION = 5;
     private static final int RECORD_SCHEMA_VERSION = 1;
     private static final Gson GSON = new Gson();
 

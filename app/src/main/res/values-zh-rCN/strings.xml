@@ -38,6 +38,7 @@
     <string name="settings_label_lyric_enable_line_blur">模糊远处歌词</string>
     <string name="settings_label_lyric_line_sync_fill">歌词填充方向</string>
     <string name="settings_label_lyric_enable_background">动态背景</string>
+    <string name="settings_label_lyric_background_style">背景样式</string>
     <string name="settings_label_lyric_force_dark_background">强制深色背景</string>
     <string name="settings_label_lyrics_transliteration_enabled">转写歌词</string>
     <string name="settings_label_lyric_aligned_per_word_romaji">在每个词下附加转写</string>
@@ -91,6 +92,9 @@
     <string name="settings_option_note">音符</string>
     <string name="settings_option_gradient_wash">渐变扫过</string>
     <string name="settings_option_spotlight">聚焦</string>
+    <string name="settings_option_gradient">渐变</string>
+    <string name="settings_option_static_texture">静态纹理</string>
+    <string name="settings_option_animated_texture">动态纹理</string>
     <string name="settings_option_furigana_only">仅振假名</string>
     <string name="settings_option_furigana_romaji">振假名 + 罗马字</string>
     <string name="settings_option_romaji_only">仅罗马字</string>
@@ -143,6 +147,7 @@
     <string name="settings_option_fa">波斯语 (fa)</string>
 
     <string name="settings_unavailable_full_build">需要完整版本</string>
+    <string name="settings_unavailable_android_13">需要 Android 13 及以上</string>
     <string name="settings_enable_transliteration">请先启用转写</string>
     <string name="settings_enable_translation">请先启用翻译</string>
     <string name="settings_sync_offset_summary">正值会让歌词更早显示</string>
@@ -236,6 +241,7 @@
     <string name="lyrics_ai_preparing_payload">正在准备请求负载…</string>
     <string name="lyrics_ai_failed_attempt_payload">失败尝试的负载</string>
     <string name="lyrics_ai_previous_failed_attempt">上一次失败的尝试</string>
+    <string name="lyrics_ai_reasoning_trace">推理过程</string>
     <string name="lyrics_ai_translation_prompt_help">选择预设，或编辑自定义提示词，说明模型应保留、修正或强调的内容。</string>
     <string name="lyrics_ai_pronunciation_prompt_help">选择预设，或编辑读音、方言、拼写或混合语言的自定义提示词。</string>
     <string name="lyrics_ai_prompt_preset">提示词预设</string>

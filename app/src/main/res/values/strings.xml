@@ -47,6 +47,7 @@
     <string name="settings_label_lyric_enable_line_blur">Blur distant lines</string>
     <string name="settings_label_lyric_line_sync_fill">Lyric fill direction</string>
     <string name="settings_label_lyric_enable_background">Animated background</string>
+    <string name="settings_label_lyric_background_style">Background style</string>
     <string name="settings_label_lyric_force_dark_background">Force dark background</string>
     <string name="settings_label_lyrics_transliteration_enabled">Transliterate lyrics</string>
     <string name="settings_label_lyric_aligned_per_word_romaji">Attach transliteration under each word</string>
@@ -105,6 +106,9 @@
     <string name="settings_option_note">Music note</string>
     <string name="settings_option_gradient_wash">Gradient wash</string>
     <string name="settings_option_spotlight">Spotlight</string>
+    <string name="settings_option_gradient">Gradient</string>
+    <string name="settings_option_static_texture">Static texture</string>
+    <string name="settings_option_animated_texture">Animated texture</string>
     <string name="settings_option_furigana_only">Furigana only</string>
     <string name="settings_option_furigana_romaji">Furigana + romaji</string>
     <string name="settings_option_romaji_only">Romaji only</string>
@@ -159,6 +163,7 @@
 
     <!-- Other settings-panel display strings. -->
     <string name="settings_unavailable_full_build">Full build required</string>
+    <string name="settings_unavailable_android_13">Android 13+ required</string>
     <string name="settings_enable_transliteration">Enable transliteration</string>
     <string name="settings_enable_translation">Enable translation</string>
     <string name="settings_sync_offset_summary">Positive shows lyrics earlier</string>
@@ -272,6 +277,7 @@
     <string name="lyrics_ai_preparing_payload">Preparing request payload…</string>
     <string name="lyrics_ai_failed_attempt_payload">Failed attempt payload</string>
     <string name="lyrics_ai_previous_failed_attempt">Previous failed attempt</string>
+    <string name="lyrics_ai_reasoning_trace">Reasoning trace</string>
     <string name="lyrics_ai_translation_prompt_help">Choose a preset or edit a custom prompt describing what the model should preserve, fix, or emphasize.</string>
     <string name="lyrics_ai_pronunciation_prompt_help">Choose a preset or edit a custom prompt for pronunciation, dialect, spelling, or mixed-language guidance.</string>
     <string name="lyrics_ai_prompt_preset">Prompt preset</string>

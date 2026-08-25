@@ -55,6 +55,19 @@ public class ArtworkLyricWindowPlannerTest {
     }
 
     @Test
+    public void unknownTimingFailsClosedToStaticFirstPage() {
+        LyricsDocument doc = timedDocument(5);
+        doc.type = "Unknown";
+
+        ArtworkLyricWindowPlanner.Window window = ArtworkLyricWindowPlanner.select(
+                doc, 99_000, 31, new int[]{10, 10, 10, 10, 10});
+
+        assertEquals(0, window.startInclusive);
+        assertEquals(3, window.endExclusive);
+        assertEquals(0, window.anchorIndex);
+    }
+
+    @Test
     public void noActiveTimedRowProducesNoPartialWindow() {
         LyricsDocument doc = timedDocument(2);
 

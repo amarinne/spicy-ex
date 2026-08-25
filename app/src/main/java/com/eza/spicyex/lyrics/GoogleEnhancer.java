@@ -110,6 +110,7 @@ public final class GoogleEnhancer {
         List<BatchLine> pending = new ArrayList<>();
         for (BatchLine line : lines) {
             if (line == null || isBlank(line.text)) continue;
+            result.requestedCount++;
             String cached = LyricCaches.getProcessingValue(context, processingVersion,
                     LyricCaches.translationKey(trackId, sourceLang, target, line.text));
             if (!isBlank(cached) && shouldDisplayTranslation(line.text, cached)) {
@@ -132,10 +133,14 @@ public final class GoogleEnhancer {
                 + Uri.encode(source)
                 + "&tl=" + Uri.encode(target)
                 + "&dt=t&q=" + Uri.encode(query.toString());
-        String body = executeRequestBody(http, taggedRequest(url, cancelTag));
-        if (isBlank(body)) return result;
+        HttpResult response = executeRequest(taggedRequest(url, cancelTag), http);
+        result.networkAttempts = response.attempts;
+        result.httpStatus = response.status;
+        result.failureReason = response.failureReason;
+        if (isBlank(response.body)) return result;
 
-        Map<Integer, String> parsed = parseBatchTranslation(body);
+        Map<Integer, String> parsed = parseBatchTranslation(response.body);
+        if (parsed.isEmpty()) result.failureReason = "parse_empty";
         Map<String, String> cacheWrites = new LinkedHashMap<>();
         for (int i = 0; i < pending.size(); i++) {
             BatchLine line = pending.get(i);
@@ -144,7 +149,11 @@ public final class GoogleEnhancer {
             translated = stripMarkerEcho(translated, i).trim();
             if (!shouldDisplayTranslation(line.text, translated)) continue;
             result.translations.put(line.index, translated);
+            result.networkTranslatedCount++;
             cacheWrites.put(LyricCaches.translationKey(trackId, sourceLang, target, line.text), translated);
+        }
+        if (result.networkTranslatedCount > 0 && result.networkTranslatedCount < pending.size()) {
+            result.failureReason = "partial_parse";
         }
         LyricCaches.putProcessingValues(context, processingVersion, cacheWrites);
         return result;
@@ -184,20 +193,34 @@ public final class GoogleEnhancer {
     }
 
     private static String executeRequestBody(OkHttpClient http, Request request) {
-        if (http == null || request == null) return null;
+        return executeRequest(request, http).body;
+    }
+
+    private static HttpResult executeRequest(Request request, OkHttpClient http) {
+        HttpResult result = new HttpResult();
+        if (http == null || request == null) {
+            result.failureReason = "client_unavailable";
+            return result;
+        }
         String lane = laneOf(request);
         for (int attempt = 0; attempt <= GOOGLE_REQUEST_RETRIES; attempt++) {
+            result.attempts++;
             throttleGoogleRequest(lane);
             try (Response response = http.newCall(request).execute()) {
+                result.status = response.code();
                 if (response.isSuccessful() && response.body() != null) {
-                    return response.body().string();
+                    result.body = response.body().string();
+                    if (isBlank(result.body)) result.failureReason = "empty_body";
+                    return result;
                 }
-                if (response.code() != 429 && response.code() < 500) return null;
-            } catch (IOException ignored) {
+                result.failureReason = "http_" + response.code();
+                if (response.code() != 429 && response.code() < 500) return result;
+            } catch (IOException failure) {
+                result.failureReason = failure.getClass().getSimpleName();
             }
             if (attempt < GOOGLE_REQUEST_RETRIES) quietSleep(GOOGLE_REQUEST_RETRY_DELAY_MS);
         }
-        return null;
+        return result;
     }
 
     /** Lane identity from the call tag: "SOUND#12" and "MEANING#13" throttle independently. */
@@ -396,6 +419,18 @@ public final class GoogleEnhancer {
     public static final class BatchResult {
         public final Map<Integer, String> translations = new LinkedHashMap<>();
         public final Set<Integer> cachedIndices = new HashSet<>();
+        public int requestedCount;
+        public int networkAttempts;
+        public int networkTranslatedCount;
+        public int httpStatus;
+        public String failureReason = "";
+    }
+
+    private static final class HttpResult {
+        String body = "";
+        int attempts;
+        int status;
+        String failureReason = "";
     }
 
     public static final class Enhancement {

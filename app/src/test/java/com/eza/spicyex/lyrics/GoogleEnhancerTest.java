@@ -6,6 +6,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Map;
+import java.util.Arrays;
+import java.util.HashSet;
 
 import org.junit.Test;
 
@@ -18,6 +20,22 @@ public class GoogleEnhancerTest {
 
         assertEquals("First translated", parsed.get(0));
         assertEquals("Second translated", parsed.get(1));
+    }
+
+    @Test
+    public void batchResultStartsAsPrivacySafeEmptyEvidence() {
+        GoogleEnhancer.BatchResult result = new GoogleEnhancer.BatchResult();
+
+        assertEquals(0, result.requestedCount);
+        assertEquals(0, result.networkAttempts);
+        assertEquals(0, result.httpStatus);
+        assertEquals("", result.failureReason);
+    }
+
+    @Test
+    public void rescueListContainsOnlyStillMissingRows() {
+        assertEquals(Arrays.asList(1, 3), LyricsMeaningLane.untranslated(
+                Arrays.asList(0, 1, 2, 3), new HashSet<>(Arrays.asList(0, 2))));
     }
 
     @Test

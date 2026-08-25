@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics.reading;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -72,6 +73,7 @@ public final class ReadingPlanFactory {
                     && texts.get(index).matches(".*\\p{IsLatin}.*")) parts.set(index, texts.get(index));
         }
         parts = align(parts, reading.romaji);
+        if (parts == null) return lineFallback(line, reading.romaji, "local");
         List<ReadingUnit> units = new ArrayList<>();
         int group = 0;
         for (int index = 0; index < canonical.spanMappings.size(); index++) {
@@ -83,7 +85,8 @@ public final class ReadingPlanFactory {
         }
         ReadingAnnotation annotation = new ReadingAnnotation("Japanese", "romaji", ReadingProvenance.LOCAL, units);
         RenderPlan plan = new DefaultRenderPlanBuilder().build(parsed, canonical, Collections.singletonList(annotation));
-        return DefaultRenderPlanBuilder.validate(plan).valid ? plan : null;
+        return validAuthoritativePlan(plan, reading.romaji)
+                ? plan : lineFallback(line, reading.romaji, "local");
     }
 
     private static SyllableSegment singleSegment(LyricsLine line) {
@@ -96,29 +99,32 @@ public final class ReadingPlanFactory {
     }
 
     private static List<String> align(List<String> input, String display) {
-        StringBuilder compactInput = new StringBuilder();
-        for (String value : input) compactInput.append(value == null ? "" : value.replaceAll("\\s+", ""));
-        String compactDisplay = display == null ? "" : display.replaceAll("\\s+", "");
-        if (compactInput.toString().equals(compactDisplay)) {
+        StringBuilder inputShape = new StringBuilder();
+        for (String value : input) inputShape.append(alignmentShape(value));
+        String displayShape = alignmentShape(display);
+        if (inputShape.toString().equals(displayShape)) {
             List<String> exact = new ArrayList<>();
             int displayCursor = 0;
-            int compactCursor = 0;
+            int shapeCursor = 0;
             for (String value : input) {
                 String chunk = value == null ? "" : value;
-                String compactChunk = chunk.replaceAll("\\s+", "");
-                if (compactChunk.isEmpty()) {
+                int chunkShapeLength = CodePointRanges.length(alignmentShape(chunk));
+                if (chunkShapeLength == 0) {
                     exact.add("");
                     continue;
                 }
-                compactCursor += compactChunk.length();
+                shapeCursor += chunkShapeLength;
                 int displayEnd = display.length();
                 int seen = 0;
-                for (int index = 0; index < display.length(); index++) {
-                    if (!Character.isWhitespace(display.charAt(index))) seen++;
-                    if (seen == compactCursor) {
-                        displayEnd = index + 1;
+                for (int index = 0; index < display.length();) {
+                    int cp = display.codePointAt(index);
+                    int next = index + Character.charCount(cp);
+                    seen = CodePointRanges.length(alignmentShape(display.substring(0, next)));
+                    if (seen == shapeCursor) {
+                        displayEnd = next;
                         break;
                     }
+                    index = next;
                 }
                 exact.add(display.substring(displayCursor, displayEnd));
                 displayCursor = displayEnd;
@@ -131,7 +137,7 @@ public final class ReadingPlanFactory {
                     }
                 }
             }
-            return exact;
+            return joined(exact).equals(display) ? exact : null;
         }
         List<String> out = new ArrayList<>(input);
         int cursor = 0;
@@ -139,7 +145,7 @@ public final class ReadingPlanFactory {
             String text = out.get(index) == null ? "" : out.get(index);
             if (text.isEmpty()) continue;
             int found = display.indexOf(text, cursor);
-            if (found < 0) return input;
+            if (found < 0) return null;
             out.set(index, display.substring(cursor, found) + text);
             cursor = found + text.length();
         }
@@ -154,7 +160,50 @@ public final class ReadingPlanFactory {
                 }
             }
         }
-        return out;
+        return joined(out).equals(display) ? out : null;
+    }
+
+    /**
+     * Alignment compares pronunciation shape, not tone-mark spelling. A whole-line phrase may
+     * correctly use a neutral tone while an isolated provider span uses its dictionary tone
+     * ({@code 记得 -> jì de}, but {@code 得 -> dé}). The full-line reading remains authoritative;
+     * this folded shape only decides whether its exact text can be projected over existing spans.
+     */
+    private static String alignmentShape(String value) {
+        String normalized = Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFD);
+        StringBuilder out = new StringBuilder();
+        boolean previousBaseWasLatin = false;
+        for (int index = 0; index < normalized.length();) {
+            int cp = normalized.codePointAt(index);
+            int type = Character.getType(cp);
+            boolean mark = type == Character.NON_SPACING_MARK
+                    || type == Character.COMBINING_SPACING_MARK
+                    || type == Character.ENCLOSING_MARK;
+            if (mark) {
+                // Tone marks may differ between whole-phrase and isolated pinyin. Thai, Indic,
+                // and other script marks carry letters' meaning and must remain part of shape.
+                if (!previousBaseWasLatin) out.appendCodePoint(cp);
+            } else if (Character.isWhitespace(cp)) {
+                previousBaseWasLatin = false;
+            } else {
+                out.appendCodePoint(cp);
+                previousBaseWasLatin = Character.UnicodeScript.of(cp) == Character.UnicodeScript.LATIN;
+            }
+            index += Character.charCount(cp);
+        }
+        return out.toString();
+    }
+
+    private static String joined(List<String> values) {
+        StringBuilder out = new StringBuilder();
+        for (String value : values) out.append(value == null ? "" : value);
+        return out.toString();
+    }
+
+    private static boolean validAuthoritativePlan(RenderPlan plan, String display) {
+        return plan != null
+                && DefaultRenderPlanBuilder.validate(plan).valid
+                && (display == null ? "" : display).equals(plan.joinedDisplayText);
     }
 
     public static RenderPlan timedLegacy(LyricsLine line, String display, String processor) {
@@ -174,6 +223,7 @@ public final class ReadingPlanFactory {
             chunks.add(value == null ? "" : value.trim());
         }
         chunks = align(chunks, display);
+        if (chunks == null) return lineFallback(line, display, "local");
         List<ReadingUnit> units = new ArrayList<>();
         for (int index = 0; index < canonical.spanMappings.size(); index++) {
             String source = line.syllables.get(index).text == null ? "" : line.syllables.get(index).text.trim();
@@ -184,7 +234,7 @@ public final class ReadingPlanFactory {
         }
         RenderPlan plan = new DefaultRenderPlanBuilder().build(parsed, canonical,
                 Collections.singletonList(new ReadingAnnotation(processor, "local", ReadingProvenance.LOCAL, units)));
-        return DefaultRenderPlanBuilder.validate(plan).valid ? plan : null;
+        return validAuthoritativePlan(plan, display) ? plan : lineFallback(line, display, "local");
     }
 
     public static RenderPlan lineFallback(LyricsLine line, String display, String provenance) {

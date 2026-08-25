@@ -146,12 +146,11 @@ public final class AiOpenAiProvider implements AiProvider {
         JsonObject choice = firstChoice(body);
         if (choice == null) return AiProviderResult.failed(AiProviderFailure.protocol("no_choice"));
 
-        String text = "";
-        if (choice.has("message") && choice.get("message").isJsonObject()) {
-            text = contentOf(choice.getAsJsonObject("message"));
-        }
-        return AiProviderResult.ok(text, usageOf(body), finishOf(stringOf(choice, "finish_reason")),
-                result.bytes);
+        JsonObject message = choice.has("message") && choice.get("message").isJsonObject()
+                ? choice.getAsJsonObject("message") : null;
+        String text = message == null ? "" : contentOf(message);
+        return AiProviderResult.ok(text, reasoningOf(message), usageOf(body),
+                finishOf(stringOf(choice, "finish_reason")), result.bytes);
     }
 
     @Override
@@ -189,8 +188,9 @@ public final class AiOpenAiProvider implements AiProvider {
 
     /**
      * DeepSeek enables high-effort thinking by default. Lyrics benefit from bounded reasoning, but
-     * not enough to justify buying the provider default; request low explicitly and read only the
-     * final {@code content}, leaving {@code reasoning_content} out of the artifact.
+     * not enough to justify buying the provider default; request low explicitly. Only the final
+     * {@code content} becomes the artifact — {@code reasoning_content} is read separately, for the
+     * monitor, and never reaches the reader or a lyric row.
      */
     private static void applyDeepSeekTraits(JsonObject body, AiProviderConfig config) {
         if (!isDeepSeek(config)) return;
@@ -368,6 +368,40 @@ public final class AiOpenAiProvider implements AiProvider {
             return (useMaxCompletionTokens ? 1 : 0) | (includeTemperature ? 2 : 0)
                     | (useJsonSchema ? 4 : 0);
         }
+    }
+
+    /**
+     * The reasoning trace a thinking model returned alongside its answer, if any.
+     *
+     * <p>Two field names, because the wire never settled on one: DeepSeek answers on
+     * {@code reasoning_content}, routed gateways on {@code reasoning}. Both are already being paid
+     * for — this adapter asks for bounded reasoning on both profiles — so the only question was
+     * whether the owner ever gets to see it. Read defensively and never parsed: a gateway that
+     * returns blocks, an object, or nothing at all must not turn a good answer into a failure.
+     */
+    private static String reasoningOf(JsonObject message) {
+        if (message == null) return "";
+        String explicit = blockTextOf(message.get("reasoning_content"));
+        return explicit.isEmpty() ? blockTextOf(message.get("reasoning")) : explicit;
+    }
+
+    /** A field that may be one string, an array of blocks, or a structured object. */
+    private static String blockTextOf(JsonElement value) {
+        if (value == null || value.isJsonNull()) return "";
+        if (value.isJsonPrimitive()) return value.getAsString();
+        if (value.isJsonObject()) {
+            String text = stringOf(value.getAsJsonObject(), "text");
+            return text.isEmpty() ? value.toString() : text;
+        }
+        if (!value.isJsonArray()) return "";
+        StringBuilder out = new StringBuilder();
+        for (JsonElement part : value.getAsJsonArray()) {
+            String text = blockTextOf(part);
+            if (text.isEmpty()) continue;
+            if (out.length() > 0) out.append('\n');
+            out.append(text);
+        }
+        return out.toString();
     }
 
     /** OpenAI-compatible servers increasingly return content blocks, not only one string. */

@@ -162,7 +162,7 @@ public class LyricsTransliterationSessionTest {
     private static LyricsRenderConfig configWithKorean(String koreanModeConfig, String defaultKoreanMode,
                                                        String koreanMode) throws Exception {
         Constructor<LyricsRenderConfig> ctor = LyricsRenderConfig.class.getDeclaredConstructor(
-                boolean.class, boolean.class, boolean.class, boolean.class, boolean.class, boolean.class, float.class,
+                String.class, boolean.class, boolean.class, boolean.class, boolean.class, boolean.class, float.class,
                 boolean.class, boolean.class, boolean.class, boolean.class, boolean.class,
                 String.class, float.class, String.class, String.class, String.class, String.class, float.class,
                 String.class, float.class, String.class, boolean.class, boolean.class, boolean.class,
@@ -172,7 +172,7 @@ public class LyricsTransliterationSessionTest {
                 boolean.class, String.class, String.class, boolean.class, int.class);
         ctor.setAccessible(true);
         return ctor.newInstance(
-                false, true, true, false, true, true, 1f,
+                LyricsBackgroundStyle.GRADIENT, true, true, false, true, true, 1f,
                 false, true, true, true, true,
                 "more", 1f, "Medium", "Medium", "default", "normal", 1f,
                 "normal", 1f, "Main only", false, false, false,

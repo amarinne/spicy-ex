@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.ai.AiCancelledException;
 import com.eza.spicyex.lyrics.ai.AiContract;
+import com.eza.spicyex.lyrics.ai.AiLiveMonitor;
 import com.eza.spicyex.lyrics.ai.AiRunOutcome;
 import com.eza.spicyex.lyrics.ai.AiRunMonitor;
 import com.eza.spicyex.lyrics.ai.AiRequestLiveState;
@@ -334,8 +335,7 @@ public final class LyricsSoundLane {
                     Diagnostics.context("provider", settings.providerId()));
         }
         final AiRunMonitor monitor = allowProviderRequest
-                ? (chunkId, attempt, payload) -> AiRequestLiveState.attempt(LayerKind.SOUND,
-                run.canonicalDigest(), run.tag, chunkId, attempt, payload)
+                ? new AiLiveMonitor(LayerKind.SOUND, run.canonicalDigest(), run.tag)
                 : null;
         aiExecutor.execute(new Runnable() {
             @Override public void run() {

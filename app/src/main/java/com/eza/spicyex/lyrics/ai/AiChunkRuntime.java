@@ -230,7 +230,15 @@ public final class AiChunkRuntime {
         TimerTask deadline = scheduleDeadline(callSignal, args.deadlineMs > 0L
                 ? args.deadlineMs : AiContract.callDeadlineMs(callConfig.maxOutputTokens));
         try {
-            return args.provider.generateChunk(request, callConfig, callSignal);
+            AiProviderResult result = args.provider.generateChunk(request, callConfig, callSignal);
+            // Reported for every returned attempt, including the ones the runtime then rejects as
+            // truncated or malformed. Those are the attempts whose reasoning is worth reading: the
+            // owner was billed for the thinking either way, and it is what says whether the model
+            // misread the request or simply ran out of room.
+            if (args.monitor != null && result != null && result.hasReasoning()) {
+                args.monitor.onReasoning(args.chunk.id, attemptNumber, result.reasoning);
+            }
+            return result;
         } finally {
             if (deadline != null) deadline.cancel();
             linked.remove();

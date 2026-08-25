@@ -50,6 +50,26 @@ public class AiChunkRuntimeTest {
         return "{\"items\":[{\"id\":\"S0\",\"t\":\"" + text + "\"}]}";
     }
 
+    /** Records both monitor channels so a test can say what the panel would have been handed. */
+    private static final class RecordingMonitor implements AiRunMonitor {
+        final List<String> payloads = new ArrayList<>();
+        final List<String> traces = new ArrayList<>();
+
+        @Override public void onAttempt(String chunkId, int attempt, String wirePayload) {
+            payloads.add(attempt + ":" + wirePayload);
+        }
+
+        @Override public void onReasoning(String chunkId, int attempt, String reasoning) {
+            traces.add(attempt + ":" + reasoning);
+        }
+    }
+
+    private static FakeAiProvider.Step thinking(final String rawText, final String reasoning,
+                                                final AiFinishReason finish) {
+        return (request, config, signal) ->
+                AiProviderResult.ok(rawText, reasoning, AiUsage.of(4, 2), finish, 20L);
+    }
+
     // --- attempts and repair -------------------------------------------------
 
     @Test
@@ -511,5 +531,51 @@ public class AiChunkRuntimeTest {
                 longest <= AiContract.MAX_CALL_DEADLINE_MS);
         assertTrue("a slow provider must get minutes, not one",
                 AiContract.callDeadlineMs(2_000) > 120_000L);
+    }
+
+    // --- reasoning capture ---------------------------------------------------
+
+    @Test
+    public void aReturnedTraceIsReportedOncePerAttempt() {
+        FakeAiProvider provider = new FakeAiProvider(
+                thinking(answer("hello"), "kept the ad-lib", AiFinishReason.STOP));
+        AiChunkRuntime.Args args = args(provider, chunk(null));
+        RecordingMonitor monitor = new RecordingMonitor();
+        args.monitor = monitor;
+
+        assertTrue(AiChunkRuntime.executeChunk(args).ok);
+
+        assertEquals(1, monitor.payloads.size());
+        assertEquals(Collections.singletonList("1:kept the ad-lib"), monitor.traces);
+    }
+
+    /**
+     * The attempts worth reading a trace for are the ones that failed: the thinking was billed
+     * either way, and it is what distinguishes a misread request from a chunk that ran out of room.
+     */
+    @Test
+    public void aRejectedAttemptStillReportsWhatItWasThinking() {
+        FakeAiProvider provider = new FakeAiProvider(
+                thinking("not json at all", "first pass", AiFinishReason.STOP),
+                thinking(answer("hello"), "second pass", AiFinishReason.STOP));
+        AiChunkRuntime.Args args = args(provider, chunk(null));
+        RecordingMonitor monitor = new RecordingMonitor();
+        args.monitor = monitor;
+
+        assertTrue(AiChunkRuntime.executeChunk(args).ok);
+
+        assertEquals(Arrays.asList("1:first pass", "2:second pass"), monitor.traces);
+    }
+
+    @Test
+    public void anAnswerWithoutAnyTraceReportsNothingAtAll() {
+        AiChunkRuntime.Args args = args(new FakeAiProvider(), chunk(null));
+        RecordingMonitor monitor = new RecordingMonitor();
+        args.monitor = monitor;
+
+        assertTrue(AiChunkRuntime.executeChunk(args).ok);
+
+        assertEquals(1, monitor.payloads.size());
+        assertTrue(monitor.traces.isEmpty());
     }
 }

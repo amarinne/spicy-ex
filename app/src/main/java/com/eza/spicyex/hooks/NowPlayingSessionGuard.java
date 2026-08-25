@@ -24,6 +24,17 @@ final class NowPlayingSessionGuard {
                 || !expectedTrackId.equals(currentTrackId);
     }
 
+    static boolean mayMergeMountedProjection(
+            boolean authoritativeReplayRequired,
+            boolean loadedTrackMatches,
+            boolean cardMounted,
+            boolean artworkMounted,
+            boolean sameCanonicalBase
+    ) {
+        return !authoritativeReplayRequired && loadedTrackMatches && cardMounted
+                && artworkMounted && sameCanonicalBase;
+    }
+
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }

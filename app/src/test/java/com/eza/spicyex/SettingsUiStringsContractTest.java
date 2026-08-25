@@ -24,6 +24,7 @@ public class SettingsUiStringsContractTest {
         assertTrue(names.contains("settings_locale_name"));
         String[] fixedPanelStrings = {
                 "settings_unavailable_full_build",
+                "settings_unavailable_android_13",
                 "settings_enable_transliteration",
                 "settings_enable_translation",
                 "settings_sync_offset_summary",

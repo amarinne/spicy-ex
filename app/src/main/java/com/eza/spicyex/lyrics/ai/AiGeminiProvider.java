@@ -175,8 +175,8 @@ public final class AiGeminiProvider implements AiProvider {
         }
 
         AiFinishReason finish = finishOf(stringOf(candidate, "finishReason"));
-        String text = textOf(candidate);
-        return AiProviderResult.ok(text, usageOf(body), finish, result.bytes);
+        return AiProviderResult.ok(partsOf(candidate, false), partsOf(candidate, true),
+                usageOf(body), finish, result.bytes);
     }
 
     @Override
@@ -263,17 +263,37 @@ public final class AiGeminiProvider implements AiProvider {
         return first.isJsonObject() ? first.getAsJsonObject() : null;
     }
 
-    /** Concatenates the candidate's text parts; the API may split one answer across several. */
-    private static String textOf(JsonObject candidate) {
+    /**
+     * Concatenates the candidate's parts on one side of the {@code thought} flag; the API may split
+     * one answer across several.
+     *
+     * <p>The two sides are read separately rather than joined because they are different kinds of
+     * text. A thought summary is prose, the answer is the JSON document the reader parses strictly,
+     * and appending the first to the second produced {@code invalid_json} for an answer the model
+     * got right. Splitting on the flag the API already sets costs nothing when no thoughts are
+     * requested — every part is then an answer part — and keeps the trace available when they are.
+     */
+    private static String partsOf(JsonObject candidate, boolean thoughts) {
         if (!candidate.has("content") || !candidate.get("content").isJsonObject()) return "";
         JsonObject content = candidate.getAsJsonObject("content");
         if (!content.has("parts") || !content.get("parts").isJsonArray()) return "";
         StringBuilder out = new StringBuilder();
         for (JsonElement part : content.getAsJsonArray("parts")) {
             if (!part.isJsonObject()) continue;
-            out.append(stringOf(part.getAsJsonObject(), "text"));
+            JsonObject object = part.getAsJsonObject();
+            if (isThought(object) != thoughts) continue;
+            out.append(stringOf(object, "text"));
         }
         return out.toString();
+    }
+
+    private static boolean isThought(JsonObject part) {
+        JsonElement thought = part.get("thought");
+        try {
+            return thought != null && thought.isJsonPrimitive() && thought.getAsBoolean();
+        } catch (RuntimeException notABoolean) {
+            return false;
+        }
     }
 
     /**

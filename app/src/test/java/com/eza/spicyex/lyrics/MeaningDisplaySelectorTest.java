@@ -52,6 +52,18 @@ public final class MeaningDisplaySelectorTest {
     }
 
     @Test
+    public void googleModesUseBestSafeCoverageWhenNeitherCandidateIsComplete() {
+        Fixture fixture = fixture();
+        MeaningArtifact ai = fixture.artifact(
+                LayerAuthority.AI, "ai", "AI one", null, true);
+        MeaningArtifact google = fixture.artifact(
+                LayerAuthority.MACHINE, "google", "Google one", "Google two", true);
+
+        assertSame(google, MeaningDisplaySelector.selectWithFallback(
+                fixture.base, fixture.requiredRows, ai, google));
+    }
+
+    @Test
     public void aiOnlyRejectsSparseAiWithoutACompleteFallback() {
         Fixture fixture = fixture();
         MeaningArtifact ai = fixture.artifact(

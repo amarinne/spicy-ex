@@ -125,6 +125,11 @@ public final class LyricsLineViewState {
             state(line).romanView.setGradientPosition(100f, 0f);
         }
         if (state(line).translationView != null) state(line).translationView.setGradientPosition(100f, 0f);
+        if (line.words != null) {
+            for (SyllableSegment word : line.words) {
+                LyricsSyllableViewState.applyStaticFrame(word, styleBatcher);
+            }
+        }
     }
 
     public static void applyRowFrame(AppliedLine line, FrameStyleBatcher styleBatcher, float opacity, float blurPx) {

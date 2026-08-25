@@ -31,4 +31,16 @@ public class NowPlayingSessionGuardTest {
         assertFalse(NowPlayingSessionGuard.projectionIsStale(
                 true, 1, 1, 2, 2, "A", "A"));
     }
+
+    @Test
+    public void resumeReplayReplacesMountedProjectionBeforeMergeIsAllowedAgain() {
+        assertFalse(NowPlayingSessionGuard.mayMergeMountedProjection(
+                true, true, true, true, true));
+        assertTrue(NowPlayingSessionGuard.mayMergeMountedProjection(
+                false, true, true, true, true));
+        assertFalse(NowPlayingSessionGuard.mayMergeMountedProjection(
+                false, false, true, true, true));
+        assertFalse(NowPlayingSessionGuard.mayMergeMountedProjection(
+                false, true, true, true, false));
+    }
 }

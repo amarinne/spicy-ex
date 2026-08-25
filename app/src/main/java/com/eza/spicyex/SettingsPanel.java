@@ -23,6 +23,7 @@ import android.widget.TextView;
 
 import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
 import com.eza.spicyex.lyrics.ai.AiSettings;
+import com.eza.spicyex.lyrics.LyricsBackgroundStyle;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
 import com.eza.spicyex.lyrics.GlyphIconDrawable;
@@ -109,6 +110,11 @@ public final class SettingsPanel {
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
         this.onClearCache = onClearCache;
+        if (!store.contains(Settings.BACKGROUND_STYLE)) {
+            store.put(Settings.BACKGROUND_STYLE, store.get(Settings.ENABLE_BACKGROUND)
+                    ? LyricsBackgroundStyle.ANIMATED_TEXTURE
+                    : LyricsBackgroundStyle.GRADIENT);
+        }
         String storedLanguage = store.get(Settings.UI_LANGUAGE);
         this.uiStrings = new SettingsUiStrings(context, storedLanguage);
         if (!uiStrings.selectedLanguage().equals(storedLanguage)) {
@@ -445,7 +451,8 @@ public final class SettingsPanel {
             return FeatureAvailability.transliterationAvailable() && store.get(Settings.TRANSLITERATION_ENABLED);
         }
         if (setting == Settings.FORCE_DARK_BACKGROUND) {
-            return store.get(Settings.ENABLE_BACKGROUND);
+            return FeatureAvailability.animatedBackgroundAvailable()
+                    && LyricsBackgroundStyle.usesTexture(store.get(Settings.BACKGROUND_STYLE));
         }
         if (setting == Settings.LINE_SYNC_FILL) {
             return "Gradient wash".equals(store.get(Settings.ANIMATION_STYLE));
@@ -482,7 +489,7 @@ public final class SettingsPanel {
                 || setting == Settings.AI_PROVIDER
                 || setting == Settings.TRANSLATION_ENABLED
                 || setting == Settings.TRANSLITERATION_ENABLED
-                || setting == Settings.ENABLE_BACKGROUND
+                || setting == Settings.BACKGROUND_STYLE
                 || setting == Settings.ANIMATION_STYLE
                 || setting == Settings.LIVE_CARD_ANIMATION
                 || setting == Settings.LYRICS_TEXT_SIZE
@@ -664,7 +671,7 @@ public final class SettingsPanel {
     private void switchRow(LinearLayout content, Settings.BooleanSetting setting) {
         LinearLayout row = newRow(content);
         boolean unavailable = unavailable(setting);
-        titleColumn(row, uiStrings.setting(setting), unavailable ? unavailableSummary() : null);
+        titleColumn(row, uiStrings.setting(setting), unavailable ? unavailableSummary(setting) : null);
         applyRowLead(row, setting.key);
         GlossyToggle toggle = new GlossyToggle(context);
         toggle.setAccent(COL_ACCENT);
@@ -690,7 +697,7 @@ public final class SettingsPanel {
         LinearLayout row = newRow(content);
         boolean unavailable = unavailable(setting);
         TextView value = titleColumn(row, uiStrings.setting(setting),
-                unavailable ? unavailableSummary() : labelFor(setting, store.get(setting)));
+                unavailable ? unavailableSummary(setting) : labelFor(setting, store.get(setting)));
         applyRowLead(row, setting.key);
         if (!unavailable) value.setTextColor(COL_ACCENT);
         row.addView(kindView(Kind.CHEVRON_RIGHT, COL_SECTION, 18),
@@ -801,6 +808,9 @@ public final class SettingsPanel {
     private void showSelectorDialog(Settings.StringSetting setting, java.util.List<String> values, TextView valueView) {
         final Dialog dialog = new Dialog(context);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        final boolean deferCommit = setting == Settings.TRANSLATION_TARGET;
+        final String initialValue = store.get(setting);
+        final String[] pendingValue = new String[]{initialValue};
 
         LinearLayout box = new LinearLayout(context);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -815,9 +825,9 @@ public final class SettingsPanel {
         title.setPadding(dp(22), 0, dp(22), dp(12));
         box.addView(title);
 
-        String current = store.get(setting);
         for (final String val : values) {
-            box.addView(selectorOptionRow(setting, val, val.equals(current), valueView, dialog, box));
+            box.addView(selectorOptionRow(setting, val, val.equals(initialValue), valueView,
+                    dialog, box, deferCommit, pendingValue));
         }
 
         ScrollView scroll = new ScrollView(context);
@@ -832,6 +842,15 @@ public final class SettingsPanel {
             }
             return false;
         });
+        if (deferCommit) {
+            dialog.setOnDismissListener(d -> {
+                String selected = pendingValue[0];
+                if (selected == null || selected.equals(initialValue)) return;
+                store.put(setting, selected);
+                valueView.setText(labelFor(setting, selected));
+                onSettingChanged(setting);
+            });
+        }
 
         Window window = dialog.getWindow();
         if (window != null) {
@@ -846,7 +865,8 @@ public final class SettingsPanel {
     }
 
     private LinearLayout selectorOptionRow(Settings.StringSetting setting, String value, boolean selected,
-                                           TextView valueView, Dialog dialog, LinearLayout card) {
+                                           TextView valueView, Dialog dialog, LinearLayout card,
+                                           boolean deferCommit, String[] pendingValue) {
         String unavailableReason = optionUnavailableReason(setting, value);
         boolean unavailable = !unavailableReason.isEmpty();
         LinearLayout optRow = new LinearLayout(context);
@@ -882,6 +902,11 @@ public final class SettingsPanel {
         optRow.setAlpha(unavailable ? 0.48f : 1f);
         if (!unavailable) {
             optRow.setOnClickListener(v -> {
+                if (deferCommit) {
+                    pendingValue[0] = value;
+                    Motion.exitCardThen(card, dialog::isShowing, dialog::dismiss);
+                    return;
+                }
                 store.put(setting, value);
                 if (setting == Settings.UI_LANGUAGE) {
                     uiStrings = new SettingsUiStrings(context, value);
@@ -898,6 +923,11 @@ public final class SettingsPanel {
     }
 
     private String optionUnavailableReason(Settings.StringSetting setting, String value) {
+        if (setting == Settings.BACKGROUND_STYLE
+                && LyricsBackgroundStyle.usesTexture(value)
+                && !FeatureAvailability.animatedBackgroundAvailable()) {
+            return uiStrings.get("settings_unavailable_android_13", "Android 13+ required");
+        }
         if (setting != Settings.LIVE_CARD_SECONDARY_MODE) return "";
         boolean needsTransliteration = "Transliteration".equals(value) || "Both".equals(value);
         boolean needsTranslation = "Translation".equals(value) || "Both".equals(value);
@@ -1111,6 +1141,15 @@ public final class SettingsPanel {
 
     private String unavailableSummary() {
         return uiStrings.get("settings_unavailable_full_build", "Full build required");
+    }
+
+    /**
+     * Why this row is greyed out. Most unavailability is a Lite-build gap, but the animated
+     * background is blocked by the device's API level instead — telling that user to install the
+     * full build would send them after a download that cannot fix it.
+     */
+    private String unavailableSummary(Settings.Setting<?> setting) {
+        return unavailableSummary();
     }
 
     private TextView text(String value, int sp, int color, boolean bold) {

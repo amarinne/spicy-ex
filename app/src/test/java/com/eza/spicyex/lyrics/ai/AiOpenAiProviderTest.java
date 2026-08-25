@@ -90,6 +90,47 @@ public class AiOpenAiProviderTest {
                 + "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}";
     }
 
+    @Test
+    public void deepSeekReasoningContentIsCapturedWithoutEnteringTheAnswer() {
+        String body = "{\"choices\":[{\"message\":{\"role\":\"assistant\","
+                + "\"reasoning_content\":\"the second line is an ad-lib\","
+                + "\"content\":\"{}\"},\"finish_reason\":\"stop\"}]}";
+        FakeTransport transport = new FakeTransport().add(ok(body));
+
+        AiProviderResult result = provider(transport).generateChunk(request(), config(),
+                new AiSignal());
+
+        assertEquals("{}", result.rawText);
+        assertEquals("the second line is an ad-lib", result.reasoning);
+        assertTrue(result.hasReasoning());
+    }
+
+    /** Routed gateways answer on {@code reasoning}, and some of them in blocks. */
+    @Test
+    public void routedReasoningIsReadFromEitherAStringOrBlocks() {
+        FakeTransport strings = new FakeTransport().add(ok(
+                "{\"choices\":[{\"message\":{\"reasoning\":\"thinking\",\"content\":\"{}\"},"
+                        + "\"finish_reason\":\"stop\"}]}"));
+        assertEquals("thinking", provider(strings)
+                .generateChunk(request(), config(), new AiSignal()).reasoning);
+
+        FakeTransport blocks = new FakeTransport().add(ok(
+                "{\"choices\":[{\"message\":{\"reasoning\":[{\"text\":\"first\"},"
+                        + "{\"text\":\"second\"}],\"content\":\"{}\"},"
+                        + "\"finish_reason\":\"stop\"}]}"));
+        assertEquals("first\nsecond", provider(blocks)
+                .generateChunk(request(), config(), new AiSignal()).reasoning);
+    }
+
+    /** A model that returned no trace must not manufacture an empty section in the panel. */
+    @Test
+    public void anAnswerWithoutAnyTraceReportsNoReasoning() {
+        FakeTransport transport = new FakeTransport().add(ok(completion("hello")));
+
+        assertFalse(provider(transport).generateChunk(request(), config(), new AiSignal())
+                .hasReasoning());
+    }
+
     // --- canonical body ------------------------------------------------------
 
     @org.junit.Before

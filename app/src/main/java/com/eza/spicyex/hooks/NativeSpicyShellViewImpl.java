@@ -66,6 +66,7 @@ import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.LyricsLocalRomanizer;
 import com.eza.spicyex.lyrics.LyricsPlaybackClock;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
+import com.eza.spicyex.lyrics.LyricsRenderMode;
 import com.eza.spicyex.lyrics.LyricsLocalReprocessController;
 import com.eza.spicyex.lyrics.LyricsRowMountController;
 import com.eza.spicyex.lyrics.LyricsRowViewFactory;
@@ -185,7 +186,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         preferenceRefreshPosted = false;
         if (!running) return;
         applyRenderConfigChanges("preference changed", false);
-        ambientController.applySettings(renderConfig.backgroundEnabled, renderConfig.forceDarkBackground);
+        ambientController.applySettings(renderConfig.backgroundStyle, renderConfig.forceDarkBackground);
     }
     private long lastKeepAliveArmMs;
     // Unsynced (plain) lyrics: no per-line timing, so don't auto-follow or karaoke-wash — render every
@@ -329,7 +330,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         setBackground(ambientController.pageBackground());
         setClickable(true);
         setFocusable(true);
-        ambientController.attachAnimatedLayer(this);
+        ambientController.attachAnimatedLayer(this, renderConfig.backgroundStyle,
+                renderConfig.forceDarkBackground);
 
         contentColumn = new LinearLayout(activity);
         contentColumn.setOrientation(LinearLayout.VERTICAL);
@@ -627,7 +629,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
         if (document != null) {
             if (staticDoc) {
-                // Static rows are styled when mounted; nothing changes between frames.
+                // Reassert static styling after remounts and late secondary-text updates. Static
+                // rows have synthetic layout timings, never a karaoke-active row.
+                frameRenderer.applyStatic(document, rowMountController.mountedIndices(), mountedRowsHost);
             } else {
                 long lyricPos = adjustedLyricPositionMs(pos);
                 int nextActive = LyricTimeline.findPrimaryActiveRow(document.appliedLines, lyricPos);
@@ -740,7 +744,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             updateToggleVisuals();
         }
         if (diff.needsBackgroundToggle) {
-            ambientController.applySettings(next.backgroundEnabled, next.forceDarkBackground);
+            ambientController.applySettings(next.backgroundStyle, next.forceDarkBackground);
             SpotifyTrack track = host.getCurrentTrackSafely();
             if (track != null) ambientController.updateForTrack(track, () -> running);
         }
@@ -903,7 +907,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             showError("Empty lyrics response");
             return;
         }
-        staticDoc = "Static".equalsIgnoreCase(document.type);
+        staticDoc = LyricsRenderMode.isStatic(document);
         if (prepareDocument) {
             populateLocalSegmentRomanization(document);
             LyricTimeline.applySyncedRows(document);
@@ -943,9 +947,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 lineVisualController::invalidate,
                 this::styleLine,
                 this::rowHeightForIndex);
-        if (rendered) {
-            if (staticDoc) frameRenderer.applyStatic(document, rowMountController.mountedIndices(), mountedRowsHost);
-            else flushStyleBatch();
+        if (staticDoc) {
+            // Render-window reuse normally skips visual work. Static rows must still reset from
+            // any stale timed state before they are shown again.
+            frameRenderer.applyStatic(document, rowMountController.mountedIndices(), mountedRowsHost);
+        } else if (rendered) {
+            flushStyleBatch();
         }
     }
 
@@ -1249,7 +1256,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void onSettingsClosed() {
         try {
             applyRenderConfigChanges("settings closed", true);
-            ambientController.applySettings(renderConfig.backgroundEnabled, renderConfig.forceDarkBackground);
+            ambientController.applySettings(renderConfig.backgroundStyle, renderConfig.forceDarkBackground);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " onSettingsClosed failed: " + t);
         }
@@ -1360,7 +1367,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             com.eza.spicyex.ui.PanelDialog review = new com.eza.spicyex.ui.PanelDialog(activity,
                     aiLayerLabel(layer))
                     .closeIcon(uiText("lyrics_ai_close", "Close"));
-            review.paragraph(reviewText(layer));
+            String lead = reviewLeadText(layer);
+            if (!lead.isEmpty()) review.paragraph(lead);
+            appendModelReasoning(review, layer, settledAttempt(monitor));
+            String output = reviewOutputText(layer);
+            if (!output.isEmpty()) review.paragraph(output);
             appendAttemptMonitor(review, monitor.previousFailure,
                     uiText("lyrics_ai_previous_failed_attempt", "Previous failed attempt"));
             review.primary(uiText("lyrics_ai_refine_again", "Refine again…"),
@@ -1459,6 +1470,49 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (!attempt.failureDetail.isEmpty()) summary.append(" · ").append(attempt.failureDetail);
         dialog.paragraph(summary.toString());
         if (attempt.hasPayload()) dialog.readOnlyBlock(attempt.payload);
+        appendReasoningTrace(dialog, attempt);
+    }
+
+    /**
+     * The run whose reasoning the review panel should show.
+     *
+     * <p>The settled copy first: by the time a review panel can open, the run that produced the
+     * output on screen has finished, and a later run may already have reset {@code current} to a
+     * preparing attempt with nothing in it yet.
+     */
+    private com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt settledAttempt(
+            com.eza.spicyex.lyrics.ai.AiRequestLiveState.Snapshot monitor) {
+        if (monitor == null) return null;
+        return monitor.lastSettled.hasReasoning() ? monitor.lastSettled : monitor.current;
+    }
+
+    /**
+     * The model's thinking for one attempt, folded away.
+     *
+     * <p>Collapsed rather than shown, and absent entirely when the wire carried no trace. A trace
+     * is longer than everything else in this dialog put together and is read only when an answer
+     * looks wrong, so opening the panel on it would bury the output the panel exists to review.
+     */
+    private void appendReasoningTrace(com.eza.spicyex.ui.PanelDialog dialog,
+                                      com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt attempt) {
+        if (dialog == null || attempt == null || !attempt.hasReasoning()) return;
+        dialog.collapsible(uiText("lyrics_ai_reasoning_trace", "Reasoning trace"),
+                attempt.reasoning);
+    }
+
+    /** Makes the model row itself the disclosure control for a successful run's reasoning. */
+    private void appendModelReasoning(com.eza.spicyex.ui.PanelDialog dialog,
+                                      com.eza.spicyex.lyrics.session.LayerKind layer,
+                                      com.eza.spicyex.lyrics.ai.AiRequestLiveState.Attempt attempt) {
+        if (dialog == null) return;
+        String model = aiModel(layer);
+        if (model.isEmpty()) return;
+        String label = uiFormat("lyrics_ai_model_used", "Model: %1$s", model);
+        if (attempt != null && attempt.hasReasoning()) {
+            dialog.collapsible(label, attempt.reasoning);
+        } else {
+            dialog.paragraph(label);
+        }
     }
 
     private void openAiComposer(com.eza.spicyex.lyrics.session.LayerKind layer) {
@@ -1771,20 +1825,34 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private String reviewText(com.eza.spicyex.lyrics.session.LayerKind layer) {
-        if (document == null || document.lines == null) return "";
         StringBuilder text = new StringBuilder();
-        if (layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING) {
-            text.append(document.translationAiRefinedFromGoogle
-                    ? uiText("lyrics_ai_refined_google",
-                    "AI refined the Google Translate version.")
-                    : uiText("lyrics_ai_from_source",
-                    "AI translated from the original lyrics.")).append("\n\n");
+        appendReviewSection(text, reviewLeadText(layer));
+        String model = aiModel(layer);
+        if (!model.isEmpty()) {
+            appendReviewSection(text,
+                    uiFormat("lyrics_ai_model_used", "Model: %1$s", model));
         }
+        appendReviewSection(text, reviewOutputText(layer));
+        return text.toString();
+    }
+
+    private String reviewLeadText(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (document == null || layer != com.eza.spicyex.lyrics.session.LayerKind.MEANING) return "";
+        return document.translationAiRefinedFromGoogle
+                ? uiText("lyrics_ai_refined_google", "AI refined the Google Translate version.")
+                : uiText("lyrics_ai_from_source", "AI translated from the original lyrics.");
+    }
+
+    private String aiModel(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (document == null) return "";
         String model = layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND
                 ? document.readingAiModel : document.translationAiModel;
-        if (model != null && !model.isEmpty()) {
-            text.append(uiFormat("lyrics_ai_model_used", "Model: %1$s", model)).append("\n\n");
-        }
+        return model == null ? "" : model.trim();
+    }
+
+    private String reviewOutputText(com.eza.spicyex.lyrics.session.LayerKind layer) {
+        if (document == null || document.lines == null) return "";
+        StringBuilder text = new StringBuilder();
         for (com.eza.spicyex.lyrics.LyricsLine line : document.lines) {
             if (line == null || line.text == null || line.text.trim().isEmpty()) continue;
             String output = layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
@@ -1795,6 +1863,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             text.append(line.text).append("\n→ ").append(output).append("\n\n");
         }
         return text.toString().trim();
+    }
+
+    private void appendReviewSection(StringBuilder text, String section) {
+        if (text == null || section == null || section.isEmpty()) return;
+        if (text.length() > 0) text.append("\n\n");
+        text.append(section);
     }
 
     @Override

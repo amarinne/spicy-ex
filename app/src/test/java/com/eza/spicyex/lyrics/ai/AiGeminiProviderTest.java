@@ -101,6 +101,36 @@ public class AiGeminiProviderTest {
 
     // --- generation ---------------------------------------------------------
 
+    /**
+     * A thought part is prose sharing the parts array with the JSON answer. Concatenating the two
+     * is how a correct answer becomes {@code invalid_json}, so the split is pinned here.
+     */
+    @Test
+    public void thoughtPartsBecomeTheTraceAndNeverPartOfTheAnswer() {
+        String body = "{\"candidates\":[{\"content\":{\"parts\":["
+                + "{\"thought\":true,\"text\":\"weighing two readings\"},"
+                + "{\"text\":\"{\\\"items\\\":[]}\"}"
+                + "]},\"finishReason\":\"STOP\"}]}";
+
+        AiProviderResult result = provider(new StubTransport(ok(body)))
+                .generateChunk(request(), config(), null);
+
+        assertEquals("{\"items\":[]}", result.rawText);
+        assertEquals("weighing two readings", result.reasoning);
+    }
+
+    @Test
+    public void anAnswerWithNoThoughtPartsReportsNoReasoning() {
+        StubTransport transport = new StubTransport(
+                ok(candidate("{\"items\":[{\"id\":\"r0\",\"t\":\"hello\"}]}", "STOP")));
+
+        AiProviderResult result = provider(transport).generateChunk(request(), config(), null);
+
+        assertEquals("{\"items\":[{\"id\":\"r0\",\"t\":\"hello\"}]}", result.rawText);
+        assertFalse(result.hasReasoning());
+    }
+
+
     @Test
     public void theKeyTravelsInAHeaderAndNeverInTheUrl() {
         StubTransport transport = new StubTransport(

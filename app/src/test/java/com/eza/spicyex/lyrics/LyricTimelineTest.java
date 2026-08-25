@@ -230,6 +230,19 @@ public class LyricTimelineTest {
     }
 
     @Test
+    public void wordTimingUsesTimedRowPlanning() {
+        LyricsDocument doc = new LyricsDocument();
+        doc.type = "Word";
+        doc.lines.add(vocal("lead", 0, 1_000));
+        doc.lines.add(marker(1_000));
+        doc.lines.add(vocal("next", 5_000, 6_000));
+
+        LyricTimeline.applySyncedRows(doc);
+
+        assertTrue("timed rows preserve explicit interludes", doc.appliedLines.get(1).dotLine);
+    }
+
+    @Test
     public void appliedRowsAbsorbDerivedTextWithoutReplanning() {
         LyricsDocument doc = new LyricsDocument();
         LyricsLine line = new LyricsLine();

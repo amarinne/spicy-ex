@@ -141,6 +141,27 @@ public final class LyricsSyllableViewState {
         applyTextGradient(state(segment).romanizedTextView, gradient, glow, brightness);
     }
 
+    /** Reset every visual child of a word for an unsynced/static lyric row. */
+    public static void applyStaticFrame(SyllableSegment segment, FrameStyleBatcher styleBatcher) {
+        if (segment == null || styleBatcher == null) return;
+        View word = state(segment).view;
+        if (word != null) {
+            styleBatcher.applyAlphaIfChanged(word, 1f);
+            styleBatcher.applyScaleIfChanged(word, 1f, 1f);
+            styleBatcher.applyTranslationYIfChanged(word, 0f);
+        }
+        applyWordGradient(segment, LyricAnimations.GRADIENT_SUNG, 0f, 1f);
+        for (AnimatedLetterState letter : state(segment).letters) {
+            if (letter == null || letter.view == null) continue;
+            styleBatcher.applyAlphaIfChanged(letter.view, 1f);
+            styleBatcher.applyScaleIfChanged(letter.view, 1f, 1f);
+            styleBatcher.applyTranslationYIfChanged(letter.view, 0f);
+            letter.view.setBrightnessMultiplier(1f);
+            letter.view.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
+            letter.view.setGradientPosition(LyricAnimations.GRADIENT_SUNG, 0f);
+        }
+    }
+
     public static int letterCount(SyllableSegment segment) {
         return segment == null || state(segment).letters == null ? 0 : state(segment).letters.size();
     }

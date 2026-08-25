@@ -79,6 +79,13 @@ public final class LyricsFrameRenderer {
             int visibleEnd
     ) {
         if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) return;
+        // Every caller should select the correct mode, but this boundary must fail closed. Static
+        // documents can acquire synthetic timestamps during parsing; those timestamps are layout
+        // data, not permission to dim every row except a fabricated active one.
+        if (LyricsRenderMode.isStatic(document)) {
+            applyStatic(document, mountedIndices, mountedRowsHost);
+            return;
+        }
         int boundedVisibleStart = Math.max(0, visibleStart - SCROLL_RENDER_MARGIN_ROWS);
         int boundedVisibleEnd = visibleEnd >= Integer.MAX_VALUE - SCROLL_RENDER_MARGIN_ROWS
                 ? Integer.MAX_VALUE

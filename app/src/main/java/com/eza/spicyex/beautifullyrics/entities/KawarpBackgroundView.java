@@ -24,17 +24,21 @@ import androidx.annotation.RequiresApi;
  * devices. Older devices skip animated background instead of running the retired CPU blob fallback.
  *
  * <p>Rather than running kawarp's 8 Kawase blur passes per frame on mobile, the cover is downsampled
- * once to a tiny bitmap and bilinearly upscaled by the shader — visually equivalent to a strong blur
- * at a fraction of the cost — leaving only the cheap per-frame warp on the GPU.
+ * and box-blurred once to kawarp's blur sigma, then bilinearly upscaled by the shader — visually
+ * equivalent at a fraction of the cost — leaving only the cheap per-frame warp on the GPU.
  */
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 public final class KawarpBackgroundView extends View implements AmbientBackgroundLayer {
-    // kawarp defaults: warpIntensity 1, saturation 1.5, dithering 0.008. blurPasses 8 is emulated by
-    // the aggressive downsample below (smaller = softer / more abstract).
-    private static final float WARP_INTENSITY = 1.18f;
+    // kawarp defaults, matched 1:1: warpIntensity 1, saturation 1.5, dithering 0.008. blurPasses 8
+    // is emulated by the downsample + box blur below, tuned to the same sigma rather than eyeballed.
+    private static final float WARP_INTENSITY = 1.0f;
     private static final float SATURATION = 1.5f;
     private static final float DITHER = 0.008f;
-    private static final int SOFT_COVER_PX = 96; // blur base; box-blurred below for smoothness
+    // Match kawarp's BLUR_SIZE so our emulated blur lands at the same fraction of the source.
+    private static final int SOFT_COVER_PX = 128; // blur base; box-blurred below for smoothness
+    // 3 box passes at this radius give sigma ~12.5/128, matching kawarp's 8 Kawase passes
+    // (sigma ~13/128). The old 0.18 factor blurred ~1.8x harder and left nothing to warp.
+    private static final float BLUR_RADIUS_FRACTION = 0.095f;
     private static final long FRAME_INTERVAL_NS = 1_000_000_000L / 30; // 30fps is plenty for slow warp
 
     // Faithful port of kawarp's DOMAIN_WARP + OUTPUT shaders (simplex-noise domain warp, vignette,
@@ -49,6 +53,7 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
             + "uniform float3 tintColor;\n"
             + "uniform float tintIntensity;\n"
             + "uniform float contrast;\n"
+            + "uniform float contrastPivot;\n"
             + "uniform float forceDarkAmount;\n"
             + "uniform float3 accentColorA;\n"
             + "uniform float3 accentColorB;\n"
@@ -87,16 +92,23 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
             + "  float n3 = snoise(uv*0.9 + float2(t*1.2, -t) + float2(100.0,0.0));\n"
             + "  float n4 = snoise(uv*0.9 + float2(-t, t*1.1) + float2(0.0,100.0));\n"
             + "  float2 warp = float2(n1*0.65 + n3*0.35, n2*0.65 + n4*0.35) * centerWeight;\n"
-            + "  float2 warpedUv = clamp(uv + warp * warpIntensity * 0.22, 0.0, 1.0);\n"
+            + "  float2 warpedUv = clamp(uv + warp * warpIntensity, 0.0, 1.0);\n"
             + "  half4 c = image.eval(warpedUv * iResolution);\n"
             + "  float vignette = 1.0 - dot(center, center) * 0.3;\n"
             + "  c.rgb *= half(vignette);\n"
             + "  half luma = dot(c.rgb, half3(0.299, 0.587, 0.114));\n"
-            + "  c.rgb = clamp(mix(half3(luma), c.rgb, half(saturation)), 0.0, 1.0);\n"
-            + "  c.rgb = clamp((c.rgb - half3(0.5)) * half(contrast) + half3(0.5), 0.0, 1.0);\n"
-            + "  float darkLuma = (float(luma) < 0.22) ? max(float(luma) * 0.96 + 0.018, 0.055) : min(float(luma), min(0.42, 0.07 + 0.34 * (1.0 - exp(-2.55 * float(luma)))));\n"
+            // Force-dark tone curve runs FIRST so the saturation/contrast lift below survives it.
+            // A soft Reinhard shoulder replaces the old hard 0.42 clamp, which crushed local slope
+            // to ~0.15 at the bright end and rendered every cover as the same flat grey.
+            + "  float darkLuma = max(0.84 * float(luma) / (float(luma) + 1.0), 0.05);\n"
             + "  float lumaScale = mix(1.0, darkLuma / max(float(luma), 0.001), forceDarkAmount);\n"
             + "  c.rgb = clamp(c.rgb * half(lumaScale), 0.0, 1.0);\n"
+            + "  half tonedLuma = luma * half(lumaScale);\n"
+            + "  c.rgb = clamp(mix(half3(tonedLuma), c.rgb, half(saturation)), 0.0, 1.0);\n"
+            // Pivot the contrast stretch at the tone curve's midpoint; a 0.5 pivot on a background
+            // that now lives around 0.2-0.35 would just darken it instead of separating it.
+            + "  half3 pivot = half3(half(contrastPivot));\n"
+            + "  c.rgb = clamp((c.rgb - pivot) * half(contrast) + pivot, 0.0, 1.0);\n"
             + "  half accentField = half(smoothstep(-0.65, 0.75, n1 * 0.7 + n2 * 0.3));\n"
             + "  half3 accent = mix(half3(accentColorA), half3(accentColorB), accentField);\n"
             + "  c.rgb = mix(c.rgb, accent, half(accentMix));\n"
@@ -124,6 +136,8 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
     private float shaderTimeSeconds = 0f;
     private float speedMultiplier = 1f;
     private float targetSpeedMultiplier = 1f;
+    private boolean motionEnabled = true;
+    private boolean playing = true;
     private boolean frameCallbackPosted;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
@@ -168,20 +182,45 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
         // input, which caused blank backgrounds until the screen was reopened.
         shader.setFloatUniform("saturation", forceDark ? 1.08f : SATURATION);
         shader.setFloatUniform("tintIntensity", forceDark ? 0.18f : 0.0f);
-        shader.setFloatUniform("contrast", forceDark ? 1.18f : 1.0f);
+        shader.setFloatUniform("contrast", forceDark ? 1.35f : 1.0f);
+        shader.setFloatUniform("contrastPivot", forceDark ? 0.26f : 0.5f);
         shader.setFloatUniform("forceDarkAmount", forceDark ? 1.0f : 0.0f);
         applyAccentMix();
         invalidate();
     }
 
     public void setPlaying(boolean playing) {
-        targetSpeedMultiplier = playing ? 1f : 0f;
+        this.playing = playing;
+        float target = motionEnabled && playing ? 1f : 0f;
+        if (target == targetSpeedMultiplier) {
+            // The shell re-asserts play state from updateState() on every frame tick. Resetting the
+            // clock for those idempotent calls keeps every draw at the first sample and freezes the
+            // shader at t=0.
+            if (target > 0f) postFrameCallbackIfNeeded();
+            return;
+        }
+        targetSpeedMultiplier = target;
+        // Rebase only on a real resume so paused wall time cannot jump the shader clock.
         if (playing) {
             lastTimeUpdateNanos = 0L;
             postFrameCallbackIfNeeded();
         } else if (rendering) {
             postFrameCallbackIfNeeded();
         }
+    }
+
+    /** Selects moving Kawarp or the original frozen t=0 texture. */
+    public void setMotionEnabled(boolean enabled) {
+        if (motionEnabled == enabled) return;
+        motionEnabled = enabled;
+        Choreographer.getInstance().removeFrameCallback(frameCallback);
+        frameCallbackPosted = false;
+        lastTimeUpdateNanos = 0L;
+        shaderTimeSeconds = 0f;
+        targetSpeedMultiplier = enabled && playing ? 1f : 0f;
+        speedMultiplier = targetSpeedMultiplier;
+        if (targetSpeedMultiplier > 0f) postFrameCallbackIfNeeded();
+        invalidate();
     }
 
     public void setPaletteColors(int[] colors) {
@@ -286,17 +325,19 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
         }
     }
 
-    /** Scale + center-crop (cover) the tiny softened bitmap to fill the view, in view-pixel space. */
+    /**
+     * Stretch the softened bitmap across the whole view, matching kawarp (which renders the cover
+     * into a square BLUR_SIZE FBO and samples it over the full canvas). A center-crop "cover" fit
+     * showed only the middle ~45% column of the art on a portrait phone — the flattest part of an
+     * already-blurred image — which is what made the mobile background read as one uniform wash.
+     * The aspect distortion is invisible at this blur level.
+     */
     private void applyCoverMatrix(BitmapShader bmp, Bitmap soft) {
         int w = getWidth();
         int h = getHeight();
         if (w <= 0 || h <= 0) return;
-        float scale = Math.max(w / (float) soft.getWidth(), h / (float) soft.getHeight());
-        float dx = (w - soft.getWidth() * scale) * 0.5f;
-        float dy = (h - soft.getHeight() * scale) * 0.5f;
         coverMatrix.reset();
-        coverMatrix.setScale(scale, scale);
-        coverMatrix.postTranslate(dx, dy);
+        coverMatrix.setScale(w / (float) soft.getWidth(), h / (float) soft.getHeight());
         bmp.setLocalMatrix(coverMatrix);
     }
 
@@ -308,10 +349,12 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
         int th = Math.max(1, Math.round(ah * scale));
         Bitmap small = Bitmap.createScaledBitmap(art, tw, th, true);
         // Real Gaussian-ish blur (3 box passes) on the medium bitmap so its texels vary SMOOTHLY.
-        // Upscaling a tiny 24px image bilinearly produced faceted/jagged gradients; a blurred 96px
-        // base reads as a smooth wash once the shader linearly upsamples + warps it.
+        // Upscaling a tiny 24px image bilinearly produced faceted/jagged gradients; a blurred 128px
+        // base reads as a smooth wash once the shader linearly upsamples + warps it. The radius is
+        // tuned to kawarp's Kawase sigma, not "as soft as possible" — over-blurring leaves the warp
+        // nothing to displace and the whole background stops appearing to move.
         Bitmap blurred = small.isMutable() ? small : small.copy(Bitmap.Config.ARGB_8888, true);
-        boxBlur(blurred, Math.max(1, Math.round(SOFT_COVER_PX * 0.18f)), 3);
+        boxBlur(blurred, Math.max(1, Math.round(SOFT_COVER_PX * BLUR_RADIUS_FRACTION)), 3);
         return blurred;
     }
 
