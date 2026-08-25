@@ -1,7 +1,12 @@
 package com.eza.spicyex.lyrics;
 
 import com.eza.spicyex.lyrics.session.LayerFailure;
+import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
+
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * Settlement-order rules for the Google preview race, as a plain synchronized object.
@@ -26,6 +31,9 @@ import com.eza.spicyex.lyrics.session.MeaningArtifact;
  */
 final class MeaningPreviewRace {
 
+    private final CanonicalBase base;
+    private final Set<String> requiredRows;
+
     /** True once the AI child settled or failed to launch. */
     private boolean aiSettled;
     /** True once the Google child settled at all — it runs once, so there is no second chance. */
@@ -38,6 +46,16 @@ final class MeaningPreviewRace {
     private MeaningArtifact googleArtifact;
     private LayerFailure aiFailure = LayerFailure.NONE;
 
+    MeaningPreviewRace() {
+        this(null, Collections.<String>emptySet());
+    }
+
+    MeaningPreviewRace(CanonicalBase base, Set<String> requiredRows) {
+        this.base = base;
+        this.requiredRows = requiredRows == null ? Collections.<String>emptySet()
+                : Collections.unmodifiableSet(new LinkedHashSet<>(requiredRows));
+    }
+
     /**
      * Settles the Google child.
      *
@@ -47,7 +65,9 @@ final class MeaningPreviewRace {
     synchronized Outcome onGoogleSettled(MeaningArtifact settled) {
         if (googleSettled) return Outcome.none();
         googleSettled = true;
-        boolean usable = settled != null && !settled.isEmpty();
+        boolean usable = settled != null && !settled.isEmpty()
+                && (base == null || MeaningDisplaySelector.isComplete(
+                        base, requiredRows, settled));
         googleSucceeded = usable;
         googleArtifact = usable ? settled : null;
         if (completionSettled) return Outcome.none();
@@ -87,8 +107,10 @@ final class MeaningPreviewRace {
         if (aiSettled || completionSettled) return Outcome.none();
         aiSettled = true;
         if (artifact != null && !artifact.isEmpty()) {
+            MeaningArtifact selected = base == null ? artifact
+                    : MeaningDisplaySelector.select(base, requiredRows, artifact, googleArtifact);
             completionSettled = true;
-            return Outcome.complete(artifact, LayerFailure.NONE);
+            return Outcome.complete(selected, LayerFailure.NONE);
         }
         aiFailure = failure == null ? LayerFailure.NONE : failure;
         if (!googleSettled) return Outcome.none();

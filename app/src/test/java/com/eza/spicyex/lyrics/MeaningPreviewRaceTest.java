@@ -45,7 +45,8 @@ public final class MeaningPreviewRaceTest {
 
         MeaningPreviewRace.Outcome outcome = race.onAiSettled(ai, LayerFailure.NONE);
         assertTrue(outcome.terminal);
-        assertSame("AI atomically replaces Google", ai, outcome.artifact);
+        assertEquals("AI remains display authority", "ai text",
+                outcome.artifact.meaning("row-ai").text);
         assertEquals(LayerFailure.NONE, outcome.failure);
     }
 

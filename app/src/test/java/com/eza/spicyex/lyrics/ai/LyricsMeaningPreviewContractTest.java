@@ -63,16 +63,32 @@ public final class LyricsMeaningPreviewContractTest {
                 preview.contains("withGoogleBaseline"));
     }
 
-    /**
-     * The warm-cache probe is the read-only path: it may serve complete stored records but must
-     * refuse any new call, so a warm revisit never triggers Google network work.
-     */
+    /** Google preview must not let a paid AI cache hit bypass its selected display flow. */
     @Test
-    public void theWarmCacheProbeCannotStartAProviderCall() throws Exception {
+    public void previewAlwaysResolvesGoogleBeforeAi() throws Exception {
         String preview = previewBody(meaningLane().replaceAll("\\s+", " "));
 
-        assertTrue(preview.contains("targetLang, false, null, null);"));
-        assertTrue(preview.contains("if (!warm.hasArtifact()) {"));
+        assertTrue(preview.contains("google = googleFallback(run, id, workerSnapshot, googleWork,"));
+        assertFalse(preview.contains("AiMeaningRun.Result warm"));
+    }
+
+    /** Google publication releases the cached/new AI task; AI cannot run before preview. */
+    @Test
+    public void googlePreviewFinishesBeforeTheSiblingAiCanRun() throws Exception {
+        String preview = previewBody(meaningLane().replaceAll("\\s+", " "));
+
+        assertTrue(preview.contains(
+                "final CountDownLatch previewReadyForAi = new CountDownLatch(1);"));
+        int google = preview.indexOf("google = googleFallback(");
+        int previewPost = preview.indexOf("callback.rerender(LayerKind.MEANING, preliminary,", google);
+        int release = preview.indexOf("previewReadyForAi.countDown();", previewPost);
+        int await = preview.indexOf("previewReadyForAi.await();", release);
+        int paidRun = preview.indexOf("result = AiMeaningRun.run(context", await);
+        assertTrue(google >= 0);
+        assertTrue(previewPost > google);
+        assertTrue(release > previewPost);
+        assertTrue(await > release);
+        assertTrue(paidRun > await);
     }
 
     /** Exactly-once accounting: the AI side owns the coalescer key and every release path. */
@@ -89,15 +105,15 @@ public final class LyricsMeaningPreviewContractTest {
                 preview.contains("provider.cancel(http, run.tag);"));
     }
 
-    /** A retired Google child still settles the race so an earlier AI failure cannot leak the key. */
+    /** Retirement before AI dispatch releases the parent run and wakes no paid request. */
     @Test
-    public void retiredGoogleChildReleasesAnAiFailureWaitingForIt() throws Exception {
+    public void retiredGoogleChildReleasesTheSequentialPreviewRun() throws Exception {
         String preview = previewBody(meaningLane().replaceAll("\\s+", " "));
 
-        assertTrue(preview.contains(
-                "MeaningPreviewRace.Outcome retired = race.onGoogleSettled(null);"));
-        assertTrue(preview.contains(
-                "callback, runIdentity, retired); return;"));
+        assertTrue(preview.contains("if (!run.accepts(currentGuard, id, generation, snapshot)) { "
+                + "race.abandonAi(); previewReadyForAi.countDown();"));
+        assertTrue(preview.contains("AiRequestLiveState.cancel(LayerKind.MEANING, "
+                + "run.canonicalDigest(), run.tag); COALESCER.finish(runIdentity); return;"));
     }
 
     /** Legacy boolean migration maps to draft/AI-only only; an old install never gets preview. */

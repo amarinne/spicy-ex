@@ -118,6 +118,12 @@ public final class ArtworkLyricsOverlayView extends FrameLayout {
         invalidateMeasurements();
     }
 
+    /** Rebuilds mounted rows after an in-place reading or translation update. */
+    public void invalidateMountedContent() {
+        invalidateMeasurements();
+        if (isOverlayVisible()) post(this::requestLayout);
+    }
+
     public void clearDocument() {
         document = null;
         invalidateMeasurements();

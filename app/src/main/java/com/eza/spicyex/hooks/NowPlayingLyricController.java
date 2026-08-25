@@ -551,12 +551,17 @@ final class NowPlayingLyricController {
                     boolean cardChanged = LyricsDocumentProcessor.mergeDerivedLayers(mountedCard, nextCardDocument);
                     boolean artworkChanged =
                             LyricsDocumentProcessor.mergeDerivedLayers(mountedArtwork, nextCardDocument);
-                    boolean rowsChanged = LyricTimeline.refreshAppliedDerivedText(mountedCard);
-                    rowsChanged |= LyricTimeline.refreshAppliedDerivedText(mountedArtwork);
-                    if (cardChanged || artworkChanged || rowsChanged) {
+                    boolean cardRowsChanged = LyricTimeline.refreshAppliedDerivedText(mountedCard);
+                    boolean artworkRowsChanged =
+                            LyricTimeline.refreshAppliedDerivedText(mountedArtwork);
+                    if (cardChanged || artworkChanged || cardRowsChanged || artworkRowsChanged) {
                         LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
                         handler.post(() -> {
                             if (isProjectionStale(id, generation, revision)) return;
+                            if (cardChanged || cardRowsChanged) card.invalidateMountedContent();
+                            if (artworkChanged || artworkRowsChanged) {
+                                artworkOverlay.invalidateMountedContent();
+                            }
                             lastIdx = Integer.MIN_VALUE;
                         });
                     }

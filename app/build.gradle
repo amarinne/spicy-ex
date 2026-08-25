@@ -47,8 +47,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 477
-        versionName "1.58.202-transparent-resume-button+B477-20260824T0756Z"
+        versionCode 482
+        versionName "1.58.207-meaning-selector-all-modes+B482-20260825T0703Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
