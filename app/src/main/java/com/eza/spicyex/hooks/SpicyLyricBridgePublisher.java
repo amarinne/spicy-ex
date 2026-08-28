@@ -106,9 +106,17 @@ final class SpicyLyricBridgePublisher {
     }
 
     synchronized void publishDocument(Bundle metadata, byte[] compressedDocument) {
-        if (!enabled) return;
+        if (!enabled) {
+            documentSkipped("publisher_disabled", 0);
+            return;
+        }
         if (metadata == null || compressedDocument == null ||
-                compressedDocument.length > SpicyLyricBridgeDocumentSerializer.MAX_COMPRESSED_BYTES) return;
+                compressedDocument.length > SpicyLyricBridgeDocumentSerializer.MAX_COMPRESSED_BYTES) {
+            documentSkipped(metadata == null ? "metadata_missing"
+                    : compressedDocument == null ? "payload_missing" : "payload_oversized",
+                    compressedDocument == null ? 0 : compressedDocument.length);
+            return;
+        }
         retainedDocumentMetadata = new Bundle(metadata);
         retainedDocument = compressedDocument.clone();
         documentReplayState.retainPayload();
@@ -117,6 +125,11 @@ final class SpicyLyricBridgePublisher {
             return;
         }
         publishPendingDocumentLocked();
+    }
+
+    private static void documentSkipped(String reason, int bytes) {
+        Diagnostics.event("hyperglow_bridge", "document_skipped",
+                Diagnostics.context("reason", reason, "bytes", String.valueOf(bytes)));
     }
 
     synchronized void clearAndDisconnect(String producerId, long generation) {

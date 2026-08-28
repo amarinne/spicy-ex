@@ -4,6 +4,25 @@ import com.eza.spicyex.SpotifyPlusConfig;
 
 /** Runtime transliteration toggle state, including per-document JP/CN cycle modes. */
 public final class LyricsTransliterationSession {
+    private static final String[] JAPANESE_CYCLE = {
+            SpotifyPlusConfig.JP_READING_FURIGANA_ONLY,
+            SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
+            SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI
+    };
+    private static final String[] CHINESE_CYCLE = {
+            SpotifyPlusConfig.CHINESE_MODE_PINYIN,
+            SpotifyPlusConfig.CHINESE_MODE_JYUTPING
+    };
+    private static final String[] KOREAN_CYCLE = {
+            KoreanDisplayMode.RR_STANDARD.value,
+            KoreanDisplayMode.WORD_TRANSLIT.value,
+            KoreanDisplayMode.RR_PRONUNCIATION.value,
+            KoreanDisplayMode.VN_PRONUNCIATION.value
+    };
+    private static final String[] CYRILLIC_CYCLE = {
+            SpicyRomanizer.CYRILLIC_RUSSIAN,
+            SpicyRomanizer.CYRILLIC_UKRAINIAN
+    };
     private boolean showRomanization;
     private String japaneseReadingMode;
     private String chineseMode;
@@ -112,19 +131,9 @@ public final class LyricsTransliterationSession {
 
     private void cycleJapanese() {
         if ("cycle".equals(japaneseModeConfig)) {
-            if (!showRomanization) {
-                // Enter at the FIRST state of the chain below, unconditionally. Seeding the last
-                // state — or keeping whatever was persisted — collapses the cycle into an on/off
-                // toggle, because the next tap falls straight through to the closing else.
-                showRomanization = true;
-                japaneseReadingMode = SpotifyPlusConfig.JP_READING_FURIGANA_ONLY;
-            } else if (SpotifyPlusConfig.JP_READING_FURIGANA_ONLY.equals(japaneseReadingMode)) {
-                japaneseReadingMode = SpotifyPlusConfig.JP_READING_ROMAJI_ONLY;
-            } else if (SpotifyPlusConfig.JP_READING_ROMAJI_ONLY.equals(japaneseReadingMode)) {
-                japaneseReadingMode = SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI;
-            } else {
-                showRomanization = false;
-            }
+            CycleStep step = advanceCycle(showRomanization, japaneseReadingMode, JAPANESE_CYCLE);
+            showRomanization = step.visible;
+            japaneseReadingMode = step.mode;
         } else {
             showRomanization = !showRomanization;
         }
@@ -132,18 +141,9 @@ public final class LyricsTransliterationSession {
 
     private void cycleKorean() {
         if ("cycle".equals(koreanModeConfig)) {
-            if (!showRomanization) {
-                showRomanization = true;
-                koreanMode = KoreanDisplayMode.RR_STANDARD.value;
-            } else if (KoreanDisplayMode.RR_STANDARD.value.equals(koreanMode)) {
-                koreanMode = KoreanDisplayMode.WORD_TRANSLIT.value;
-            } else if (KoreanDisplayMode.WORD_TRANSLIT.value.equals(koreanMode)) {
-                koreanMode = KoreanDisplayMode.RR_PRONUNCIATION.value;
-            } else if (KoreanDisplayMode.RR_PRONUNCIATION.value.equals(koreanMode)) {
-                koreanMode = KoreanDisplayMode.VN_PRONUNCIATION.value;
-            } else {
-                showRomanization = false;
-            }
+            CycleStep step = advanceCycle(showRomanization, koreanMode, KOREAN_CYCLE);
+            showRomanization = step.visible;
+            koreanMode = step.mode;
         } else if ("Off".equals(koreanModeConfig)) {
             showRomanization = false;
         } else {
@@ -154,15 +154,9 @@ public final class LyricsTransliterationSession {
 
     private void cycleCyrillic() {
         if ("cycle".equals(cyrillicModeConfig)) {
-            if (!showRomanization) {
-                // First state of the chain, unconditionally: see cycleJapanese.
-                showRomanization = true;
-                cyrillicMode = SpicyRomanizer.CYRILLIC_RUSSIAN;
-            } else if (SpicyRomanizer.CYRILLIC_RUSSIAN.equals(cyrillicMode)) {
-                cyrillicMode = SpicyRomanizer.CYRILLIC_UKRAINIAN;
-            } else {
-                showRomanization = false;
-            }
+            CycleStep step = advanceCycle(showRomanization, cyrillicMode, CYRILLIC_CYCLE);
+            showRomanization = step.visible;
+            cyrillicMode = step.mode;
         } else if ("Off".equals(cyrillicModeConfig)) {
             showRomanization = false;
         } else {
@@ -173,14 +167,10 @@ public final class LyricsTransliterationSession {
 
     private void cycleChinese() {
         if ("cycle".equals(chineseModeConfig)) {
-            if (!showRomanization) {
-                showRomanization = true;
-                chineseMode = SpotifyPlusConfig.CHINESE_MODE_PINYIN;
-            } else if (SpotifyPlusConfig.CHINESE_MODE_PINYIN.equals(LyricsShellSettings.normalizeChineseMode(chineseMode))) {
-                chineseMode = SpotifyPlusConfig.CHINESE_MODE_JYUTPING;
-            } else {
-                showRomanization = false;
-            }
+            CycleStep step = advanceCycle(showRomanization,
+                    LyricsShellSettings.normalizeChineseMode(chineseMode), CHINESE_CYCLE);
+            showRomanization = step.visible;
+            chineseMode = step.mode;
         } else {
             showRomanization = !showRomanization;
         }
@@ -197,6 +187,29 @@ public final class LyricsTransliterationSession {
     private static String cycleOrDefault(String modeConfig, String current, String fallback) {
         if ("cycle".equals(modeConfig) && !isBlank(current)) return current;
         return safe(fallback);
+    }
+
+    private static CycleStep advanceCycle(boolean visible, String current, String[] modes) {
+        if (modes == null || modes.length == 0) return new CycleStep(false, safe(current));
+        if (!visible) return new CycleStep(true, modes[0]);
+        String normalized = safe(current);
+        for (int index = 0; index < modes.length; index++) {
+            if (!modes[index].equals(normalized)) continue;
+            return index + 1 < modes.length
+                    ? new CycleStep(true, modes[index + 1])
+                    : new CycleStep(false, normalized);
+        }
+        return new CycleStep(false, normalized);
+    }
+
+    private static final class CycleStep {
+        final boolean visible;
+        final String mode;
+
+        CycleStep(boolean visible, String mode) {
+            this.visible = visible;
+            this.mode = mode;
+        }
     }
 
     public static final class CycleResult {

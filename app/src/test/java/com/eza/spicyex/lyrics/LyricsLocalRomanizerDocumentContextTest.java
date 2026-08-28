@@ -10,6 +10,8 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import org.junit.Test;
 import java.util.List;
 
+import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
+
 public class LyricsLocalRomanizerDocumentContextTest {
     private static final RomanizationOptions JYUTPING = new RomanizationOptions(
             SpotifyPlusConfig.CHINESE_MODE_JYUTPING, "Off", true, "Off", false);
@@ -62,6 +64,24 @@ public class LyricsLocalRomanizerDocumentContextTest {
 
         assertEquals("hoeng1 gong2", romanized);
         assertEquals(SpotifyPlusConfig.CHINESE_MODE_JYUTPING, line.chineseMode);
+    }
+
+    @Test
+    public void unmatchedDisplaySegmentFallsBackEvenWhenLineHasReadingPlan() {
+        LyricsDocument doc = doc("yue", "香港");
+        AppliedLine applied = new AppliedLine();
+        applied.sourceLine = doc.lines.get(0);
+        applied.readingRenderPlan = new RenderPlan("source", java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(), java.util.Collections.emptyList(),
+                "hoeng1 gong2", null);
+        SyllableSegment synthetic = new SyllableSegment();
+        synthetic.text = "香";
+
+        String reading = LyricsLocalRomanizer.romanizeDisplaySegment(
+                JYUTPING, doc, applied, synthetic, LyricsDocumentProcessor.collectText(doc));
+
+        assertEquals("hoeng1", reading);
+        assertEquals("hoeng1", synthetic.romanizedText);
     }
 
     @Test

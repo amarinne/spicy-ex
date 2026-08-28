@@ -58,6 +58,8 @@ public final class AiLayerFailures {
             case BASELINE_UNAVAILABLE:
             case MODEL_UNAVAILABLE:
             case PROVIDER_REFUSED:
+            case STORAGE_FULL:
+            case STORAGE_UNAVAILABLE:
             case OVERSIZED:
             default:
                 return LayerFailure.Reason.UNAVAILABLE;

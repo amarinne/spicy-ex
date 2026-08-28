@@ -119,7 +119,7 @@ public final class Settings {
     public static final Setting<String> LIVE_CARD_LINE_SYNC_FILL = enumSetting(
             "lyrics_live_card_line_sync_fill", NOW_PLAYING, "Fill direction",
             "Top to bottom",
-            "Top to bottom", "Left to right (sentence)"
+            "Top to bottom", "Left to right (block)", "Left to right (sentence)"
     );
 
     public static final Setting<String> LIVE_CARD_OVERFLOW = enumSetting(

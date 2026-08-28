@@ -5,7 +5,6 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 import android.content.Context;
 
 import com.eza.spicyex.Diagnostics;
-import com.eza.spicyex.References;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
@@ -75,8 +74,15 @@ final class LyricsFetchCoordinator {
                 "fetchLyrics",
                 "start generation=" + generation + " track=" + (track == null ? "null" : safe(track.uri))
         );
-        String operationKey = fetchKey(track,
-                SpotifyPlusConfig.from(context).get(Settings.SEND_TOKEN), References.accessToken);
+        boolean sendToken = SpotifyPlusConfig.from(context).get(Settings.SEND_TOKEN);
+        // M3: in-flight identity uses the non-secret token generation from the token store
+        // (never the raw token, never a token-present boolean), so a fresh token generation
+        // can never join an in-flight stale-token request. The snapshot binds the token text
+        // to the generation used for the request and any later scoped invalidation.
+        SpotifyTokenState.Authorized authorized = sendToken
+                ? SpotifyTokenStore.authorization(System.currentTimeMillis())
+                : null;
+        String operationKey = fetchKey(track, sendToken, authorized);
         InFlightFetch existing;
         LyricsDocument replay = null;
         boolean joined = false;
@@ -87,10 +93,7 @@ final class LyricsFetchCoordinator {
                 existing.callbacks.add(callback);
                 if (existing.latest != null) replay = LyricsDocument.copyOf(existing.latest);
             } else {
-                existing = new InFlightFetch(operationKey,
-                        SpotifyPlusConfig.from(context).get(Settings.SEND_TOKEN)
-                                && References.accessToken != null
-                                && !References.accessToken.trim().isEmpty());
+                existing = new InFlightFetch(operationKey, authorized != null);
                 existing.callbacks.add(callback);
                 inFlight.put(operationKey, existing);
             }
@@ -104,14 +107,17 @@ final class LyricsFetchCoordinator {
                 nativeLyricsSource,
                 NativeRuntime.LYRICS_IO
         );
-        boolean sendToken = SpotifyPlusConfig.from(context).get(Settings.SEND_TOKEN);
-        String accessToken = References.accessToken;
+        String accessToken = authorized == null ? "" : authorized.token();
+        int tokenGeneration = authorized == null ? TOKEN_GENERATION_NONE : authorized.generation();
+        LyricsRepository.AuthRecovery authRecovery = authRecovery();
         NativeRuntime.LYRICS_IO.execute(() -> repository.fetchLyrics(
                 context,
                 track,
                 generation,
                 sendToken,
                 accessToken,
+                tokenGeneration,
+                authRecovery,
                 new LyricsRepository.ResultCallback() {
                     @Override
                     public void onSuccess(LyricsDocument document) {
@@ -173,9 +179,45 @@ final class LyricsFetchCoordinator {
         }
     }
 
-    private static String fetchKey(SpotifyTrack track, boolean sendToken, String token) {
+    /** Sentinel token generation for requests issued without a usable token; never a real generation. */
+    private static final int TOKEN_GENERATION_NONE = -1;
+
+    /**
+     * M3 seam: tombstones exactly the generation used by the rejected request and returns the
+     * replacement authorization only when a newer usable generation already exists. With no newer
+     * generation the repository proceeds to native/LRCLIB fallback, so an auth failure cannot loop.
+     */
+    private LyricsRepository.AuthRecovery authRecovery() {
+        return rejectedGeneration -> {
+            Diagnostics.event("lyrics_fetch", "auth_rejected",
+                    Diagnostics.context("tokenGeneration", String.valueOf(rejectedGeneration)));
+            SpotifyTokenStore.invalidate(rejectedGeneration);
+            SpotifyTokenState.Authorized candidate =
+                    SpotifyTokenStore.authorization(System.currentTimeMillis());
+            SpotifyTokenState.Authorized newer =
+                    retryAuthorizationAfterRejection(candidate, rejectedGeneration);
+            return newer == null
+                    ? null
+                    : LyricsRepository.Authorization.of(newer.token(), newer.generation());
+        };
+    }
+
+    /** Pure guard: a replacement is usable only when its generation is strictly newer. */
+    static SpotifyTokenState.Authorized retryAuthorizationAfterRejection(
+            SpotifyTokenState.Authorized candidate, int rejectedGeneration) {
+        if (candidate == null) return null;
+        if (candidate.generation() <= rejectedGeneration) return null;
+        return candidate;
+    }
+
+    /**
+     * Non-secret in-flight identity: track URI plus the token generation actually bound to the
+     * request (or {@code none} when no usable token is sent). Token text never participates.
+     */
+    static String fetchKey(SpotifyTrack track, boolean sendToken, SpotifyTokenState.Authorized authorized) {
         String uri = track == null ? "" : safe(track.uri);
-        return uri + "|token=" + (sendToken && token != null && !token.trim().isEmpty());
+        boolean tokenUsable = sendToken && authorized != null;
+        return uri + "|tokenGen=" + (tokenUsable ? String.valueOf(authorized.generation()) : "none");
     }
 
     private static final class InFlightFetch {

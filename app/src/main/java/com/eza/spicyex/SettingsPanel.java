@@ -435,7 +435,11 @@ public final class SettingsPanel {
     private boolean shouldRender(Settings.Setting<?> setting) {
         if (setting == Settings.AI_ENABLED) return aiAvailable();
         if (setting == Settings.AI_DEEPSEEK_REASONING) {
-            return AiSettings.PROVIDER_DEEPSEEK.equals(store.get(Settings.AI_PROVIDER));
+            return AiSettings.PROVIDER_DEEPSEEK.equals(store.get(Settings.AI_PROVIDER))
+                    && aiSettingVisible(setting, Boolean.TRUE.equals(store.get(Settings.AI_ENABLED)));
+        }
+        if (setting.section == Settings.AI) {
+            return aiSettingVisible(setting, Boolean.TRUE.equals(store.get(Settings.AI_ENABLED)));
         }
         if (setting == Settings.TRANSLATION_TARGET || setting == Settings.TRANSLATION_BRIGHTNESS) {
             return FeatureAvailability.translationAvailable()
@@ -473,6 +477,11 @@ public final class SettingsPanel {
             return "custom".equals(store.get(Settings.LIVE_CARD_TEXT_SIZE));
         }
         return true;
+    }
+
+    /** Keep AI master switch visible; nest every other AI setting under that switch. */
+    static boolean aiSettingVisible(Settings.Setting<?> setting, boolean enabled) {
+        return setting == Settings.AI_ENABLED || enabled;
     }
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */

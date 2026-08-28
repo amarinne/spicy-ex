@@ -102,6 +102,8 @@ local.properties
 ### Java ###
 # Compiled class file
 *.class
+__pycache__/
+*.py[cod]
 
 # Log file
 *.log
@@ -203,10 +205,12 @@ README.html
 /app/release
 # Version-stamped APK artifacts (local convenience; not committed)
 /artifacts/
+/.gradle-agent/
 
 # Agent / AI tool session folders
 .claude/
 .codex/
+.agents/
 .cursor/
 .aider*
 

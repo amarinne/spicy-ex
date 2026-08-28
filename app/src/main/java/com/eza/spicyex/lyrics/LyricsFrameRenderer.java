@@ -126,6 +126,7 @@ public final class LyricsFrameRenderer {
                 }
             } else {
                 applySecondaryGradient(line, positionMs, lineGlow, config);
+                WordGradientRoute wordGradientRoute = wordGradientRoute(config.lineSyncFillMode);
                 if (hasRealTimedWords(line)) {
                     if (lineState.active || lineState.sung) {
                         LyricsAnimationApplier.animateSyllables(
@@ -136,12 +137,14 @@ public final class LyricsFrameRenderer {
                                 styleSink,
                                 config.spotlight,
                                 config.glowBlurEnabled);
+                        if (wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
+                            applyContinuousWordGradient(line, lineState, lineGlow);
+                        }
                     } else {
                         LyricsAnimationApplier.resetSyllables(line, styleSink);
                     }
                 } else if (line.words != null && !line.words.isEmpty()
-                        && !config.lineSyncFillWord()
-                        && !config.lineSyncFillSentence()) {
+                        && wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
                     animateContinuousLineWords(line, lineState, lineGlow, deltaSeconds);
                 } else if (lineState.active || lineState.sung) {
                     LyricsAnimationApplier.animateSyllables(
@@ -170,6 +173,23 @@ public final class LyricsFrameRenderer {
         return line != null && !line.syntheticWords && line.words != null && !line.words.isEmpty();
     }
 
+    static WordGradientRoute wordGradientRoute(String fillMode) {
+        if ("Left to right (block)".equals(fillMode)) {
+            return WordGradientRoute.CONTINUOUS_BLOCK;
+        }
+        if ("Left to right (sentence)".equals(fillMode)
+                || "Left to right (word)".equals(fillMode)) {
+            return WordGradientRoute.TIMED_WORDS;
+        }
+        return WordGradientRoute.LINE_LEVEL;
+    }
+
+    enum WordGradientRoute {
+        LINE_LEVEL,
+        CONTINUOUS_BLOCK,
+        TIMED_WORDS
+    }
+
     private void animateContinuousLineWords(AppliedLine line, LyricsLineAnimationState lineState,
                                             float lineGlow, float deltaSeconds) {
         if (line == null || line.words == null || line.words.isEmpty() || lineState == null) return;
@@ -190,6 +210,19 @@ public final class LyricsFrameRenderer {
             LyricsSyllableViewState.resetWordTransform(seg);
             LyricsSyllableViewState.applySyntheticLineGradient(
                     seg, container, containerWidth, lineState.gradient, lineGlow,
+                    lineState.brightnessTarget);
+        }
+    }
+
+    private void applyContinuousWordGradient(AppliedLine line, LyricsLineAnimationState lineState,
+                                             float lineGlow) {
+        if (line == null || line.words == null || line.words.isEmpty() || lineState == null) return;
+        View contentContainer = LyricsSyllableViewState.parentView(line.words.get(0));
+        int contentWidth = contentContainer == null ? 0 : contentContainer.getWidth();
+        for (SyllableSegment seg : line.words) {
+            if (seg == null) continue;
+            LyricsSyllableViewState.applySyntheticLineGradient(
+                    seg, contentContainer, contentWidth, lineState.gradient, lineGlow,
                     lineState.brightnessTarget);
         }
     }

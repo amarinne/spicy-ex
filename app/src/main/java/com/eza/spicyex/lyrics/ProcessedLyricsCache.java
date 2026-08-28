@@ -13,13 +13,11 @@ import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
 import com.eza.spicyex.lyrics.reading.CodePointRanges;
 import com.eza.spicyex.lyrics.reading.DefaultRenderPlanBuilder;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
-import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.DerivedLayerArtifact;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
-import com.eza.spicyex.lyrics.session.PaidArtifactIdentity;
 import com.eza.spicyex.lyrics.session.MeaningEntry;
 import com.eza.spicyex.lyrics.session.SoundArtifact;
 import com.eza.spicyex.lyrics.session.SoundEntry;
@@ -166,7 +164,9 @@ public final class ProcessedLyricsCache {
             if (rows.size() == 0) return false;
             JsonObject record = newRecordHeader("SOUND", base.digest, artifact.configId, !artifact.partial);
             record.add("rows", rows);
-            if (isPaid(artifact)) return persistPaid(context, artifact, record);
+            // AiPaidRecord is the sole paid authority. Writing this second schema under the same
+            // identity would overwrite resumable accounting and could cause a duplicate charge.
+            if (isPaid(artifact)) return true;
             LyricCaches.putSoundArtifact(context,
                     LyricCaches.soundArtifactKey(base.digest, artifact.configId), record.toString());
             return true;
@@ -193,7 +193,7 @@ public final class ProcessedLyricsCache {
             if (rows.size() == 0) return false;
             JsonObject record = newRecordHeader("MEANING", base.digest, artifact.configId, !artifact.partial);
             record.add("rows", rows);
-            if (isPaid(artifact)) return persistPaid(context, artifact, record);
+            if (isPaid(artifact)) return true;
             LyricCaches.putMeaningArtifact(context,
                     LyricCaches.meaningArtifactKey(base.digest, artifact.configId), record.toString());
             return true;
@@ -264,23 +264,6 @@ public final class ProcessedLyricsCache {
     public static boolean isPaid(DerivedLayerArtifact artifact) {
         return artifact != null && artifact.provenance != null
                 && artifact.provenance.authority == LayerAuthority.AI;
-    }
-
-    private static boolean persistPaid(Context context, DerivedLayerArtifact artifact,
-                                       JsonObject record) {
-        PaidArtifactIdentity identity = PaidArtifactIdentity.forArtifact(artifact);
-        if (identity == null) {
-            // AI-authored but unaddressable: no provider, model, or prompt contract to key it by.
-            // Refusing beats writing it somewhere it can be evicted without anyone noticing.
-            XposedBridge.log(TAG + " paid save refused: incomplete provenance kind=" + artifact.kind);
-            return false;
-        }
-        AIPaidArtifactCache.Write write = AIPaidArtifactCache.put(context, identity, record.toString());
-        if (!write.durable) {
-            XposedBridge.log(TAG + " paid save not durable reason=" + write.reason
-                    + " layer=" + identity.layerKind);
-        }
-        return write.durable;
     }
 
     private static JsonObject newRecord(String kind, CanonicalBase base, String configId, boolean complete) {

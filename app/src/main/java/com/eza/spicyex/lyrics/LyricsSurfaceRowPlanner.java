@@ -53,9 +53,7 @@ public final class LyricsSurfaceRowPlanner {
                 && !options.showJapaneseFurigana
                 && options.attachTransliterationToWords
                 && options.showRomanization
-                && displayLine != null
-                && displayLine.readingRenderPlan != null
-                && displayLine.readingRenderPlan.timedReadingUnits.size() >= displayLine.words.size();
+                && displayLine != null;
         options.documentText = alignedRomaji && document != null ? LyricsDocumentProcessor.collectText(document) : "";
         return new RowPlan(displayLine, options);
     }

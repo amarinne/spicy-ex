@@ -38,6 +38,16 @@ public class References {
     /** Strong playback snapshots keep background track detection alive while Spotify UI is idle. */
     public static volatile Object playerStateStrong;
     public static volatile Object playerStateWrapperStrong;
+    /**
+     * Legacy compatibility mirror of the currently captured Spotify access token. Never
+     * authoritative: the process-wide token lifecycle state (token text, captured timestamp,
+     * observed expiry, generation, tombstoning) is owned by the package-private
+     * SpotifyTokenStore/SpotifyTokenState seam in com.eza.spicyex.hooks, and this mirror is
+     * refreshed from it after every capture, restore, and invalidation. It is blank whenever no
+     * usable (present, non-tombstoned, fresh) token exists. Read-only consumers must keep deciding
+     * via their own settings (SEND_TOKEN) whether this value may be sent; capture itself never
+     * depends on that choice. Do not assign this field outside the token store.
+     */
     public static String accessToken = "";
     public static WeakReference<Typeface> beautifulFont = new WeakReference<>(null);
     public static XModuleResources modResources = null;

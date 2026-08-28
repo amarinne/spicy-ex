@@ -31,6 +31,8 @@ import com.eza.spicyex.lyrics.session.LegacyDocumentComposer;
 import com.eza.spicyex.lyrics.session.LyricSession;
 import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
+import com.eza.spicyex.lyrics.ai.AiRequestStartResult;
+import com.eza.spicyex.lyrics.ai.AiSettings;
 
 import de.robv.android.xposed.XposedBridge;
 
@@ -417,11 +419,21 @@ final class LyricsSessionManager {
     /**
      * Explicit model action. Keeps the displayed artifact while the paid/reuse run settles.
      *
-     * @return true when the requested layer accepted work
+     * @return one stable reason for acceptance or refusal
      */
-    boolean requestAiLayer(LayerKind layer) {
+    AiRequestStartResult requestAiLayer(LayerKind layer) {
         if (layer == null || track == null || document == null || policy.trackUri().isEmpty()) {
-            return false;
+            return AiRequestStartResult.INVALID_CONTEXT;
+        }
+        if (!new AiSettings(context).isConfigured()) {
+            return AiRequestStartResult.NOT_CONFIGURED;
+        }
+        if (session != null) {
+            LayerState layerState = session.layer(layer);
+            if (layerState.status == LayerStatus.PROCESSING
+                    && layerState.authority == LayerAuthority.AI) {
+                return AiRequestStartResult.ALREADY_IN_FLIGHT;
+            }
         }
         if (layer == LayerKind.MEANING) {
             LyricsDocumentProcessor.resetMeaningLayer(context, document);
@@ -429,7 +441,8 @@ final class LyricsSessionManager {
             LyricsDocumentProcessor.resetSoundLayer(context, document);
         }
         return startSharedProcessing(track, document, policy.generation(),
-                java.util.EnumSet.of(layer)).contains(layer);
+                java.util.EnumSet.of(layer)).contains(layer)
+                ? AiRequestStartResult.STARTED : AiRequestStartResult.NOTHING_TO_DO;
     }
 
     /** Drops the accepted AI overlay and republishes the canonical baseline only. */

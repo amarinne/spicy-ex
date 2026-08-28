@@ -17,6 +17,15 @@ public class LyricsRenderModeTest {
         assertTrue(LyricsRenderMode.isStatic(null));
     }
 
+    @Test
+    public void oneRowProjectionPreservesSourceTimingTrust() {
+        LyricsDocument projection = document("Unknown");
+
+        LyricsRenderMode.copyTimingType(document("Syllable"), projection);
+
+        assertFalse(LyricsRenderMode.isStatic(projection));
+    }
+
     private static LyricsDocument document(String type) {
         LyricsDocument document = new LyricsDocument();
         document.type = type;

@@ -33,7 +33,7 @@ public final class AiRunOutcome {
     public final String failureToken;
     /** Privacy-safe validation/provider rule, optionally followed by an opaque canonical row ID. */
     public final String failureDetail;
-    /** False when the result could not be stored. It is still valid; it is just not saved. */
+    /** False when durable accounting failed. Such output is never exposed as completed. */
     public final boolean durable;
     /** Cancellation reason token, or empty. */
     public final String cancelReason;

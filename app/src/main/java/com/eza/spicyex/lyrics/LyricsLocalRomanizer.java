@@ -194,6 +194,21 @@ public final class LyricsLocalRomanizer {
         }
     }
 
+    /** Resolve one display segment after a reading-plan span lookup did not match it. */
+    public static String romanizeDisplaySegment(RomanizationOptions opts, LyricsDocument doc,
+                                                AppliedLine line, SyllableSegment segment,
+                                                String fullText) {
+        if (segment == null || isBlank(segment.text)) return "";
+        if (!isBlank(segment.romanizedText)) return segment.romanizedText;
+        LyricsLine source = line == null ? null : line.sourceLine;
+        String local = romanizeText(opts, doc, segment.text, fullText,
+                source == null ? "" : source.chineseMode);
+        if (isBlank(local) || local.equals(segment.text)
+                || SpicyTextDetection.hasRomanizableScript(local)) return "";
+        segment.romanizedText = local;
+        return local;
+    }
+
     private static boolean isChineseLine(LyricsDocument doc, String text, String fullText) {
         return hanLineScript(doc, text, fullText) == SpicyTextDetection.Script.CHINESE;
     }

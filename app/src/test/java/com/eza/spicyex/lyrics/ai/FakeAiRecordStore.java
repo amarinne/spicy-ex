@@ -16,8 +16,13 @@ public final class FakeAiRecordStore implements AiRecordStore {
 
     public int reads;
     public int commits;
+    public int reservations;
+    public int releases;
     /** When true, every write is rejected — the store-is-full path. */
     public boolean rejectWrites;
+    public Reservation.Status rejectedReservationStatus;
+    /** Reject this reservation number; zero means never. */
+    public int rejectReservationAt;
 
     @Override public AiPaidRecord read(AiRunConfig config) {
         reads++;
@@ -30,6 +35,21 @@ public final class FakeAiRecordStore implements AiRecordStore {
         if (rejectWrites) return false;
         payloads.put(key(config), AiPaidRecordCodec.encode(record));
         return true;
+    }
+
+    @Override public Reservation reserve(AiRunConfig config, long maxRecordBytes) {
+        reservations++;
+        if (rejectedReservationStatus != null
+                && (rejectReservationAt == 0 || reservations == rejectReservationAt)) {
+            return Reservation.rejected(rejectedReservationStatus,
+                    rejectedReservationStatus == Reservation.Status.FULL
+                            ? "store-full-bytes" : "storage-unavailable");
+        }
+        return Reservation.admitted();
+    }
+
+    @Override public void release(AiRunConfig config) {
+        releases++;
     }
 
     @Override public void forget(AiRunConfig config) {

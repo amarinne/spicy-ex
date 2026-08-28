@@ -120,6 +120,39 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
+    public void separateRomanizationUsesTimedRowWhenReadingUnitsCoverWords() {
+        AppliedLine line = line("hello world");
+        line.words.add(word("hello", false));
+        line.words.add(word("world", false));
+        java.util.ArrayList<TimedReadingUnit> timed = new java.util.ArrayList<>();
+        timed.add(new TimedReadingUnit("0", new TextRange(0, 5), "heh-loh", "en-0"));
+        timed.add(new TimedReadingUnit("1", new TextRange(6, 11), "world", "en-1"));
+        line.readingRenderPlan = new RenderPlan("line", java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(), timed, "heh-loh world", null);
+
+        assertTrue(LyricsRowViewFactory.canBuildTimedRomanRow(line, true, false));
+        assertTrue(LyricsRowViewFactory.canBuildTimedRomanRow(line, true, true));
+        assertFalse(LyricsRowViewFactory.canBuildTimedRomanRow(line, false, true));
+    }
+
+    @Test
+    public void unmatchedSyntheticSpanUsesProviderEvenWhenReadingPlanExists() {
+        AppliedLine line = line("hello world");
+        SyllableSegment synthetic = word("hello", false);
+        java.util.ArrayList<TimedReadingUnit> timed = new java.util.ArrayList<>();
+        timed.add(new TimedReadingUnit("source-span", new TextRange(0, 11),
+                "heh-loh world", "source"));
+        line.readingRenderPlan = new RenderPlan("line", java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(), timed, "heh-loh world", null);
+
+        String reading = LyricsRowViewFactory.romanizedWordText(
+                line, synthetic, 0, java.util.Collections.singletonMap("source-span", timed.get(0)),
+                new LyricsRowViewFactory.Options(), (ignoredLine, ignoredSegment, ignoredText) -> "heh-loh");
+
+        assertEquals("heh-loh", reading);
+    }
+
+    @Test
     public void lineFallbackDoesNotEnableRendererTimeWordProcessing() {
         AppliedLine line = line("hello world");
         line.romanizedText = "heh-loh world";

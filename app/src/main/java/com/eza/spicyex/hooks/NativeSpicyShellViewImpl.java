@@ -1048,10 +1048,17 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 document,
                 LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(
                         renderConfig, showRomanization(), showTranslation(), japaneseReadingMode()));
-        return rowViewFactory.build(rowPlan.line, rowPlan.options, () -> {
+        return rowViewFactory.build(rowPlan.line, rowPlan.options,
+                this::segmentRomanizedText, () -> {
             invalidateRowHeightPrefix();
             updateVirtualSpacerHeights();
         });
+    }
+
+    private String segmentRomanizedText(AppliedLine line, SyllableSegment segment,
+                                         String fullText) {
+        return LyricsLocalRomanizer.romanizeDisplaySegment(
+                romanizationOptions(), document, line, segment, fullText);
     }
 
     private boolean isJapaneseLine(AppliedLine line) {
@@ -1706,6 +1713,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             case "protocol_invalid": return uiText("lyrics_ai_failure_protocol", "Invalid provider response");
             case "request_rejected": return uiText("lyrics_ai_failure_request", "Request rejected");
             case "provider_refused": return uiText("lyrics_ai_failure_refused", "Provider refused the request");
+            case "storage_full": return uiText("lyrics_ai_failure_storage_full", "Paid AI storage is full");
+            case "storage_unavailable": return uiText("lyrics_ai_failure_storage_unavailable", "Paid AI storage is unavailable");
             case "truncated": return uiText("lyrics_ai_failure_truncated", "Response truncated");
             case "oversized": return uiText("lyrics_ai_failure_oversized", "Lyrics or response too large");
             case "runtime_unavailable": return uiText("lyrics_ai_failure_runtime", "AI runtime unavailable");
@@ -1745,13 +1754,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     .apply();
             refreshSecondaryRows("");
         }
-        boolean started = host.requestAiLyricsLayer(layer);
+        com.eza.spicyex.lyrics.ai.AiRequestStartResult result =
+                host.requestAiLyricsLayer(layer);
         String label = aiLayerLabel(layer);
-        if (!started) {
+        if (!result.started()) {
             android.widget.Toast.makeText(activity,
-                    uiFormat("lyrics_ai_request_not_started",
-                            "%1$s request did not start. Lyrics or AI configuration may not be ready.",
-                            label), android.widget.Toast.LENGTH_LONG).show();
+                    aiRequestRefusalMessage(result, label),
+                    android.widget.Toast.LENGTH_LONG).show();
             updateToggleVisuals();
             return false;
         }
@@ -1765,6 +1774,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                         "AI translation request is running for this song."),
                 android.widget.Toast.LENGTH_SHORT).show();
         return true;
+    }
+
+    private String aiRequestRefusalMessage(
+            com.eza.spicyex.lyrics.ai.AiRequestStartResult result, String label) {
+        switch (result) {
+            case NOT_CONFIGURED:
+                return uiFormat("lyrics_ai_request_not_configured",
+                        "%1$s request cannot start. Complete AI setup first.", label);
+            case ALREADY_IN_FLIGHT:
+                return uiFormat("lyrics_ai_request_already_running",
+                        "%1$s request is already running for this song.", label);
+            case NOTHING_TO_DO:
+                return uiFormat("lyrics_ai_request_nothing_to_do",
+                        "%1$s request found no new work for this song.", label);
+            default:
+                return uiFormat("lyrics_ai_request_lyrics_unavailable",
+                        "%1$s request cannot start because lyrics are not ready.", label);
+        }
     }
 
     private com.eza.spicyex.lyrics.ai.AiRequestFeedbackState aiFeedback(

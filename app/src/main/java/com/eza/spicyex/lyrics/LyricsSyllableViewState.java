@@ -305,11 +305,29 @@ public final class LyricsSyllableViewState {
                                                int containerWidth, float gradient, float glow, float brightness) {
         if (view == null) return;
         view.setBrightnessMultiplier(brightness);
-        if (container != null && containerWidth > 0 && view.isAttachedToWindow()) {
-            view.setContainerGradientPosition(gradient, glow, containerWidth, offsetWithin(view, container));
+        View gradientContainer = isDescendantOf(view, container) ? container : parentView(view);
+        int gradientWidth = gradientContainer == container
+                ? containerWidth : gradientContainer == null ? 0 : gradientContainer.getWidth();
+        if (gradientContainer != null && gradientWidth > 0 && view.isAttachedToWindow()) {
+            view.setContainerGradientPosition(
+                    gradient, glow, gradientWidth, offsetWithin(view, gradientContainer));
         } else {
             view.setGradientPosition(gradient, glow);
         }
+    }
+
+    private static boolean isDescendantOf(View child, View ancestor) {
+        if (child == null || ancestor == null) return false;
+        for (View current = child; current != null; current = parentView(current)) {
+            if (current == ancestor) return true;
+        }
+        return false;
+    }
+
+    private static View parentView(View view) {
+        if (view == null) return null;
+        Object parent = view.getParent();
+        return parent instanceof View ? (View) parent : null;
     }
 
     private static float offsetWithin(View child, View ancestor) {

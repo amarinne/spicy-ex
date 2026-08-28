@@ -137,6 +137,36 @@ public class AiLayerRunnerTest {
     }
 
     @Test
+    public void fullPaidStorageRejectsBeforeProviderCall() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        store.rejectedReservationStatus = AiRecordStore.Reservation.Status.FULL;
+        FakeAiProvider provider = new FakeAiProvider();
+
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(3), provider, store));
+
+        assertEquals(AiRunOutcome.Kind.FAILED, outcome.kind);
+        assertEquals("storage_full", outcome.failureToken);
+        assertFalse(outcome.durable);
+        assertTrue(provider.calls.isEmpty());
+        assertEquals(1, store.reservations);
+        assertEquals(1, store.releases);
+    }
+
+    @Test
+    public void unavailablePaidStorageRejectsBeforeProviderCall() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        store.rejectedReservationStatus = AiRecordStore.Reservation.Status.UNAVAILABLE;
+        FakeAiProvider provider = new FakeAiProvider();
+
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(3), provider, store));
+
+        assertEquals(AiRunOutcome.Kind.FAILED, outcome.kind);
+        assertEquals("storage_unavailable", outcome.failureToken);
+        assertTrue(provider.calls.isEmpty());
+        assertEquals(1, store.releases);
+    }
+
+    @Test
     public void terminalProtocolFailureKeepsItsPrivacySafeRule() {
         FakeAiRecordStore store = new FakeAiRecordStore();
         FakeAiProvider provider = new FakeAiProvider(
@@ -442,16 +472,53 @@ public class AiLayerRunnerTest {
     // --- durability ---------------------------------------------------------
 
     @Test
-    public void aResultThatCouldNotBeStoredIsStillReturnedButNotClaimedAsSaved() {
+    public void aResultThatCouldNotBeStoredStopsAsStorageFailure() {
         FakeAiRecordStore store = new FakeAiRecordStore();
         store.rejectWrites = true;
+        FakeAiProvider provider = new FakeAiProvider();
 
-        AiRunOutcome outcome = AiLayerRunner.run(args(rows(3), new FakeAiProvider(), store));
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(3), provider, store));
 
-        assertEquals(AiRunOutcome.Kind.COMPLETED, outcome.kind);
-        assertTrue(outcome.hasOutput());
-        assertFalse("a rejected write must not be reported as durable", outcome.durable);
+        assertEquals(AiRunOutcome.Kind.FAILED, outcome.kind);
+        assertEquals("storage_unavailable", outcome.failureToken);
+        assertFalse(outcome.hasOutput());
+        assertFalse(outcome.durable);
+        assertEquals(1, provider.calls.size());
         assertNull(store.peek(config()));
+        assertEquals(1, store.releases);
+    }
+
+    @Test
+    public void reservationFailureAfterFirstChunkKeepsFirstChunkAndStopsSpending() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        store.rejectedReservationStatus = AiRecordStore.Reservation.Status.FULL;
+        store.rejectReservationAt = 2;
+        FakeAiProvider provider = new FakeAiProvider();
+
+        AiRunOutcome outcome = AiLayerRunner.run(args(chunkedRows(), provider, store));
+
+        assertEquals(AiRunOutcome.Kind.FAILED, outcome.kind);
+        assertEquals("storage_full", outcome.failureToken);
+        assertEquals(1, provider.calls.size());
+        assertNotNull(store.peek(config()));
+        assertEquals(1, store.peek(config()).chunks().size());
+        assertTrue(outcome.durable);
+        assertEquals(1, store.releases);
+    }
+
+    @Test
+    public void commitFailureAfterFirstChunkStopsBeforeSecondProviderCall() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        store.rejectWrites = true;
+        FakeAiProvider provider = new FakeAiProvider();
+
+        AiRunOutcome outcome = AiLayerRunner.run(args(chunkedRows(), provider, store));
+
+        assertEquals(AiRunOutcome.Kind.FAILED, outcome.kind);
+        assertEquals("storage_unavailable", outcome.failureToken);
+        assertEquals(1, provider.calls.size());
+        assertEquals(1, store.commits);
+        assertEquals(1, store.releases);
     }
 
     @Test

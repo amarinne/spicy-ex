@@ -329,6 +329,7 @@ final class NowPlayingLyricController {
         }
         card.renderLine(activity, cur, renderConfig, pos, deltaSeconds,
                 cardDocument,
+                this::segmentRomanizedText,
                 lineChanged);
     }
 
@@ -676,6 +677,16 @@ final class NowPlayingLyricController {
     private RomanizationOptions romanizationOptions() {
         return new RomanizationOptions(renderConfig.defaultChineseMode, renderConfig.koreanMode,
                 renderConfig.chineseTones, renderConfig.defaultCyrillicMode, renderConfig.cyrillicKeepSigns);
+    }
+
+    private String segmentRomanizedText(AppliedLine line,
+                                        com.eza.spicyex.lyrics.SyllableSegment segment,
+                                        String fullText) {
+        // LyricsRowViewFactory calls this only after no timed reading unit matched this segment.
+        // Synthetic sentence words do not share the source plan's span IDs, so the plan can exist
+        // while this exact display segment still needs the local per-segment fallback.
+        return LyricsLocalRomanizer.romanizeDisplaySegment(
+                romanizationOptions(), cardDocument, line, segment, fullText);
     }
 
     private boolean isUnsyncedDocument(LyricsDocument doc) {

@@ -66,31 +66,40 @@ public final class AiLayerRunner {
         // ones are reopened. An explicit retry is the only thing that reaches this line.
         record.reopenFailedChunks();
 
-        boolean durable = true;
-        boolean anyChunkFellBack = false;
-        for (AiPlannedChunk chunk : plan.chunks) {
-            ChunkRunResult result = runChunk(args, plannerInput(args), store, config, record, chunk,
-                    durable);
-            durable = result.durable;
-            anyChunkFellBack |= result.fellBack;
-            if (result.cancelReason != null) {
-                return stop(store, config, record, args, durable, result.cancelReason);
+        try {
+            boolean durable = store == null || stored != null;
+            boolean anyChunkFellBack = false;
+            for (AiPlannedChunk chunk : plan.chunks) {
+                ChunkRunResult result = runChunk(args, plannerInput(args), store, config, record,
+                        chunk, durable);
+                durable = result.durable;
+                anyChunkFellBack |= result.fellBack;
+                if (result.cancelReason != null) {
+                    return stop(store, config, record, args, durable, result.cancelReason);
+                }
+                if (result.failure != null) {
+                    if (isStorageFailure(result.failure)) {
+                        return AiRunOutcome.failed(record, result.failure, durable);
+                    }
+                    record.status = AiPaidRecord.Status.FAILED;
+                    if (!commit(store, config, record)) {
+                        return storageCommitFailure(record);
+                    }
+                    return AiRunOutcome.failed(record, result.failure, true);
+                }
             }
-            if (result.failure != null) {
-                record.status = AiPaidRecord.Status.FAILED;
-                durable &= commit(store, config, record);
-                return AiRunOutcome.failed(record, result.failure, durable);
-            }
-        }
 
-        // A run whose every chunk is terminal is finished even when some rows fell back — display
-        // composes those rows from the baseline layer. The record deliberately does not become
-        // COMPLETE in that case: satisfies() stays strict, so a half-AI answer can never be reused
-        // as if it were a full one.
-        record.status = record.satisfies(plan) ? AiPaidRecord.Status.COMPLETE
-                : anyChunkFellBack ? AiPaidRecord.Status.PARTIAL : record.status;
-        durable &= commit(store, config, record);
-        return AiRunOutcome.completed(record, durable);
+            // A run whose every chunk is terminal is finished even when some rows fell back —
+            // display composes those rows from the baseline layer. The record deliberately does
+            // not become COMPLETE in that case: satisfies() stays strict, so a half-AI answer can
+            // never be reused as if it were a full one.
+            record.status = record.satisfies(plan) ? AiPaidRecord.Status.COMPLETE
+                    : anyChunkFellBack ? AiPaidRecord.Status.PARTIAL : record.status;
+            if (!commit(store, config, record)) return storageCommitFailure(record);
+            return AiRunOutcome.completed(record, durable);
+        } finally {
+            if (store != null) store.release(config);
+        }
     }
 
     /** Result of one original or hierarchical child chunk. */
@@ -132,6 +141,10 @@ public final class AiLayerRunner {
         }
 
         if (previous == null || previous.status != AiChunkRecord.Status.REPLANNED) {
+            AiRecordStore.Reservation reservation = reserve(store, config, record);
+            if (!reservation.accepted()) {
+                return new ChunkRunResult(durable, false, storageFailure(reservation), null);
+            }
             AiChunkExecution execution;
             try {
                 execution = AiChunkRuntime.executeChunk(chunkArgs(args, chunk, previous));
@@ -146,7 +159,11 @@ public final class AiLayerRunner {
                 execution.record.status = AiChunkRecord.Status.REPLANNED;
                 record.putChunk(chunk.id, execution.record);
                 record.status = AiPaidRecord.Status.PARTIAL;
-                durable &= commit(store, config, record);
+                if (!commit(store, config, record)) {
+                    return new ChunkRunResult(false, false,
+                            AiChunkFailure.of(AiFailureReason.STORAGE_UNAVAILABLE), null);
+                }
+                durable = true;
                 previous = execution.record;
             } else {
                 record.putChunk(chunk.id, execution.record);
@@ -154,8 +171,11 @@ public final class AiLayerRunner {
                 for (AiResponseItem item : execution.items) record.putItem(item.id, item.text);
                 boolean fellBack = !execution.fallbackRowIds.isEmpty();
                 record.status = AiPaidRecord.Status.PARTIAL;
-                durable &= commit(store, config, record);
-                return ChunkRunResult.done(durable, fellBack);
+                if (!commit(store, config, record)) {
+                    return new ChunkRunResult(false, fellBack,
+                            AiChunkFailure.of(AiFailureReason.STORAGE_UNAVAILABLE), null);
+                }
+                return ChunkRunResult.done(true, fellBack);
             }
         }
 
@@ -185,8 +205,11 @@ public final class AiLayerRunner {
         completedParent.failure = null;
         record.putChunk(chunk.id, completedParent);
         record.status = AiPaidRecord.Status.PARTIAL;
-        durable &= commit(store, config, record);
-        return ChunkRunResult.done(durable, fellBack);
+        if (!commit(store, config, record)) {
+            return new ChunkRunResult(false, fellBack,
+                    AiChunkFailure.of(AiFailureReason.STORAGE_UNAVAILABLE), null);
+        }
+        return ChunkRunResult.done(true, fellBack);
     }
 
     private static AiRunOutcome stop(AiRecordStore store, AiRunConfig config, AiPaidRecord record,
@@ -195,12 +218,33 @@ public final class AiLayerRunner {
         // are valid answers that a resume must be allowed to keep.
         record.status = AiPaidRecord.Status.PARTIAL;
         record.lastAccessedAtMs = args.nowMs;
-        boolean stored = commit(store, config, record) && durable;
+        boolean stored = commit(store, config, record);
         return AiRunOutcome.cancelled(record, stored, reason);
     }
 
     private static boolean commit(AiRecordStore store, AiRunConfig config, AiPaidRecord record) {
         return store == null || store.commit(config, record);
+    }
+
+    private static AiRecordStore.Reservation reserve(AiRecordStore store, AiRunConfig config,
+                                                      AiPaidRecord record) {
+        return store == null ? AiRecordStore.Reservation.admitted()
+                : store.reserve(config, AiStorageBudget.maxRecordBytes(record));
+    }
+
+    private static AiChunkFailure storageFailure(AiRecordStore.Reservation reservation) {
+        return AiChunkFailure.of(reservation.status == AiRecordStore.Reservation.Status.FULL
+                ? AiFailureReason.STORAGE_FULL : AiFailureReason.STORAGE_UNAVAILABLE);
+    }
+
+    private static boolean isStorageFailure(AiChunkFailure failure) {
+        return failure != null && (failure.reason == AiFailureReason.STORAGE_FULL
+                || failure.reason == AiFailureReason.STORAGE_UNAVAILABLE);
+    }
+
+    private static AiRunOutcome storageCommitFailure(AiPaidRecord record) {
+        return AiRunOutcome.failed(record,
+                AiChunkFailure.of(AiFailureReason.STORAGE_UNAVAILABLE), false);
     }
 
     private static AiChunkPlanner.Input plannerInput(Args args) {

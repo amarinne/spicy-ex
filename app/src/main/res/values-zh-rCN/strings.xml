@@ -164,7 +164,7 @@
     <string name="settings_option_ai_translation_pipeline_google_draft">Google 草稿 → AI 优化</string>
     <string name="settings_label_ai_pronunciation_mode">AI 读音触发</string>
     <string name="settings_option_ai_pronunciation_mode_on_demand">手动</string>
-    <string name="settings_option_ai_pronunciation_mode_always_use_ai">自动补全缺失读音</string>
+    <string name="settings_option_ai_pronunciation_mode_always_use_ai">非拉丁语言自动补全</string>
     <string name="settings_label_ai_pronunciation_source">AI 读音流程</string>
     <string name="settings_option_ai_pronunciation_source_layered">歌词 + Google 读音 → AI 优化</string>
     <string name="settings_option_ai_pronunciation_source_ai_only">歌词 → AI 读音</string>
@@ -262,6 +262,8 @@
     <string name="lyrics_ai_failure_protocol">服务响应无效</string>
     <string name="lyrics_ai_failure_request">请求被拒绝</string>
     <string name="lyrics_ai_failure_refused">服务拒绝了请求</string>
+    <string name="lyrics_ai_failure_storage_full">付费 AI 存储空间已满</string>
+    <string name="lyrics_ai_failure_storage_unavailable">付费 AI 存储不可用</string>
     <string name="lyrics_ai_failure_truncated">响应被截断</string>
     <string name="lyrics_ai_failure_oversized">歌词或响应过大</string>
     <string name="lyrics_ai_failure_runtime">AI 运行环境不可用</string>

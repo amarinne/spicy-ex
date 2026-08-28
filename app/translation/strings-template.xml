@@ -370,6 +370,8 @@
     <string name="lyrics_ai_failure_protocol">Invalid provider response</string>
     <string name="lyrics_ai_failure_request">Request rejected</string>
     <string name="lyrics_ai_failure_refused">Provider refused the request</string>
+    <string name="lyrics_ai_failure_storage_full">Paid AI storage is full</string>
+    <string name="lyrics_ai_failure_storage_unavailable">Paid AI storage is unavailable</string>
     <string name="lyrics_ai_failure_truncated">Response truncated</string>
     <string name="lyrics_ai_failure_oversized">Lyrics or response too large</string>
     <string name="lyrics_ai_failure_runtime">AI runtime unavailable</string>

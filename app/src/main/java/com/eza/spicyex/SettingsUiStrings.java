@@ -229,7 +229,7 @@ public final class SettingsUiStrings {
         }
         if (setting == Settings.AI_PRONUNCIATION_MODE) {
             if ("On demand".equals(value)) return "Manual";
-            if ("Always use AI".equals(value)) return "Automatic gap fill";
+            if ("Always use AI".equals(value)) return "Automatic non-Latin fallback";
         }
         if (setting == Settings.AI_PRONUNCIATION_SOURCE) {
             if ("Layered".equals(value)) return "Lyrics + Google reading → AI refinement";

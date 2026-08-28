@@ -5,6 +5,10 @@ import android.net.Uri;
 
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.io.IOException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -24,14 +28,6 @@ import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 /** Fetch/fallback coordinator for native Spicy lyrics. */
 public final class LyricsRepository {
     private static final String TAG = "[SpotifyPlusSpicyRepository]";
-    private static final String SPICY_QUERY_URL = "https://api.spicylyrics.org/query";
-    private static final String SPICY_ORIGIN = "https://xpui.app.spotify.com";
-    private static final String SPICY_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Spotify/1.2.63 Chrome/132.0.6834.210 Electron/34.3.1 Safari/537.36";
-    // Compatibility pin, not an upstream-release tracker. Upstream is 6.2.3 as of 2026-07-25,
-    // but the server still accepts 6.1.1. Bump only after live server acceptance changes or an
-    // update payload proves this version is rejected; 5.x was previously retired that way.
-    // The value is sent in both client.version and SpicyLyrics-Version.
-    private static final String SPICY_VERSION = "6.1.1";
     private static final MediaType JSON = MediaType.parse("application/json");
     private static final int NATIVE_LYRICS_RETRY_LIMIT = 4;
     private static final long NATIVE_LYRICS_RETRY_DELAY_MS = 125;
@@ -61,6 +57,8 @@ public final class LyricsRepository {
             int generation,
             boolean sendToken,
             String accessToken,
+            int tokenGeneration,
+            AuthRecovery authRecovery,
             ResultCallback callback
     ) {
         String uri = track == null ? "" : safe(track.uri);
@@ -104,7 +102,8 @@ public final class LyricsRepository {
                 callback.onError(error);
             }
         };
-        fetchSpicyLyricsFallback(context, track, generation, sendToken, accessToken, gated);
+        fetchSpicyLyricsFallback(context, track, generation, sendToken, accessToken,
+                tokenGeneration, authRecovery, false, gated);
     }
 
     private void fetchSpicyLyricsFallback(
@@ -113,6 +112,9 @@ public final class LyricsRepository {
             int generation,
             boolean sendToken,
             String accessToken,
+            int tokenGeneration,
+            AuthRecovery authRecovery,
+            boolean authRetryUsed,
             ResultCallback callback
     ) {
         String trackId = trackIdFromUri(track == null ? "" : track.uri);
@@ -152,8 +154,7 @@ public final class LyricsRepository {
                     "Spicy token unavailable", chain, false);
             return;
         }
-        String requestVersion = SPICY_VERSION;
-        Request request = buildSpicyLyricsRequest(trackId, requestVersion, accessToken);
+        Request request = buildSpicyLyricsRequest(trackId, accessToken);
 
         http.newCall(request).enqueue(new Callback() {
             @Override
@@ -173,14 +174,33 @@ public final class LyricsRepository {
                         return;
                     }
                     String raw = response.body().string();
-                    LyricsDocument doc;
-                    try {
-                        doc = parser.parseSpicyLyrics(context, track, raw, false);
-                    } catch (Throwable parseErr) {
-                        if (chain.deliveredCachedSynced()) return;
-                        XposedBridge.log(TAG + " parse failed: " + parseErr);
-                        fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                "Spicy parse failed: " + parseErr.getMessage(), chain, hasToken);
+                    // M3: an HTTP-200 envelope can still carry an inner result status of 401/403.
+                    // Check the raw body first (the auth-error shape has no lyrics data, so the
+                    // parser would only throw), then the parsed document (covers packed payloads
+                    // whose status is invisible to a plain scan). Only token-bearing requests are
+                    // treated as auth rejections; anonymous rejections have no generation to
+                    // invalidate and must not retry.
+                    Integer authRejection = hasUsableToken(sendToken, accessToken)
+                            ? innerSpicyAuthRejectionStatus(raw) : null;
+                    LyricsDocument doc = null;
+                    if (authRejection == null) {
+                        try {
+                            doc = parser.parseSpicyLyrics(context, track, raw, false);
+                        } catch (Throwable parseErr) {
+                            if (chain.deliveredCachedSynced()) return;
+                            XposedBridge.log(TAG + " parse failed: " + parseErr);
+                            fetchNativeThenLrclib(context, track, generation, callback, 0,
+                                    "Spicy parse failed: " + parseErr.getMessage(), chain, hasToken);
+                            return;
+                        }
+                        if (hasUsableToken(sendToken, accessToken) && isInnerSpicyAuthRejection(doc)) {
+                            authRejection = doc.spicyQueryStatus;
+                        }
+                    }
+                    if (authRejection != null) {
+                        handleSpicyAuthRejection(context, track, generation, sendToken,
+                                tokenGeneration, authRecovery, authRetryUsed, callback,
+                                chain, hasToken, authRejection);
                         return;
                     }
                     LyricsProviderChain.Decision decision = chain.acceptSpicyNetwork(doc, raw);
@@ -224,26 +244,131 @@ public final class LyricsRepository {
         });
     }
 
+    /**
+     * M3: an inner Spicy result status of 401/403 rejects the token epoch this request was issued
+     * under. The coordinator-owned {@link AuthRecovery} seam tombstones exactly that generation via
+     * the token store and returns a replacement authorization only when a newer generation already
+     * exists. One retry maximum; with no newer generation the request proceeds to the normal
+     * native/LRCLIB fallback instead of looping.
+     */
+    private void handleSpicyAuthRejection(
+            Context context,
+            SpotifyTrack track,
+            int generation,
+            boolean sendToken,
+            int rejectedTokenGeneration,
+            AuthRecovery authRecovery,
+            boolean authRetryUsed,
+            ResultCallback callback,
+            LyricsProviderChain chain,
+            boolean hasToken,
+            int rejectionStatus
+    ) {
+        XposedBridge.log(TAG + " inner Spicy auth rejection status=" + rejectionStatus
+                + " tokenGeneration=" + rejectedTokenGeneration
+                + (authRetryUsed ? " retryAlreadyUsed" : ""));
+        Authorization replacement = authRecovery == null
+                ? null : authRecovery.afterAuthRejection(rejectedTokenGeneration);
+        if (chain.deliveredCachedSynced()) return; // cached synced already delivered; nothing to do
+        if (shouldRetryWithNewerGeneration(rejectedTokenGeneration, authRetryUsed, replacement)) {
+            XposedBridge.log(TAG + " retrying Spicy once with newer token generation="
+                    + replacement.generation());
+            fetchSpicyLyricsFallback(context, track, generation, sendToken,
+                    replacement.token(), replacement.generation(), authRecovery, true, callback);
+            return;
+        }
+        fetchNativeThenLrclib(context, track, generation, callback, 0,
+                "Spicy auth rejected HTTP " + rejectionStatus, chain, hasToken);
+    }
+
+    /**
+     * Pure M3 retry guard: retry at most once, only against a genuinely different (newer) token
+     * generation. A null replacement (no newer generation exists) or an already-used retry routes
+     * the request to the native/LRCLIB fallback, so an auth failure can never loop.
+     */
+    static boolean shouldRetryWithNewerGeneration(
+            int rejectedTokenGeneration, boolean authRetryUsed, Authorization replacement) {
+        return replacement != null
+                && !authRetryUsed
+                && replacement.generation() != rejectedTokenGeneration;
+    }
+
+    /**
+     * Scans a raw Spicy HTTP-200 body for an inner query-result status of 401/403 (the shape
+     * {@code {"queries":[{"result":{"status":401,...}}]}}). Returns the rejecting status, or null
+     * when the body is absent, malformed, or carries no rejecting inner status. Statuses outside
+     * the query-result objects are deliberately ignored to avoid false positives.
+     */
+    static Integer innerSpicyAuthRejectionStatus(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return null;
+        try {
+            return innerAuthRejectionInQueries(JsonParser.parseString(raw));
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Integer innerAuthRejectionInQueries(JsonElement root) {
+        if (root == null || !root.isJsonObject()) return null;
+        JsonObject object = root.getAsJsonObject();
+        JsonArray queries = Json.optArray(object, "queries", "Queries");
+        if (queries != null) {
+            for (JsonElement queryElement : queries) {
+                Integer rejection = innerAuthRejectionInResult(queryElement);
+                if (rejection != null) return rejection;
+            }
+            return null;
+        }
+        return innerAuthRejectionInResult(object);
+    }
+
+    private static Integer innerAuthRejectionInResult(JsonElement queryElement) {
+        if (queryElement == null || !queryElement.isJsonObject()) return null;
+        JsonObject result = Json.optObject(queryElement.getAsJsonObject(), "result", "Result");
+        if (result == null) return null;
+        Integer status = optStatusInteger(result);
+        return isAuthRejectionStatus(status) ? status : null;
+    }
+
+    private static Integer optStatusInteger(JsonObject result) {
+        JsonElement element = Json.optElement(result, "httpStatus", "HttpStatus", "status", "Status");
+        if (element == null) return null;
+        try {
+            return element.getAsInt();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** Pure M3 seam: inner Spicy query status 401/403 on a parsed document means auth rejection. */
+    static boolean isInnerSpicyAuthRejection(LyricsDocument doc) {
+        return doc != null && isAuthRejectionStatus(doc.spicyQueryStatus);
+    }
+
+    private static boolean isAuthRejectionStatus(Integer status) {
+        return status != null && (status == 401 || status == 403);
+    }
+
     private void probeSpicyVersionOnce() {
-        final String requestVersion = SPICY_VERSION;
+        final String requestVersion = SpicyLyricsRequestContract.UPSTREAM_VERSION;
         if (!SpicyVersionProbeState.beginProbe(requestVersion)) return;
 
         RequestBody body = RequestBody.create(
                 SpicyVersionProbeState.buildExtVersionQueryBody(requestVersion).getBytes(java.nio.charset.StandardCharsets.UTF_8),
                 JSON);
         Request request = new Request.Builder()
-                .url(SPICY_QUERY_URL)
+                .url(SpicyLyricsRequestContract.SPICY_QUERY_URL)
                 .post(body)
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Content-Type", "application/json")
-                .header("Origin", SPICY_ORIGIN)
-                .header("Referer", SPICY_ORIGIN + "/")
+                .header("Origin", SpicyLyricsRequestContract.SPICY_ORIGIN)
+                .header("Referer", SpicyLyricsRequestContract.SPICY_ORIGIN + "/")
                 .header("Sec-Fetch-Dest", "empty")
                 .header("Sec-Fetch-Mode", "cors")
                 .header("Sec-Fetch-Site", "cross-site")
                 .header("SpicyLyrics-Version", requestVersion)
-                .header("User-Agent", SPICY_USER_AGENT)
+                .header("User-Agent", SpicyLyricsRequestContract.SPICY_USER_AGENT)
                 .build();
 
         http.newCall(request).enqueue(new Callback() {
@@ -447,33 +572,17 @@ public final class LyricsRepository {
         callback.onError(error);
     }
 
-    static String buildSpicyLyricsQueryBody(String trackId, String version) {
-        return "{\"queries\":[{\"operation\":\"lyrics\",\"variables\":{\"id\":\"" + escapeJson(trackId) + "\",\"auth\":\"SpicyLyrics-WebAuth\"}}],\"client\":{\"version\":\"" + escapeJson(version) + "\"}}";
+    static String buildSpicyLyricsQueryBody(String trackId) {
+        return new String(SpicyLyricsRequestContract.buildLyricsQueryBytes(trackId),
+                java.nio.charset.StandardCharsets.UTF_8);
     }
 
     static boolean hasUsableToken(boolean sendToken, String accessToken) {
-        return sendToken && !isBlank(accessToken) && !"0".equals(accessToken);
+        return SpicyLyricsRequestContract.hasUsableToken(sendToken, accessToken);
     }
 
-    static Request buildSpicyLyricsRequest(String trackId, String requestVersion, String accessToken) {
-        RequestBody body = RequestBody.create(
-                buildSpicyLyricsQueryBody(trackId, requestVersion).getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                JSON);
-        Request.Builder builder = new Request.Builder()
-                .url(SPICY_QUERY_URL)
-                .post(body)
-                .header("Accept", "*/*")
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .header("Content-Type", "application/json")
-                .header("Origin", SPICY_ORIGIN)
-                .header("Referer", SPICY_ORIGIN + "/")
-                .header("Sec-Fetch-Dest", "empty")
-                .header("Sec-Fetch-Mode", "cors")
-                .header("Sec-Fetch-Site", "cross-site")
-                .header("SpicyLyrics-Version", requestVersion)
-                .header("User-Agent", SPICY_USER_AGENT);
-        if (hasUsableToken(true, accessToken)) builder.header("SpicyLyrics-WebAuth", "Bearer " + accessToken);
-        return builder.build();
+    static Request buildSpicyLyricsRequest(String trackId, String accessToken) {
+        return SpicyLyricsRequestContract.buildLyricsRequest(trackId, accessToken);
     }
 
     private static String sourceLabel(LyricsDocument doc, String fallback) {
@@ -485,14 +594,55 @@ public final class LyricsRepository {
         return fallback;
     }
 
-    private static String escapeJson(String value) {
-        if (value == null) return "";
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
     public interface ResultCallback {
         void onSuccess(LyricsDocument document);
         void onError(String error);
+    }
+
+    /**
+     * M3 seam implemented hook-side (the lyrics layer must never depend on hooks). Reports that an
+     * inner Spicy 401/403 rejected the request issued under {@code rejectedTokenGeneration}; the
+     * implementation tombstones exactly that generation in the token store and returns a
+     * replacement {@link Authorization} only when a newer usable generation already exists, or
+     * {@code null} to let the caller proceed to the native/LRCLIB fallback.
+     */
+    public interface AuthRecovery {
+        Authorization afterAuthRejection(int rejectedTokenGeneration);
+    }
+
+    /**
+     * Immutable authorization snapshot for one retried request. The token text is request-only:
+     * it never enters keys, logs, errors, or {@code toString}.
+     */
+    public static final class Authorization {
+        private final String token;
+        private final int generation;
+
+        private Authorization(String token, int generation) {
+            this.token = token == null ? "" : token;
+            this.generation = generation;
+        }
+
+        public static Authorization of(String token, int generation) {
+            return new Authorization(token, generation);
+        }
+
+        /** Token text for the retried request header; never logged, keyed, or stringified. */
+        public String token() {
+            return token;
+        }
+
+        /** Non-secret generation identifying this token epoch. */
+        public int generation() {
+            return generation;
+        }
+
+        /** Token-free diagnostics; the text never appears here. */
+        @Override
+        public String toString() {
+            return "Authorization{generation=" + generation
+                    + ", tokenLength=" + token.length() + "}";
+        }
     }
 
     public interface Parser {

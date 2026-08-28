@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import com.eza.spicyex.Settings;
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.AppliedLine;
@@ -139,11 +140,15 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
         String fingerprint = LyricsDocumentProcessor.publicationFingerprint(source);
         if (fingerprint.equals(publishedFingerprint)) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
+            documentSkipped("unchanged_fingerprint");
             return;
         }
         publishedFingerprint = fingerprint;
         LyricsDocument workerSnapshot = LyricsDocument.copyOf(source);
-        if (workerSnapshot == null) return;
+        if (workerSnapshot == null) {
+            documentSkipped("copy_failed");
+            return;
+        }
         LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
         int generation = snapshot.generation;
         String trackUri = snapshot.trackUri;
@@ -169,6 +174,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                         XposedBridge.log("[SpotifyPlusBridge] document publication superseded"
                                 + " generation=" + generation + " revision=" + revision
                                 + " current=" + documentRevision);
+                        documentSkipped("superseded");
                         return;
                     }
                     publisher.publishDocument(metadata, encoded);
@@ -178,6 +184,11 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                         + e.getClass().getSimpleName());
             }
         });
+    }
+
+    private static void documentSkipped(String reason) {
+        Diagnostics.event("hyperglow_bridge", "document_skipped",
+                Diagnostics.context("reason", reason));
     }
 
     /**

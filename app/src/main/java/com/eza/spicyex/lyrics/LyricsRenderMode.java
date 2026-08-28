@@ -14,4 +14,10 @@ public final class LyricsRenderMode {
     public static boolean isStatic(LyricsDocument document) {
         return document == null || !LyricsSourcePolicy.isSynced(document.type);
     }
+
+    /** Preserve timing trust when a surface renders a projected document. */
+    static void copyTimingType(LyricsDocument source, LyricsDocument projection) {
+        if (projection == null) return;
+        projection.type = source == null ? "Unknown" : source.type;
+    }
 }

@@ -3,11 +3,8 @@ package com.eza.spicyex.hooks;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.isBlank;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 
-import android.app.Activity;
 import android.content.Context;
 import android.net.Uri;
-
-import com.eza.spicyex.References;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -20,10 +17,10 @@ import de.robv.android.xposed.XposedHelpers;
 
 /** Captures Spotify access tokens from OkHttp headers and Spotify auth response objects. */
 final class AuthTokenCaptureHook {
-    private static final String PREFS_MAIN = "SpotifyPlus";
-    private static final String KEY_LAST_SPOTIFY_ACCESS_TOKEN = "native_spotify_access_token";
     private static final int AUTH_REQUEST_DEBUG_LIMIT = 20;
     private static final int AUTH_HEADER_DEBUG_LIMIT = 24;
+    /** Upper bound for a plausible observed expires-in value (seconds); anything beyond is ignored. */
+    private static final long MAX_PLAUSIBLE_EXPIRES_IN_SECONDS = 30L * 24L * 3600L;
     // Spotify's auth-token classes (kept names; fields are proto-style). The access token lives in
     // EsAccessToken$AccessToken.token_ (obfuscated getter), which the OkHttp-header capture misses.
     private static final String[] SPOTIFY_AUTH_TOKEN_CLASSES = {
@@ -160,55 +157,17 @@ final class AuthTokenCaptureHook {
         if (bearer || authHeaderDebugCount < AUTH_HEADER_DEBUG_LIMIT) {
             authHeaderDebugCount++;
             NativeSpicyLyricsHook.dbg("captureAuthHeader",
-                    "authorization hasValue=true bearer=" + bearer + " len=" + headerValue.length());
+                    "authorization hasValue=true bearer=" + bearer);
         }
         if (!bearer) return;
         String token = headerValue.replaceFirst("(?i)^bearer", "").trim();
         if (token.isEmpty() || token.equals("0")) return;
-        String old = References.accessToken;
-        if (old != null && old.equals(token)) return;
-        References.accessToken = token;
-        persistAccessToken(token);
-        XposedBridge.log(NativeSpicyLyricsHook.TAG + " captured Spotify access token len=" + token.length());
-    }
-
-    private static Context appContext() {
-        Activity activity = References.currentActivity();
-        if (activity != null) return activity.getApplicationContext();
-        try {
-            Object app = XposedHelpers.callStaticMethod(
-                    XposedHelpers.findClass("android.app.ActivityThread", null), "currentApplication");
-            if (app instanceof Context) return ((Context) app).getApplicationContext();
-        } catch (Throwable ignored) {
-        }
-        return null;
-    }
-
-    private static void persistAccessToken(String token) {
-        Context context = appContext();
-        if (context == null || isBlank(token)) return;
-        try {
-            context.getSharedPreferences(PREFS_MAIN, Context.MODE_PRIVATE)
-                    .edit()
-                    .putString(KEY_LAST_SPOTIFY_ACCESS_TOKEN, token)
-                    .apply();
-        } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " token persist failed: " + t);
-        }
+        // Header captures carry no observed expiry. All capture paths share SpotifyTokenStore.
+        SpotifyTokenStore.store(token, System.currentTimeMillis(), 0L, "okhttp:authorization-header");
     }
 
     static void restorePersistedAccessToken(Context context) {
-        if (context == null || !isBlank(References.accessToken)) return;
-        try {
-            String stored = context.getSharedPreferences(PREFS_MAIN, Context.MODE_PRIVATE)
-                    .getString(KEY_LAST_SPOTIFY_ACCESS_TOKEN, "");
-            if (isBlank(stored) || "0".equals(stored)) return;
-            References.accessToken = stored;
-            XposedBridge.log(NativeSpicyLyricsHook.TAG
-                    + " restored persisted Spotify access token len=" + stored.length());
-        } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " token restore failed: " + t);
-        }
+        SpotifyTokenStore.restore(context);
     }
 
     // Probe Spotify's auth-token classes directly - the OkHttp-header capture misses the token on
@@ -256,15 +215,19 @@ final class AuthTokenCaptureHook {
 
     // Capture only the access-token field (token_/accessToken), recursing one level into nested
     // objects (AccessTokenResponse -> AccessToken.token_). Never grabs arbitrary long strings.
+    // Sibling expires-in/expiry fields of the same object are picked up as best-effort observed
+    // expiry and persisted alongside the token so restores can apply the expiry freshness rule.
     private static void captureAccessTokenObject(Object tokenObject, String source, int depth) {
         if (tokenObject == null || depth > 2) return;
         if (tokenObject instanceof String) {
-            captureAccessTokenCandidate((String) tokenObject, source);
+            captureAccessTokenCandidate((String) tokenObject, 0L, source);
             return;
         }
         Class<?> clazz = tokenObject.getClass();
         String cn = clazz.getName();
         if (clazz.isArray() || cn.startsWith("java.") || cn.startsWith("android.") || cn.startsWith("kotlin.")) return;
+        String tokenCandidate = null;
+        Long expiresInSeconds = null;
         while (clazz != null && clazz != Object.class) {
             for (Field field : clazz.getDeclaredFields()) {
                 if (Modifier.isStatic(field.getModifiers())) continue;
@@ -272,8 +235,13 @@ final class AuthTokenCaptureHook {
                     field.setAccessible(true);
                     Object value = field.get(tokenObject);
                     if (value instanceof String) {
-                        if (isAccessTokenFieldName(field.getName())) {
-                            captureAccessTokenCandidate((String) value, source + "#" + field.getName());
+                        if (tokenCandidate == null && isAccessTokenFieldName(field.getName())) {
+                            tokenCandidate = (String) value;
+                        }
+                    } else if (value instanceof Number) {
+                        if (expiresInSeconds == null) {
+                            expiresInSeconds = observedExpiresInSeconds(
+                                    field.getName(), ((Number) value).longValue());
                         }
                     } else if (value != null && depth < 2) {
                         captureAccessTokenObject(value, source + "#" + field.getName(), depth + 1);
@@ -283,6 +251,26 @@ final class AuthTokenCaptureHook {
             }
             clazz = clazz.getSuperclass();
         }
+        if (tokenCandidate != null) {
+            captureAccessTokenCandidate(tokenCandidate,
+                    expiresInSeconds == null ? 0L : expiresInSeconds, source);
+        }
+    }
+
+    // Best-effort observed expiry from sibling fields of Spotify auth response objects. Returns
+    // seconds-until-expiry only for plausible values under a recognized field name; unknown fields,
+    // implausible magnitudes, and computed past expiries all yield null (expiry stays unknown).
+    private static Long observedExpiresInSeconds(String fieldName, long rawValue) {
+        if (isBlank(fieldName) || rawValue <= 0) return null;
+        String lower = fieldName.toLowerCase(Locale.ROOT);
+        if (!lower.contains("expire") && !lower.contains("expiry") && !lower.contains("expires")) return null;
+        if (rawValue > 1_000_000_000_000L) {
+            // Epoch milliseconds: convert to seconds remaining at capture time.
+            long until = (rawValue - System.currentTimeMillis()) / 1000L;
+            return until > 0 && until <= MAX_PLAUSIBLE_EXPIRES_IN_SECONDS ? until : null;
+        }
+        if (rawValue <= MAX_PLAUSIBLE_EXPIRES_IN_SECONDS) return rawValue;
+        return null;
     }
 
     private static boolean isAccessTokenFieldName(String name) {
@@ -293,14 +281,16 @@ final class AuthTokenCaptureHook {
         return false;
     }
 
-    private static void captureAccessTokenCandidate(String candidate, String source) {
+    private static void captureAccessTokenCandidate(String candidate, long expiresInSeconds, String source) {
         if (isBlank(candidate)) return;
         String token = candidate.trim();
         if (token.toLowerCase(Locale.ROOT).startsWith("bearer ")) {
             token = token.substring("bearer ".length()).trim();
         }
         if (!looksLikeSpotifyAccessToken(token)) return;
-        storeSpotifyAccessToken(token, source);
+        long now = System.currentTimeMillis();
+        long expiresAtMillis = expiresInSeconds > 0 ? now + expiresInSeconds * 1000L : 0L;
+        SpotifyTokenStore.store(token, now, expiresAtMillis, source);
     }
 
     private static boolean looksLikeSpotifyAccessToken(String token) {
@@ -312,15 +302,5 @@ final class AuthTokenCaptureHook {
         String lower = token.toLowerCase(Locale.ROOT);
         return !lower.equals("bearer") && !lower.equals("access_token")
                 && !lower.equals("token") && !lower.startsWith("spotify:");
-    }
-
-    private static void storeSpotifyAccessToken(String token, String source) {
-        if (!looksLikeSpotifyAccessToken(token)) return;
-        String old = References.accessToken;
-        if (old != null && old.equals(token)) return;
-        References.accessToken = token;
-        persistAccessToken(token);
-        XposedBridge.log(NativeSpicyLyricsHook.TAG
-                + " captured Spotify access token source=" + source + " len=" + token.length());
     }
 }

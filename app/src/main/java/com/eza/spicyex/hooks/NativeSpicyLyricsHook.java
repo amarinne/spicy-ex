@@ -12,6 +12,7 @@ import com.eza.spicyex.References;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.CacheClearKind;
+import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
@@ -81,6 +82,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             // At process start, not only on fullscreen open: a user who never opens the fullscreen
             // screen would otherwise keep derived data from a retired cache epoch indefinitely.
             DeployCacheCleaner.ensureCleared(applicationContext);
+            // Transition B515 paid records before any AI lane can dispatch. This only opens local
+            // storage; it performs no provider request and leaves the source XML untouched.
+            AIPaidArtifactCache.prepare(applicationContext);
             lyricsSessionManager.start();
             bridgeCoordinator = new SpicyLyricBridgeCoordinator(
                     lyricsSessionManager, applicationContext);
@@ -164,7 +168,8 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     }
 
     @Override
-    public boolean requestAiLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer) {
+    public com.eza.spicyex.lyrics.ai.AiRequestStartResult requestAiLyricsLayer(
+            com.eza.spicyex.lyrics.session.LayerKind layer) {
         return lyricsSessionManager.requestAiLayer(layer);
     }
 

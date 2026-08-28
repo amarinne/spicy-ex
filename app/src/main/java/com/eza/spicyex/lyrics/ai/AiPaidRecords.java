@@ -20,9 +20,34 @@ import com.eza.spicyex.lyrics.session.PaidArtifactIdentity;
 public final class AiPaidRecords implements AiRecordStore {
 
     private final Context context;
+    private AIPaidArtifactCache.Reservation activeReservation;
 
     public AiPaidRecords(Context context) {
         this.context = context;
+    }
+
+    @Override
+    public Reservation reserve(AiRunConfig config, long maxRecordBytes) {
+        if (context == null || config == null) {
+            return Reservation.rejected(Reservation.Status.UNAVAILABLE, "storage-unavailable");
+        }
+        PaidArtifactIdentity identity = config.recordIdentity();
+        if (identity == null || !identity.isComplete()) {
+            return Reservation.rejected(Reservation.Status.UNAVAILABLE, "incomplete-identity");
+        }
+        AIPaidArtifactCache.Reservation next = AIPaidArtifactCache.reserve(
+                context, identity, maxRecordBytes, activeReservation);
+        if (next.accepted()) activeReservation = next;
+        switch (next.status) {
+            case ADMITTED:
+                return Reservation.admitted();
+            case FULL:
+                return Reservation.rejected(Reservation.Status.FULL, next.reason);
+            case BUSY:
+                return Reservation.rejected(Reservation.Status.BUSY, next.reason);
+            default:
+                return Reservation.rejected(Reservation.Status.UNAVAILABLE, next.reason);
+        }
     }
 
     @Override
@@ -48,13 +73,20 @@ public final class AiPaidRecords implements AiRecordStore {
         PaidArtifactIdentity identity = config.recordIdentity();
         if (identity == null || !identity.isComplete()) return false;
         AIPaidArtifactCache.Write write =
-                AIPaidArtifactCache.put(context, identity, AiPaidRecordCodec.encode(record));
+                AIPaidArtifactCache.put(context, identity, AiPaidRecordCodec.encode(record),
+                        activeReservation);
         if (!write.durable) {
             // The store never evicts to make room, so a rejected write means it is full or the
             // payload is too large. Either way the caller must not claim the result was saved.
             Diagnostics.event("AiPaidRecords", "paid_write_rejected:" + write.reason);
         }
         return write.durable;
+    }
+
+    @Override
+    public void release(AiRunConfig config) {
+        AIPaidArtifactCache.release(context, activeReservation);
+        activeReservation = null;
     }
 
     @Override

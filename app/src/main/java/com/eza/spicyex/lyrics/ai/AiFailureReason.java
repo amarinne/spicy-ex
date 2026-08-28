@@ -14,6 +14,10 @@ public enum AiFailureReason {
     REQUEST_REJECTED,
     /** The provider declined. Read from its finish state, never guessed from the text. */
     PROVIDER_REFUSED,
+    /** The paid ledger has no safe room for another provider dispatch. */
+    STORAGE_FULL,
+    /** The paid ledger could not reserve or commit durable accounting. */
+    STORAGE_UNAVAILABLE,
     /** Output hit the cap mid-document. */
     TRUNCATED,
     OVERSIZED

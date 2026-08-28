@@ -10,9 +10,12 @@ import com.google.gson.JsonObject;
 
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The paid store's contract: an accepted AI artifact is addressable by everything it depends on,
@@ -89,53 +92,57 @@ public class PaidArtifactStoreTest {
     // --- admission ----------------------------------------------------------
 
     @Test
-    public void aFullStoreRejectsTheWriteInsteadOfEvicting() {
-        AIPaidArtifactCache.Admission first = AIPaidArtifactCache.admit("", "a", 10L, 2, 1000L);
-        AIPaidArtifactCache.Admission second = AIPaidArtifactCache.admit(first.nextIndex, "b", 10L, 2, 1000L);
-        AIPaidArtifactCache.Admission third = AIPaidArtifactCache.admit(second.nextIndex, "c", 10L, 2, 1000L);
-
-        assertTrue(first.admitted);
-        assertTrue(second.admitted);
-        assertFalse(third.admitted);
-        assertEquals("store-full-entries", third.reason);
-        // The two paid artifacts already accepted are still indexed.
-        assertTrue(second.nextIndex.contains("a|10"));
-        assertTrue(second.nextIndex.contains("b|10"));
+    public void entryCountDoesNotRejectWhenBytesFit() {
+        assertEquals("", AIPaidArtifactCache.admissionReason(999L, 1L, 1_000L));
     }
 
     @Test
     public void theByteBoundAlsoRejectsRatherThanMakingRoom() {
-        AIPaidArtifactCache.Admission first = AIPaidArtifactCache.admit("", "a", 60L, 10, 100L);
-        AIPaidArtifactCache.Admission second = AIPaidArtifactCache.admit(first.nextIndex, "b", 60L, 10, 100L);
-        assertTrue(first.admitted);
-        assertFalse(second.admitted);
-        assertEquals("store-full-bytes", second.reason);
+        assertEquals("store-full-bytes",
+                AIPaidArtifactCache.admissionReason(60L, 60L, 100L));
     }
 
     @Test
     public void anArtifactBiggerThanTheStoreIsRejected() {
-        AIPaidArtifactCache.Admission admission = AIPaidArtifactCache.admit("", "a", 500L, 10, 100L);
-        assertFalse(admission.admitted);
-        assertEquals("artifact-larger-than-store", admission.reason);
+        assertEquals("artifact-larger-than-store",
+                AIPaidArtifactCache.admissionReason(0L, 500L, 100L));
     }
 
     @Test
     public void rewritingOneIdentityIsMeasuredAgainstItsOwnStoredSize() {
-        AIPaidArtifactCache.Admission first = AIPaidArtifactCache.admit("", "a", 90L, 10, 100L);
-        assertTrue(first.admitted);
-        // Room for both would need 185 bytes; replacing "a" needs only 95.
-        AIPaidArtifactCache.Admission rewrite = AIPaidArtifactCache.admit(first.nextIndex, "a", 95L, 10, 100L);
-        assertTrue(rewrite.admitted);
-        assertEquals("a|95", rewrite.nextIndex);
+        // The caller excludes the rewritten identity from otherBytes.
+        assertEquals("", AIPaidArtifactCache.admissionReason(0L, 95L, 100L));
     }
 
     @Test
-    public void anUnreadableIndexRowDoesNotBlockAdmission() {
-        AIPaidArtifactCache.Admission admission =
-                AIPaidArtifactCache.admit("a|notanumber\nb|10", "c", 10L, 10, 1000L);
-        assertTrue(admission.admitted);
-        assertTrue(admission.nextIndex.contains("b|10"));
-        assertTrue(admission.nextIndex.contains("c|10"));
+    public void admissionArithmeticSaturatesInsteadOfOverflowing() {
+        assertEquals("store-full-bytes", AIPaidArtifactCache.admissionReason(
+                Long.MAX_VALUE - 5L, 10L, Long.MAX_VALUE - 1L));
+    }
+
+    // --- v515 transition ----------------------------------------------------
+
+    @Test
+    public void migrationPreservesEveryPaidStringByteForByteInStableOrder() {
+        Map<String, Object> prefs = new HashMap<>();
+        prefs.put("paid-v1|z", "not-json");
+        prefs.put("paid-v1|a", "{\"layer\":\"MEANING\",\"payload\":\"é\"}");
+        prefs.put("__paid_index", "paid-v1|a|99");
+        prefs.put("paid-v1|number", 3L);
+        prefs.put("unrelated", "ignored");
+
+        List<AIPaidArtifactCache.MigrationRow> rows =
+                AIPaidArtifactCache.migrationRows(prefs);
+
+        assertEquals(2, rows.size());
+        assertEquals("paid-v1|a", rows.get(0).key);
+        assertEquals("MEANING", rows.get(0).layer);
+        assertEquals("{\"layer\":\"MEANING\",\"payload\":\"é\"}",
+                new String(rows.get(0).valueBytes, StandardCharsets.UTF_8));
+        assertEquals("paid-v1|z", rows.get(1).key);
+        assertEquals("", rows.get(1).layer);
+        assertEquals("not-json",
+                new String(rows.get(1).valueBytes, StandardCharsets.UTF_8));
     }
 
     // --- routing ------------------------------------------------------------

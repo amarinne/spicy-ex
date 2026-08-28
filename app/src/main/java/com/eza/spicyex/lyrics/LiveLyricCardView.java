@@ -80,6 +80,7 @@ public final class LiveLyricCardView extends LinearLayout {
     public void renderLine(Activity activity, AppliedLine line, LyricsRenderConfig config,
                            long positionMs, float deltaSeconds,
                            LyricsDocument document,
+                           LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider,
                            boolean animateMount) {
         if (activity == null || line == null || config == null) {
             clear();
@@ -90,7 +91,7 @@ public final class LiveLyricCardView extends LinearLayout {
             LyricsSurfaceRowPlanner.RowPlan rowPlan = LyricsSurfaceRowPlanner.plan(
                     line, document, LyricsSurfaceRowPlanner.SurfacePolicy.liveCard(liveConfig));
             String key = rowConfigKey(liveConfig, rowPlan);
-            mountLine(activity, line, rowPlan, liveConfig, animateMount);
+            mountLine(activity, line, rowPlan, liveConfig, romanizedWordProvider, animateMount);
             mountedConfigKey = key;
         }
         AppliedLine renderLine = mountedLine == null ? mountedRowPlan.line : mountedLine;
@@ -100,6 +101,10 @@ public final class LiveLyricCardView extends LinearLayout {
         }
         oneRowDocument.appliedLines.clear();
         oneRowDocument.appliedLines.add(renderLine);
+        // LyricsFrameRenderer fails closed to a static frame unless the document carries a
+        // trusted timing type. This adapter uses a reusable one-row projection, so preserve the
+        // source document's timing trust instead of leaving the projection as "Unknown".
+        LyricsRenderMode.copyTimingType(document, oneRowDocument);
         frameRenderer.applySynced(
                 oneRowDocument,
                 ACTIVE_ROW,
@@ -149,14 +154,16 @@ public final class LiveLyricCardView extends LinearLayout {
     }
 
     private void mountLine(Activity activity, AppliedLine sourceLine, LyricsSurfaceRowPlanner.RowPlan rowPlan,
-                           LyricsRenderConfig config, boolean animateMount) {
+                           LyricsRenderConfig config,
+                           LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider,
+                           boolean animateMount) {
         if (rowPlan == null || rowPlan.line == null) return;
         mountedOverflowMode = config.liveCardOverflowMode;
         LinearLayout nextHost = replaceRowHost(animateMount, config.liveCardTransitionMode);
         clearLineState(rowPlan.line);
         LyricsTextFactory textFactory = new LyricsTextFactory(activity, SpotifyPlusConfig.from(activity));
         LyricsRowViewFactory factory = new LyricsRowViewFactory(activity, textFactory);
-        View row = factory.build(rowPlan.line, rowPlan.options, null);
+        View row = factory.build(rowPlan.line, rowPlan.options, romanizedWordProvider, null);
         installLineOverflowViewports(row, rowPlan.line, rowPlan.options.wrapLongLines);
         nextHost.addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         if (animateMount) animateIn(nextHost, config.liveCardTransitionMode);

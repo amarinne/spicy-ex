@@ -418,7 +418,8 @@ public final class LyricsShellSettings {
 
     private static String normalizeLiveCardLineSyncFillMode(String mode) {
         String value = safe(mode);
-        if ("Left to right (sentence)".equals(value)) return value;
+        if ("Left to right (block)".equals(value)
+                || "Left to right (sentence)".equals(value)) return value;
         return "Top to bottom";
     }
 

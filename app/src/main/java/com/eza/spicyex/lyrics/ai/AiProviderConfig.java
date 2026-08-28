@@ -42,7 +42,7 @@ public final class AiProviderConfig {
                             boolean iteration, boolean baselineRefinement) {
         this(layer, endpoint, providerVersion, model, targetLang, promptVersion,
                 AiContract.TEMPERATURE, AiContract.CONTEXT_MODE, false, iteration,
-                baselineRefinement, 0);
+                baselineRefinement, defaultOutputTokens(model));
     }
 
     private AiProviderConfig(LayerKind layer, String endpoint, String providerVersion,
@@ -60,7 +60,7 @@ public final class AiProviderConfig {
         this.repair = repair;
         this.iteration = iteration;
         this.baselineRefinement = baselineRefinement;
-        this.maxOutputTokens = maxOutputTokens;
+        this.maxOutputTokens = clampOutputTokens(model, maxOutputTokens);
     }
 
     /** The per-attempt copy: same configuration, this attempt's repair flag and output cap. */
@@ -70,14 +70,24 @@ public final class AiProviderConfig {
                 maxOutputTokens);
     }
 
+    private static int defaultOutputTokens(AiModelDescriptor model) {
+        return clampOutputTokens(model, AiContract.MAX_CONFIGURED_OUTPUT_TOKENS);
+    }
+
+    private static int clampOutputTokens(AiModelDescriptor model, int requested) {
+        int modelLimit = model == null
+                ? AiContract.MAX_CONFIGURED_OUTPUT_TOKENS : model.outputTokenLimit;
+        int positive = requested > 0 ? requested : AiContract.MAX_CONFIGURED_OUTPUT_TOKENS;
+        return Math.max(1, Math.min(Math.min(modelLimit, positive),
+                AiContract.MAX_CONFIGURED_OUTPUT_TOKENS));
+    }
+
     /**
      * The output cap for a call: the contract's per-request ceiling, or the model's own limit when
      * that is lower.
      */
     public int callOutputTokens() {
-        int modelLimit = model == null
-                ? AiContract.MAX_CONFIGURED_OUTPUT_TOKENS : model.outputTokenLimit;
-        return Math.min(modelLimit, AiContract.MAX_CONFIGURED_OUTPUT_TOKENS);
+        return maxOutputTokens;
     }
 
     /** The system turn this configuration produces for the given attempt. */
