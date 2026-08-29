@@ -178,7 +178,7 @@ public final class LyricsSurfaceRowPlanner {
         }
         if (!needsSyntheticWords) return;
         if (!line.words.isEmpty()) return;
-        if (isJapaneseLine(line)) return;
+        if (isJapaneseLine(line) && !policy.lineLevelFillSentence) return;
         String text = line.text == null ? "" : line.text.trim();
         if (text.isEmpty()) return;
         if (needsAttachedRomanization
@@ -187,9 +187,26 @@ public final class LyricsSurfaceRowPlanner {
                 && isBlank(line.romanizedText) && line.readingRenderPlan == null) {
             return;
         }
-        if (!text.contains(" ")) return;
-        String[] parts = text.split("\\s+");
-        if (parts.length < 2) return;
+        String[] parts;
+        if (isJapaneseLine(line)) {
+            List<DisplayLayoutGroup> groups = DisplayLayoutGroup.forLine("ja", text, line.japaneseReading);
+            if (groups.size() < 2) return;
+            ArrayList<String> japaneseParts = new ArrayList<>();
+            int sourceCursor = 0;
+            for (DisplayLayoutGroup group : groups) {
+                if (group == null || group.end <= group.start) continue;
+                if (group.start > sourceCursor) japaneseParts.add(text.substring(sourceCursor, group.start));
+                japaneseParts.add(text.substring(group.start, Math.min(text.length(), group.end)));
+                sourceCursor = Math.max(sourceCursor, group.end);
+            }
+            if (sourceCursor < text.length()) japaneseParts.add(text.substring(sourceCursor));
+            if (japaneseParts.size() < 2) return;
+            parts = japaneseParts.toArray(new String[0]);
+        } else {
+            if (!text.contains(" ")) return;
+            parts = text.split("\\s+");
+            if (parts.length < 2) return;
+        }
         int totalChars = 0;
         for (String part : parts) totalChars += Math.max(1, part.length());
         long span = Math.max(1L, line.endMs - line.startMs);

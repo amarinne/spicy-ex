@@ -91,6 +91,32 @@ public class SpicyResponseClassifierTest {
         assertEquals("DOWNGRADED_STATIC_PLAIN", doc.spicyQualityReason);
     }
 
+    @Test
+    public void rejectsPackedForcedUpdateStaticPayload() {
+        LyricsDocument doc = staticDoc(
+                "Please update Spicy Lyrics",
+                "You can do so immediately by restarting Spotify");
+
+        SpicyResponseClassifier.apply(doc);
+
+        assertTrue(doc.spicyPoisoned);
+        assertEquals("CLIENT_UPDATE_REQUIRED", doc.spicyQualityReason);
+    }
+
+    @Test
+    public void rejectsUnpackedJsonForcedUpdateStaticPayload() {
+        LyricsDocument doc = staticDoc(
+                "Please update Spicy Lyrics",
+                "You can do so immediately by restarting Spotify");
+        doc.spicyPackedPayload = false;
+        doc.spicyFormat = "json";
+
+        SpicyResponseClassifier.apply(doc);
+
+        assertTrue(doc.spicyPoisoned);
+        assertEquals("CLIENT_UPDATE_REQUIRED", doc.spicyQualityReason);
+    }
+
     private static void assertOk(LyricsDocument doc) {
         SpicyResponseClassifier.apply(doc);
         assertFalse(doc.spicyPoisoned);

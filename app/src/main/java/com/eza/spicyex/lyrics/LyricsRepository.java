@@ -362,6 +362,7 @@ public final class LyricsRepository {
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Content-Type", "application/json")
+                .header("X-mode", "2")
                 .header("Origin", SpicyLyricsRequestContract.SPICY_ORIGIN)
                 .header("Referer", SpicyLyricsRequestContract.SPICY_ORIGIN + "/")
                 .header("Sec-Fetch-Dest", "empty")

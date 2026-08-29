@@ -17,9 +17,11 @@ import com.eza.spicyex.lyrics.LyricsTextFactory;
 
 /** Builds transient loading and error rows for the fullscreen lyric surface. */
 final class LyricsShellEmptyStateController {
+    private static final long ERROR_DISPLAY_MS = 10_000L;
     private final Activity activity;
     private final SpotifyPlusConfig config;
     private final LyricsTextFactory textFactory;
+    private int stateToken;
 
     LyricsShellEmptyStateController(
             Activity activity,
@@ -32,6 +34,7 @@ final class LyricsShellEmptyStateController {
     }
 
     void showLoading(LinearLayout lyricsColumn, String message) {
+        stateToken++;
         lyricsColumn.removeAllViews();
         if (config.get(Settings.SHOW_SKELETON)) {
             LyricsSkeletonView skeleton = new LyricsSkeletonView(activity);
@@ -56,7 +59,10 @@ final class LyricsShellEmptyStateController {
     }
 
     void showError(LinearLayout lyricsColumn, String error) {
+        final int token = ++stateToken;
         lyricsColumn.removeAllViews();
+        LinearLayout errorBox = new LinearLayout(activity);
+        errorBox.setOrientation(LinearLayout.VERTICAL);
         TextView title = textFactory.createText(
                 activity,
                 "No lyrics found",
@@ -65,7 +71,7 @@ final class LyricsShellEmptyStateController {
                 textFactory.resolveTypeface(true));
         title.setGravity(Gravity.CENTER);
         title.setPadding(dp(16), dp(80), dp(16), dp(8));
-        lyricsColumn.addView(title, new LinearLayout.LayoutParams(
+        errorBox.addView(title, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView message = textFactory.createText(
@@ -76,8 +82,31 @@ final class LyricsShellEmptyStateController {
                 textFactory.resolveTypeface(false));
         message.setGravity(Gravity.CENTER);
         message.setPadding(dp(16), dp(4), dp(16), dp(16));
-        lyricsColumn.addView(message, new LinearLayout.LayoutParams(
+        errorBox.addView(message, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+        lyricsColumn.addView(errorBox, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        lyricsColumn.postDelayed(() -> {
+            if (token != stateToken || errorBox.getParent() != lyricsColumn) return;
+            errorBox.animate().alpha(0f).setDuration(350L).withEndAction(() -> {
+                if (token != stateToken || errorBox.getParent() != lyricsColumn) return;
+                lyricsColumn.removeAllViews();
+                showInterludeIndicator(lyricsColumn);
+            }).start();
+        }, ERROR_DISPLAY_MS);
+    }
+
+    private void showInterludeIndicator(LinearLayout lyricsColumn) {
+        boolean noteMode = "note".equals(config.get(Settings.INTERLUDE_ICON));
+        TextView indicator = textFactory.createText(
+                activity, noteMode ? "♪" : "•  •  •", noteMode ? 38 : 44,
+                Color.WHITE, textFactory.resolveTypeface(true));
+        indicator.setGravity(Gravity.START);
+        indicator.setAlpha(0f);
+        indicator.setPadding(dp(16), dp(80), dp(16), dp(16));
+        lyricsColumn.addView(indicator, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        indicator.animate().alpha(1f).setDuration(350L).start();
     }
 }

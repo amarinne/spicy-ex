@@ -69,6 +69,20 @@ public class LyricsParserSpicyMetadataTest {
     }
 
     @Test
+    public void liveForcedUpdatePayloadIsClassifiedAsControlResponse() {
+        String raw = "{\"queries\":[{\"_notice\":\"Access is granted solely for personal, individual use through official Spicy Lyrics clients or their public forks of official repositories. Any automated data extraction (scraping) or unauthorized redistribution via third-party applications is strictly prohibited.\"},{\"operation\":\"lyrics\",\"operationId\":\"0\",\"result\":{\"data\":[[\"Text\",\"Type\",\"Static\",\"SongWriters\",\"the cool spicetify extension\",\"Lines\",\"Please update Spicy Lyrics\",\"You can do so immediately by restarting Spotify\",\"id\",\"4uLU6hMCjMI75M1A2tKUQC\",\"source\",\"spl\"],[-1,5,1,3,5,8,10,2,-5,4,-3,2,1,0,6,7,9,11]],\"httpStatus\":200,\"format\":\"json\"}}]}";
+
+        LyricsDocument doc = parser.parseSpicyLyrics(null, track, raw, false);
+        SpicyResponseClassifier.apply(doc);
+
+        assertEquals("Static", doc.type);
+        assertEquals(2, doc.lines.size());
+        assertTrue(doc.spicyPackedPayload);
+        assertTrue(doc.spicyPoisoned);
+        assertEquals("CLIENT_UPDATE_REQUIRED", doc.spicyQualityReason);
+    }
+
+    @Test
     public void parseSyllableLyricsUsesTrailingSpanSpaceAsWordBoundary() {
         JsonObject result = new JsonObject();
         result.addProperty("httpStatus", 200);

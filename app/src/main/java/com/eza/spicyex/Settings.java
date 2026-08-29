@@ -192,6 +192,11 @@ public final class Settings {
             "dots", "note"
     );
 
+    public static final Setting<String> FULLSCREEN_CONTROLS = enumSetting(
+            "lyrics_fullscreen_controls", TEXT, "Fullscreen controls", "Always on",
+            "5 seconds", "10 seconds", "30 seconds", "Always on"
+    );
+
     // --- Animation ---
     // "Gradient wash" = the karaoke fill sweeps each line (classic Spicy look).
     // "Spotlight" = no fill; the active line/word zooms + glows instead (gradient direction ignored).

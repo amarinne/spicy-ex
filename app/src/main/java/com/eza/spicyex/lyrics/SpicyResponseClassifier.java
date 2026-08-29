@@ -26,11 +26,30 @@ public final class SpicyResponseClassifier {
             return Result.poisoned("UNKNOWN_SUSPICIOUS");
         }
 
+        // When the server retires a client protocol, it returns a valid Static control document
+        // with these two lines and HTTP 200. Current responses are packed, but reject the marker
+        // independent of transport encoding so an unpacked downgrade cannot become lyrics.
+        if (staticType && isForcedUpdateNotice(doc)) {
+            return Result.poisoned("CLIENT_UPDATE_REQUIRED");
+        }
+
         if (mixedConfusableWordRatio(doc) > MIXED_CONFUSABLE_WORD_RATIO_THRESHOLD) {
             return Result.poisoned("POISON_HOMOGLYPH_NOTICE");
         }
 
         return Result.ok();
+    }
+
+    private static boolean isForcedUpdateNotice(LyricsDocument doc) {
+        boolean update = false;
+        boolean restart = false;
+        for (LyricsLine line : doc.lines) {
+            String text = LyricsDocument.safe(line == null ? "" : line.text)
+                    .trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
+            if (text.equals("please update spicy lyrics")) update = true;
+            if (text.contains("immediately by restarting spotify")) restart = true;
+        }
+        return update && restart;
     }
 
     public static void apply(LyricsDocument doc) {

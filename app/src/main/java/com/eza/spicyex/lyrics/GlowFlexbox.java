@@ -28,9 +28,105 @@ public class GlowFlexbox extends FlexboxLayout {
     // in SpicyAnimatedTextView; only touched from the UI thread.
     private static final SparseArray<BlurMaskFilter> blurCache = new SparseArray<>();
 
+    // Adaptive sectioning state, armed by LyricsRowViewFactory for wrapping word rows when the
+    // setting is on. Default (disarmed) keeps plain greedy Flexbox wrapping.
+    private boolean adaptiveSectioning;
+    private boolean[] adaptiveForbiddenBreaks = new boolean[0];
+    private int[][] adaptiveKeepTogetherGroups = new int[0][];
+    private long adaptiveSignature = Long.MIN_VALUE; // sentinel: nothing planned yet
+    private boolean adaptiveWrapApplied;
+
     public GlowFlexbox(Context context) {
         super(context);
         setWillNotDraw(false);
+    }
+
+    /**
+     * Arms or disarms adaptive wrapBefore planning for this row. {@code forbiddenBreakAfter[i]}
+     * forbids a line break between direct child i and i+1; {@code keepTogetherGroups} holds
+     * inclusive {first, last} child-index pairs whose members may split only when the whole group
+     * is wider than the row (emergency overflow rule). Safe to call before the first measure;
+     * grouping changes force a re-plan on the next measure pass.
+     */
+    public void setAdaptiveSectioning(boolean enabled, boolean[] forbiddenBreakAfter,
+                                      int[][] keepTogetherGroups) {
+        adaptiveSectioning = enabled;
+        adaptiveForbiddenBreaks = forbiddenBreakAfter == null
+                ? new boolean[0] : forbiddenBreakAfter.clone();
+        adaptiveKeepTogetherGroups = keepTogetherGroups == null
+                ? new int[0][] : cloneGroups(keepTogetherGroups);
+        adaptiveSignature = Long.MIN_VALUE;
+    }
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        int childCount = getChildCount();
+        int available = MeasureSpec.getSize(widthMeasureSpec) - getPaddingLeft() - getPaddingRight();
+        if (!adaptiveSectioning || childCount == 0 || available <= 0) {
+            if (adaptiveWrapApplied) applyWrapBefore(null);
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+            return;
+        }
+        // Children are WRAP_CONTENT, so their measured widths are natural regardless of the
+        // currently applied wrapBefore flags; this measure doubles as the planning width probe.
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        long signature = adaptiveSignature(available, childCount);
+        if (signature == adaptiveSignature) return; // width, count and widths unchanged
+        adaptiveSignature = signature;
+        boolean[] plan = AdaptiveBreakPlanner.plan(childOuterWidths(childCount), available,
+                adaptiveForbiddenBreaks, adaptiveKeepTogetherGroups);
+        if (applyWrapBefore(plan)) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec); // bounded second measure
+        }
+    }
+
+    private long adaptiveSignature(int available, int childCount) {
+        long h = 1125899906842597L;
+        h = 31L * h + available;
+        h = 31L * h + childCount;
+        for (int i = 0; i < childCount; i++) h = 31L * h + getChildAt(i).getMeasuredWidth();
+        return h;
+    }
+
+    private int[] childOuterWidths(int childCount) {
+        int[] widths = new int[childCount];
+        for (int i = 0; i < childCount; i++) {
+            View child = getChildAt(i);
+            int margins = 0;
+            ViewGroup.LayoutParams lp = child.getLayoutParams();
+            if (lp instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) lp;
+                margins = mlp.leftMargin + mlp.rightMargin;
+            }
+            widths[i] = child.getMeasuredWidth() + margins;
+        }
+        return widths;
+    }
+
+    /** Applies the plan to direct children and returns true when any flag changed. */
+    private boolean applyWrapBefore(boolean[] plan) {
+        boolean changed = false;
+        boolean anySet = false;
+        for (int i = 0; i < getChildCount(); i++) {
+            boolean want = plan != null && i < plan.length && plan[i];
+            ViewGroup.LayoutParams lp = getChildAt(i).getLayoutParams();
+            if (lp instanceof FlexboxLayout.LayoutParams) {
+                FlexboxLayout.LayoutParams flp = (FlexboxLayout.LayoutParams) lp;
+                if (flp.isWrapBefore() != want) {
+                    flp.setWrapBefore(want);
+                    changed = true;
+                }
+            }
+            if (want) anySet = true;
+        }
+        adaptiveWrapApplied = anySet;
+        return changed;
+    }
+
+    private static int[][] cloneGroups(int[][] groups) {
+        int[][] out = new int[groups.length][];
+        for (int i = 0; i < groups.length; i++) out[i] = groups[i] == null ? null : groups[i].clone();
+        return out;
     }
 
     static BlurMaskFilter blurFilter(float sigma) {

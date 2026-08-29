@@ -68,7 +68,7 @@ public final class LyricsMeaningPreviewContractTest {
     public void previewAlwaysResolvesGoogleBeforeAi() throws Exception {
         String preview = previewBody(meaningLane().replaceAll("\\s+", " "));
 
-        assertTrue(preview.contains("google = googleFallback(run, id, workerSnapshot, googleWork,"));
+        assertTrue(preview.contains("GoogleFallbackResult googleResult = googleFallback(run, id, workerSnapshot,"));
         assertFalse(preview.contains("AiMeaningRun.Result warm"));
     }
 
@@ -79,7 +79,7 @@ public final class LyricsMeaningPreviewContractTest {
 
         assertTrue(preview.contains(
                 "final CountDownLatch previewReadyForAi = new CountDownLatch(1);"));
-        int google = preview.indexOf("google = googleFallback(");
+        int google = preview.indexOf("GoogleFallbackResult googleResult = googleFallback(");
         int previewPost = preview.indexOf("callback.rerender(LayerKind.MEANING, preliminary,", google);
         int release = preview.indexOf("previewReadyForAi.countDown();", previewPost);
         int await = preview.indexOf("previewReadyForAi.await();", release);

@@ -21,6 +21,8 @@ import com.google.android.flexbox.FlexWrap;
 import com.google.android.flexbox.FlexboxLayout;
 import com.google.android.flexbox.JustifyContent;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
@@ -113,13 +115,13 @@ public final class LyricsRowViewFactory {
         boolean hasSyllableWords = line.words != null && !line.words.isEmpty();
         boolean hasRealTimedWords = hasSyllableWords && !line.syntheticWords;
         boolean indicLine = SpicyTextDetection.hasIndicScript(line.text);
-        boolean furiganaCrossesWords = showJapaneseFurigana && FuriganaText.hasRubyCrossingWordBoundaries(line);
         boolean showAlignedRomaji = !indicLine
                 && hasSyllableWords
                 && !showJapaneseFurigana
                 && options.attachTransliterationToWords
                 && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji);
-        boolean useSyllableWords = !indicLine && !furiganaCrossesWords && (hasRealTimedWords || (hasSyllableWords
+        // Ruby groups remain visual-only; timed provider children keep their existing word path.
+        boolean useSyllableWords = !indicLine && (hasRealTimedWords || (hasSyllableWords
                 && (options.wordLevelFill || options.lineLevelFillSentence || showJapaneseFurigana || showAlignedRomaji)));
         boolean lineLevelFillTopDown = !useSyllableWords && options.lineLevelFillTopDown;
         if (useSyllableWords) {
@@ -226,11 +228,20 @@ public final class LyricsRowViewFactory {
         int furiganaOffset = 0;
         int wordIndex = 0;
         Map<String, TimedReadingUnit> timedBySpanId = timedBySpanId(line);
+        // Adaptive sectioning candidate: only the wrapping word-row flexbox participates. The
+        // LinearLayout Scroll/Clip path and line-level TextView rows keep their existing behavior.
+        boolean adaptiveWordRow = words instanceof GlowFlexbox && wrapLongLines
+                && options != null && options.adaptiveSectioningEnabled;
+        List<int[]> adaptiveChildRanges = adaptiveWordRow ? new ArrayList<>() : null;
         for (SyllableSegment seg : line.words) {
             if (seg == null || isBlank(seg.text)) continue;
             int[] sourceRange = FuriganaText.wordRange(line, seg, wordIndex, furiganaOffset);
             int wordStart = sourceRange[0];
             furiganaOffset = Math.max(furiganaOffset, sourceRange[1]);
+            if (adaptiveChildRanges != null) {
+                adaptiveChildRanges.add(adaptiveRangeCertain(line.text, seg.text, sourceRange)
+                        ? sourceRange : null);
+            }
             View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
                     options == null ? "Medium" : options.lyricWeight,
                     options == null ? "spotify" : options.lyricsFont);
@@ -250,9 +261,88 @@ public final class LyricsRowViewFactory {
             LyricsSyllableViewState.setWordView(seg, wordView);
             wordIndex++;
         }
+        applyAdaptiveWordSectioning(words, line, adaptiveChildRanges);
         row.addView(words, new LinearLayout.LayoutParams(
                 wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /** Arms adaptive wrapBefore planning on the wrapping word-row flexbox when the Adaptive
+     * sectioning setting is on. Keep-together constraints come from
+     * {@link DisplayLayoutGroup#forLine}; child ranges reuse the FuriganaText.wordRange progression
+     * computed during the mount loop, so mapping stays aligned with the existing furigana path. */
+    private void applyAdaptiveWordSectioning(ViewGroup words, AppliedLine line,
+                                            List<int[]> childRanges) {
+        if (!(words instanceof GlowFlexbox)) return;
+        GlowFlexbox flex = (GlowFlexbox) words;
+        if (childRanges == null || childRanges.isEmpty()) {
+            flex.setAdaptiveSectioning(false, null, null);
+            return;
+        }
+        String text = LyricUtils.safe(line == null ? "" : line.text);
+        List<DisplayLayoutGroup> groups = line == null || text.isEmpty()
+                ? Collections.<DisplayLayoutGroup>emptyList()
+                : DisplayLayoutGroup.forLine(adaptiveLayoutLanguage(line), text, line.japaneseReading);
+        flex.setAdaptiveSectioning(true,
+                adaptiveForbiddenBreaks(groups, childRanges),
+                adaptiveKeepTogetherGroups(groups, childRanges));
+    }
+
+    /** A mapped range is certain only when the UTF-16 slice really is the word's own text;
+     * uncertain mappings become null so the affected boundaries allow breaks instead of merging
+     * unrelated text. */
+    private static boolean adaptiveRangeCertain(String lineText, String wordText, int[] range) {
+        if (range == null || wordText == null || wordText.isEmpty()) return false;
+        return range[1] - range[0] == wordText.length()
+                && LyricUtils.safe(lineText).regionMatches(range[0], wordText, 0, wordText.length());
+    }
+
+    /** Reading metadata disambiguates all-kanji Japanese lines from Chinese text detection. */
+    static String adaptiveLayoutLanguage(AppliedLine line) {
+        return line != null && line.japaneseReading != null ? "ja" : null;
+    }
+
+    /** Break between adaptive children i and i+1 is forbidden when both word ranges sit wholly
+     * inside one keepTogether display group. Uncertain mappings (null ranges) allow the break. */
+    static boolean[] adaptiveForbiddenBreaks(List<DisplayLayoutGroup> groups,
+                                             List<int[]> childRanges) {
+        int n = childRanges.size();
+        boolean[] forbidden = new boolean[Math.max(0, n - 1)];
+        for (DisplayLayoutGroup group : groups) {
+            if (group == null || !group.keepTogether) continue;
+            for (int i = 0; i + 1 < n; i++) {
+                int[] left = childRanges.get(i);
+                int[] right = childRanges.get(i + 1);
+                if (left == null || right == null) continue;
+                if (group.start <= left[0] && left[1] <= group.end
+                        && group.start <= right[0] && right[1] <= group.end) {
+                    forbidden[i] = true;
+                }
+            }
+        }
+        return forbidden;
+    }
+
+    /** Inclusive {first, last} child-index spans of keepTogether groups, consumed only by the
+     * planner's emergency rule that lets an oversized phrase split rather than overflow. */
+    static int[][] adaptiveKeepTogetherGroups(List<DisplayLayoutGroup> groups,
+                                              List<int[]> childRanges) {
+        ArrayList<int[]> spans = new ArrayList<>();
+        for (DisplayLayoutGroup group : groups) {
+            if (group == null || !group.keepTogether) continue;
+            int first = -1;
+            int last = -1;
+            for (int i = 0; i < childRanges.size(); i++) {
+                int[] range = childRanges.get(i);
+                if (range == null) continue;
+                if (group.start <= range[0] && range[1] <= group.end) {
+                    if (first < 0) first = i;
+                    last = i;
+                }
+            }
+            if (first >= 0 && last > first) spans.add(new int[]{first, last});
+        }
+        return spans.toArray(new int[0][]);
     }
 
     private void buildTimedRomanRow(LinearLayout row, AppliedLine line, Options options,

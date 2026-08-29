@@ -11,6 +11,9 @@ import android.graphics.Color;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
+import android.os.Build;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -53,6 +56,7 @@ final class LyricsActivityTakeoverHook {
     private final NativeSpicyLyricsHook host;
     private final NowPlayingInjector nowPlayingInjector;
     private final WeakHashMap<Activity, ExtraInjectionRetry> extraInjectionRetries = new WeakHashMap<>();
+    private final WeakHashMap<Activity, OnBackInvokedCallback> backCallbacks = new WeakHashMap<>();
 
     LyricsActivityTakeoverHook(NativeSpicyLyricsHook host, NowPlayingInjector nowPlayingInjector) {
         this.host = host;
@@ -66,10 +70,10 @@ final class LyricsActivityTakeoverHook {
             protected void afterHookedMethod(MethodHookParam param) {
                 Activity activity = (Activity) param.thisObject;
                 if (isLyricsFullscreenActivity(activity)) {
-                    if (hasNativeSpicyRoot(activity) || consumeTakeoverArmed() || nativeLyricsSessionActive) {
+                    registerSystemBackCallback(activity);
+                    if (activateNativeTakeover(activity)) {
                         XposedBridge.log(NativeSpicyLyricsHook.TAG
                                 + " lyrics activity onCreate (takeover) " + activity.getClass().getName());
-                        activity.getWindow().getDecorView().postDelayed(() -> mountNativeSpicyRoot(activity), 250);
                     }
                     // else: opened via Spotify's native lyric card - leave Spotify's screen untouched.
                 } else {
@@ -84,15 +88,25 @@ final class LyricsActivityTakeoverHook {
                 Activity activity = (Activity) param.thisObject;
                 References.setCurrentActivity(activity);
                 if (isLyricsFullscreenActivity(activity)) {
-                    if (hasNativeSpicyRoot(activity) || consumeTakeoverArmed() || nativeLyricsSessionActive) {
-                        activity.getWindow().getDecorView().postDelayed(() -> mountNativeSpicyRoot(activity), 150);
-                    }
+                    activateNativeTakeover(activity);
                     // else: native lyric card opened Spotify's own screen - do not take over.
                 } else {
                     scheduleExtraLyricsButtonInjection(activity);
                 }
             }
         });
+
+        XposedHelpers.findAndHookMethod(Activity.class, "onWindowFocusChanged", boolean.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        if (!((boolean) param.args[0])) return;
+                        Activity activity = (Activity) param.thisObject;
+                        if (isLyricsFullscreenActivity(activity) && activateNativeTakeover(activity)) {
+                            mountNativeSpicyRoot(activity);
+                        }
+                    }
+                });
 
         XposedHelpers.findAndHookMethod(Activity.class, "onDestroy", new XC_MethodHook() {
             @Override
@@ -101,9 +115,10 @@ final class LyricsActivityTakeoverHook {
                 cancelExtraLyricsButtonInjection(activity);
                 nowPlayingInjector.destroy(activity);
                 if (!isLyricsFullscreenActivity(activity)) return;
-                // Rotation/config change recreates the activity - keep the session so onCreate
-                // re-mounts our shell. Only a real destroy ends the session.
-                if (!activity.isChangingConfigurations()) nativeLyricsSessionActive = false;
+                unregisterSystemBackCallback(activity);
+                // Keep takeover state through every lyrics-page destroy. Spotify may report a
+                // track-change rotation as a normal destroy, and the old content root can already
+                // be detached before this hook runs. Non-lyrics onResume and explicit back clear it.
                 removeNativeSpicyRoot(activity);
             }
         });
@@ -154,6 +169,29 @@ final class LyricsActivityTakeoverHook {
         nativeLyricsSessionActive = false; // user is leaving - end the session (next open stays native)
         synchronized (EXPLICIT_LYRICS_EXIT_UNTIL_MS) {
             EXPLICIT_LYRICS_EXIT_UNTIL_MS.put(activity, SystemClock.elapsedRealtime() + 1200);
+        }
+    }
+
+    private void registerSystemBackCallback(Activity activity) {
+        if (activity == null || Build.VERSION.SDK_INT < 33) return;
+        synchronized (backCallbacks) {
+            if (backCallbacks.containsKey(activity)) return;
+            OnBackInvokedCallback callback = () -> {
+                markExplicitLyricsExit(activity);
+                activity.finish();
+            };
+            activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback);
+            backCallbacks.put(activity, callback);
+        }
+    }
+
+    private void unregisterSystemBackCallback(Activity activity) {
+        if (activity == null || Build.VERSION.SDK_INT < 33) return;
+        synchronized (backCallbacks) {
+            OnBackInvokedCallback callback = backCallbacks.remove(activity);
+            if (callback != null) activity.getOnBackInvokedDispatcher()
+                    .unregisterOnBackInvokedCallback(callback);
         }
     }
 
@@ -373,6 +411,16 @@ final class LyricsActivityTakeoverHook {
         return false;
     }
 
+    private boolean activateNativeTakeover(Activity activity) {
+        if (!isLyricsFullscreenActivity(activity)) return false;
+        if (nativeLyricsSessionActive || hasNativeSpicyRoot(activity)) return true;
+        if (!consumeTakeoverArmed()) return false;
+        // Promote the one-shot entry signal before waiting for a mount-ready window. This is the
+        // durable lifecycle signal carried across rotation and Spotify activity relaunches.
+        nativeLyricsSessionActive = true;
+        return true;
+    }
+
     private boolean isStayInLyricsEnabled(Activity activity) {
         try {
             return SpotifyPlusConfig.from(activity).get(Settings.STAY_IN_LYRICS);
@@ -384,15 +432,16 @@ final class LyricsActivityTakeoverHook {
     private boolean shouldKeepLyricsActivityOpen(Activity activity) {
         if (!isLyricsFullscreenActivity(activity) || !isNativeSpicyEnabled(activity)) return false;
         if (!isStayInLyricsEnabled(activity)) return false;
-        if (!hasNativeSpicyRoot(activity)) return false;
+        // Spotify invalidates and finishes its fullscreen lyrics activity after some track
+        // changes. During rotation that finish can happen before our recreated root mounts, so
+        // root presence and short keep windows are not stable ownership signals. The takeover
+        // session is stable; explicit back clears it before calling finish.
+        if (!nativeLyricsSessionActive) return false;
         synchronized (EXPLICIT_LYRICS_EXIT_UNTIL_MS) {
             Long until = EXPLICIT_LYRICS_EXIT_UNTIL_MS.get(activity);
             if (until != null && SystemClock.elapsedRealtime() <= until) return false;
         }
-        synchronized (KEEP_LYRICS_ACTIVITY_UNTIL_MS) {
-            Long until = KEEP_LYRICS_ACTIVITY_UNTIL_MS.get(activity);
-            return until != null && SystemClock.elapsedRealtime() <= until;
-        }
+        return true;
     }
 
     private boolean isLyricsFullscreenActivity(Activity activity) {
@@ -403,6 +452,8 @@ final class LyricsActivityTakeoverHook {
         NativeSpicyLyricsHook.dbg("mountNativeSpicyRoot",
                 "activity=" + (activity == null ? "null" : activity.getClass().getName()));
         try {
+            if (activity == null || activity.isFinishing()
+                    || (Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) return;
             DeployCacheCleaner.ensureCleared(activity);
             AuthTokenCaptureHook.restorePersistedAccessToken(activity);
             if (!isLyricsFullscreenActivity(activity)) return;
@@ -454,6 +505,14 @@ final class LyricsActivityTakeoverHook {
             View existing = content.findViewWithTag(TAG_NATIVE_SPICY_ROOT);
             if (existing instanceof NativeSpicyShellView) {
                 NativeSpicyShellView shell = (NativeSpicyShellView) existing;
+                // Host activity may already be leaving for rotation or a track-driven recreate.
+                // Do not rely on an exit animation callback from a detached window to stop the
+                // shell; that callback can be skipped, leaving stale subscriptions alive.
+                if (activity.isDestroyed() || activity.isFinishing() || activity.isChangingConfigurations()) {
+                    shell.stop();
+                    content.removeView(shell);
+                    return;
+                }
                 shell.animate().alpha(0f).translationY(NativeLyricsUtils.dp(24)).setDuration(220).withEndAction(() -> {
                     try {
                         shell.stop();

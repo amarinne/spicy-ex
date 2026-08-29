@@ -49,6 +49,11 @@
     <string name="settings_label_lyrics_text_size">Lyric text size</string>
     <string name="settings_label_lyrics_text_size_custom">Custom size</string>
     <string name="settings_label_lyric_interlude_icon">Interlude indicator</string>
+    <string name="settings_label_lyrics_fullscreen_controls">Fullscreen controls</string>
+    <string name="settings_option_5_seconds">5 seconds</string>
+    <string name="settings_option_10_seconds">10 seconds</string>
+    <string name="settings_option_30_seconds">30 seconds</string>
+    <string name="settings_option_always_on">Always on</string>
     <string name="settings_label_lyric_animation_style">Animation style</string>
     <string name="settings_label_lyric_enable_glow_blur">Text glow</string>
     <string name="settings_label_lyric_enable_line_blur">Blur distant lines</string>

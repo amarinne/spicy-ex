@@ -87,14 +87,16 @@ final class LyricsShellChromeController {
 
         romanToggle.setForeground(romanSpinner);
         translationToggle.setForeground(translationSpinner);
-        return new ChromeViews(romanToggle, translationToggle);
+        return new ChromeViews(header, romanToggle, translationToggle);
     }
 
     static final class ChromeViews {
         final ImageButton romanToggle;
         final ImageButton translationToggle;
+        final ViewGroup header;
 
-        ChromeViews(ImageButton romanToggle, ImageButton translationToggle) {
+        ChromeViews(ViewGroup header, ImageButton romanToggle, ImageButton translationToggle) {
+            this.header = header;
             this.romanToggle = romanToggle;
             this.translationToggle = translationToggle;
         }

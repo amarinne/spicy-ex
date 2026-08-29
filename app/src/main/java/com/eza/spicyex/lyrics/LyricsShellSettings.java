@@ -35,6 +35,19 @@ public final class LyricsShellSettings {
         return fallback;
     }
 
+    public String fullscreenControlsMode() {
+        String fallback = config == null ? "Always on" : config.get(Settings.FULLSCREEN_CONTROLS);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.FULLSCREEN_CONTROLS.key)) {
+                String value = prefs.getString(Settings.FULLSCREEN_CONTROLS.key, fallback);
+                if ("5 seconds".equals(value) || "10 seconds".equals(value)
+                        || "30 seconds".equals(value) || "Always on".equals(value)) return value;
+            }
+        } catch (Throwable ignored) { }
+        return fallback;
+    }
+
     public String lineSpacingMode() {
         String fallback = config == null ? "more" : config.get(Settings.LINE_SPACING);
         try {

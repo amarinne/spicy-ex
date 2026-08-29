@@ -335,10 +335,13 @@ public final class LyricsMeaningLane {
                     // Only Google draft refines. AI-only runs raw by contract; the preview flow
                     // never enters this path.
                     refineGoogle = settings.meaningFlow() == AiSettings.MeaningFlow.GOOGLE_DRAFT;
-                    googleBaseline = refineGoogle
-                            ? googleFallback(run, id, workerSnapshot, googleWork,
-                            effectiveSourceLang, targetLang)
-                            : null;
+                    if (refineGoogle) {
+                        GoogleFallbackResult googleResult = googleFallback(run, id, workerSnapshot,
+                                googleWork, effectiveSourceLang, targetLang);
+                        googleBaseline = googleResult.artifact;
+                        postGoogleFailureIfNeeded(run, id, generation, snapshot, currentGuard,
+                                callback, googleResult.failure);
+                    }
                     if (googleBaseline != null) {
                         final MeaningArtifact preliminary = googleBaseline;
                         post(run, id, generation, snapshot, currentGuard, new Runnable() {
@@ -399,8 +402,11 @@ public final class LyricsMeaningLane {
                 // Every AI Meaning mode uses the same document-level display selector. AI-only
                 // has no Google candidate; Google-draft may fall back only to a complete baseline.
                 if (googleBaseline == null && refineGoogle) {
-                    googleBaseline = googleFallback(run, id, workerSnapshot, googleWork,
-                            effectiveSourceLang, targetLang);
+                    GoogleFallbackResult googleResult = googleFallback(run, id, workerSnapshot,
+                            googleWork, effectiveSourceLang, targetLang);
+                    googleBaseline = googleResult.artifact;
+                    postGoogleFailureIfNeeded(run, id, generation, snapshot, currentGuard,
+                            callback, googleResult.failure);
                 }
                 Set<String> requiredRows = requiredRowIds(
                         run.base, workerSnapshot, sourceLang, targetLang);
@@ -491,7 +497,8 @@ public final class LyricsMeaningLane {
         try {
             laneExecutor.execute(new Runnable() {
                 @Override public void run() {
-                    MeaningArtifact google = null;
+                        MeaningArtifact google = null;
+                        LayerFailure googleFailure = LayerFailure.NONE;
                     try {
                         if (!run.accepts(currentGuard, id, generation, snapshot)) {
                             race.abandonAi();
@@ -501,13 +508,19 @@ public final class LyricsMeaningLane {
                             COALESCER.finish(runIdentity);
                             return;
                         }
-                        google = googleFallback(run, id, workerSnapshot, googleWork,
-                                effectiveSourceLang, targetLang);
+                        GoogleFallbackResult googleResult = googleFallback(run, id, workerSnapshot,
+                                googleWork, effectiveSourceLang, targetLang);
+                        google = googleResult.artifact;
+                        googleFailure = googleResult.failure;
                     } catch (Throwable failure) {
                         XposedBridge.log(TAG + " preview google failed: "
                                 + failure.getClass().getSimpleName());
                     }
                     final MeaningPreviewRace.Outcome googleOutcome = race.onGoogleSettled(google);
+                    if (googleFailure.isFailure()) {
+                        postGoogleFailureIfNeeded(run, id, generation, snapshot, currentGuard,
+                                callback, googleFailure);
+                    }
                     if (googleOutcome.preliminary) {
                         final MeaningArtifact preliminary = googleOutcome.artifact;
                         handler.post(new Runnable() {
@@ -675,7 +688,7 @@ public final class LyricsMeaningLane {
         return new AiSettings(context).providerId();
     }
 
-    private MeaningArtifact googleFallback(DerivedLayerRun run, String id,
+    private GoogleFallbackResult googleFallback(DerivedLayerRun run, String id,
                                            LyricsDocument workerSnapshot, List<Integer> work,
                                            String effectiveSourceLang, String targetLang) {
         List<MeaningEntry> entries = new ArrayList<>();
@@ -717,10 +730,33 @@ public final class LyricsMeaningLane {
         boolean complete = missing.isEmpty() || translated.containsAll(missing);
         logGoogleSettlement(stats, translated.size(), complete,
                 SystemClock.elapsedRealtime() - stats.startedAtMs);
-        if (entries.isEmpty()) return null;
-        return new MeaningArtifact(run.canonicalDigest(), run.configId(),
+        MeaningArtifact artifact = entries.isEmpty() ? null : new MeaningArtifact(
+                run.canonicalDigest(), run.configId(),
                 new LayerProvenance(LayerAuthority.MACHINE, "google_unofficial", run.configId(),
                         System.currentTimeMillis()), entries, !complete);
+        LayerFailure failure = stats.lastStatus == 429
+                ? LayerFailure.http(429) : LayerFailure.NONE;
+        return new GoogleFallbackResult(artifact, failure);
+    }
+
+    private void postGoogleFailureIfNeeded(DerivedLayerRun run, String id, int generation,
+                                           LyricsDocument snapshot,
+                                           LyricsSecondaryProcessor.CurrentGuard guard,
+                                           LyricsSecondaryProcessor.Callback callback,
+                                           LayerFailure failure) {
+        if (failure == null || failure.reason != LayerFailure.Reason.RATE_LIMITED) return;
+        post(run, id, generation, snapshot, guard,
+                () -> callback.progress("Google translation rate limited"));
+    }
+
+    private static final class GoogleFallbackResult {
+        final MeaningArtifact artifact;
+        final LayerFailure failure;
+
+        GoogleFallbackResult(MeaningArtifact artifact, LayerFailure failure) {
+            this.artifact = artifact;
+            this.failure = failure == null ? LayerFailure.NONE : failure;
+        }
     }
 
     private List<Integer> translateBatchPass(

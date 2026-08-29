@@ -132,6 +132,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final LyricsShellEmptyStateController emptyStateController;
     private LyricsRowMountController rowMountController;
     private LinearLayout contentColumn;
+    private ViewGroup chromeHeader;
+    private final Runnable hideChromeRunnable = this::hideChrome;
     private boolean scrollInProgress;
     private boolean scrollSettleScheduled;
     private long lastScrollEventMs;
@@ -159,8 +161,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private String loadingTrackId = "";
     private LyricsDocument document;
     private boolean running;
+    private boolean chromeRevealAnimating;
     private boolean scrollWindowRenderScheduled;
     private boolean showTranslation;
+
+    private void hideChrome() {
+        if (running && chromeHeader != null && !"Always on".equals(fullscreenControlsMode())) {
+            chromeRevealAnimating = false;
+            chromeHeader.animate().alpha(0f).setDuration(240L).start();
+        }
+    }
     private LyricsTransliterationSession transliterationSession;
     private LyricsSessionManager.SessionSubscription sessionSubscription;
     private LyricsSessionManager.LyricsRequest lyricRequest;
@@ -187,6 +197,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (!running) return;
         applyRenderConfigChanges("preference changed", false);
         ambientController.applySettings(renderConfig.backgroundStyle, renderConfig.forceDarkBackground);
+        revealChrome();
     }
     private long lastKeepAliveArmMs;
     // Unsynced (plain) lyrics: no per-line timing, so don't auto-follow or karaoke-wash — render every
@@ -378,6 +389,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     renderDocument();
                 },
                 () -> settingsDialogController.show());
+        chromeHeader = chrome.header;
         romanToggle = chrome.romanToggle;
         translationToggle = chrome.translationToggle;
         romanToggle.setOnClickListener(v -> {
@@ -433,12 +445,17 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         lyricsScroll.setFadingEdgeLength(0);
         lyricsScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         lyricsScroll.setVerticalScrollBarEnabled(false);
-        lyricsScroll.setOnTouchListener(new LyricsTapSeekHandler(
+        LyricsTapSeekHandler tapSeekHandler = new LyricsTapSeekHandler(
                 activity,
                 config,
                 followState::holdUntil,
                 followState::setTouching,
-                this::seekNearestLineAt));
+                this::seekNearestLineAt);
+        lyricsScroll.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN
+                    || event.getActionMasked() == android.view.MotionEvent.ACTION_MOVE) revealChrome();
+            return tapSeekHandler.onTouch(view, event);
+        });
         lyricsFrame = new FrameLayout(activity);
         lyricsColumn = new LinearLayout(activity);
         lyricsColumn.setOrientation(LinearLayout.VERTICAL);
@@ -523,6 +540,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         dbgEnter("NativeSpicyShellView.start");
         if (running) return;
         running = true;
+        revealChrome();
         documentGate.start();
         registerPreferenceListener();
         sessionSubscription = host.subscribeLyricsSession(sessionListener);
@@ -551,7 +569,37 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         scrollSettleScheduled = false;
         scrollInProgress = false;
         handler.removeCallbacksAndMessages(null);
+        chromeRevealAnimating = false;
+        if (chromeHeader != null) chromeHeader.animate().cancel();
         clearPendingStyleWrites();
+    }
+
+    private void revealChrome() {
+        if (chromeHeader == null) return;
+        handler.removeCallbacks(hideChromeRunnable);
+        chromeHeader.setVisibility(View.VISIBLE);
+        if (chromeHeader.getAlpha() < 0.99f && !chromeRevealAnimating) {
+            chromeRevealAnimating = true;
+            chromeHeader.animate().cancel();
+            chromeHeader.animate().alpha(1f).setDuration(100L)
+                    .withEndAction(() -> chromeRevealAnimating = false).start();
+        } else {
+            chromeHeader.setAlpha(1f);
+            chromeRevealAnimating = false;
+        }
+        long delay;
+        switch (fullscreenControlsMode()) {
+            case "5 seconds": delay = 5000L; break;
+            case "10 seconds": delay = 10000L; break;
+            case "30 seconds": delay = 30000L; break;
+            default: return;
+        }
+        handler.postDelayed(hideChromeRunnable, delay);
+    }
+
+    private String fullscreenControlsMode() {
+        return new com.eza.spicyex.lyrics.LyricsShellSettings(activity, config)
+                .fullscreenControlsMode();
     }
 
     // The reflective player-state walk in host.getCurrentTrackSafely() is too expensive for every

@@ -203,7 +203,21 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
-    public void japaneseFuriganaCrossingTimedWordsRequiresLineLevelRendering() {
+    public void japaneseSentenceFillSynthesizesLayoutGroupWordsWithoutSpaces() {
+        AppliedLine line = line("君は歌う");
+        LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(
+                1f, true, false, "romaji_only", false,
+                false, true, false, false, "Medium", "default", 1f,
+                false, true, false, false, true);
+
+        LyricsSurfaceRowPlanner.plan(line, document(line), policy);
+
+        assertTrue(line.syntheticWords);
+        assertTrue(line.words.size() >= 2);
+    }
+
+    @Test
+    public void japaneseFuriganaCrossingTimedWordsIsDetectedBeforeCoalescing() {
         AppliedLine line = line("今年も早いね");
         line.words.add(word("今", false));
         line.words.add(word("年", true));
