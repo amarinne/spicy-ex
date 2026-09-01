@@ -48,7 +48,7 @@ public final class LyricsAnimationApplier {
             boolean spotlight
     ) {
         animateSyllables(line, positionMs, deltaSeconds, basePx, sink,
-                spotlight, true, true);
+                spotlight, true, true, false);
     }
 
     public static void animateSyllables(
@@ -59,7 +59,8 @@ public final class LyricsAnimationApplier {
             StyleSink sink,
             boolean spotlight,
             boolean glowEnabled,
-            boolean wordBounceEnabled
+            boolean wordBounceEnabled,
+            boolean directMotion
     ) {
         if (line == null || line.words == null || line.words.isEmpty() || sink == null) return;
         for (int groupStart = 0; groupStart < line.words.size();) {
@@ -88,9 +89,9 @@ public final class LyricsAnimationApplier {
                     float targetY = grouped ? groupedWrapperY(beforeGroup)
                             : wordMotionY(focusActive, positionMs >= groupEndMs, focusProgress);
                     float scale = LyricsSyllableViewState.stepWordScale(
-                            motionOwner, targetScale, deltaSeconds);
+                            motionOwner, targetScale, deltaSeconds, directMotion);
                     float y = LyricsSyllableViewState.stepWordY(
-                            motionOwner, targetY, deltaSeconds);
+                            motionOwner, targetY, deltaSeconds, directMotion);
                     LyricsSyllableViewState.updateTextPivot(
                             motionOwner, grouped ? null : focus);
                     LyricsSyllableViewState.applyWordFrame(
@@ -100,9 +101,9 @@ public final class LyricsAnimationApplier {
                             SyllableSegment segment = line.words.get(wordIndex);
                             boolean localFocus = wordIndex == focusIndex && focusActive;
                             float localScaleY = LyricsSyllableViewState.stepLocalWordScale(segment,
-                                    groupedLocalScaleY(localFocus, focusProgress), deltaSeconds);
+                                    groupedLocalScaleY(localFocus, focusProgress), deltaSeconds, directMotion);
                             float localY = LyricsSyllableViewState.stepLocalWordY(segment,
-                                    groupedLocalY(localFocus, focusProgress), deltaSeconds);
+                                    groupedLocalY(localFocus, focusProgress), deltaSeconds, directMotion);
                             LyricsSyllableViewState.applyLocalWordFrame(segment, sink,
                                     groupedLocalScaleX(), localScaleY, localY, basePx);
                         }
@@ -111,10 +112,24 @@ public final class LyricsAnimationApplier {
             }
             for (int wordIndex = groupStart; wordIndex <= groupEnd; wordIndex++) {
                 animateSegmentVisuals(line.words.get(wordIndex), positionMs, deltaSeconds,
-                        basePx, sink, spotlight, glowEnabled, wordBounceEnabled);
+                        basePx, sink, spotlight, glowEnabled, wordBounceEnabled, directMotion);
             }
             groupStart = groupEnd + 1;
         }
+    }
+
+    public static void animateSyllables(
+            AppliedLine line,
+            long positionMs,
+            float deltaSeconds,
+            float basePx,
+            StyleSink sink,
+            boolean spotlight,
+            boolean glowEnabled,
+            boolean wordBounceEnabled
+    ) {
+        animateSyllables(line, positionMs, deltaSeconds, basePx, sink,
+                spotlight, glowEnabled, wordBounceEnabled, false);
     }
 
     private static void animateSegmentVisuals(
@@ -125,7 +140,8 @@ public final class LyricsAnimationApplier {
             StyleSink sink,
             boolean spotlight,
             boolean glowEnabled,
-            boolean wordBounceEnabled
+            boolean wordBounceEnabled,
+            boolean directMotion
     ) {
         if (!LyricsSyllableViewState.isWordAttached(seg)) return;
         float progress = progress01(positionMs, seg.startMs, seg.endMs);
@@ -173,8 +189,8 @@ public final class LyricsAnimationApplier {
             else if (timeAlpha <= letter.start) letterGradient = LyricAnimations.GRADIENT_UNSUNG;
             else letterGradient = LyricAnimations.gradientPosition(LyricAnimations.easeSinOut(letterTimeScale));
             float targetLetterBrightness = spotlight && active ? spotlightBrightness(letterTimeScale) : 1f;
-            float letterScale = LyricsSyllableViewState.stepLetterScale(letter, targetLetterScale, deltaSeconds);
-            float letterY = LyricsSyllableViewState.stepLetterY(letter, targetLetterY, deltaSeconds);
+            float letterScale = LyricsSyllableViewState.stepLetterScale(letter, targetLetterScale, deltaSeconds, directMotion);
+            float letterY = LyricsSyllableViewState.stepLetterY(letter, targetLetterY, deltaSeconds, directMotion);
             float letterGlow = LyricsSyllableViewState.stepLetterGlow(letter, targetLetterGlow, deltaSeconds);
             LyricsSyllableViewState.applyLetterFrame(letter, sink, letterScale, letterY, basePx,
                     letterGradient, letterGlow, targetLetterBrightness);

@@ -213,9 +213,12 @@ public final class Settings {
             "Gradient wash", "Spotlight"
     );
 
-    public static final Setting<Boolean> WORD_BOUNCE = boolSetting(
-            "lyric_word_bounce", ANIMATION, "Word bounce", true
+    // One selector owns both the bounce gate and its scope.
+    public static final Setting<String> WORD_BOUNCE = enumSetting(
+            "lyric_word_bounce_mode", ANIMATION, "Word bounce",
+            "Word/syllable synced only", "Off", "Word/syllable synced only", "All synced rows"
     );
+
 
     public static final Setting<Boolean> ENABLE_GLOW_BLUR = boolSetting(
             "lyric_enable_glow_blur", ANIMATION, "Text glow", true
@@ -254,7 +257,7 @@ public final class Settings {
     // Global romanization layout — aligned under each word (great for language learners comparing
     // word-by-word) vs a single line. Applies to every romanizable script, not just one language.
     public static final Setting<Boolean> ALIGNED_PER_WORD_ROMAJI = boolSetting(
-            "lyric_aligned_per_word_romaji", TRANSLITERATION, "Attach transliteration under each word", true
+            "lyric_aligned_per_word_romaji", TRANSLITERATION, "Attach transliteration under each word", false
     );
 
     // "cycle" = the in-screen chip cycles the modes on tap; a fixed value locks to that mode.
@@ -367,7 +370,7 @@ public final class Settings {
     );
 
     public static final Setting<String> AI_BUTTON_BEHAVIOR = enumSetting(
-            "ai_button_behavior", AI, "Translation & transliteration buttons",
+            "ai_button_behavior", AI, "Translation button",
             "Generate AI output, then toggle",
             "Generate AI output, then toggle", "Toggle display only"
     );

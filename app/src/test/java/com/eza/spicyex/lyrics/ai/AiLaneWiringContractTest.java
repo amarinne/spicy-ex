@@ -89,6 +89,35 @@ public final class AiLaneWiringContractTest {
                 + "showTranslation = true;"));
     }
 
+    /** Sound tap cycles local modes. Only long press or automatic gap fill may request Sound AI. */
+    @Test
+    public void soundPrimaryTapNeverStartsAi() throws Exception {
+        String compact = read("src/main/java/com/eza/spicyex/hooks/NativeSpicyShellViewImpl.java")
+                .replaceAll("\\s+", " ");
+
+        int click = compact.indexOf("romanToggle.setOnClickListener(v -> {");
+        int longClick = compact.indexOf("romanToggle.setOnLongClickListener", click);
+        assertTrue(click >= 0);
+        assertTrue(longClick > click);
+        String listener = compact.substring(click, longClick);
+        assertTrue(listener.contains("cycleTransliterationMode(prefs);"));
+        assertFalse(listener.contains("requestAiLayerWithFeedback"));
+        assertFalse(listener.contains("shouldGenerateAi"));
+    }
+
+    @Test
+    public void localModeCycleClearsStaleSoundAiMarker() throws Exception {
+        String compact = read("src/main/java/com/eza/spicyex/hooks/NativeSpicyShellViewImpl.java")
+                .replaceAll("\\s+", " ");
+        int cycle = compact.indexOf("private void cycleTransliterationMode");
+        int body = compact.indexOf("LyricsTransliterationSession.CycleResult result", cycle);
+        assertTrue(cycle >= 0);
+        assertTrue(body > cycle);
+        String prefix = compact.substring(cycle, body);
+        assertTrue(prefix.contains("resetSoundLayer"));
+        assertTrue(prefix.contains("readingFromAi"));
+    }
+
     /**
      * The coalescer key is claimed on the calling thread, before dispatch. A refused execution
      * would otherwise leave it held with no owner to release it, and every later request for that

@@ -36,8 +36,11 @@ public final class LyricsLocalRomanizer {
             List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
             if (doc != null && isChineseLine(doc, line.text, fullText)) {
                 if (opts == null || isBlank(opts.chineseMode)) return "";
-                // Clear stale JP reading state from older/wrong cycles so Chinese rows cannot render furigana.
+                // Chinese mode changes must discard the previous plan and segment output. Otherwise
+                // an aligned row can keep displaying the prior mode before fallback resolution runs.
                 line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading("", "", new ArrayList<>());
+                line.readingRenderPlan = null;
+                line.romanizedText = "";
                 line.chineseMode = normalizeChineseMode(opts.chineseMode);
                 return SpicyJapaneseChineseProcessor.romanizeChineseLine(line.text, line.chineseMode, opts.chineseTones);
             }
@@ -78,6 +81,10 @@ public final class LyricsLocalRomanizer {
                 if (line.readingRenderPlan != null) return line.readingRenderPlan.joinedDisplayText;
                 return "";
             }
+            // Generic local modes (including Cyrillic Russian/Ukrainian) do not create a plan
+            // themselves. Drop any plan from the previous cycle before fallback resolution rebuilds it.
+            line.readingRenderPlan = null;
+            line.romanizedText = "";
             return SpicyRomanizer.romanizeLine(line.text, scripts, doc == null ? "" : doc.language, opts);
         } catch (Throwable t) {
             XposedBridge.log(TAG + " local romanization failed: " + t);

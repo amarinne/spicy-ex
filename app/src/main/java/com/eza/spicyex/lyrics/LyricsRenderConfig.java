@@ -17,6 +17,7 @@ public final class LyricsRenderConfig {
     public final boolean lineGradientEnabled;
     public final boolean spotlight;
     public final boolean wordBounceEnabled;
+    public final String wordBounceScope;
     public final boolean glowBlurEnabled;
     public final boolean lineBlurEnabled;
     public final float blurQuality;
@@ -69,6 +70,7 @@ public final class LyricsRenderConfig {
             boolean lineGradientEnabled,
             boolean spotlight,
             boolean wordBounceEnabled,
+            String wordBounceScope,
             boolean glowBlurEnabled,
             boolean lineBlurEnabled,
             float blurQuality,
@@ -122,6 +124,7 @@ public final class LyricsRenderConfig {
         this.lineGradientEnabled = lineGradientEnabled;
         this.spotlight = spotlight;
         this.wordBounceEnabled = wordBounceEnabled;
+        this.wordBounceScope = safe(wordBounceScope);
         this.glowBlurEnabled = glowBlurEnabled;
         this.lineBlurEnabled = lineBlurEnabled;
         this.blurQuality = blurQuality;
@@ -169,6 +172,45 @@ public final class LyricsRenderConfig {
         this.syncOffsetMs = syncOffsetMs;
     }
 
+    // Keep reflection-based JVM fixtures stable while the scope setting is added.
+    private LyricsRenderConfig(
+            String backgroundStyle, boolean forceDarkBackground, boolean lineGradientEnabled,
+            boolean spotlight, boolean wordBounceEnabled, boolean glowBlurEnabled,
+            boolean lineBlurEnabled, float blurQuality, boolean interludeNoteIcon,
+            boolean toggleSpinnerEnabled, boolean attachTransliterationToWords,
+            boolean transliterationEnabled, boolean adaptiveSectioningEnabled,
+            String lineSpacingMode, float lineSpacingMultiplier, String lyricWeight,
+            String liveCardWeight, String lyricsFont, String lyricsTextSizeMode,
+            float lyricsTextSizeMultiplier, String liveCardTextSizeMode,
+            float liveCardTextSizeMultiplier, String liveCardSecondaryMode,
+            boolean liveCardShowTransliteration, boolean liveCardShowTranslation,
+            boolean liveCardMinimalAnimation, String liveCardAnimationMode,
+            String liveCardGlowMode, String liveCardLineSyncFillMode,
+            String liveCardTransitionMode, String liveCardOverflowMode,
+            String liveCardScrollScope, String lineSyncFillMode, String japaneseModeConfig,
+            String defaultJapaneseReadingMode, String chineseModeConfig, String defaultChineseMode,
+            String koreanModeConfig, String defaultKoreanMode, String koreanMode,
+            boolean chineseTones, String cyrillicModeConfig, String defaultCyrillicMode,
+            String cyrillicMode, boolean cyrillicKeepSigns, boolean translationEnabled,
+            String translationBackend, String translationTarget, boolean translationBright,
+            int syncOffsetMs
+    ) {
+        this(backgroundStyle, forceDarkBackground, lineGradientEnabled, spotlight,
+                wordBounceEnabled, "Word/syllable synced only", glowBlurEnabled,
+                lineBlurEnabled, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
+                attachTransliterationToWords, transliterationEnabled, adaptiveSectioningEnabled,
+                lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont,
+                lyricsTextSizeMode, lyricsTextSizeMultiplier, liveCardTextSizeMode,
+                liveCardTextSizeMultiplier, liveCardSecondaryMode, liveCardShowTransliteration,
+                liveCardShowTranslation, liveCardMinimalAnimation, liveCardAnimationMode,
+                liveCardGlowMode, liveCardLineSyncFillMode, liveCardTransitionMode,
+                liveCardOverflowMode, liveCardScrollScope, lineSyncFillMode, japaneseModeConfig,
+                defaultJapaneseReadingMode, chineseModeConfig, defaultChineseMode, koreanModeConfig,
+                defaultKoreanMode, koreanMode, chineseTones, cyrillicModeConfig, defaultCyrillicMode,
+                cyrillicMode, cyrillicKeepSigns, translationEnabled, translationBackend,
+                translationTarget, translationBright, syncOffsetMs);
+    }
+
     public static LyricsRenderConfig read(Context context, SpotifyPlusConfig config) {
         SpotifyPlusConfig cfg = config;
         if (cfg == null && context != null) cfg = SpotifyPlusConfig.from(context);
@@ -194,13 +236,20 @@ public final class LyricsRenderConfig {
         boolean transliterationEnabled = transliterationAvailable && get(cfg, Settings.TRANSLITERATION_ENABLED);
         boolean translationEnabled = translationAvailable && translationEnabled(cfg);
 
+        String wordBounceMode = cfg == null ? Settings.WORD_BOUNCE.defaultValue
+                : cfg.get(Settings.WORD_BOUNCE);
+        boolean wordBounceEnabled = !"Off".equals(wordBounceMode);
+        String wordBounceScope = "All synced rows".equals(wordBounceMode)
+                ? "All synced rows" : "Word/syllable synced only";
+
         return new LyricsRenderConfig(
                 FeatureAvailability.animatedBackgroundAvailable()
                         ? LyricsBackgroundStyle.read(cfg) : LyricsBackgroundStyle.GRADIENT,
                 get(cfg, Settings.FORCE_DARK_BACKGROUND),
                 get(cfg, Settings.ENABLE_LINE_GRADIENT),
                 shell.spotlightAnimation(),
-                get(cfg, Settings.WORD_BOUNCE),
+                wordBounceEnabled,
+                wordBounceScope,
                 get(cfg, Settings.ENABLE_GLOW_BLUR),
                 get(cfg, Settings.ENABLE_LINE_BLUR),
                 shell.lineBlurQualityMultiplier(),
@@ -249,6 +298,7 @@ public final class LyricsRenderConfig {
         );
     }
 
+
     public long adjustedPositionMs(long playbackPositionMs) {
         return Math.max(0L, playbackPositionMs + syncOffsetMs);
     }
@@ -283,8 +333,9 @@ public final class LyricsRenderConfig {
                 forceDarkBackground,
                 !minimal,
                 spotlightCard,
-                wordBounceEnabled,
-                glow,
+                 wordBounceEnabled,
+                 wordBounceScope,
+                 glow,
                 false,
                 blurQuality,
                 interludeNoteIcon,
@@ -447,7 +498,8 @@ public final class LyricsRenderConfig {
             boolean visualOnlyChanged = oldValue.toggleSpinnerEnabled != next.toggleSpinnerEnabled
                     || oldValue.lineGradientEnabled != next.lineGradientEnabled
                     || oldValue.spotlight != next.spotlight
-                    || oldValue.wordBounceEnabled != next.wordBounceEnabled
+                     || oldValue.wordBounceEnabled != next.wordBounceEnabled
+                     || changed(oldValue.wordBounceScope, next.wordBounceScope)
                     || oldValue.glowBlurEnabled != next.glowBlurEnabled
                     || oldValue.lineBlurEnabled != next.lineBlurEnabled
                     || changed(oldValue.blurQuality, next.blurQuality);

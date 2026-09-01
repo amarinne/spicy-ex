@@ -28,6 +28,37 @@ public final class LyricsSyllableViewState {
         state.ySpring = null;
         state.localScaleSpring = null;
         state.localYSpring = null;
+        if (motionOwner && motionView != null) {
+            // Inactive word rows mount at the 0.95 recessed scale. The default center pivot would
+            // render that scale with a leading inset (and a baseline offset) until the row becomes
+            // active and animateSyllables applies updateTextPivot — visible as a gap that snaps
+            // away when the karaoke fill reaches the line. Pin the rest pivot at layout time with
+            // the same formula updateTextPivot resolves at rest, so the mount state and the
+            // animated state are pixel-identical (same pattern as LyricsLineViewState.setMainView).
+            motionView.removeOnLayoutChangeListener(REST_MOTION_PIVOT_LISTENER);
+            motionView.addOnLayoutChangeListener(REST_MOTION_PIVOT_LISTENER);
+        }
+    }
+
+    private static final View.OnLayoutChangeListener REST_MOTION_PIVOT_LISTENER =
+            (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+                    applyRestMotionPivot((View) v);
+
+    /** Rest pivot for a word motion view: leading-edge clamp near the row edges, else the group
+     * center — exactly what {@link #updateTextPivot} computes at rest — with the baseline as the
+     * vertical pivot. */
+    private static void applyRestMotionPivot(View motion) {
+        if (motion == null || motion.getWidth() <= 0 || motion.getHeight() <= 0) return;
+        int parentWidth = motion.getParent() instanceof View
+                ? ((View) motion.getParent()).getWidth() : 0;
+        float pivotX = horizontalMotionPivot(motion.getLeft(), motion.getRight(),
+                motion.getWidth(), parentWidth, motion.getWidth() / 2f);
+        if (Math.abs(motion.getPivotX() - pivotX) > 0.5f) {
+            motion.setPivotX(pivotX);
+        }
+        if (Math.abs(motion.getPivotY() - motion.getHeight()) > 0.5f) {
+            motion.setPivotY(motion.getHeight());
+        }
     }
 
     public static void clear(SyllableSegment segment) {
@@ -117,14 +148,34 @@ public final class LyricsSyllableViewState {
     }
 
     public static float stepWordScale(SyllableSegment segment, float targetScale, float deltaSeconds) {
+        return stepWordScale(segment, targetScale, deltaSeconds, false);
+    }
+
+    public static float stepWordScale(SyllableSegment segment, float targetScale, float deltaSeconds,
+                                      boolean direct) {
         if (segment == null) return targetScale;
+        if (direct) return targetScale;
         ensureWordScaleSpring(segment, targetScale);
         state(segment).scaleSpring.setGoal(targetScale);
         return state(segment).scaleSpring.step(deltaSeconds);
     }
 
+    public static float directWordScale(float targetScale) {
+        return targetScale;
+    }
+
+    public static float directWordY(float targetY) {
+        return targetY;
+    }
+
     public static float stepWordY(SyllableSegment segment, float targetY, float deltaSeconds) {
+        return stepWordY(segment, targetY, deltaSeconds, false);
+    }
+
+    public static float stepWordY(SyllableSegment segment, float targetY, float deltaSeconds,
+                                  boolean direct) {
         if (segment == null) return targetY;
+        if (direct) return targetY;
         ensureWordYSpring(segment, targetY);
         state(segment).ySpring.setGoal(targetY);
         return state(segment).ySpring.step(deltaSeconds);
@@ -139,15 +190,27 @@ public final class LyricsSyllableViewState {
 
     public static float stepLocalWordScale(SyllableSegment segment, float targetScale,
                                            float deltaSeconds) {
+        return stepLocalWordScale(segment, targetScale, deltaSeconds, false);
+    }
+
+    public static float stepLocalWordScale(SyllableSegment segment, float targetScale,
+                                           float deltaSeconds, boolean direct) {
         if (segment == null) return targetScale;
-        ensureLocalWordSprings(segment);
+        if (direct) return targetScale;
+        ensureLocalWordScaleSpring(segment, targetScale);
         state(segment).localScaleSpring.setGoal(targetScale);
         return state(segment).localScaleSpring.step(deltaSeconds);
     }
 
     public static float stepLocalWordY(SyllableSegment segment, float targetY, float deltaSeconds) {
+        return stepLocalWordY(segment, targetY, deltaSeconds, false);
+    }
+
+    public static float stepLocalWordY(SyllableSegment segment, float targetY, float deltaSeconds,
+                                       boolean direct) {
         if (segment == null) return targetY;
-        ensureLocalWordSprings(segment);
+        if (direct) return targetY;
+        ensureLocalWordYSpring(segment, targetY);
         state(segment).localYSpring.setGoal(targetY);
         return state(segment).localYSpring.step(deltaSeconds);
     }
@@ -295,22 +358,42 @@ public final class LyricsSyllableViewState {
     }
 
     public static float stepLetterScale(AnimatedLetterState letter, float targetScale, float deltaSeconds) {
+        return stepLetterScale(letter, targetScale, deltaSeconds, false);
+    }
+
+    public static float stepLetterScale(AnimatedLetterState letter, float targetScale, float deltaSeconds,
+                                        boolean direct) {
         if (letter == null) return targetScale;
-        ensureLetterSprings(letter);
+        if (direct) return targetScale;
+        ensureLetterScaleSpring(letter, targetScale);
         letter.scaleSpring.setGoal(targetScale);
         return letter.scaleSpring.step(deltaSeconds);
     }
 
+    public static float directLetterScale(float targetScale) {
+        return targetScale;
+    }
+
+    public static float directLetterY(float targetY) {
+        return targetY;
+    }
+
     public static float stepLetterY(AnimatedLetterState letter, float targetY, float deltaSeconds) {
+        return stepLetterY(letter, targetY, deltaSeconds, false);
+    }
+
+    public static float stepLetterY(AnimatedLetterState letter, float targetY, float deltaSeconds,
+                                    boolean direct) {
         if (letter == null) return targetY;
-        ensureLetterSprings(letter);
+        if (direct) return targetY;
+        ensureLetterYSpring(letter, targetY);
         letter.ySpring.setGoal(targetY);
         return letter.ySpring.step(deltaSeconds);
     }
 
     public static float stepLetterGlow(AnimatedLetterState letter, float targetGlow, float deltaSeconds) {
         if (letter == null) return targetGlow;
-        ensureLetterSprings(letter);
+        ensureLetterGlowSpring(letter);
         letter.glowSpring.setGoal(targetGlow);
         return letter.glowSpring.step(deltaSeconds);
     }
@@ -408,10 +491,14 @@ public final class LyricsSyllableViewState {
         state(segment).glowSpring = new Spring(0f, 1.18f, 0.56f);
     }
 
-    private static void ensureLocalWordSprings(SyllableSegment segment) {
-        if (state(segment).localScaleSpring != null && state(segment).localYSpring != null) return;
-        state(segment).localScaleSpring = new Spring(1f, 0.88f, 0.64f);
-        state(segment).localYSpring = new Spring(0f, 1.45f, 0.4f);
+    private static void ensureLocalWordScaleSpring(SyllableSegment segment, float initialScale) {
+        if (state(segment).localScaleSpring != null) return;
+        state(segment).localScaleSpring = new Spring(initialScale, 0.88f, 0.64f);
+    }
+
+    private static void ensureLocalWordYSpring(SyllableSegment segment, float initialY) {
+        if (state(segment).localYSpring != null) return;
+        state(segment).localYSpring = new Spring(initialY, 1.45f, 0.4f);
     }
 
     private static void snapWordSprings(SyllableSegment segment, float scale, float y, float glow) {
@@ -460,10 +547,18 @@ public final class LyricsSyllableViewState {
         if (Math.abs(view.getTranslationY()) > 0.5f) view.setTranslationY(0f);
     }
 
-    private static void ensureLetterSprings(AnimatedLetterState letter) {
-        if (letter.scaleSpring != null && letter.ySpring != null && letter.glowSpring != null) return;
-        letter.scaleSpring = new Spring(1f, 0.6f, 0.7f);
-        letter.ySpring = new Spring(0f, 1.25f, 0.4f);
+    private static void ensureLetterScaleSpring(AnimatedLetterState letter, float initialScale) {
+        if (letter.scaleSpring != null) return;
+        letter.scaleSpring = new Spring(initialScale, 0.6f, 0.7f);
+    }
+
+    private static void ensureLetterYSpring(AnimatedLetterState letter, float initialY) {
+        if (letter.ySpring != null) return;
+        letter.ySpring = new Spring(initialY, 1.25f, 0.4f);
+    }
+
+    private static void ensureLetterGlowSpring(AnimatedLetterState letter) {
+        if (letter.glowSpring != null) return;
         letter.glowSpring = new Spring(0f, 1f, 0.5f);
     }
 

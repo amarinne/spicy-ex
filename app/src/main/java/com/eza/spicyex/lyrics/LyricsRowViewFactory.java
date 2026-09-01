@@ -123,7 +123,10 @@ public final class LyricsRowViewFactory {
         // Ruby groups remain visual-only; timed provider children keep their existing word path.
         boolean useSyllableWords = !indicLine && (hasRealTimedWords || (hasSyllableWords
                 && (options.wordLevelFill || options.lineLevelFillSentence || showJapaneseFurigana || showAlignedRomaji)));
-        boolean lineLevelFillTopDown = !useSyllableWords && options.lineLevelFillTopDown;
+        // Gradient direction is a document-level choice. Do not switch one row to horizontal
+        // merely because that row has timed syllables; mixed rows otherwise render with different
+        // fill geometry in the same song.
+        boolean lineLevelFillTopDown = options.lineLevelFillTopDown;
         if (useSyllableWords) {
             buildSyllableWords(row, line, options, romanizedWordProvider,
                     showJapaneseFurigana, showAlignedRomaji);

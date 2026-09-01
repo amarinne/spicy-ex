@@ -67,6 +67,43 @@ public class LyricsLocalRomanizerDocumentContextTest {
     }
 
     @Test
+    public void chineseModeChangeClearsPreviousReadingPlan() {
+        LyricsDocument doc = doc("yue", "香港");
+        LyricsLine line = doc.lines.get(0);
+        line.chineseMode = SpotifyPlusConfig.CHINESE_MODE_JYUTPING;
+        line.readingRenderPlan = new RenderPlan("old", java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(), java.util.Collections.emptyList(),
+                "hoeng1 gong2", null);
+
+        RomanizationOptions pinyin = new RomanizationOptions(
+                SpotifyPlusConfig.CHINESE_MODE_PINYIN, "Off", true, "Off", false);
+        String romanized = LyricsLocalRomanizer.romanizeLine(pinyin, doc, line,
+                LyricsDocumentProcessor.collectText(doc));
+
+        assertTrue(romanized != null && !romanized.isEmpty());
+        assertFalse(romanized.contains("hoeng1"));
+        assertEquals(SpotifyPlusConfig.CHINESE_MODE_PINYIN, line.chineseMode);
+        assertTrue(line.readingRenderPlan == null);
+    }
+
+    @Test
+    public void cyrillicModeChangeClearsPreviousReadingPlan() {
+        LyricsDocument doc = doc("ru", "гора");
+        LyricsLine line = doc.lines.get(0);
+        line.readingRenderPlan = new RenderPlan("old", java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(), java.util.Collections.emptyList(),
+                "hora", null);
+
+        RomanizationOptions ukrainian = new RomanizationOptions(
+                "", "Off", false, SpicyRomanizer.CYRILLIC_UKRAINIAN, false);
+        String romanized = LyricsLocalRomanizer.romanizeLine(ukrainian, doc, line,
+                LyricsDocumentProcessor.collectText(doc));
+
+        assertEquals("hora", romanized);
+        assertTrue(line.readingRenderPlan == null);
+    }
+
+    @Test
     public void unmatchedDisplaySegmentFallsBackEvenWhenLineHasReadingPlan() {
         LyricsDocument doc = doc("yue", "香港");
         AppliedLine applied = new AppliedLine();

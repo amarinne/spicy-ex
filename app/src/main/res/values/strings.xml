@@ -56,6 +56,10 @@
     <string name="settings_option_always_on">Always on</string>
     <string name="settings_label_lyric_animation_style">Animation style</string>
     <string name="settings_label_lyric_word_bounce">Word bounce</string>
+    <string name="settings_label_lyric_word_bounce_mode">Word bounce</string>
+    <string name="settings_option_lyric_word_bounce_mode_off">Off</string>
+    <string name="settings_option_lyric_word_bounce_mode_word_syllable_synced_only">Word/syllable synced only</string>
+    <string name="settings_option_lyric_word_bounce_mode_all_synced_rows">All synced rows</string>
     <string name="settings_label_lyric_enable_glow_blur">Text glow</string>
     <string name="settings_label_lyric_enable_line_blur">Blur distant lines</string>
     <string name="settings_label_lyric_line_sync_fill">Lyric fill direction</string>
@@ -270,7 +274,7 @@
     <string name="settings_option_ai_pronunciation_source_ai_only">Lyrics → AI reading</string>
     <string name="settings_option_layered">Layered</string>
     <string name="settings_option_ai_only">AI only</string>
-    <string name="settings_label_ai_button_behavior">Translation &amp; transliteration buttons</string>
+    <string name="settings_label_ai_button_behavior">Translation button</string>
     <string name="settings_option_generate_ai_output_then_toggle">Generate AI output, then toggle</string>
     <string name="settings_option_toggle_display_only">Toggle display only</string>
     <string name="settings_ai_status">AI status</string>

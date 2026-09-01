@@ -112,7 +112,9 @@ public final class LyricsFrameRenderer {
             float lineGlow = LyricsAnimationApplier.stepLineGlow(line, lineGlowTarget, deltaSeconds);
 
             if (LyricsLineViewState.hasMainView(line)) {
-                float scale = LyricsAnimationApplier.stepLineScale(line, lineState.scaleTarget, deltaSeconds);
+                float lineScaleTarget = lineLevelBounceEnabled(config, line)
+                        ? lineState.scaleTarget : 1f;
+                float scale = LyricsAnimationApplier.stepLineScale(line, lineScaleTarget, deltaSeconds);
                 LyricsLineViewState.updateMainScalePivot(line);
                 LyricsLineViewState.applyMainScale(line, styleBatcher, scale);
                 LyricsLineViewState.applyLineLevelGradient(
@@ -137,13 +139,14 @@ public final class LyricsFrameRenderer {
                                 styleSink,
                                 config.spotlight,
                                 config.glowBlurEnabled,
-                                config.wordBounceEnabled);
+                                wordBounceEnabled(config, line),
+                                true);
                         if (wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
                             applyContinuousWordGradient(line, lineState, lineGlow);
                         }
                     } else {
-                        LyricsAnimationApplier.resetSyllables(
-                                line, styleSink, config.wordBounceEnabled);
+                            LyricsAnimationApplier.resetSyllables(
+                                    line, styleSink, wordBounceEnabled(config, line));
                     }
                 } else if (line.words != null && !line.words.isEmpty()
                         && wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
@@ -157,14 +160,14 @@ public final class LyricsFrameRenderer {
                             styleSink,
                             config.spotlight,
                             config.glowBlurEnabled,
-                            config.wordBounceEnabled);
+                            wordBounceEnabled(config, line));
                 } else {
                     if (config.lineSyncFillWord() || config.lineSyncFillSentence()) {
                         resetNearbySyllables(
-                                line, i, activeIndex, styleSink, config.wordBounceEnabled);
+                                line, i, activeIndex, styleSink, wordBounceEnabled(config, line));
                     } else {
                         LyricsAnimationApplier.resetSyllables(
-                                line, styleSink, config.wordBounceEnabled);
+                                line, styleSink, wordBounceEnabled(config, line));
                     }
                 }
             }
@@ -176,6 +179,16 @@ public final class LyricsFrameRenderer {
 
     private boolean hasRealTimedWords(AppliedLine line) {
         return line != null && !line.syntheticWords && line.words != null && !line.words.isEmpty();
+    }
+
+    private boolean wordBounceEnabled(LyricsRenderConfig config, AppliedLine line) {
+        return config != null && config.wordBounceEnabled
+                && (config.wordBounceScope.equals("All synced rows") || hasRealTimedWords(line));
+    }
+
+    private boolean lineLevelBounceEnabled(LyricsRenderConfig config, AppliedLine line) {
+        return config != null && config.wordBounceEnabled
+                && "All synced rows".equals(config.wordBounceScope);
     }
 
     static WordGradientRoute wordGradientRoute(String fillMode) {

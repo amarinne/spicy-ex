@@ -126,6 +126,30 @@ public class TimedTextRowProjectionTest {
     }
 
     @Test
+    public void newlyMountedLetterMotionStartsAtCurrentPlaybackTarget() {
+        AnimatedLetterState letter = new AnimatedLetterState();
+
+        assertEquals(1.037f,
+                LyricsSyllableViewState.stepLetterScale(letter, 1.037f, 1f / 60f),
+                0.0001f);
+        assertEquals(-0.012f,
+                LyricsSyllableViewState.stepLetterY(letter, -0.012f, 1f / 60f),
+                0.0001f);
+    }
+
+    @Test
+    public void newlyMountedGroupedWordStartsAtCurrentPlaybackTarget() {
+        SyllableSegment segment = timedSegment("wide", true, 1000, 2000);
+
+        assertEquals(1.037f,
+                LyricsSyllableViewState.stepLocalWordScale(segment, 1.037f, 1f / 60f),
+                0.0001f);
+        assertEquals(-0.012f,
+                LyricsSyllableViewState.stepLocalWordY(segment, -0.012f, 1f / 60f),
+                0.0001f);
+    }
+
+    @Test
     public void syntheticTimingSectionsRemainIndependentMotionGroups() {
         AppliedLine line = new AppliedLine();
         line.syntheticWords = true;

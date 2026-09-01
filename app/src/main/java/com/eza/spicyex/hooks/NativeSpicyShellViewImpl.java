@@ -394,19 +394,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         romanToggle = chrome.romanToggle;
         translationToggle = chrome.translationToggle;
         romanToggle.setOnClickListener(v -> {
-            boolean wasVisible = showRomanization();
-            boolean hasDisplayedSound = hasLayerOutput(
-                    com.eza.spicyex.lyrics.session.LayerKind.SOUND);
-            boolean requestedOutput = shouldGenerateAi(
-                    com.eza.spicyex.lyrics.session.LayerKind.SOUND);
-            if (requestedOutput && !requestAiLayerWithFeedback(
-                    com.eza.spicyex.lyrics.session.LayerKind.SOUND)) {
-                return;
-            }
-            if (transliterationSession.keepVisibleForRequestedOutput(
-                    requestedOutput, wasVisible, hasDisplayedSound)) {
-                return;
-            }
+            // Sound tap belongs to the local reading pipeline. In cycle mode it must advance
+            // Pinyin/Jyutping (or the equivalent local language modes), never start a paid AI run.
+            // Automatic AI can still fill local-language gaps, and long press owns explicit AI.
             cycleTransliterationMode(prefs);
         });
         romanToggle.setOnLongClickListener(v -> {
@@ -1970,6 +1960,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void cycleTransliterationMode(SharedPreferences prefs) {
         if (renderConfig != null && !renderConfig.transliterationEnabled) return;
+        // A local mode cycle replaces any previously accepted AI reading. Clear the old Sound
+        // authority before repainting, otherwise the chip briefly shows the green AI marker while
+        // the local Pinyin/Jyutping pass is still running.
+        if (document != null && (document.readingFromAi || document.readingAiPending
+                || !safe(document.readingAiFailureToken).isEmpty())) {
+            LyricsDocumentProcessor.resetSoundLayer(activity.getApplicationContext(), document);
+            updateToggleVisuals();
+        }
         LyricsTransliterationSession.CycleResult result =
                 transliterationSession.cycle(activeLineHasJapanese(), activeLineHasChinese(),
                         activeLineHasKorean(), activeLineHasCyrillic());

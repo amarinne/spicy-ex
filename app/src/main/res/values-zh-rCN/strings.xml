@@ -35,6 +35,10 @@
     <string name="settings_label_lyric_interlude_icon">间奏指示符</string>
     <string name="settings_label_lyric_animation_style">动画样式</string>
     <string name="settings_label_lyric_word_bounce">单词弹跳</string>
+    <string name="settings_label_lyric_word_bounce_mode">单词弹跳</string>
+    <string name="settings_option_lyric_word_bounce_mode_off">关闭</string>
+    <string name="settings_option_lyric_word_bounce_mode_word_syllable_synced_only">仅单词/音节同步</string>
+    <string name="settings_option_lyric_word_bounce_mode_all_synced_rows">所有同步行</string>
     <string name="settings_label_lyric_enable_glow_blur">文字光晕</string>
     <string name="settings_label_lyric_enable_line_blur">模糊远处歌词</string>
     <string name="settings_label_lyric_line_sync_fill">歌词填充方向</string>
@@ -291,7 +295,7 @@
     <string name="settings_option_ai_deepseek_reasoning_high">High</string>
     <string name="settings_option_ai_deepseek_reasoning_max">Max</string>
     <string name="settings_option_ai_provider_custom">自定义（兼容 OpenAI）</string>
-    <string name="settings_label_ai_button_behavior">翻译与音译按钮</string>
+    <string name="settings_label_ai_button_behavior">翻译按钮</string>
     <string name="settings_option_generate_ai_output_then_toggle">先生成 AI 结果，再切换显示</string>
     <string name="settings_option_ai_only">仅 AI</string>
     <string name="settings_option_always_use_ai">始终使用 AI</string>
