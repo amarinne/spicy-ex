@@ -30,8 +30,16 @@ public final class AIPaidArtifactCache {
     static final String LEGACY_PREFS = "SpotifyPlusAIPaidArtifactCache";
     static final String LEGACY_INDEX_KEY = "__paid_index";
     static final int SCHEMA_VERSION = 1;
-    static final long MAX_BYTES = 24L * 1024L * 1024L;
     static final Object LOCK = new Object();
+
+    /**
+     * Paid-AI byte quota from the shared "Cache size" budget (50% plus rounding remainder).
+     * Existing records are never evicted to make room; a full finite quota still refuses writes.
+     */
+    private static long quotaBytes(Context context) {
+        return com.eza.spicyex.lyrics.CacheStoragePolicy.paidAiQuota(
+                com.eza.spicyex.lyrics.CacheStoragePolicy.totalBudget(context));
+    }
 
     private static volatile AIPaidArtifactDatabase database;
 
@@ -130,7 +138,7 @@ public final class AIPaidArtifactCache {
                 AIPaidArtifactDatabase db = database(context);
                 if (!db.ensureV515Migration()) return Write.rejected("migration-failed");
                 return db.put(entryKey(identity), identity.layerKind.name(), value, reservation,
-                        MAX_BYTES);
+                        quotaBytes(context));
             }
         } catch (Throwable failure) {
             Diagnostics.warn("AIPaidArtifactCache", "put", failure);
@@ -152,7 +160,7 @@ public final class AIPaidArtifactCache {
                             "migration-failed");
                 }
                 return db.reserve(entryKey(identity), identity.layerKind.name(), maxRecordBytes,
-                        current, MAX_BYTES);
+                        current, quotaBytes(context));
             }
         } catch (Throwable failure) {
             Diagnostics.warn("AIPaidArtifactCache", "reserve", failure);
@@ -226,11 +234,13 @@ public final class AIPaidArtifactCache {
     }
 
     public static Stats stats(Context context) {
-        if (context == null) return new Stats(0, 0L, Integer.MAX_VALUE, MAX_BYTES);
+        long quota = context == null
+                ? quotaBytes(null) : quotaBytes(context);
+        if (context == null) return new Stats(0, 0L, Integer.MAX_VALUE, quota);
         try {
             synchronized (LOCK) {
                 AIPaidArtifactDatabase db = database(context);
-                if (db.ensureV515Migration()) return db.stats(MAX_BYTES);
+                if (db.ensureV515Migration()) return db.stats(quota);
             }
         } catch (Throwable failure) {
             Diagnostics.warn("AIPaidArtifactCache", "stats", failure);
@@ -239,7 +249,25 @@ public final class AIPaidArtifactCache {
                 LEGACY_PREFS, Context.MODE_PRIVATE).getAll());
         long bytes = 0L;
         for (MigrationRow row : legacy) bytes = safeAdd(bytes, row.valueBytes.length);
-        return new Stats(legacy.size(), bytes, Integer.MAX_VALUE, MAX_BYTES);
+        return new Stats(legacy.size(), bytes, Integer.MAX_VALUE, quota);
+    }
+
+    /**
+     * Combined logical-payload usage of the paid artifact store, for the settings panel.
+     * Counts SQLite {@code raw_bytes} only; the legacy migration XML is never counted here, and an
+     * unreadable store contributes zero.
+     */
+    public static long usageBytes(Context context) {
+        if (context == null) return 0L;
+        try {
+            synchronized (LOCK) {
+                AIPaidArtifactDatabase db = database(context);
+                if (db.ensureV515Migration()) return db.usageBytes();
+            }
+        } catch (Throwable failure) {
+            Diagnostics.warn("AIPaidArtifactCache", "usageBytes", failure);
+        }
+        return 0L;
     }
 
     private static AIPaidArtifactDatabase database(Context context) {

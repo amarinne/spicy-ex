@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics;
 
 import com.atilika.kuromoji.unidic.Token;
 import com.atilika.kuromoji.unidic.Tokenizer;
+import com.atilika.kuromoji.viterbi.ViterbiNode;
 
 import net.sourceforge.pinyin4j.PinyinHelper;
 import net.sourceforge.pinyin4j.format.HanyuPinyinCaseType;
@@ -125,6 +126,34 @@ public final class SpicyJapaneseChineseProcessor {
         final List<JapaneseReadingPolicyModels.ReadingDecision> decisions = new ArrayList<>();
         String romaji;
         Token token;
+    }
+
+    /** Minimal synthetic token used after a reviewed grammar-boundary correction. */
+    private static final class GrammarToken extends Token {
+        private final String pos1;
+        private final String pos2;
+        private final String lemma;
+        private final String reading;
+
+        GrammarToken(String surface, String pos1, String pos2, String lemma, String reading) {
+            super(0, surface, ViterbiNode.Type.KNOWN, 0, null);
+            this.pos1 = pos1;
+            this.pos2 = pos2;
+            this.lemma = lemma;
+            this.reading = reading;
+        }
+
+        @Override public String getPartOfSpeechLevel1() { return pos1; }
+        @Override public String getPartOfSpeechLevel2() { return pos2; }
+        @Override public String getPartOfSpeechLevel3() { return "*"; }
+        @Override public String getPartOfSpeechLevel4() { return "*"; }
+        @Override public String getLemma() { return lemma; }
+        @Override public String getLemmaReadingForm() { return reading; }
+        @Override public String getPronunciation() { return reading; }
+        @Override public String getWrittenForm() { return lemma; }
+        @Override public String getWrittenBaseForm() { return lemma; }
+        @Override public String getConjugationForm() { return "*"; }
+        @Override public String getConjugationType() { return "*"; }
     }
 
     static final class JapaneseDebugToken {
@@ -406,6 +435,23 @@ public final class SpicyJapaneseChineseProcessor {
         return analyzeJapaneseLineWithProviderFurigana(text, furigana, null);
     }
 
+    /** Upgrades provider/cache payloads to the same finalized full-line analysis used locally. */
+    public static JapaneseReading finalizeParsedJapaneseReading(JapaneseReading parsed) {
+        return finalizeParsedJapaneseReading(parsed, parsed == null ? "" : parsed.sourceText);
+    }
+
+    /** Full-line upgrade also covers provider payloads that only contain compact romaji text. */
+    public static JapaneseReading finalizeParsedJapaneseReading(JapaneseReading parsed, String fallbackSourceText) {
+        if (parsed != null && !parsed.groups.isEmpty()) return parsed;
+        String sourceText = parsed == null || isBlank(parsed.sourceText)
+                ? safe(fallbackSourceText) : parsed.sourceText;
+        if (isBlank(sourceText) || !SpicyTextDetection.itemJapaneseTest(sourceText)) return parsed;
+        JapaneseReading finalized = parsed == null || parsed.furigana.isEmpty()
+                ? analyzeJapaneseLine(sourceText, null)
+                : analyzeJapaneseLineWithProviderFurigana(sourceText, parsed.furigana);
+        return finalized == null || isBlank(finalized.romaji) ? parsed : finalized;
+    }
+
     static JapaneseReading analyzeJapaneseLineWithProviderFurigana(
             String text, List<FuriganaSegment> furigana,
             List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
@@ -604,6 +650,29 @@ public final class SpicyJapaneseChineseProcessor {
         return mapGroupsToSyllables(reading.sourceText, reading.groups, syllableTexts);
     }
 
+    /** Projects finalized full-line analysis onto one canonical source range. */
+    public static String romanizeJapaneseRange(JapaneseReading reading, int startCp, int endCp) {
+        if (reading == null || startCp < 0 || endCp <= startCp) return "";
+        // Provider and older cache payloads do not carry finalized groups. Keep the authoritative
+        // full-line reading visible as one unit instead of falling back to section tokenization.
+        if (reading.groups.isEmpty()) return startCp == 0 ? reading.romaji : "";
+        int sourceCpLength = reading.sourceText.codePointCount(0, reading.sourceText.length());
+        int safeStartCp = Math.min(startCp, sourceCpLength);
+        int safeEndCp = Math.min(endCp, sourceCpLength);
+        int start = reading.sourceText.offsetByCodePoints(0, safeStartCp);
+        int end = reading.sourceText.offsetByCodePoints(0, safeEndCp);
+        StringBuilder out = new StringBuilder();
+        for (ReadingGroup group : reading.groups) {
+            if (group == null || isBlank(group.romaji)) continue;
+            // A tokenizer group belongs to the visual section where the group starts. A later
+            // section that only continues the same word stays blank.
+            if (group.start < start || group.start >= end) continue;
+            if (out.length() > 0) out.append(' ');
+            out.append(group.romaji);
+        }
+        return normalizeSpaces(out.toString());
+    }
+
     private static List<ReadingGroup> readingGroups(List<Entry> entries) {
         ArrayList<ReadingGroup> out = new ArrayList<>();
         for (RomajiGroup group : romajiGroups(entries)) {
@@ -703,6 +772,7 @@ public final class SpicyJapaneseChineseProcessor {
         List<Entry> entries = buildRawEntries(sourceText, analysisText);
         applyExplicitBoundaries(sourceText, entries, explicitBoundaries);
         applyAnalyzerParityCorrections(entries);
+        applyGrammarBoundaryCorrections(entries);
         applyProductiveOverrides(entries);
         if (providerFurigana != null && !providerFurigana.isEmpty()) {
             applyProviderFuriganaOverrides(sourceText, entries, providerFurigana);
@@ -744,6 +814,72 @@ public final class SpicyJapaneseChineseProcessor {
             second.readingKana = "つかい";
             first.readingReason = second.readingReason = "analyzer-parity:unidic-browser-tokenization";
         }
+    }
+
+    /**
+     * Repairs a bounded UniDic lexical collision after a finite lyric clause:
+     * よこ+の / よそ+の can be sentence-final よ plus この / その.
+     * Written lexical 横の and 余所の stay analyzer-owned.
+     */
+    private static void applyGrammarBoundaryCorrections(List<Entry> entries) {
+        for (int i = 0; i + 1 < entries.size(); i++) {
+            Entry ambiguous = entries.get(i);
+            Entry particleNo = entries.get(i + 1);
+            if (!("よこ".equals(ambiguous.surface) || "よそ".equals(ambiguous.surface))
+                    || !"の".equals(particleNo.surface)
+                    || particleNo.token == null
+                    || !"助詞".equals(safe(particleNo.token.getPartOfSpeechLevel1()))
+                    || !adjacentWithoutHardBoundary(ambiguous, particleNo)
+                    || !followsFiniteClause(entries, i)) continue;
+
+            String demonstrative = "よこ".equals(ambiguous.surface) ? "この" : "その";
+            int splitAnalysis = ambiguous.analysisStart + 1;
+            int splitDisplay = ambiguous.start + 1;
+            ambiguous.analysisEnd = splitAnalysis;
+            ambiguous.end = splitDisplay;
+            ambiguous.surface = "よ";
+            ambiguous.token = grammarToken("よ", "助詞", "終助詞");
+            ambiguous.dictionaryReadingKana = "よ";
+            ambiguous.dictionaryReadingSource = "authored-kana";
+            ambiguous.readingKana = "よ";
+            ambiguous.readingReason = "authored-kana";
+
+            particleNo.analysisStart = splitAnalysis;
+            particleNo.start = splitDisplay;
+            particleNo.surface = demonstrative;
+            particleNo.token = grammarToken(demonstrative, "連体詞", "*");
+            particleNo.dictionaryReadingKana = demonstrative;
+            particleNo.dictionaryReadingSource = "authored-kana";
+            particleNo.readingKana = demonstrative;
+            particleNo.readingReason = "authored-kana";
+            particleNo.boundaryBefore = false;
+            particleNo.hardBoundaryBefore = false;
+
+            decide(ambiguous, "よ", "ja.reading.grammar.particle-demonstrative",
+                    "rule:ja.reading.grammar.particle-demonstrative");
+            decide(particleNo, demonstrative, "ja.reading.grammar.particle-demonstrative",
+                    "rule:ja.reading.grammar.particle-demonstrative");
+        }
+    }
+
+    private static Token grammarToken(String surface, String pos1, String pos2) {
+        return new GrammarToken(surface, pos1, pos2, surface, surface);
+    }
+
+    private static boolean followsFiniteClause(List<Entry> entries, int ambiguousIndex) {
+        Entry previous = ambiguousIndex > 0 ? entries.get(ambiguousIndex - 1) : null;
+        if (isFiniteClauseEntry(previous)) return true;
+        if (previous == null || previous.token == null || ambiguousIndex < 2
+                || !"助詞".equals(safe(previous.token.getPartOfSpeechLevel1()))
+                || !"接続助詞".equals(safe(previous.token.getPartOfSpeechLevel2()))) return false;
+        return isFiniteClauseEntry(entries.get(ambiguousIndex - 2));
+    }
+
+    private static boolean isFiniteClauseEntry(Entry entry) {
+        if (entry == null || entry.token == null) return false;
+        String pos1 = safe(entry.token.getPartOfSpeechLevel1());
+        return "動詞".equals(pos1) || "助動詞".equals(pos1)
+                || "形容詞".equals(pos1) || "形状詞".equals(pos1);
     }
 
     private static void applyExplicitBoundaries(
@@ -1192,17 +1328,9 @@ public final class SpicyJapaneseChineseProcessor {
                 continue;
             }
 
-            // UniDic can tag bare 君 as the honorific suffix reading クン. As an independent
-            // pronoun in lyrics it should read きみ; suffix use remains "kun" in 田中君.
-            if ("君".equals(entry.surface) && "代名詞".equals(token.getPartOfSpeechLevel1())) {
-                decide(entry, "きみ", "ja.reading.context.kimi-kun", "lexicalOverride:kimiPronoun");
-                continue;
-            }
-
-            // Boundary-separated 君 (provider/authored whitespace removed before analysis) is
-            // the lyric pronoun; the honorific くん needs an attached person name (時 君 ≠ 時君).
-            if ("君".equals(entry.surface) && "接尾辞".equals(safe(token.getPartOfSpeechLevel1()))
-                    && entry.boundaryBefore) {
+            // Honorific くん needs positive attachment evidence. A suffix tag alone is not
+            // enough: lyric sections can place generic katakana directly before independent 君.
+            if ("君".equals(entry.surface) && !isAttachedPersonNameHonorific(prevEntry, entry)) {
                 decide(entry, "きみ", "ja.reading.context.kimi-kun", "rule:ja.reading.context.kimi-kun");
                 continue;
             }
@@ -1221,14 +1349,17 @@ public final class SpicyJapaneseChineseProcessor {
                 }
             }
 
-            // 何 as an independent pronoun before a case particle reads なに; lexicalized
-            // なん constructions (何でも/何です/counters) keep the analyzer reading.
+            // 何 as an independent pronoun before a case particle reads なに. The attached
+            // particles も and か also keep the full なに reading (何も/何か), rather than
+            // inheriting UniDic's shortened なん. Lexicalized なん constructions
+            // (何でも/何です/counters/何の) keep the analyzer reading.
             if ("何".equals(entry.surface) && "なん".equals(entry.readingKana) && nextEntry != null
                     && nextEntry.token != null && !nextEntry.boundaryBefore
                     && "助詞".equals(safe(nextEntry.token.getPartOfSpeechLevel1()))
-                    && "格助詞".equals(safe(nextEntry.token.getPartOfSpeechLevel2()))
-                    && ("が".equals(nextEntry.surface) || "を".equals(nextEntry.surface)
-                        || "に".equals(nextEntry.surface) || "から".equals(nextEntry.surface))) {
+                    && (("格助詞".equals(safe(nextEntry.token.getPartOfSpeechLevel2()))
+                            && ("が".equals(nextEntry.surface) || "を".equals(nextEntry.surface)
+                                || "に".equals(nextEntry.surface) || "から".equals(nextEntry.surface)))
+                        || "も".equals(nextEntry.surface) || "か".equals(nextEntry.surface))) {
                 decide(entry, "なに", "ja.reading.context.nan-nani", "rule:ja.reading.context.nan-nani");
                 continue;
             }
@@ -1274,10 +1405,38 @@ public final class SpicyJapaneseChineseProcessor {
         }
     }
 
+    private static boolean isAttachedPersonNameHonorific(Entry previous, Entry kimi) {
+        if (previous == null || previous.token == null || kimi == null || kimi.token == null
+                || kimi.boundaryBefore || previous.end != kimi.start
+                || !"接尾辞".equals(safe(kimi.token.getPartOfSpeechLevel1()))) return false;
+        return "名詞".equals(safe(previous.token.getPartOfSpeechLevel1()))
+                && "固有名詞".equals(safe(previous.token.getPartOfSpeechLevel2()))
+                && "人名".equals(safe(previous.token.getPartOfSpeechLevel3()));
+    }
+
     private static void applyReadingDefaults(List<Entry> entries) {
         for (int i = 0; i < entries.size(); i++) {
             Entry entry = entries.get(i);
             Entry previous = i > 0 ? entries.get(i - 1) : null;
+            Entry next = i + 1 < entries.size() ? entries.get(i + 1) : null;
+            Token token = entry.token;
+
+            // Lyrics use independent 何 as なに far more often than the bare analyzer
+            // default なん. This is a reviewed default, so validated provider evidence
+            // must win. Strong nan evidence (particles, copula, suffix/counter, and
+            // lexicalized forms) remains analyzer-owned.
+            if ("何".equals(entry.surface) && "なん".equals(entry.readingKana)
+                    && token != null && "代名詞".equals(safe(token.getPartOfSpeechLevel1()))
+                    && isBlank(entry.ruleId) && !entry.providerValidated
+                    && (next == null || next.token == null
+                        || (!"助詞".equals(safe(next.token.getPartOfSpeechLevel1()))
+                            && !"助動詞".equals(safe(next.token.getPartOfSpeechLevel1()))
+                            && !"接尾辞".equals(safe(next.token.getPartOfSpeechLevel1()))))) {
+                decide(entry, "なに", "ja.reading.policy.nani-default",
+                        "rule:ja.reading.policy.nani-default");
+                continue;
+            }
+
             boolean compoundLeft = adjacentWithoutHardBoundary(previous, entry)
                     && previous.token != null
                     && ("名詞".equals(safe(previous.token.getPartOfSpeechLevel1()))
@@ -1818,10 +1977,19 @@ public final class SpicyJapaneseChineseProcessor {
         for (int i = 0; i < entries.size(); i++) {
             Entry entry = entries.get(i);
             if (isBlank(entry.romaji)) continue;
-            boolean noSpaceBefore = shouldNoSpaceBefore(entry, i > 0 ? entries.get(i - 1) : null);
-            appendToken(out, entry.romaji, noSpaceBefore);
+            Entry previous = i > 0 ? entries.get(i - 1) : null;
+            boolean noSpaceBefore = shouldNoSpaceBefore(entry, previous);
+            appendToken(out, entry.romaji, noSpaceBefore, hasAuthoredWhitespaceBefore(entry, previous));
         }
         return normalizeSpaces(out.toString());
+    }
+
+    private static boolean hasAuthoredWhitespaceBefore(Entry entry, Entry previous) {
+        if (entry == null || previous == null || entry.sourceText == null
+                || previous.end < 0 || entry.start <= previous.end
+                || entry.start > entry.sourceText.length()) return false;
+        String gap = entry.sourceText.substring(previous.end, entry.start);
+        return !gap.isEmpty() && gap.trim().isEmpty();
     }
 
     private static List<FuriganaSegment> buildFurigana(String lineText, List<Entry> entries) {
@@ -2135,8 +2303,14 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static void appendToken(StringBuilder out, String romaji, boolean noSpaceBefore) {
+        appendToken(out, romaji, noSpaceBefore, false);
+    }
+
+    private static void appendToken(StringBuilder out, String romaji, boolean noSpaceBefore,
+                                    boolean forceSpaceBefore) {
         if (isBlank(romaji)) return;
-        if (out.length() > 0 && !noSpaceBefore && needsSpace(out, romaji)) out.append(' ');
+        if (out.length() > 0 && !noSpaceBefore
+                && (forceSpaceBefore || needsSpace(out, romaji))) out.append(' ');
         out.append(romaji);
     }
 
@@ -2149,6 +2323,7 @@ public final class SpicyJapaneseChineseProcessor {
         if (entry.surface.matches("^[。、？！…・「」『』（）().?!,\\s]+$")) return true;
         if (shouldMergeNonJapaneseAscii(entry, prevEntry)) return true;
         if (shouldMergeJapaneseVerbContinuation(entry, prevEntry)) return true;
+        if (shouldMergeDatte(entry, prevEntry)) return true;
         if (shouldMergeMekuSuffix(entry, prevEntry)) return true;
         if (shouldMergeFillerContinuation(entry, prevEntry)) return true;
         return entry.romaji != null && entry.romaji.length() == 1 && !Character.isLetterOrDigit(entry.romaji.charAt(0));
@@ -2161,6 +2336,17 @@ public final class SpicyJapaneseChineseProcessor {
                 && "フィラー".equals(safe(entry.token.getPartOfSpeechLevel2()))
                 && "感動詞".equals(safe(prevEntry.token.getPartOfSpeechLevel1()))
                 && "フィラー".equals(safe(prevEntry.token.getPartOfSpeechLevel2()));
+    }
+
+    /** UniDic splits colloquial だって as copular だ + adverbial particle って. */
+    private static boolean shouldMergeDatte(Entry entry, Entry prevEntry) {
+        if (entry == null || prevEntry == null || entry.token == null || prevEntry.token == null) return false;
+        if (prevEntry.end != entry.start) return false;
+        return "だ".equals(prevEntry.surface)
+                && "助動詞".equals(safe(prevEntry.token.getPartOfSpeechLevel1()))
+                && "って".equals(entry.surface)
+                && "助詞".equals(safe(entry.token.getPartOfSpeechLevel1()))
+                && "副助詞".equals(safe(entry.token.getPartOfSpeechLevel2()));
     }
 
     /**

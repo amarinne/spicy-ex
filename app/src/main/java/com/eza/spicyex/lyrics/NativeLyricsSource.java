@@ -325,7 +325,7 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
         }
         CanonicalLine canonical = SyllableCanonicalizer.canonicalize(
                 "native-" + line.startMs + "-" + line.endMs, line.text, parsed);
-        line.text = canonical.text;
+        line.text = SyllableCanonicalizer.displayText(canonical, parsed);
         line.syllables.addAll(parsed);
     }
 

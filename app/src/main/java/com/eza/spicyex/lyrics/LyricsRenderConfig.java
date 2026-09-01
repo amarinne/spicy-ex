@@ -16,6 +16,7 @@ public final class LyricsRenderConfig {
     public final boolean forceDarkBackground;
     public final boolean lineGradientEnabled;
     public final boolean spotlight;
+    public final boolean wordBounceEnabled;
     public final boolean glowBlurEnabled;
     public final boolean lineBlurEnabled;
     public final float blurQuality;
@@ -67,6 +68,7 @@ public final class LyricsRenderConfig {
             boolean forceDarkBackground,
             boolean lineGradientEnabled,
             boolean spotlight,
+            boolean wordBounceEnabled,
             boolean glowBlurEnabled,
             boolean lineBlurEnabled,
             float blurQuality,
@@ -119,6 +121,7 @@ public final class LyricsRenderConfig {
         this.forceDarkBackground = forceDarkBackground;
         this.lineGradientEnabled = lineGradientEnabled;
         this.spotlight = spotlight;
+        this.wordBounceEnabled = wordBounceEnabled;
         this.glowBlurEnabled = glowBlurEnabled;
         this.lineBlurEnabled = lineBlurEnabled;
         this.blurQuality = blurQuality;
@@ -197,6 +200,7 @@ public final class LyricsRenderConfig {
                 get(cfg, Settings.FORCE_DARK_BACKGROUND),
                 get(cfg, Settings.ENABLE_LINE_GRADIENT),
                 shell.spotlightAnimation(),
+                get(cfg, Settings.WORD_BOUNCE),
                 get(cfg, Settings.ENABLE_GLOW_BLUR),
                 get(cfg, Settings.ENABLE_LINE_BLUR),
                 shell.lineBlurQualityMultiplier(),
@@ -279,6 +283,7 @@ public final class LyricsRenderConfig {
                 forceDarkBackground,
                 !minimal,
                 spotlightCard,
+                wordBounceEnabled,
                 glow,
                 false,
                 blurQuality,
@@ -442,6 +447,7 @@ public final class LyricsRenderConfig {
             boolean visualOnlyChanged = oldValue.toggleSpinnerEnabled != next.toggleSpinnerEnabled
                     || oldValue.lineGradientEnabled != next.lineGradientEnabled
                     || oldValue.spotlight != next.spotlight
+                    || oldValue.wordBounceEnabled != next.wordBounceEnabled
                     || oldValue.glowBlurEnabled != next.glowBlurEnabled
                     || oldValue.lineBlurEnabled != next.lineBlurEnabled
                     || changed(oldValue.blurQuality, next.blurQuality);

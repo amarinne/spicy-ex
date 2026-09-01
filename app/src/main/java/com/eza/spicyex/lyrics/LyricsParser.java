@@ -260,13 +260,24 @@ public final class LyricsParser implements LyricsRepository.Parser {
                 "TranslatedText", "translatedText", "Translation", "translation"));
         captureProviderTranslation(line, translated, providerTranslationLanguage(object));
 
-        line.japaneseReading = parseJapaneseReading(object);
+        line.japaneseReading = SpicyJapaneseChineseProcessor.finalizeParsedJapaneseReading(
+                parseJapaneseReading(object, line.text), line.text);
+        if (line.japaneseReading != null && !line.japaneseReading.groups.isEmpty()
+                && !isBlank(line.japaneseReading.romaji)) {
+            line.romanizedText = line.japaneseReading.romaji;
+        }
     }
 
     public static SpicyJapaneseChineseProcessor.JapaneseReading parseJapaneseReading(JsonObject object) {
+        return parseJapaneseReading(object, "");
+    }
+
+    private static SpicyJapaneseChineseProcessor.JapaneseReading parseJapaneseReading(
+            JsonObject object, String fallbackSourceText) {
         JsonObject reading = Json.optObject(object, "JapaneseReading", "japaneseReading");
         if (reading == null) return null;
         String sourceText = Json.optString(reading, "sourceText", "SourceText");
+        if (isBlank(sourceText)) sourceText = fallbackSourceText;
         String romaji = Json.optString(reading, "romaji", "Romaji");
         JsonArray furiganaArray = Json.optArray(reading, "furigana", "Furigana");
         ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> furigana = new ArrayList<>();
@@ -281,8 +292,22 @@ public final class LyricsParser implements LyricsRepository.Parser {
                 furigana.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(start, end, kana));
             }
         }
+        JsonArray groupsArray = Json.optArray(reading, "groups", "Groups");
+        ArrayList<SpicyJapaneseChineseProcessor.ReadingGroup> groups = new ArrayList<>();
+        if (groupsArray != null) {
+            for (JsonElement groupElement : groupsArray) {
+                if (!groupElement.isJsonObject()) continue;
+                JsonObject group = groupElement.getAsJsonObject();
+                int start = (int) Json.optDouble(group, 0d, "start", "Start");
+                int end = (int) Json.optDouble(group, 0d, "end", "End");
+                String groupRomaji = Json.optString(group, "romaji", "Romaji");
+                if (isBlank(groupRomaji) || end <= start) continue;
+                groups.add(new SpicyJapaneseChineseProcessor.ReadingGroup(start, end, groupRomaji));
+            }
+        }
         if (isBlank(sourceText) && isBlank(romaji) && furigana.isEmpty()) return null;
-        return new SpicyJapaneseChineseProcessor.JapaneseReading(sourceText, romaji, furigana);
+        return SpicyJapaneseChineseProcessor.finalizeParsedJapaneseReading(
+                new SpicyJapaneseChineseProcessor.JapaneseReading(sourceText, romaji, furigana, groups));
     }
 
     private static List<BackgroundLine> parseBackgroundLines(JsonObject object) {
@@ -370,7 +395,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         }
         if (segments.isEmpty()) return null;
         CanonicalLine canonical = SyllableCanonicalizer.canonicalize(lineId, providerLine, segments);
-        return new ParsedSyllableLine(canonical.text, segments);
+        return new ParsedSyllableLine(SyllableCanonicalizer.displayText(canonical, segments), segments);
     }
 
     private static String cleanSyllableTextPreserveEdges(String value) {

@@ -23,6 +23,7 @@ import com.google.android.flexbox.FlexboxLayout;
  * the active karaoke position. The real (gradient) word text is drawn on top by super.dispatchDraw.
  */
 public class GlowFlexbox extends FlexboxLayout {
+    private boolean glowLayerEnabled = true;
     // Blur filters cached by quantized sigma; sigma animates every frame and BlurMaskFilter is
     // immutable, so allocating one per word per frame would churn. Shared with the selfGlow path
     // in SpicyAnimatedTextView; only touched from the UI thread.
@@ -139,28 +140,39 @@ public class GlowFlexbox extends FlexboxLayout {
         return filter;
     }
 
+    public void setGlowLayerEnabled(boolean enabled) {
+        glowLayerEnabled = enabled;
+        invalidate();
+    }
+
+    static boolean shouldDrawGlow(boolean enabled, float glow) {
+        return enabled && glow > 0.02f;
+    }
+
     @Override
     protected void dispatchDraw(Canvas canvas) {
-        drawGlowLayer(canvas, this, 0f, 0f);
+        drawGlowLayer(canvas, this);
         super.dispatchDraw(canvas);
     }
 
-    private void drawGlowLayer(Canvas canvas, ViewGroup parent, float ox, float oy) {
+    private void drawGlowLayer(Canvas canvas, ViewGroup parent) {
         for (int i = 0; i < parent.getChildCount(); i++) {
             View child = parent.getChildAt(i);
-            float cx = ox + child.getLeft();
-            float cy = oy + child.getTop();
+            int save = canvas.save();
+            canvas.translate(child.getLeft(), child.getTop());
+            canvas.concat(child.getMatrix());
             if (child instanceof SpicyAnimatedTextView) {
-                drawWordGlow(canvas, (SpicyAnimatedTextView) child, cx, cy);
+                drawWordGlow(canvas, (SpicyAnimatedTextView) child, 0f, 0f);
             } else if (child instanceof ViewGroup) {
-                drawGlowLayer(canvas, (ViewGroup) child, cx, cy);
+                drawGlowLayer(canvas, (ViewGroup) child);
             }
+            canvas.restoreToCount(save);
         }
     }
 
     private void drawWordGlow(Canvas canvas, SpicyAnimatedTextView tv, float x, float y) {
         float g = Math.max(0f, Math.min(1f, tv.getGlow()));
-        if (g <= 0.02f) return;
+        if (!shouldDrawGlow(glowLayerEnabled, g)) return;
         Layout layout = tv.getLayout();
         if (layout == null) return;
         TextPaint paint = tv.getPaint();

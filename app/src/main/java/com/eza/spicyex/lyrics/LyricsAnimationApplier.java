@@ -47,7 +47,8 @@ public final class LyricsAnimationApplier {
             StyleSink sink,
             boolean spotlight
     ) {
-        animateSyllables(line, positionMs, deltaSeconds, basePx, sink, spotlight, true);
+        animateSyllables(line, positionMs, deltaSeconds, basePx, sink,
+                spotlight, true, true);
     }
 
     public static void animateSyllables(
@@ -57,73 +58,174 @@ public final class LyricsAnimationApplier {
             float basePx,
             StyleSink sink,
             boolean spotlight,
-            boolean glowEnabled
+            boolean glowEnabled,
+            boolean wordBounceEnabled
     ) {
         if (line == null || line.words == null || line.words.isEmpty() || sink == null) return;
-        for (SyllableSegment seg : line.words) {
-            if (!LyricsSyllableViewState.isWordAttached(seg)) continue;
-            float progress = progress01(positionMs, seg.startMs, seg.endMs);
-            boolean active = positionMs >= seg.startMs && positionMs < seg.endMs;
-            boolean sung = positionMs >= seg.endMs;
-            float targetScale = active ? LyricAnimations.scaleSpline(progress) : (sung ? 1.0f : 0.95f);
-            float targetY = active ? LyricAnimations.yOffsetSpline(progress) : (sung ? 0f : 0.01f);
-            // Spotlight: no per-word fill — the active word is lit solid and its glow builds with
-            // the word's progress (gradual, not an instant pop), then holds after completion.
-            float targetGlow = spotlight
-                    ? (active ? 0.60f * progress : (sung ? 0.60f : 0f))
-                    : (active ? 0.55f * LyricAnimations.glowSpline(progress) : (sung ? 0.55f : 0f));
-            if (!glowEnabled) targetGlow = 0f;
-            float targetGradient = spotlight
-                    ? (active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG)
-                    : (active ? LyricAnimations.gradientPosition(progress)
-                    : (sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG));
-            float targetBrightness = spotlight && active ? spotlightBrightness(progress) : 1f;
-            float scale = LyricsSyllableViewState.stepWordScale(seg, targetScale, deltaSeconds);
-            float y = LyricsSyllableViewState.stepWordY(seg, targetY, deltaSeconds);
-            float glow = LyricsSyllableViewState.stepWordGlow(seg, targetGlow, deltaSeconds);
-            LyricsSyllableViewState.updateTextPivot(seg);
-            LyricsSyllableViewState.applyWordFrame(seg, sink, scale, y, basePx);
-            LyricsSyllableViewState.applyWordGradient(seg, targetGradient, glow, targetBrightness);
-
-            int letterCount = LyricsSyllableViewState.letterCount(seg);
-            if (letterCount <= 0) continue;
-            float timeAlpha = (float) Math.sin(progress * (Math.PI / 2d));
-            float letterAnchor = LyricAnimations.activeLetterPosition(letterCount, timeAlpha);
-            for (int letterIndex = 0; letterIndex < letterCount; letterIndex++) {
-                AnimatedLetterState letter = LyricsSyllableViewState.letterAt(seg, letterIndex);
-                if (letter == null || letter.view == null) continue;
-                float letterTime = timeAlpha - letter.start;
-                float letterTimeScale = clamp01(letterTime / Math.max(0.0001f, letter.duration));
-                float glowTimeScale = clamp01(letterTime / Math.max(0.0001f, letter.glowDuration));
-                float distance = Math.abs(letterIndex - letterAnchor);
-                float motionFalloff = LyricAnimations.letterMotionFalloff(distance);
-                float glowFalloff = LyricAnimations.letterGlowFalloff(distance);
-                float targetLetterScale = 1f + ((LyricAnimations.letterScaleSpline(letterTimeScale) - 1f) * motionFalloff);
-                float targetLetterY = LyricAnimations.letterYOffsetSpline(letterTimeScale) * motionFalloff;
-                float targetLetterGlow = spotlight
-                        ? (active || sung ? 0.6f : 0f)
-                        : (sung ? 0.55f : LyricAnimations.glowSpline(glowTimeScale) * glowFalloff);
-                if (!glowEnabled) targetLetterGlow = 0f;
-                float letterEnd = letter.start + letter.duration;
-                float letterGradient;
-                if (spotlight) letterGradient = active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG;
-                else if (timeAlpha >= letterEnd) letterGradient = LyricAnimations.GRADIENT_SUNG;
-                else if (timeAlpha <= letter.start) letterGradient = LyricAnimations.GRADIENT_UNSUNG;
-                else letterGradient = LyricAnimations.gradientPosition(LyricAnimations.easeSinOut(letterTimeScale));
-                float targetLetterBrightness = spotlight && active ? spotlightBrightness(letterTimeScale) : 1f;
-                float letterScale = LyricsSyllableViewState.stepLetterScale(letter, targetLetterScale, deltaSeconds);
-                float letterY = LyricsSyllableViewState.stepLetterY(letter, targetLetterY, deltaSeconds);
-                float letterGlow = LyricsSyllableViewState.stepLetterGlow(letter, targetLetterGlow, deltaSeconds);
-                LyricsSyllableViewState.applyLetterFrame(letter, sink, letterScale, letterY, basePx,
-                        letterGradient, letterGlow, targetLetterBrightness);
+        for (int groupStart = 0; groupStart < line.words.size();) {
+            int groupEnd = TimedWordGrouping.groupEnd(line, groupStart);
+            SyllableSegment motionOwner = line.words.get(groupStart);
+            if (LyricsSyllableViewState.isMotionAttached(motionOwner)) {
+                if (!wordBounceEnabled) {
+                    for (int wordIndex = groupStart; wordIndex <= groupEnd; wordIndex++) {
+                        LyricsSyllableViewState.applyNeutralWordMotion(
+                                line.words.get(wordIndex), sink);
+                    }
+                } else {
+                    long groupStartMs = TimedWordGrouping.startMs(line, groupStart);
+                    long groupEndMs = TimedWordGrouping.endMs(line, groupStart);
+                    boolean beforeGroup = positionMs < groupStartMs;
+                    boolean grouped = groupEnd > groupStart;
+                    int focusIndex = TimedWordGrouping.focusIndex(
+                            line, groupStart, groupEnd, positionMs);
+                    SyllableSegment focus = line.words.get(focusIndex);
+                    boolean focusActive = focus != null && positionMs >= focus.startMs
+                            && positionMs < focus.endMs;
+                    float focusProgress = focus == null ? 0f : progress01(
+                            positionMs, focus.startMs, focus.endMs);
+                    float targetScale = grouped ? groupedWrapperScale(beforeGroup)
+                            : wordMotionScale(focusActive, positionMs >= groupEndMs, focusProgress);
+                    float targetY = grouped ? groupedWrapperY(beforeGroup)
+                            : wordMotionY(focusActive, positionMs >= groupEndMs, focusProgress);
+                    float scale = LyricsSyllableViewState.stepWordScale(
+                            motionOwner, targetScale, deltaSeconds);
+                    float y = LyricsSyllableViewState.stepWordY(
+                            motionOwner, targetY, deltaSeconds);
+                    LyricsSyllableViewState.updateTextPivot(
+                            motionOwner, grouped ? null : focus);
+                    LyricsSyllableViewState.applyWordFrame(
+                            motionOwner, sink, scale, y, basePx);
+                    if (grouped) {
+                        for (int wordIndex = groupStart; wordIndex <= groupEnd; wordIndex++) {
+                            SyllableSegment segment = line.words.get(wordIndex);
+                            boolean localFocus = wordIndex == focusIndex && focusActive;
+                            float localScaleY = LyricsSyllableViewState.stepLocalWordScale(segment,
+                                    groupedLocalScaleY(localFocus, focusProgress), deltaSeconds);
+                            float localY = LyricsSyllableViewState.stepLocalWordY(segment,
+                                    groupedLocalY(localFocus, focusProgress), deltaSeconds);
+                            LyricsSyllableViewState.applyLocalWordFrame(segment, sink,
+                                    groupedLocalScaleX(), localScaleY, localY, basePx);
+                        }
+                    }
+                }
             }
+            for (int wordIndex = groupStart; wordIndex <= groupEnd; wordIndex++) {
+                animateSegmentVisuals(line.words.get(wordIndex), positionMs, deltaSeconds,
+                        basePx, sink, spotlight, glowEnabled, wordBounceEnabled);
+            }
+            groupStart = groupEnd + 1;
         }
     }
 
-    public static void resetSyllables(AppliedLine line, StyleSink sink) {
+    private static void animateSegmentVisuals(
+            SyllableSegment seg,
+            long positionMs,
+            float deltaSeconds,
+            float basePx,
+            StyleSink sink,
+            boolean spotlight,
+            boolean glowEnabled,
+            boolean wordBounceEnabled
+    ) {
+        if (!LyricsSyllableViewState.isWordAttached(seg)) return;
+        float progress = progress01(positionMs, seg.startMs, seg.endMs);
+        boolean active = positionMs >= seg.startMs && positionMs < seg.endMs;
+        boolean sung = positionMs >= seg.endMs;
+        // Spotlight: no per-word fill — the active word is lit solid and its glow builds with
+        // the word's progress (gradual, not an instant pop), then holds after completion.
+        float targetGlow = spotlight
+                ? (active ? 0.60f * progress : (sung ? 0.60f : 0f))
+                : (active ? 0.55f * LyricAnimations.glowSpline(progress) : (sung ? 0.55f : 0f));
+        if (!glowEnabled) targetGlow = 0f;
+        float targetGradient = spotlight
+                ? (active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG)
+                : (active ? LyricAnimations.gradientPosition(progress)
+                : (sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG));
+        float targetBrightness = spotlight && active ? spotlightBrightness(progress) : 1f;
+        float glow = LyricsSyllableViewState.stepWordGlow(seg, targetGlow, deltaSeconds);
+        LyricsSyllableViewState.applyWordGradient(seg, targetGradient, glow, targetBrightness);
+
+        int letterCount = LyricsSyllableViewState.letterCount(seg);
+        if (letterCount <= 0) return;
+        float timeAlpha = (float) Math.sin(progress * (Math.PI / 2d));
+        float letterAnchor = LyricAnimations.activeLetterPosition(letterCount, timeAlpha);
+        for (int letterIndex = 0; letterIndex < letterCount; letterIndex++) {
+            AnimatedLetterState letter = LyricsSyllableViewState.letterAt(seg, letterIndex);
+            if (letter == null || letter.view == null) continue;
+            float letterTime = timeAlpha - letter.start;
+            float letterTimeScale = clamp01(letterTime / Math.max(0.0001f, letter.duration));
+            float glowTimeScale = clamp01(letterTime / Math.max(0.0001f, letter.glowDuration));
+            float distance = Math.abs(letterIndex - letterAnchor);
+            float motionFalloff = LyricAnimations.letterMotionFalloff(distance);
+            float glowFalloff = LyricAnimations.letterGlowFalloff(distance);
+            float targetLetterScale = letterMotionScale(
+                    wordBounceEnabled, letterTimeScale, motionFalloff);
+            float targetLetterY = letterMotionY(
+                    wordBounceEnabled, letterTimeScale, motionFalloff);
+            float targetLetterGlow = spotlight
+                    ? (active || sung ? 0.6f : 0f)
+                    : (sung ? 0.55f : LyricAnimations.glowSpline(glowTimeScale) * glowFalloff);
+            if (!glowEnabled) targetLetterGlow = 0f;
+            float letterEnd = letter.start + letter.duration;
+            float letterGradient;
+            if (spotlight) letterGradient = active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG;
+            else if (timeAlpha >= letterEnd) letterGradient = LyricAnimations.GRADIENT_SUNG;
+            else if (timeAlpha <= letter.start) letterGradient = LyricAnimations.GRADIENT_UNSUNG;
+            else letterGradient = LyricAnimations.gradientPosition(LyricAnimations.easeSinOut(letterTimeScale));
+            float targetLetterBrightness = spotlight && active ? spotlightBrightness(letterTimeScale) : 1f;
+            float letterScale = LyricsSyllableViewState.stepLetterScale(letter, targetLetterScale, deltaSeconds);
+            float letterY = LyricsSyllableViewState.stepLetterY(letter, targetLetterY, deltaSeconds);
+            float letterGlow = LyricsSyllableViewState.stepLetterGlow(letter, targetLetterGlow, deltaSeconds);
+            LyricsSyllableViewState.applyLetterFrame(letter, sink, letterScale, letterY, basePx,
+                    letterGradient, letterGlow, targetLetterBrightness);
+        }
+    }
+
+    static float wordMotionScale(boolean active, boolean sung, float progress) {
+        return active ? LyricAnimations.scaleSpline(progress) : (sung ? 1f : 0.95f);
+    }
+
+    static float wordMotionY(boolean active, boolean sung, float progress) {
+        return active ? LyricAnimations.yOffsetSpline(progress) : (sung ? 0f : 0.01f);
+    }
+
+    static float groupedWrapperScale(boolean beforeGroup) {
+        return beforeGroup ? 0.95f : 1f;
+    }
+
+    static float groupedWrapperY(boolean beforeGroup) {
+        return 0f;
+    }
+
+    static float groupedLocalScaleX() {
+        return 1f;
+    }
+
+    static float groupedLocalScaleY(boolean activeFocus, float progress) {
+        return activeFocus ? LyricAnimations.scaleSpline(progress) : 1f;
+    }
+
+    static float groupedLocalY(boolean activeFocus, float progress) {
+        return activeFocus ? LyricAnimations.yOffsetSpline(progress) : 0f;
+    }
+
+    static float inactiveWordScale(boolean motionEnabled) {
+        return motionEnabled ? 0.95f : 1f;
+    }
+
+    static float letterMotionScale(boolean motionEnabled, float progress, float falloff) {
+        return motionEnabled
+                ? 1f + ((LyricAnimations.letterScaleSpline(progress) - 1f) * falloff) : 1f;
+    }
+
+    static float letterMotionY(boolean motionEnabled, float progress, float falloff) {
+        return motionEnabled ? LyricAnimations.letterYOffsetSpline(progress) * falloff : 0f;
+    }
+
+    public static void resetSyllables(AppliedLine line, StyleSink sink, boolean motionEnabled) {
         if (line == null || line.words == null || line.words.isEmpty() || sink == null) return;
         for (SyllableSegment seg : line.words) {
-            LyricsSyllableViewState.resetAnimatedWord(seg, sink);
+            LyricsSyllableViewState.resetAnimatedWord(seg, sink, motionEnabled);
         }
     }
 

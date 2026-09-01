@@ -10,6 +10,7 @@ import com.eza.spicyex.lyrics.Json;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.SyllableSegment;
+import com.eza.spicyex.lyrics.reading.SyllableCanonicalizer;
 
 /**
  * Serializes the canonical projection of a parsed document: original text, timing, spans, and
@@ -20,8 +21,8 @@ import com.eza.spicyex.lyrics.SyllableSegment;
  * their provider fields; turning them into displayed text stays the Meaning layer's job.
  */
 public final class CanonicalSourceCodec {
-    /** Bump only when this record's shape changes. Independent of any derived-layer contract. */
-    public static final int SCHEMA_VERSION = 1;
+    /** Bump when record shape or canonical source display semantics change. */
+    public static final int SCHEMA_VERSION = 2;
 
     private CanonicalSourceCodec() {
     }
@@ -110,6 +111,7 @@ public final class CanonicalSourceCodec {
                 line.providerTranslatedText = Json.optString(item, "providerTranslatedText");
                 line.providerTranslationLanguage = Json.optString(item, "providerTranslationLanguage");
                 decodeSyllables(Json.optArray(item, "syllables"), line.syllables);
+                line.text = SyllableCanonicalizer.restoreAuthoredGlyphs(line.text, line.syllables);
                 JsonArray backgrounds = Json.optArray(item, "backgroundLines");
                 if (backgrounds != null) {
                     for (JsonElement bgElement : backgrounds) {
@@ -123,6 +125,8 @@ public final class CanonicalSourceCodec {
                         background.providerTranslationLanguage =
                                 Json.optString(bgItem, "providerTranslationLanguage");
                         decodeSyllables(Json.optArray(bgItem, "syllables"), background.syllables);
+                        background.text = SyllableCanonicalizer.restoreAuthoredGlyphs(
+                                background.text, background.syllables);
                         line.backgroundLines.add(background);
                     }
                 }

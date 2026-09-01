@@ -67,6 +67,13 @@ public final class Settings {
             "lyrics_hyper_aod_lyrics_enabled", LYRICS, "Publish lyrics to HyperGlow", false
     );
 
+    // Stored values are the exact display labels; allocation is in CacheStoragePolicy.
+    public static final StringSetting CACHE_SIZE =
+            (StringSetting) enumSetting(
+                    "cache_size", LYRICS, "Cache size limit", "128 MB",
+                    "32 MB", "128 MB", "512 MB", "1024 MB", "No limit"
+            );
+
     // --- Now Playing ---
     public static final Setting<String> LIVE_CARD_TAP_MODE = enumSetting(
             "lyrics_live_card_tap_mode", NOW_PLAYING, "Tap card to open lyrics",
@@ -204,6 +211,10 @@ public final class Settings {
             "lyric_animation_style", ANIMATION, "Animation style",
             "Gradient wash",
             "Gradient wash", "Spotlight"
+    );
+
+    public static final Setting<Boolean> WORD_BOUNCE = boolSetting(
+            "lyric_word_bounce", ANIMATION, "Word bounce", true
     );
 
     public static final Setting<Boolean> ENABLE_GLOW_BLUR = boolSetting(

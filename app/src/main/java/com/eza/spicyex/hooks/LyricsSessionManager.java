@@ -9,6 +9,7 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
 import com.eza.spicyex.lyrics.LyricsSecondaryProcessingSession;
 import com.eza.spicyex.lyrics.LyricsSecondaryProcessor;
@@ -279,6 +280,7 @@ final class LyricsSessionManager {
         session = LyricSession.of(CanonicalBase.fromDocument(requestedUri, record.document),
                 requestedGeneration, record.sourceRevision);
         status = "ready";
+        LyricsFetchDiagnosticsState.recordCached(record.document);
         LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.CACHED_ORIGINAL_RENDER);
         LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.CACHED_ORIGINAL_RENDER,
                 SystemClock.elapsedRealtime() - startedAtMs);

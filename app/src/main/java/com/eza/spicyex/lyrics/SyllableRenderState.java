@@ -8,20 +8,30 @@ import java.util.List;
 /** Renderer-owned mount and animation state for one applied syllable/word. */
 public final class SyllableRenderState {
     public View view;
+    public View motionView;
+    public View containerView;
+    public boolean motionOwner;
     public SpicyAnimatedTextView textView;
     public SpicyAnimatedTextView romanizedTextView;
     public final List<AnimatedLetterState> letters = new ArrayList<>();
     public Spring scaleSpring;
     public Spring ySpring;
     public Spring glowSpring;
+    public Spring localScaleSpring;
+    public Spring localYSpring;
 
     public void clear() {
         view = null;
+        motionView = null;
+        containerView = null;
+        motionOwner = false;
         textView = null;
         romanizedTextView = null;
         scaleSpring = null;
         ySpring = null;
         glowSpring = null;
+        localScaleSpring = null;
+        localYSpring = null;
         for (AnimatedLetterState letter : letters) {
             if (letter == null) continue;
             letter.view = null;

@@ -46,6 +46,7 @@ public class SettingsDefaultsTest {
         assertEquals(KoreanDisplayMode.RR_STANDARD.value, Settings.KOREAN_ROMANIZATION.defaultValue);
 
         // Text glow defaults ON since the B322+ desktop-parity rework made it subtle and cheap.
+        assertTrue(Settings.WORD_BOUNCE.defaultValue);
         assertTrue(Settings.ENABLE_GLOW_BLUR.defaultValue);
         assertFalse(Settings.ENABLE_LINE_BLUR.defaultValue);
         assertTrue(Settings.FORCE_DARK_BACKGROUND.defaultValue);

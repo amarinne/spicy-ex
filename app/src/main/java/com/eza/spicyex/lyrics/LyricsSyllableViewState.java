@@ -17,6 +17,19 @@ public final class LyricsSyllableViewState {
         if (segment != null) state(segment).view = view;
     }
 
+    public static void configureWordMotion(SyllableSegment segment, View motionView,
+                                           View containerView, boolean motionOwner) {
+        if (segment == null) return;
+        SyllableRenderState state = state(segment);
+        state.motionView = motionView;
+        state.containerView = containerView;
+        state.motionOwner = motionOwner;
+        state.scaleSpring = null;
+        state.ySpring = null;
+        state.localScaleSpring = null;
+        state.localYSpring = null;
+    }
+
     public static void clear(SyllableSegment segment) {
         if (segment != null) state(segment).clear();
     }
@@ -48,6 +61,7 @@ public final class LyricsSyllableViewState {
     public static void invalidate(SyllableSegment segment, FrameStyleBatcher styleBatcher) {
         if (segment == null || styleBatcher == null) return;
         styleBatcher.invalidateRecursive(state(segment).view);
+        if (state(segment).motionOwner) styleBatcher.invalidateRecursive(motionView(segment));
         styleBatcher.invalidateRecursive(state(segment).textView);
         styleBatcher.invalidateRecursive(state(segment).romanizedTextView);
         for (AnimatedLetterState letter : state(segment).letters) {
@@ -58,8 +72,15 @@ public final class LyricsSyllableViewState {
     public static void style(SyllableSegment segment, FrameStyleBatcher styleBatcher, int baseTextSp, int color) {
         if (segment == null || state(segment).view == null || styleBatcher == null) return;
         styleBatcher.applyAlphaIfChanged(state(segment).view, 1.0f);
-        styleBatcher.applyScaleIfChanged(state(segment).view, 0.95f, 0.95f);
-        styleBatcher.applyTranslationYIfChanged(state(segment).view, 0f);
+        if (state(segment).motionOwner) {
+            View motion = motionView(segment);
+            styleBatcher.applyScaleIfChanged(motion, 0.95f, 0.95f);
+            styleBatcher.applyTranslationYIfChanged(motion, 0f);
+        }
+        if (hasGroupedMotion(segment)) {
+            styleBatcher.applyScaleIfChanged(state(segment).view, 1f, 1f);
+            styleBatcher.applyTranslationYIfChanged(state(segment).view, 0f);
+        }
         if (state(segment).textView != null) {
             state(segment).textView.setTextColor(color);
             state(segment).textView.setTextSize(baseTextSp);
@@ -89,46 +110,123 @@ public final class LyricsSyllableViewState {
                 && state(segment).view.isAttachedToWindow();
     }
 
+    public static boolean isMotionAttached(SyllableSegment segment) {
+        View motion = motionView(segment);
+        return segment != null && state(segment).motionOwner
+                && motion != null && motion.isAttachedToWindow();
+    }
+
     public static float stepWordScale(SyllableSegment segment, float targetScale, float deltaSeconds) {
         if (segment == null) return targetScale;
-        ensureWordSprings(segment);
+        ensureWordScaleSpring(segment, targetScale);
         state(segment).scaleSpring.setGoal(targetScale);
         return state(segment).scaleSpring.step(deltaSeconds);
     }
 
     public static float stepWordY(SyllableSegment segment, float targetY, float deltaSeconds) {
         if (segment == null) return targetY;
-        ensureWordSprings(segment);
+        ensureWordYSpring(segment, targetY);
         state(segment).ySpring.setGoal(targetY);
         return state(segment).ySpring.step(deltaSeconds);
     }
 
     public static float stepWordGlow(SyllableSegment segment, float targetGlow, float deltaSeconds) {
         if (segment == null) return targetGlow;
-        ensureWordSprings(segment);
+        ensureWordGlowSpring(segment);
         state(segment).glowSpring.setGoal(targetGlow);
         return state(segment).glowSpring.step(deltaSeconds);
     }
 
-    public static void updateTextPivot(SyllableSegment segment) {
-        if (segment == null || state(segment).textView == null || state(segment).textView.getHeight() <= 0) return;
-        int baseline = state(segment).textView.getBaseline();
-        float pivotX = state(segment).textView.getWidth() / 2f;
-        float pivotY = baseline > 0 ? baseline : state(segment).textView.getHeight();
-        if (Math.abs(state(segment).textView.getPivotX() - pivotX) > 0.5f) {
-            state(segment).textView.setPivotX(pivotX);
+    public static float stepLocalWordScale(SyllableSegment segment, float targetScale,
+                                           float deltaSeconds) {
+        if (segment == null) return targetScale;
+        ensureLocalWordSprings(segment);
+        state(segment).localScaleSpring.setGoal(targetScale);
+        return state(segment).localScaleSpring.step(deltaSeconds);
+    }
+
+    public static float stepLocalWordY(SyllableSegment segment, float targetY, float deltaSeconds) {
+        if (segment == null) return targetY;
+        ensureLocalWordSprings(segment);
+        state(segment).localYSpring.setGoal(targetY);
+        return state(segment).localYSpring.step(deltaSeconds);
+    }
+
+    public static void updateTextPivot(SyllableSegment segment, SyllableSegment focusSegment) {
+        View motion = motionView(segment);
+        if (segment == null || !state(segment).motionOwner || motion == null
+                || motion.getHeight() <= 0) return;
+        View focus = focusSegment == null ? null : state(focusSegment).view;
+        float requestedPivot = motion.getWidth() / 2f;
+        if (focus != null && focus != motion && focus.getWidth() > 0) {
+            requestedPivot = offsetWithin(focus, motion) + focus.getWidth() / 2f;
         }
-        if (Math.abs(state(segment).textView.getPivotY() - pivotY) > 0.5f) {
-            state(segment).textView.setPivotY(pivotY);
+        float pivotX = horizontalMotionPivot(motion.getLeft(), motion.getRight(),
+                motion.getWidth(), motion.getParent() instanceof View
+                        ? ((View) motion.getParent()).getWidth() : 0, requestedPivot);
+        float pivotY = motion.getHeight();
+        if (Math.abs(motion.getPivotX() - pivotX) > 0.5f) {
+            motion.setPivotX(pivotX);
         }
+        if (Math.abs(motion.getPivotY() - pivotY) > 0.5f) {
+            motion.setPivotY(pivotY);
+        }
+    }
+
+    static float horizontalMotionPivot(int left, int right, int width, int parentWidth) {
+        return horizontalMotionPivot(left, right, width, parentWidth, width / 2f);
+    }
+
+    static float horizontalMotionPivot(int left, int right, int width, int parentWidth,
+                                       float requestedPivot) {
+        if (width <= 0) return 0f;
+        float expansion = width * ((1.0505f - 1f) * 0.5f);
+        if (left < expansion) return 0f;
+        if (parentWidth > 0 && parentWidth - right < expansion) return width;
+        return Math.max(0f, Math.min(width, requestedPivot));
     }
 
     public static void applyWordFrame(SyllableSegment segment, LyricsAnimationApplier.StyleSink sink,
                                       float scale, float y, float basePx) {
-        if (segment == null || state(segment).view == null || sink == null) return;
-        sink.applyScale(state(segment).view, scale, scale);
-        sink.applyTranslationY(state(segment).view, basePx * y);
-        sink.applyAlpha(state(segment).view, 1.0f);
+        View motion = motionView(segment);
+        if (segment == null || !state(segment).motionOwner || motion == null || sink == null) return;
+        sink.applyScale(motion, scale, scale);
+        sink.applyTranslationY(motion, basePx * y);
+        sink.applyAlpha(motion, 1.0f);
+    }
+
+    public static void applyLocalWordFrame(SyllableSegment segment,
+                                           LyricsAnimationApplier.StyleSink sink,
+                                           float scaleX, float scaleY, float y, float basePx) {
+        if (segment == null || sink == null || !hasGroupedMotion(segment)) return;
+        View word = state(segment).view;
+        if (word == null) return;
+        if (word.getHeight() > 0 && Math.abs(word.getPivotY() - word.getHeight()) > 0.5f) {
+            word.setPivotY(word.getHeight());
+        }
+        sink.applyScale(word, scaleX, scaleY);
+        sink.applyTranslationY(word, basePx * y);
+        sink.applyAlpha(word, 1f);
+    }
+
+    public static void applyNeutralWordMotion(SyllableSegment segment,
+                                              LyricsAnimationApplier.StyleSink sink) {
+        if (segment == null || sink == null) return;
+        snapWordMotionSprings(segment, 1f, 0f);
+        snapLocalWordSprings(segment, 1f, 0f);
+        if (state(segment).motionOwner) {
+            View motion = motionView(segment);
+            if (motion != null) {
+                sink.applyScale(motion, 1f, 1f);
+                sink.applyTranslationY(motion, 0f);
+                sink.applyAlpha(motion, 1f);
+            }
+        }
+        if (hasGroupedMotion(segment) && state(segment).view != null) {
+            sink.applyScale(state(segment).view, 1f, 1f);
+            sink.applyTranslationY(state(segment).view, 0f);
+            sink.applyAlpha(state(segment).view, 1f);
+        }
     }
 
     public static void applyWordGradient(SyllableSegment segment, float gradient, float glow) {
@@ -144,15 +242,23 @@ public final class LyricsSyllableViewState {
     /** Reset every visual child of a word for an unsynced/static lyric row. */
     public static void applyStaticFrame(SyllableSegment segment, FrameStyleBatcher styleBatcher) {
         if (segment == null || styleBatcher == null) return;
+        snapWordSprings(segment, 1f, 0f, 0f);
+        snapLocalWordSprings(segment, 1f, 0f);
         View word = state(segment).view;
         if (word != null) {
             styleBatcher.applyAlphaIfChanged(word, 1f);
             styleBatcher.applyScaleIfChanged(word, 1f, 1f);
             styleBatcher.applyTranslationYIfChanged(word, 0f);
         }
+        if (state(segment).motionOwner) {
+            View motion = motionView(segment);
+            styleBatcher.applyScaleIfChanged(motion, 1f, 1f);
+            styleBatcher.applyTranslationYIfChanged(motion, 0f);
+        }
         applyWordGradient(segment, LyricAnimations.GRADIENT_SUNG, 0f, 1f);
         for (AnimatedLetterState letter : state(segment).letters) {
             if (letter == null || letter.view == null) continue;
+            snapLetterSprings(letter, 1f, 0f, 0f);
             styleBatcher.applyAlphaIfChanged(letter.view, 1f);
             styleBatcher.applyScaleIfChanged(letter.view, 1f, 1f);
             styleBatcher.applyTranslationYIfChanged(letter.view, 0f);
@@ -209,14 +315,28 @@ public final class LyricsSyllableViewState {
         return letter.glowSpring.step(deltaSeconds);
     }
 
-    public static void resetAnimatedWord(SyllableSegment segment, LyricsAnimationApplier.StyleSink sink) {
-        if (segment == null || state(segment).view == null || sink == null) return;
-        sink.applyScale(state(segment).view, 0.95f, 0.95f);
-        sink.applyTranslationY(state(segment).view, 0f);
-        sink.applyAlpha(state(segment).view, 1.0f);
+    public static void resetAnimatedWord(SyllableSegment segment,
+                                         LyricsAnimationApplier.StyleSink sink,
+                                         boolean motionEnabled) {
+        View motion = motionView(segment);
+        if (segment == null || sink == null) return;
+        float resetScale = LyricsAnimationApplier.inactiveWordScale(motionEnabled);
+        snapWordSprings(segment, resetScale, 0f, 0f);
+        snapLocalWordSprings(segment, 1f, 0f);
+        if (state(segment).motionOwner && motion != null) {
+            sink.applyScale(motion, resetScale, resetScale);
+            sink.applyTranslationY(motion, 0f);
+            sink.applyAlpha(motion, 1.0f);
+        }
+        if (hasGroupedMotion(segment) && state(segment).view != null) {
+            sink.applyScale(state(segment).view, 1f, 1f);
+            sink.applyTranslationY(state(segment).view, 0f);
+            sink.applyAlpha(state(segment).view, 1f);
+        }
         applyWordGradient(segment, LyricAnimations.GRADIENT_UNSUNG, 0f);
         for (AnimatedLetterState letter : state(segment).letters) {
             if (letter == null || letter.view == null) continue;
+            snapLetterSprings(letter, 1f, 0f, 0f);
             sink.applyScale(letter.view, 1.0f, 1.0f);
             sink.applyTranslationY(letter.view, 0f);
             sink.applyAlpha(letter.view, 1.0f);
@@ -228,23 +348,25 @@ public final class LyricsSyllableViewState {
 
     public static View parentView(SyllableSegment segment) {
         if (segment == null || state(segment).view == null) return null;
+        if (state(segment).containerView != null) return state(segment).containerView;
         Object parent = state(segment).view.getParent();
         return parent instanceof View ? (View) parent : null;
     }
 
     public static void resetWordTransform(SyllableSegment segment) {
-        if (segment == null || state(segment).view == null) return;
-        View view = state(segment).view;
-        if (Math.abs(view.getScaleX() - 1f) > 0.002f) view.setScaleX(1f);
-        if (Math.abs(view.getScaleY() - 1f) > 0.002f) view.setScaleY(1f);
-        if (Math.abs(view.getTranslationY()) > 0.5f) view.setTranslationY(0f);
+        if (segment == null) return;
+        snapWordMotionSprings(segment, 1f, 0f);
+        snapLocalWordSprings(segment, 1f, 0f);
+        if (state(segment).motionOwner) resetTransform(motionView(segment));
+        if (hasGroupedMotion(segment)) resetTransform(state(segment).view);
     }
 
     public static boolean isSettled(SyllableSegment segment) {
         if (segment == null) return true;
         SyllableRenderState state = state(segment);
         if (!springAtRest(state.scaleSpring) || !springAtRest(state.ySpring)
-                || !springAtRest(state.glowSpring)) return false;
+                || !springAtRest(state.glowSpring) || !springAtRest(state.localScaleSpring)
+                || !springAtRest(state.localYSpring)) return false;
         for (AnimatedLetterState letter : state.letters) {
             if (letter == null) continue;
             if (!springAtRest(letter.scaleSpring) || !springAtRest(letter.ySpring)
@@ -271,11 +393,43 @@ public final class LyricsSyllableViewState {
         }
     }
 
-    private static void ensureWordSprings(SyllableSegment segment) {
-        if (state(segment).scaleSpring != null && state(segment).ySpring != null && state(segment).glowSpring != null) return;
-        state(segment).scaleSpring = new Spring(0.95f, 0.88f, 0.64f);
-        state(segment).ySpring = new Spring(0.01f, 1.45f, 0.4f);
+    private static void ensureWordScaleSpring(SyllableSegment segment, float initialScale) {
+        if (state(segment).scaleSpring != null) return;
+        state(segment).scaleSpring = new Spring(initialScale, 0.88f, 0.64f);
+    }
+
+    private static void ensureWordYSpring(SyllableSegment segment, float initialY) {
+        if (state(segment).ySpring != null) return;
+        state(segment).ySpring = new Spring(initialY, 1.45f, 0.4f);
+    }
+
+    private static void ensureWordGlowSpring(SyllableSegment segment) {
+        if (state(segment).glowSpring != null) return;
         state(segment).glowSpring = new Spring(0f, 1.18f, 0.56f);
+    }
+
+    private static void ensureLocalWordSprings(SyllableSegment segment) {
+        if (state(segment).localScaleSpring != null && state(segment).localYSpring != null) return;
+        state(segment).localScaleSpring = new Spring(1f, 0.88f, 0.64f);
+        state(segment).localYSpring = new Spring(0f, 1.45f, 0.4f);
+    }
+
+    private static void snapWordSprings(SyllableSegment segment, float scale, float y, float glow) {
+        SyllableRenderState state = state(segment);
+        snapWordMotionSprings(segment, scale, y);
+        if (state.glowSpring != null) state.glowSpring.snap(glow);
+    }
+
+    private static void snapWordMotionSprings(SyllableSegment segment, float scale, float y) {
+        SyllableRenderState state = state(segment);
+        if (state.scaleSpring != null) state.scaleSpring.snap(scale);
+        if (state.ySpring != null) state.ySpring.snap(y);
+    }
+
+    private static void snapLocalWordSprings(SyllableSegment segment, float scale, float y) {
+        SyllableRenderState state = state(segment);
+        if (state.localScaleSpring != null) state.localScaleSpring.snap(scale);
+        if (state.localYSpring != null) state.localYSpring.snap(y);
     }
 
     private static SyllableRenderState state(SyllableSegment segment) {
@@ -287,11 +441,37 @@ public final class LyricsSyllableViewState {
         return state;
     }
 
+    private static View motionView(SyllableSegment segment) {
+        if (segment == null) return null;
+        SyllableRenderState state = state(segment);
+        return state.motionView == null ? state.view : state.motionView;
+    }
+
+    private static boolean hasGroupedMotion(SyllableSegment segment) {
+        if (segment == null) return false;
+        SyllableRenderState state = state(segment);
+        return state.view != null && state.motionView != null && state.motionView != state.view;
+    }
+
+    private static void resetTransform(View view) {
+        if (view == null) return;
+        if (Math.abs(view.getScaleX() - 1f) > 0.002f) view.setScaleX(1f);
+        if (Math.abs(view.getScaleY() - 1f) > 0.002f) view.setScaleY(1f);
+        if (Math.abs(view.getTranslationY()) > 0.5f) view.setTranslationY(0f);
+    }
+
     private static void ensureLetterSprings(AnimatedLetterState letter) {
         if (letter.scaleSpring != null && letter.ySpring != null && letter.glowSpring != null) return;
         letter.scaleSpring = new Spring(1f, 0.6f, 0.7f);
         letter.ySpring = new Spring(0f, 1.25f, 0.4f);
         letter.glowSpring = new Spring(0f, 1f, 0.5f);
+    }
+
+    private static void snapLetterSprings(AnimatedLetterState letter,
+                                          float scale, float y, float glow) {
+        if (letter.scaleSpring != null) letter.scaleSpring.snap(scale);
+        if (letter.ySpring != null) letter.ySpring.snap(y);
+        if (letter.glowSpring != null) letter.glowSpring.snap(glow);
     }
 
     private static void applyTextGradient(SpicyAnimatedTextView view, float gradient, float glow, float brightness) {

@@ -23,6 +23,10 @@ import android.widget.TextView;
 
 import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
 import com.eza.spicyex.lyrics.ai.AiSettings;
+import com.eza.spicyex.lyrics.CacheStoragePolicy;
+import com.eza.spicyex.lyrics.session.CanonicalSourceCache;
+import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
+import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.lyrics.LyricsBackgroundStyle;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
@@ -360,7 +364,7 @@ public final class SettingsPanel {
                 stepperRow(content, (Settings.IntegerSetting) setting);
             } else if (setting instanceof Settings.StringSetting) {
                 Settings.StringSetting s = (Settings.StringSetting) setting;
-                if (setting == Settings.UI_LANGUAGE) selectorRow(content, s, uiStrings.availableUiLanguages());
+                if (setting == Settings.UI_LANGUAGE) selectorRow(content, s, uiStrings.availableUiLanguages(), null);
                 else if (s.allowedValues == null || s.allowedValues.isEmpty()) textFieldRow(content, s);
                 else selectorRow(content, s);
             }
@@ -574,7 +578,11 @@ public final class SettingsPanel {
     }
 
     private void clearCache(CacheClearKind kind) {
-        if (onClearCache != null) onClearCache.accept(kind);
+        if (onClearCache == null) return;
+        onClearCache.accept(kind);
+        // Cache clears update preference memory (and the AI database) before returning. Rebuild
+        // the owning row now so its usage summary reflects the clear without closing the panel.
+        rebuildSection(Settings.LYRICS);
     }
 
     private void renderStatus(LinearLayout content) {
@@ -591,7 +599,8 @@ public final class SettingsPanel {
 
     private void renderDiagnostics(LinearLayout content) {
         LyricsFetchDiagnosticsState.Snapshot s = LyricsFetchDiagnosticsState.get();
-        infoRow(content, uiStrings.get("settings_diagnostic_source_chosen", "Source chosen"), s.sourceChosen);
+        infoRow(content, uiStrings.get("settings_diagnostic_source_chosen", "Source chosen"),
+                s.displayedSourceChosen());
         infoRow(content, uiStrings.get("settings_diagnostic_candidates_seen", "Candidates seen"), s.candidatesSeen);
         infoRow(content, uiStrings.get("settings_diagnostic_type_chosen", "Type chosen"), s.typeChosen);
         infoRow(content, uiStrings.get("settings_diagnostic_spicy_version_sent", "Spicy version sent"), emptyDash(s.spicyVersionSent));
@@ -699,20 +708,34 @@ public final class SettingsPanel {
     }
 
     private void selectorRow(LinearLayout content, Settings.StringSetting setting) {
-        selectorRow(content, setting, setting.allowedValues);
+        if (setting == Settings.CACHE_SIZE) {
+            selectorRow(content, setting, Settings.CACHE_SIZE.allowedValues, cacheSizeSummary());
+            return;
+        }
+        selectorRow(content, setting, setting.allowedValues, null);
     }
 
-    private void selectorRow(LinearLayout content, Settings.StringSetting setting, java.util.List<String> values) {
+    private void selectorRow(LinearLayout content, Settings.StringSetting setting,
+                             java.util.List<String> values, String summaryOverride) {
         LinearLayout row = newRow(content);
         boolean unavailable = unavailable(setting);
+        String summary = summaryOverride != null ? summaryOverride
+                : labelFor(setting, store.get(setting));
         TextView value = titleColumn(row, uiStrings.setting(setting),
-                unavailable ? unavailableSummary(setting) : labelFor(setting, store.get(setting)));
+                unavailable ? unavailableSummary(setting) : summary);
         applyRowLead(row, setting.key);
         if (!unavailable) value.setTextColor(COL_ACCENT);
         row.addView(kindView(Kind.CHEVRON_RIGHT, COL_SECTION, 18),
                 new LinearLayout.LayoutParams(dp(24), dp(30)));
         row.setEnabled(!unavailable);
         if (!unavailable) row.setOnClickListener(v -> showSelectorDialog(setting, values, value));
+    }
+
+    /** "<label> · <usage> used" for the main Cache size row; pure render-time computation. */
+    private String cacheSizeSummary() {
+        String label = uiStrings.option(Settings.CACHE_SIZE, store.get(Settings.CACHE_SIZE));
+        return uiStrings.format("settings_cache_size_usage_suffix", "%1$s · %2$s used",
+                label, CacheStoragePolicy.formatBytes(CacheStoragePolicy.storedTotal(context)));
     }
 
     private void stepperRow(LinearLayout content, Settings.IntegerSetting setting) {
@@ -820,6 +843,11 @@ public final class SettingsPanel {
         final boolean deferCommit = setting == Settings.TRANSLATION_TARGET;
         final String initialValue = store.get(setting);
         final String[] pendingValue = new String[]{initialValue};
+        // Cache size only: recompute once per dialog so the selected option carries the usage suffix.
+        final String[] cacheUsageSuffix = setting == Settings.CACHE_SIZE
+                ? new String[]{" · " + CacheStoragePolicy.formatBytes(
+                        CacheStoragePolicy.storedTotal(context)) + " used"}
+                : null;
 
         LinearLayout box = new LinearLayout(context);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -830,13 +858,30 @@ public final class SettingsPanel {
         box.setBackground(bg);
         box.setPadding(0, dp(18), 0, dp(10));
 
+        LinearLayout titleRow = new LinearLayout(context);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text(uiStrings.setting(setting), 19, COL_TITLE, true);
-        title.setPadding(dp(22), 0, dp(22), dp(12));
-        box.addView(title);
+        title.setPadding(dp(22), 0, dp(8), dp(12));
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (setting == Settings.CACHE_SIZE) {
+            ImageButton help = new ImageButton(context);
+            help.setImageDrawable(new ActionIconDrawable(Kind.CIRCLE_HELP, COL_ACCENT, density()));
+            help.setContentDescription("Show cache details");
+            help.setTooltipText("Show cache details");
+            help.setPadding(dp(8), dp(8), dp(8), dp(8));
+            help.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null,
+                    new ColorDrawable(0xFFFFFFFF)));
+            help.setOnClickListener(v -> showCacheInfoDialog());
+            LinearLayout.LayoutParams helpLp = new LinearLayout.LayoutParams(dp(38), dp(38));
+            helpLp.rightMargin = dp(18);
+            helpLp.bottomMargin = dp(8);
+            titleRow.addView(help, helpLp);
+        }
+        box.addView(titleRow);
 
         for (final String val : values) {
             box.addView(selectorOptionRow(setting, val, val.equals(initialValue), valueView,
-                    dialog, box, deferCommit, pendingValue));
+                    dialog, box, deferCommit, pendingValue, cacheUsageSuffix));
         }
 
         ScrollView scroll = new ScrollView(context);
@@ -873,9 +918,48 @@ public final class SettingsPanel {
         Motion.enterCard(box);
     }
 
+    private void showCacheInfoDialog() {
+        Dialog dialog = new Dialog(context);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout box = new LinearLayout(context);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(22), dp(18), dp(22), dp(18));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(COL_CARD);
+        bg.setCornerRadius(dp(24));
+        bg.setStroke(dp(1), COL_CARD_BORDER);
+        box.setBackground(bg);
+        TextView title = text("Cache details", 19, COL_TITLE, true);
+        title.setPadding(0, 0, 0, dp(12));
+        box.addView(title);
+        int songs = Math.max(CanonicalSourceCache.entryCount(context),
+                LyricsResponseCache.entryCount(context));
+        infoRow(box, "Cached songs", String.valueOf(songs));
+        infoRow(box, "Lyric data cached", CacheStoragePolicy.formatBytes(
+                CacheStoragePolicy.storedTotal(context) - AIPaidArtifactCache.usageBytes(context)));
+        infoRow(box, "AI data cached", CacheStoragePolicy.formatBytes(
+                AIPaidArtifactCache.usageBytes(context)));
+        TextView close = text("Close", 15, COL_ACCENT, true);
+        close.setGravity(Gravity.RIGHT);
+        close.setPadding(0, dp(16), 0, 0);
+        close.setOnClickListener(v -> dialog.dismiss());
+        box.addView(close);
+        dialog.setContentView(box);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setDimAmount(0.55f);
+            window.setLayout((int) (context.getResources().getDisplayMetrics().widthPixels * 0.82f),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        dialog.show();
+        Motion.enterCard(box);
+    }
+
     private LinearLayout selectorOptionRow(Settings.StringSetting setting, String value, boolean selected,
                                            TextView valueView, Dialog dialog, LinearLayout card,
-                                           boolean deferCommit, String[] pendingValue) {
+                                           boolean deferCommit, String[] pendingValue,
+                                           String[] cacheUsageSuffix) {
         String unavailableReason = optionUnavailableReason(setting, value);
         boolean unavailable = !unavailableReason.isEmpty();
         LinearLayout optRow = new LinearLayout(context);
@@ -895,6 +979,10 @@ public final class SettingsPanel {
         dotLp.rightMargin = dp(12);
         optRow.addView(dot, dotLp);
         String optionLabel = labelFor(setting, value);
+        if (selected && cacheUsageSuffix != null) {
+            // Cache size contract: the selected option shows the same usage suffix as the main row.
+            optionLabel = optionLabel + cacheUsageSuffix[0];
+        }
         if (unavailable) optionLabel = optionLabel + "  · " + unavailableReason;
         TextView label = text(optionLabel, 16, selected ? COL_ACCENT : COL_TITLE, false);
         optRow.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -921,7 +1009,8 @@ public final class SettingsPanel {
                     uiStrings = new SettingsUiStrings(context, value);
                     if (panelTitle != null) panelTitle.setText(uiStrings.appName());
                 }
-                valueView.setText(labelFor(setting, value));
+                valueView.setText(setting == Settings.CACHE_SIZE
+                        ? cacheSizeSummary() : labelFor(setting, value));
                 Motion.exitCardThen(card, dialog::isShowing, () -> {
                     dialog.dismiss();
                     onSettingChanged(setting);

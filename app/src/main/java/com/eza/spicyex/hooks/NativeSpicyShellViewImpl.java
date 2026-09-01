@@ -163,6 +163,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean running;
     private boolean chromeRevealAnimating;
     private boolean scrollWindowRenderScheduled;
+    private boolean resetScrollForNextDocument;
     private boolean showTranslation;
 
     private void hideChrome() {
@@ -648,6 +649,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             lastDisplayedAlbum = "";
             followState.resetActive();
             lastLyricPositionMs = -1;
+            resetScrollForNextDocument = true;
             document = null;
             String id = trackIdFromUri(uri);
             ambientController.updateForTrack(track, () -> running);
@@ -929,7 +931,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void showLoading(String message) {
         rowMountController.reset();
         followState.resetActive();
-        emptyStateController.showLoading(lyricsColumn, message);
+        emptyStateController.showLoading(lyricsScroll, lyricsColumn, message);
     }
 
     private void showError(String error) {
@@ -969,6 +971,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 : "lyrics provided by " + sourceProviderLabel(document.provider));
         rowMountController.markDirty();
         renderWindowForActive(0);
+        if (resetScrollForNextDocument) {
+            resetScrollForNextDocument = false;
+            // A cache hit can replace the short loading state before ScrollView gets a layout pass
+            // that clamps the previous song's scrollY. Reset after mounting the new document so
+            // its opening row starts from the center-padding position even during lyric pre-roll.
+            lyricsScroll.scrollTo(0, 0);
+        }
     }
 
     private void ensureLyricsColumnScaffold() {
@@ -1195,6 +1204,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void setActiveLine(int index, long positionMs, SpotifyTrack track, boolean instantScroll) {
         int old = followState.activeIndex();
+        boolean placeFirstActiveInstantly = LyricsScrollController.shouldScrollInstantly(
+                instantScroll, old);
         if (document != null && index >= 0) {
             boolean activeVisible = rowMountController.containsIndex(index);
             if (!activeVisible || followState.isHoldingNow()) {
@@ -1216,7 +1227,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (followState.isHoldingNow()) return;
         View row = rowMountController.attachedRowView(line);
         if (row == null) return;
-        scrollActiveRowWhenLaidOut(index, line, row, 0, instantScroll);
+        scrollActiveRowWhenLaidOut(index, line, row, 0, placeFirstActiveInstantly);
     }
 
     private void scrollActiveRowWhenLaidOut(int index, AppliedLine line, View row, int attempt, boolean instantScroll) {

@@ -97,6 +97,12 @@ public class PaidArtifactStoreTest {
     }
 
     @Test
+    public void unlimitedCapacityNeverRejectsForBytePressure() {
+        assertEquals("", AIPaidArtifactCache.admissionReason(
+                Long.MAX_VALUE - 100L, 100L, Long.MAX_VALUE));
+    }
+
+    @Test
     public void theByteBoundAlsoRejectsRatherThanMakingRoom() {
         assertEquals("store-full-bytes",
                 AIPaidArtifactCache.admissionReason(60L, 60L, 100L));

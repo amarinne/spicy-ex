@@ -25,6 +25,41 @@ public class JapaneseReadingTest {
     public void adjacentFillerFragmentsShareOneRomajiWord() {
         assertEquals("daibu muri an ne", romaji("だいぶ無理あんね"));
     }
+
+    @Test
+    public void datteStaysOneColloquialRomajiWord() {
+        assertEquals("datte", romaji("だって"));
+        assertEquals("datte kimi ga", romaji("だって君が"));
+        assertEquals("kimi tte", romaji("君って"));
+    }
+
+    @Test
+    public void particleBeforeDemonstrativeBeatsLexicalYokoYoso() {
+        assertEquals("kowareta yo kono sekai de", romaji("壊れたよこの世界で"));
+        assertEquals("oshiete yo sono shikumi wo", romaji("教えてよその仕組みを"));
+        assertEquals("yoko no sekai", romaji("横の世界"));
+        assertEquals("yoso no shikumi", romaji("余所の仕組み"));
+        assertEquals("yoko no sekai", romaji("よこの世界"));
+        assertEquals("yoso no shikumi", romaji("よその仕組み"));
+
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot yoko =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("壊れたよこの世界で", null, null);
+        assertEquals(Arrays.asList("壊れ", "た", "よ", "この", "世界", "で"),
+                surfaces(yoko.tokens));
+        assertEquals("ja.reading.grammar.particle-demonstrative", yoko.tokens.get(2).ruleId);
+
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot yoso =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("教えてよその仕組みを", null, null);
+        assertEquals(Arrays.asList("教え", "て", "よ", "その", "仕組み", "を"),
+                surfaces(yoso.tokens));
+        assertEquals("ja.reading.grammar.particle-demonstrative", yoso.tokens.get(2).ruleId);
+    }
+
+    private static List<String> surfaces(List<SpicyJapaneseChineseProcessor.JapaneseDebugToken> tokens) {
+        ArrayList<String> out = new ArrayList<>();
+        for (SpicyJapaneseChineseProcessor.JapaneseDebugToken token : tokens) out.add(token.surface);
+        return out;
+    }
     private static String romaji(String line) {
         SpicyJapaneseChineseProcessor.JapaneseReading r =
                 SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line, null);
@@ -40,6 +75,11 @@ public class JapaneseReadingTest {
 
     private static List<JapaneseReadingPolicyModels.BoundaryEvidence> softBoundary(int offset) {
         return softBoundaries(offset);
+    }
+
+    private static List<JapaneseReadingPolicyModels.BoundaryEvidence> providerBoundary(int offset) {
+        return Arrays.asList(new JapaneseReadingPolicyModels.BoundaryEvidence(
+                offset, "provider-fragment", "soft", "test-provider-fragment"));
     }
 
     private static SpicyJapaneseChineseProcessor.JapaneseReading analyzeSoftSplit(String line, int offset) {
@@ -130,7 +170,7 @@ public class JapaneseReadingTest {
 
     @Test
     public void irisNanDemoUsesFullLineContextAcrossTimingSplit() {
-        assertEquals("nan", romaji("何"));
+        assertEquals("nani", romaji("何"));
         String source = "パチモンでもいい何でもいい";
         assertEquals("pachi mon de mo ii nan de mo ii", romaji(source));
 
@@ -150,6 +190,19 @@ public class JapaneseReadingTest {
         assertEquals(6, plan.timedReadingUnits.size());
         assertEquals(" nan", plan.timedReadingUnits.get(3).text);
         assertEquals(" de mo", plan.timedReadingUnits.get(4).text);
+    }
+
+    @Test
+    public void lyricDefaultNaniKeepsStrongNanContexts() {
+        assertEquals("nani", romaji("何"));
+        assertEquals("nani taberu", romaji("何食べる"));
+        assertEquals("nani mo nai", romaji("何もない"));
+        assertEquals("nani ka aru", romaji("何かある"));
+        assertEquals("miren ya kui nado wa nani mo nai", romaji("未練や悔いなどは何もない"));
+        assertEquals("nan ji desu ka", romaji("何時ですか"));
+        assertEquals("nan de mo ii", romaji("何でもいい"));
+        assertEquals("nan da", romaji("何だ"));
+        assertEquals("nan no tame", romaji("何のため"));
     }
 
     @Test
@@ -358,6 +411,31 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void kimiKunRequiresPositiveAttachedPersonNameEvidence() {
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot genericKatakana =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("ゴー君", null, null);
+        assertEquals("接尾辞", genericKatakana.tokens.get(1).partOfSpeech1);
+        assertEquals("きみ", genericKatakana.tokens.get(1).selectedReading);
+        assertEquals("ja.reading.context.kimi-kun", genericKatakana.tokens.get(1).ruleId);
+        assertEquals("goo kimi", genericKatakana.romaji);
+
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot katakanaPersonName =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("ミク君", null, null);
+        assertEquals("固有名詞", katakanaPersonName.tokens.get(0).partOfSpeech2);
+        assertEquals("くん", katakanaPersonName.tokens.get(1).selectedReading);
+        assertEquals("", katakanaPersonName.tokens.get(1).ruleId);
+        assertEquals("miku kun", katakanaPersonName.romaji);
+
+        SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot providerSection =
+                SpicyJapaneseChineseProcessor.debugJapaneseSnapshot(
+                        "ミク君", null, providerBoundary(2));
+        assertTrue(providerSection.tokens.get(1).boundaryBefore);
+        assertEquals("きみ", providerSection.tokens.get(1).selectedReading);
+        assertEquals("ja.reading.context.kimi-kun", providerSection.tokens.get(1).ruleId);
+        assertEquals("miku kimi", providerSection.romaji);
+    }
+
+    @Test
     public void debugSnapshotExposesDeterministicOracleStages() {
         SpicyJapaneseChineseProcessor.JapaneseDebugSnapshot snapshot =
                 SpicyJapaneseChineseProcessor.debugJapaneseSnapshot("殺 した", null, softBoundary(2));
@@ -528,6 +606,90 @@ public class JapaneseReadingTest {
     }
 
     @Test
+    public void syntheticSentenceSectionsProjectFullLineTokenizerReading() {
+        String text = "散らかった愛のかけらを集めて今";
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLine(text, null);
+        assertNotNull(reading);
+        assertEquals("chirakatta ai no kakera wo atsumete ima", reading.romaji);
+
+        AppliedLine line = new AppliedLine();
+        line.text = text;
+        line.japaneseReading = reading;
+        SyllableSegment first = segment("散");
+        first.boundaryProvenance = "syntheticLineWords";
+        first.canonicalStartCp = 0;
+        first.canonicalEndCp = 1;
+        SyllableSegment continuation = segment("ら");
+        continuation.boundaryProvenance = "syntheticLineWords";
+        continuation.canonicalStartCp = 1;
+        continuation.canonicalEndCp = 2;
+
+        assertEquals("chirakatta", LyricsLocalRomanizer.romanizeDisplaySegment(
+                null, null, line, first, text));
+        assertEquals("", LyricsLocalRomanizer.romanizeDisplaySegment(
+                null, null, line, continuation, text));
+    }
+
+    @Test
+    public void cachedReadingWithoutGroupsKeepsWholeRomajiLineVisible() {
+        String text = "散らかった愛のかけらを集めて今";
+        SpicyJapaneseChineseProcessor.JapaneseReading cached =
+                new SpicyJapaneseChineseProcessor.JapaneseReading(
+                        text, "chirakatta ai no kakera wo atsumete ima", new ArrayList<>());
+        AppliedLine line = new AppliedLine();
+        line.text = text;
+        line.japaneseReading = cached;
+        SyllableSegment first = segment("散らかった");
+        first.boundaryProvenance = "syntheticLineWords";
+        first.canonicalStartCp = 0;
+        first.canonicalEndCp = 5;
+
+        assertEquals(cached.romaji, LyricsLocalRomanizer.romanizeDisplaySegment(
+                null, null, line, first, text));
+    }
+
+    @Test
+    public void compactProviderRomajiIsRebuiltFromFullSentenceAnalysis() {
+        String text = "ここから先が本心に見える?";
+        SpicyJapaneseChineseProcessor.JapaneseReading provider =
+                new SpicyJapaneseChineseProcessor.JapaneseReading(
+                        text, "kokokokarasakigahonshinnimieru?", new ArrayList<>());
+
+        SpicyJapaneseChineseProcessor.JapaneseReading finalized =
+                SpicyJapaneseChineseProcessor.finalizeParsedJapaneseReading(provider);
+
+        assertNotNull(finalized);
+        assertEquals("koko kara saki ga honshin ni mieru?", finalized.romaji);
+        assertFalse(finalized.groups.isEmpty());
+    }
+
+    @Test
+    public void mixedGreetingAndConjugatedLinesKeepOneSpacedFullSentenceReading() {
+        assertEquals("Hello,how are you?hajimemashite",
+                romaji("Hello,how are you?はじめまして"));
+        assertEquals("Hello, how are you? hajimemashite",
+                romaji("Hello, how are you? はじめまして"));
+        assertEquals("zutto aitakatta n da yo", romaji("ずっと会いたかったんだよ"));
+        assertEquals("kimi ni au made no aida", romaji("君に会うまでの間"));
+    }
+
+    @Test
+    public void providerRomajiWithoutJapaneseReadingStillUsesFullSentenceAnalysis() {
+        SpicyJapaneseChineseProcessor.JapaneseReading greeting =
+                SpicyJapaneseChineseProcessor.finalizeParsedJapaneseReading(
+                        null, "Hello, how are you? はじめまして");
+        SpicyJapaneseChineseProcessor.JapaneseReading longing =
+                SpicyJapaneseChineseProcessor.finalizeParsedJapaneseReading(
+                        null, "ずっと会いたかったんだよ");
+
+        assertNotNull(greeting);
+        assertEquals("Hello, how are you? hajimemashite", greeting.romaji);
+        assertNotNull(longing);
+        assertEquals("zutto aitakatta n da yo", longing.romaji);
+    }
+
+    @Test
     public void readingPolicyEvidenceIsImmutableAndVersioned() {
         SpicyJapaneseChineseProcessor.JapaneseReading reading =
                 SpicyJapaneseChineseProcessor.analyzeJapaneseLine("言って", null);
@@ -562,6 +724,20 @@ public class JapaneseReadingTest {
                 decision -> "provider-ruby-validated".equals(decision.reasonId) && decision.ruleId == null));
         assertFalse(reading.readingDecisions.stream().anyMatch(
                 decision -> "ja.reading.policy.ashita-default".equals(decision.ruleId)));
+    }
+
+    @Test
+    public void providerEvidenceOutranksBareNaniDefault() {
+        ArrayList<SpicyJapaneseChineseProcessor.FuriganaSegment> provider = new ArrayList<>();
+        provider.add(new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "なん"));
+        SpicyJapaneseChineseProcessor.JapaneseReading reading =
+                SpicyJapaneseChineseProcessor.analyzeJapaneseLineWithProviderFurigana("何", provider);
+        assertNotNull(reading);
+        assertEquals("nan", reading.romaji);
+        assertTrue(reading.readingDecisions.stream().anyMatch(
+                decision -> "provider-ruby-validated".equals(decision.reasonId) && decision.ruleId == null));
+        assertFalse(reading.readingDecisions.stream().anyMatch(
+                decision -> "ja.reading.policy.nani-default".equals(decision.ruleId)));
     }
 
     @Test

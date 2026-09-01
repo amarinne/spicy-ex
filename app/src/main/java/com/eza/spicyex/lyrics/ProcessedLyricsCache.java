@@ -354,6 +354,18 @@ public final class ProcessedLyricsCache {
             }
         }
         object.add("furigana", furigana);
+        JsonArray groups = new JsonArray();
+        if (reading.groups != null) {
+            for (SpicyJapaneseChineseProcessor.ReadingGroup group : reading.groups) {
+                if (group == null || isBlank(group.romaji) || group.end <= group.start) continue;
+                JsonObject item = new JsonObject();
+                item.addProperty("start", group.start);
+                item.addProperty("end", group.end);
+                item.addProperty("romaji", group.romaji);
+                groups.add(item);
+            }
+        }
+        object.add("groups", groups);
         return object;
     }
 

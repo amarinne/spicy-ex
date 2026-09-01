@@ -136,12 +136,14 @@ public final class LyricsFrameRenderer {
                                 spToPx(LyricsLineViewState.effectiveBaseTextSp(line)),
                                 styleSink,
                                 config.spotlight,
-                                config.glowBlurEnabled);
+                                config.glowBlurEnabled,
+                                config.wordBounceEnabled);
                         if (wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
                             applyContinuousWordGradient(line, lineState, lineGlow);
                         }
                     } else {
-                        LyricsAnimationApplier.resetSyllables(line, styleSink);
+                        LyricsAnimationApplier.resetSyllables(
+                                line, styleSink, config.wordBounceEnabled);
                     }
                 } else if (line.words != null && !line.words.isEmpty()
                         && wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
@@ -154,12 +156,15 @@ public final class LyricsFrameRenderer {
                             spToPx(LyricsLineViewState.effectiveBaseTextSp(line)),
                             styleSink,
                             config.spotlight,
-                            config.glowBlurEnabled);
+                            config.glowBlurEnabled,
+                            config.wordBounceEnabled);
                 } else {
                     if (config.lineSyncFillWord() || config.lineSyncFillSentence()) {
-                        resetNearbySyllables(line, i, activeIndex, styleSink);
+                        resetNearbySyllables(
+                                line, i, activeIndex, styleSink, config.wordBounceEnabled);
                     } else {
-                        LyricsAnimationApplier.resetSyllables(line, styleSink);
+                        LyricsAnimationApplier.resetSyllables(
+                                line, styleSink, config.wordBounceEnabled);
                     }
                 }
             }
@@ -228,9 +233,10 @@ public final class LyricsFrameRenderer {
     }
 
     private void resetNearbySyllables(AppliedLine line, int index, int activeIndex,
-                                      LyricsAnimationApplier.StyleSink sink) {
+                                      LyricsAnimationApplier.StyleSink sink,
+                                      boolean motionEnabled) {
         if (activeIndex < 0 || Math.abs(index - activeIndex) <= 2) {
-            LyricsAnimationApplier.resetSyllables(line, sink);
+            LyricsAnimationApplier.resetSyllables(line, sink, motionEnabled);
         }
     }
 

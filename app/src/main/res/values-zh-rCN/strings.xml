@@ -34,6 +34,7 @@
     <string name="settings_label_lyrics_text_size_custom">自定义大小</string>
     <string name="settings_label_lyric_interlude_icon">间奏指示符</string>
     <string name="settings_label_lyric_animation_style">动画样式</string>
+    <string name="settings_label_lyric_word_bounce">单词弹跳</string>
     <string name="settings_label_lyric_enable_glow_blur">文字光晕</string>
     <string name="settings_label_lyric_enable_line_blur">模糊远处歌词</string>
     <string name="settings_label_lyric_line_sync_fill">歌词填充方向</string>

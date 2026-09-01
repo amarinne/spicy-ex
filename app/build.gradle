@@ -6,6 +6,36 @@ android {
     namespace 'com.eza.spicyex'
     compileSdk 35
 
+    // Keep focused JVM runs discoverable without moving the existing JUnit4 classes. Groups are
+    // intentionally additive: the narrower lyrics-ai and lyrics-session groups sit inside the
+    // broad lyrics group, while corpus names identify the golden language fixtures.
+    def unitTestGroups = [
+            settings: ['com.eza.spicyex.Settings*'],
+            diagnostics: ['com.eza.spicyex.diagnostics.*'],
+            hooks: ['com.eza.spicyex.hooks.*'],
+            lyrics: ['com.eza.spicyex.lyrics.*'],
+            'lyrics-ai': ['com.eza.spicyex.lyrics.ai.*'],
+            'lyrics-session': ['com.eza.spicyex.lyrics.session.*'],
+            corpus: [
+                    'com.eza.spicyex.lyrics.ChineseRomanizerTest',
+                    'com.eza.spicyex.lyrics.CyrillicRomanizerTest',
+                    'com.eza.spicyex.lyrics.GreekRomanizerTest',
+                    'com.eza.spicyex.lyrics.JapaneseReadingTest',
+                    'com.eza.spicyex.lyrics.JapaneseReadingPolicyConformanceTest',
+                    'com.eza.spicyex.lyrics.JapaneseRomajiProjectionConformanceTest',
+                    'com.eza.spicyex.lyrics.JapaneseRubyGeometryTest',
+                    'com.eza.spicyex.lyrics.JyutpingRomanizerTest',
+                    'com.eza.spicyex.lyrics.KoreanPronunciationTest',
+                    'com.eza.spicyex.lyrics.KoreanReadingProcessorTest',
+                    'com.eza.spicyex.lyrics.KoreanRomanizerTest'
+            ]
+    ]
+    def requestedTestGroup = providers.gradleProperty('testGroup').orNull
+    if (requestedTestGroup != null && !unitTestGroups.containsKey(requestedTestGroup)) {
+        throw new GradleException("Unknown testGroup '${requestedTestGroup}'. Choose one of: "
+                + unitTestGroups.keySet().join(', '))
+    }
+
     def keystorePath = System.getenv("SIGNING_KEYSTORE_FILE")
     def releaseStorePassword = System.getenv("SIGNING_STORE_PASSWORD")
     def releaseKeyAlias = System.getenv("SIGNING_KEY_ALIAS")
@@ -47,8 +77,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 542
-        versionName "1.58.267-spicy-control-poison+B542-20260829T1040Z"
+        versionCode 573
+        versionName "1.58.298-word-bounce-seed+B573-20260901T0714Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
@@ -95,6 +125,16 @@ android {
             if (releaseKeystoreValid) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    testOptions {
+        unitTests.all {
+            if (requestedTestGroup != null) {
+                filter {
+                    unitTestGroups[requestedTestGroup].each { includeTestsMatching(it) }
+                }
+            }
         }
     }
 

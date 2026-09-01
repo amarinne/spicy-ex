@@ -191,8 +191,11 @@ public final class LyricsMeaningLane {
         boolean aiConfigured = aiSettings.meaningLayerEnabled() && aiSettings.isEnabled()
                 && !aiSettings.modelName().isEmpty();
         boolean aiAutomaticRequest = aiAutomatic && snapshot.translationPending;
-        if (aiConfigured && (wanted || explicitAiRequest || aiAutomatic
-                || !snapshot.translationPending)) {
+        // Pending Google work must stay on the Google lane unless the user explicitly requested
+        // AI or selected the automatic AI trigger. The old `wanted` term made every configured AI
+        // install bypass Google, even in On-demand mode; disabling AI then exposed the broken
+        // assumption because no Google result had been fetched for that document.
+        if (shouldUseAi(aiConfigured, explicitAiRequest, aiAutomatic, snapshot.translationPending)) {
             if (meaningFlow == AiSettings.MeaningFlow.GOOGLE_PREVIEW) {
                 return startPreviewRun(run, id, generation, snapshot, workerSnapshot, work,
                         backend, targetLang, sourceLang, effectiveSourceLang, explicitAiRequest,
@@ -266,10 +269,16 @@ public final class LyricsMeaningLane {
                     SystemClock.elapsedRealtime() - startedAtMs);
             post(run, id, generation, snapshot, currentGuard,
                     () -> callback.complete(LayerKind.MEANING, artifactOf(run, entries, complete),
-                            LayerFailure.NONE,
-                            "Enhanced " + finalChanged + " translation fields", finalChanged));
+                            googleStats.failure(),
+                            googleStats.message(finalChanged), finalChanged));
         });
         return true;
+    }
+
+    /** AI routing contract: pending work stays Google-owned until an AI trigger is present. */
+    static boolean shouldUseAi(boolean aiConfigured, boolean explicitAiRequest,
+                               boolean aiAutomatic, boolean translationPending) {
+        return aiConfigured && (explicitAiRequest || aiAutomatic || !translationPending);
     }
 
     /**
@@ -900,6 +909,31 @@ public final class LyricsMeaningLane {
             networkAttempts += Math.max(0, result.networkAttempts);
             if (result.httpStatus > 0) lastStatus = result.httpStatus;
             if (!isBlank(result.failureReason)) lastReason = result.failureReason;
+        }
+
+        LayerFailure failure() {
+            if (lastStatus > 0 && lastStatus != 200) return LayerFailure.http(lastStatus);
+            if ("parse_empty".equals(lastReason) || "partial_parse".equals(lastReason)) {
+                return new LayerFailure(LayerFailure.Reason.MALFORMED, lastReason, 0);
+            }
+            if ("SocketTimeoutException".equals(lastReason)
+                    || "InterruptedIOException".equals(lastReason)) {
+                return new LayerFailure(LayerFailure.Reason.TIMEOUT, lastReason, 0);
+            }
+            if (!isBlank(lastReason)) {
+                return new LayerFailure(LayerFailure.Reason.UNAVAILABLE, lastReason, 0);
+            }
+            return LayerFailure.NONE;
+        }
+
+        String message(int changed) {
+            LayerFailure failure = failure();
+            if (!failure.isFailure()) return "Enhanced " + changed + " translation fields";
+            if (failure.reason == LayerFailure.Reason.RATE_LIMITED) {
+                return "Google translation rate limited; retry later";
+            }
+            return "Google translation unavailable (" + failure.reason.name().toLowerCase(
+                    java.util.Locale.ROOT) + ")";
         }
     }
 

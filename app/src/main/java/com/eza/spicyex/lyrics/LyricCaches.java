@@ -7,9 +7,9 @@ import com.eza.spicyex.Diagnostics;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
-import java.util.Collection;
 import java.util.Map;
 import java.util.Locale;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
@@ -25,23 +25,51 @@ public final class LyricCaches {
     /** Meaning artifacts. Separate store so a Sound contract bump never discards paid-for work. */
     private static final String PREFS_MEANING_CACHE = "SpotifyPlusMeaningArtifactCache";
     private static final String PREFS_PROCESSED_CACHE_ORDER_KEY = "__cache_order";
-    private static final int GOOGLE_CACHE_MAX_ENTRIES = 5000;
-    private static final int PROCESSED_CACHE_MAX_ENTRIES = 24;
-    private static final long PROCESSED_CACHE_MAX_BYTES = 4L * 1024L * 1024L;
-    private static final long PROCESSED_CACHE_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L;
-    // A track keeps one reading record per configuration, so switching back to a mode you have
-    // used before is instant instead of a re-derivation. That is the common case — people settle on
-    // a reading style — so the store is sized for several styles across a healthy set of tracks
-    // rather than made to hold one record per track. Sized here so those extra records cost other
-    // tracks nothing.
-    private static final int SOUND_CACHE_MAX_ENTRIES = 160;
-    private static final long SOUND_CACHE_MAX_BYTES = 8L * 1024L * 1024L;
-    private static final int MEANING_CACHE_MAX_ENTRIES = 96;
-    private static final long MEANING_CACHE_MAX_BYTES = 4L * 1024L * 1024L;
     private static final Object GOOGLE_CACHE_LOCK = new Object();
     private static final Object PROCESSED_CACHE_LOCK = new Object();
 
     private LyricCaches() {
+    }
+    /**
+     * Byte quotas for the preference-backed stores, derived from the shared "Cache size" budget.
+     * {@code Long.MAX_VALUE} (CacheStoragePolicy.UNLIMITED) means no byte or entry-count eviction.
+     */
+    public static long soundQuotaBytes(Context context) {
+        return CacheStoragePolicy.soundQuota(CacheStoragePolicy.totalBudget(context));
+    }
+
+    public static long meaningQuotaBytes(Context context) {
+        return CacheStoragePolicy.meaningQuota(CacheStoragePolicy.totalBudget(context));
+    }
+
+    public static long googleQuotaBytes(Context context) {
+        return CacheStoragePolicy.googleQuota(CacheStoragePolicy.totalBudget(context));
+    }
+
+    public static int googleStoreEntryCount(Context context) {
+        return preferenceStoreEntryCount(context, PREFS_GOOGLE_CACHE, PREFS_GOOGLE_CACHE_ORDER_KEY);
+    }
+
+    public static int soundStoreEntryCount(Context context) {
+        return preferenceStoreEntryCount(context, PREFS_SOUND_CACHE, PREFS_PROCESSED_CACHE_ORDER_KEY);
+    }
+
+    public static int meaningStoreEntryCount(Context context) {
+        return preferenceStoreEntryCount(context, PREFS_MEANING_CACHE, PREFS_PROCESSED_CACHE_ORDER_KEY);
+    }
+
+    private static int preferenceStoreEntryCount(Context context, String prefsName, String orderKey) {
+        if (context == null) return 0;
+        try {
+            int count = 0;
+            for (Map.Entry<String, ?> entry : context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getAll().entrySet()) {
+                if (entry.getKey() != null && entry.getKey().equals(orderKey)) continue;
+                if (entry.getValue() instanceof String) count++;
+            }
+            return count;
+        } catch (Throwable ignored) {
+            return 0;
+        }
     }
 
     public static void clearGoogle(Context context) {
@@ -69,23 +97,19 @@ public final class LyricCaches {
     }
 
     public static String getSoundArtifact(Context context, String key) {
-        return getBoundedRecord(context, PREFS_SOUND_CACHE, key,
-                SOUND_CACHE_MAX_ENTRIES, SOUND_CACHE_MAX_BYTES);
+        return getBoundedRecord(context, PREFS_SOUND_CACHE, key, soundQuotaBytes(context));
     }
 
     public static void putSoundArtifact(Context context, String key, String value) {
-        putBoundedRecord(context, PREFS_SOUND_CACHE, key, value,
-                SOUND_CACHE_MAX_ENTRIES, SOUND_CACHE_MAX_BYTES);
+        putBoundedRecord(context, PREFS_SOUND_CACHE, key, value, soundQuotaBytes(context));
     }
 
     public static String getMeaningArtifact(Context context, String key) {
-        return getBoundedRecord(context, PREFS_MEANING_CACHE, key,
-                MEANING_CACHE_MAX_ENTRIES, MEANING_CACHE_MAX_BYTES);
+        return getBoundedRecord(context, PREFS_MEANING_CACHE, key, meaningQuotaBytes(context));
     }
 
     public static void putMeaningArtifact(Context context, String key, String value) {
-        putBoundedRecord(context, PREFS_MEANING_CACHE, key, value,
-                MEANING_CACHE_MAX_ENTRIES, MEANING_CACHE_MAX_BYTES);
+        putBoundedRecord(context, PREFS_MEANING_CACHE, key, value, meaningQuotaBytes(context));
     }
 
     public static String sourceLanguageForCache(String sourceLang) {
@@ -102,13 +126,13 @@ public final class LyricCaches {
         return "translate|" + safe(trackId) + "|" + sourceLanguageForCache(sourceLang) + "|" + safe(targetLang) + "|" + safe(text);
     }
 
-    private static String getBoundedRecord(Context context, String prefsName, String key) {
-        return getBoundedRecord(context, prefsName, key,
-                PROCESSED_CACHE_MAX_ENTRIES, PROCESSED_CACHE_MAX_BYTES);
-    }
-
+    /**
+     * Quota-bounded record read. Byte budget is authoritative; no age expiry; the entry-count
+     * parameter of the order planner is passed non-binding (Integer.MAX_VALUE) so a store below
+     * its byte quota never evicts on count alone. Reads refresh LRU recency via the order key.
+     */
     private static String getBoundedRecord(Context context, String prefsName, String key,
-                                           int maxEntries, long maxBytes) {
+                                           long quotaBytes) {
         if (context == null) return null;
         try {
             SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
@@ -119,7 +143,7 @@ public final class LyricCaches {
                 ProcessedCacheOrderUpdate update = boundedProcessedCacheOrder(
                         prefs.getString(PREFS_PROCESSED_CACHE_ORDER_KEY, ""), hashedKey,
                         value.getBytes(StandardCharsets.UTF_8).length, System.currentTimeMillis(),
-                        maxEntries, maxBytes, PROCESSED_CACHE_MAX_AGE_MS);
+                        Integer.MAX_VALUE, quotaBytes, 0L);
                 SharedPreferences.Editor editor = prefs.edit();
                 for (String evicted : update.evictedKeys) editor.remove(evicted);
                 String nextOrder = update.evictedKeys.contains(hashedKey)
@@ -136,13 +160,9 @@ public final class LyricCaches {
         }
     }
 
-    private static void putBoundedRecord(Context context, String prefsName, String key, String value) {
-        putBoundedRecord(context, prefsName, key, value,
-                PROCESSED_CACHE_MAX_ENTRIES, PROCESSED_CACHE_MAX_BYTES);
-    }
-
+    /** Quota-bounded record write; byte budget authoritative, no age expiry, no entry cap. */
     private static void putBoundedRecord(Context context, String prefsName, String key, String value,
-                                         int maxEntries, long maxBytes) {
+                                         long quotaBytes) {
         if (context == null || isBlank(value)) return;
         try {
             SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
@@ -151,7 +171,7 @@ public final class LyricCaches {
                 ProcessedCacheOrderUpdate update = boundedProcessedCacheOrder(
                         prefs.getString(PREFS_PROCESSED_CACHE_ORDER_KEY, ""), hashedKey,
                         value.getBytes(StandardCharsets.UTF_8).length, System.currentTimeMillis(),
-                        maxEntries, maxBytes, PROCESSED_CACHE_MAX_AGE_MS);
+                        Integer.MAX_VALUE, quotaBytes, 0L);
                 SharedPreferences.Editor editor = prefs.edit();
                 if (update.evictedKeys.contains(hashedKey)) editor.remove(hashedKey);
                 else editor.putString(hashedKey, value);
@@ -174,7 +194,7 @@ public final class LyricCaches {
      *
      * <p>Keeping the configuration in the key means a track holds one record per reading style it
      * has been shown in, so returning to a style is instant rather than a re-derivation. The store
-     * is sized for that; see {@code SOUND_CACHE_MAX_ENTRIES}.
+     * is sized for that; see {@link CacheStoragePolicy#soundQuota(long)}.
      */
     public static String soundArtifactKey(String canonicalDigest, String soundConfigId) {
         return "sound|" + safe(canonicalDigest) + "|" + safe(soundConfigId);
@@ -240,15 +260,16 @@ public final class LyricCaches {
             SharedPreferences prefs = context.getSharedPreferences(PREFS_GOOGLE_CACHE, Context.MODE_PRIVATE);
             synchronized (GOOGLE_CACHE_LOCK) {
                 SharedPreferences.Editor editor = prefs.edit();
-                LinkedHashSet<String> hashedKeys = new LinkedHashSet<>();
+                LinkedHashMap<String, Long> newEntries = new LinkedHashMap<>();
                 for (Map.Entry<String, String> entry : values.entrySet()) {
                     if (entry == null || isBlank(entry.getValue())) continue;
                     String hashedKey = sha256(entry.getKey());
-                    hashedKeys.add(hashedKey);
+                    newEntries.put(hashedKey,
+                            (long) entry.getValue().getBytes(StandardCharsets.UTF_8).length);
                     editor.putString(hashedKey, entry.getValue());
                 }
-                if (hashedKeys.isEmpty()) return;
-                recordBoundedGoogleCachePut(prefs, editor, hashedKeys);
+                if (newEntries.isEmpty()) return;
+                recordBoundedGoogleCachePut(context, prefs, editor, newEntries);
                 editor.apply();
             }
         } catch (Throwable t) {
@@ -256,14 +277,46 @@ public final class LyricCaches {
         }
     }
 
-    private static void recordBoundedGoogleCachePut(SharedPreferences prefs, SharedPreferences.Editor editor,
-                                                    Collection<String> hashedKeys) {
-        CacheOrderUpdate update = boundedGoogleCacheOrder(
-                prefs.getString(PREFS_GOOGLE_CACHE_ORDER_KEY, ""),
-                hashedKeys,
-                GOOGLE_CACHE_MAX_ENTRIES);
+    /**
+     * Google processing values are byte-quota bounded by the shared budget; the old 5000-entry cap
+     * is no longer an independent eviction cause. The order line carries each entry's payload size
+     * ({@code key|bytes}); legacy plain-key lines are sized once from the store and migrated on
+     * the first write. Under {@link CacheStoragePolicy#UNLIMITED} nothing is evicted.
+     */
+    private static void recordBoundedGoogleCachePut(Context context, SharedPreferences prefs,
+                                                    SharedPreferences.Editor editor,
+                                                    Map<String, Long> newEntries) {
+        String rawOrder = prefs.getString(PREFS_GOOGLE_CACHE_ORDER_KEY, "");
+        Map<String, Long> knownSizes = googleKnownSizesIfNeeded(prefs, rawOrder);
+        GoogleQuotaUpdate update = boundedGoogleCacheOrderByBytes(rawOrder, knownSizes, newEntries,
+                googleQuotaBytes(context));
         for (String evicted : update.evictedKeys) editor.remove(evicted);
         editor.putString(PREFS_GOOGLE_CACHE_ORDER_KEY, update.nextOrder);
+    }
+
+    /** Legacy order lines carry no size; fetch payload sizes only when one is present. */
+    private static Map<String, Long> googleKnownSizesIfNeeded(SharedPreferences prefs, String rawOrder) {
+        if (isBlank(rawOrder)) return java.util.Collections.emptyMap();
+        for (String line : rawOrder.split("\n")) {
+            if (isBlank(line) || PREFS_GOOGLE_CACHE_ORDER_KEY.equals(line)) continue;
+            if (line.indexOf('|') < 0) return googleValueSizes(prefs);
+        }
+        return java.util.Collections.emptyMap();
+    }
+
+    private static Map<String, Long> googleValueSizes(SharedPreferences prefs) {
+        Map<String, Long> sizes = new LinkedHashMap<>();
+        try {
+            for (Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
+                if (entry.getKey() == null || PREFS_GOOGLE_CACHE_ORDER_KEY.equals(entry.getKey())) continue;
+                if (entry.getValue() instanceof String) {
+                    sizes.put(entry.getKey(),
+                            (long) ((String) entry.getValue()).getBytes(StandardCharsets.UTF_8).length);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return sizes;
     }
 
     static CacheOrderUpdate boundedGoogleCacheOrder(String rawOrder, String hashedKey, int maxEntries) {
@@ -298,6 +351,88 @@ public final class LyricCaches {
             nextOrder.append(entry);
         }
         return new CacheOrderUpdate(nextOrder.toString(), evicted);
+    }
+
+    static GoogleQuotaUpdate boundedGoogleCacheOrderByBytes(String rawOrder,
+                                                            Map<String, Long> knownSizes,
+                                                            Map<String, Long> newEntries,
+                                                            long quotaBytes) {
+        LinkedHashMap<String, Long> order = new LinkedHashMap<>();
+        if (!isBlank(rawOrder)) {
+            for (String line : rawOrder.split("\n")) {
+                if (isBlank(line) || PREFS_GOOGLE_CACHE_ORDER_KEY.equals(line)) continue;
+                int sep = line.indexOf('|');
+                if (sep > 0) {
+                    Long size = null;
+                    try {
+                        size = Math.max(0L, Long.parseLong(line.substring(sep + 1)));
+                    } catch (NumberFormatException ignored) {
+                    }
+                    if (size == null) size = googleKnownSize(knownSizes, line);
+                    order.put(line.substring(0, sep), size);
+                } else {
+                    order.put(line, googleKnownSize(knownSizes, line));
+                }
+            }
+        }
+        if (newEntries != null) {
+            for (Map.Entry<String, Long> entry : newEntries.entrySet()) {
+                if (entry == null || isBlank(entry.getKey())) continue;
+                order.remove(entry.getKey());
+                order.put(entry.getKey(), Math.max(0L, entry.getValue() == null ? 0L : entry.getValue()));
+            }
+        }
+        LinkedHashSet<String> evicted = new LinkedHashSet<>();
+        if (quotaBytes != CacheStoragePolicy.UNLIMITED) {
+            long total = 0L;
+            for (Long size : order.values()) total = CacheStoragePolicy.saturatingAdd(total, size);
+            while (total > Math.max(0L, quotaBytes) && !order.isEmpty()) {
+                String eldest = order.keySet().iterator().next();
+                Long removed = order.remove(eldest);
+                total -= Math.max(0L, removed == null ? 0L : removed);
+                evicted.add(eldest);
+            }
+        }
+        StringBuilder next = new StringBuilder();
+        for (Map.Entry<String, Long> entry : order.entrySet()) {
+            if (next.length() > 0) next.append('\n');
+            next.append(entry.getKey()).append('|').append(entry.getValue());
+        }
+        return new GoogleQuotaUpdate(next.toString(), evicted);
+    }
+
+    private static long googleKnownSize(Map<String, Long> knownSizes, String key) {
+        if (knownSizes == null) return 0L;
+        Long size = knownSizes.get(key);
+        return size == null ? 0L : Math.max(0L, size);
+    }
+
+    static final class GoogleQuotaUpdate {
+        final String nextOrder;
+        final LinkedHashSet<String> evictedKeys;
+
+        GoogleQuotaUpdate(String nextOrder, LinkedHashSet<String> evictedKeys) {
+            this.nextOrder = nextOrder;
+            this.evictedKeys = evictedKeys;
+        }
+    }
+
+    /** Combined logical-payload usage of the Google processing store, for the settings panel. */
+    public static long googleStoreUsageBytes(Context context) {
+        return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_GOOGLE_CACHE,
+                PREFS_GOOGLE_CACHE_ORDER_KEY);
+    }
+
+    /** Combined logical-payload usage of the Sound artifact store, for the settings panel. */
+    public static long soundStoreUsageBytes(Context context) {
+        return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_SOUND_CACHE,
+                PREFS_PROCESSED_CACHE_ORDER_KEY);
+    }
+
+    /** Combined logical-payload usage of the Meaning artifact store, for the settings panel. */
+    public static long meaningStoreUsageBytes(Context context) {
+        return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_MEANING_CACHE,
+                PREFS_PROCESSED_CACHE_ORDER_KEY);
     }
 
     static final class CacheOrderUpdate {

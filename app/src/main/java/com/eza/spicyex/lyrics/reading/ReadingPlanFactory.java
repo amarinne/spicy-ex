@@ -70,7 +70,10 @@ public final class ReadingPlanFactory {
         List<String> parts = SpicyJapaneseChineseProcessor.romanizeJapaneseSyllables(reading, texts);
         for (int index = 0; index < parts.size(); index++) {
             if ((parts.get(index) == null || parts.get(index).isEmpty())
-                    && texts.get(index).matches(".*\\p{IsLatin}.*")) parts.set(index, texts.get(index));
+                    && texts.get(index).matches(".*\\p{IsLatin}.*")
+                    && !ownedByEarlierReadingGroup(reading, texts, index)) {
+                parts.set(index, texts.get(index));
+            }
         }
         parts = align(parts, reading.romaji);
         if (parts == null) return lineFallback(line, reading.romaji, "local");
@@ -96,6 +99,35 @@ public final class ReadingPlanFactory {
         seg.startMs = line.startMs;
         seg.endMs = line.endMs;
         return seg;
+    }
+
+    /** A full-line group can own several provider chunks (A + dore -> Adore). Keep later chunks
+     * blank instead of restoring them as duplicate Latin passthrough. */
+    private static boolean ownedByEarlierReadingGroup(
+            SpicyJapaneseChineseProcessor.JapaneseReading reading,
+            List<String> texts,
+            int targetIndex
+    ) {
+        if (reading == null || reading.groups == null || reading.groups.isEmpty()
+                || targetIndex < 0 || targetIndex >= texts.size()) return false;
+        String source = Normalizer.normalize(
+                reading.sourceText == null ? "" : reading.sourceText, Normalizer.Form.NFKC);
+        int cursor = 0;
+        for (int index = 0; index <= targetIndex; index++) {
+            while (cursor < source.length() && Character.isWhitespace(source.codePointAt(cursor))) {
+                cursor += Character.charCount(source.codePointAt(cursor));
+            }
+            String text = Normalizer.normalize(texts.get(index) == null ? "" : texts.get(index),
+                    Normalizer.Form.NFKC);
+            int start = cursor;
+            int end = Math.min(source.length(), start + text.length());
+            cursor = end;
+            if (index != targetIndex) continue;
+            for (SpicyJapaneseChineseProcessor.ReadingGroup group : reading.groups) {
+                if (group != null && group.start < start && group.end > start) return true;
+            }
+        }
+        return false;
     }
 
     private static List<String> align(List<String> input, String display) {

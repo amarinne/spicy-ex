@@ -8,6 +8,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public class LyricCachesTest {
     @Test
@@ -181,5 +183,34 @@ public class LyricCachesTest {
 
         assertEquals("fresh|950|20\nnew|1000|20", update.nextOrder);
         assertTrue(update.evictedKeys.contains("old"));
+    }
+
+    @Test
+    public void processedCacheOrderKeepsOldEntriesWhenAgeLimitIsDisabled() {
+        LyricCaches.ProcessedCacheOrderUpdate update = LyricCaches.boundedProcessedCacheOrder(
+                "old|100|20\nfresh|950|20", "new", 20, 1000,
+                Integer.MAX_VALUE, 1000, 0L);
+
+        assertEquals("old|100|20\nfresh|950|20\nnew|1000|20", update.nextOrder);
+        assertTrue(update.evictedKeys.isEmpty());
+    }
+
+    @Test
+    public void googleCacheEvictsByBytesInsteadOfOldEntryCount() {
+        Map<String, Long> sizes = new LinkedHashMap<>();
+        sizes.put("a", 4L);
+        sizes.put("b", 4L);
+        Map<String, Long> writes = new LinkedHashMap<>();
+        writes.put("c", 4L);
+
+        LyricCaches.GoogleQuotaUpdate roomy = LyricCaches.boundedGoogleCacheOrderByBytes(
+                "a|4\nb|4", sizes, writes, 12L);
+        assertEquals("a|4\nb|4\nc|4", roomy.nextOrder);
+        assertTrue(roomy.evictedKeys.isEmpty());
+
+        LyricCaches.GoogleQuotaUpdate tight = LyricCaches.boundedGoogleCacheOrderByBytes(
+                "a|4\nb|4", sizes, writes, 8L);
+        assertEquals("b|4\nc|4", tight.nextOrder);
+        assertTrue(tight.evictedKeys.contains("a"));
     }
 }

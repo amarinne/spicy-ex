@@ -200,6 +200,11 @@ public final class LyricsLocalRomanizer {
                                                 String fullText) {
         if (segment == null || isBlank(segment.text)) return "";
         if (!isBlank(segment.romanizedText)) return segment.romanizedText;
+        if (line != null && line.japaneseReading != null
+                && "syntheticLineWords".equals(segment.boundaryProvenance)) {
+            return SpicyJapaneseChineseProcessor.romanizeJapaneseRange(
+                    line.japaneseReading, segment.canonicalStartCp, segment.canonicalEndCp);
+        }
         LyricsLine source = line == null ? null : line.sourceLine;
         String local = romanizeText(opts, doc, segment.text, fullText,
                 source == null ? "" : source.chineseMode);

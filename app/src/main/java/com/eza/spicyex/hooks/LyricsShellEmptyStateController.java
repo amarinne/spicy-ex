@@ -6,8 +6,10 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 import android.app.Activity;
 import android.graphics.Color;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.eza.spicyex.Settings;
@@ -33,7 +35,7 @@ final class LyricsShellEmptyStateController {
         this.textFactory = textFactory;
     }
 
-    void showLoading(LinearLayout lyricsColumn, String message) {
+    void showLoading(ScrollView lyricsScroll, LinearLayout lyricsColumn, String message) {
         stateToken++;
         lyricsColumn.removeAllViews();
         if (config.get(Settings.SHOW_SKELETON)) {
@@ -41,8 +43,10 @@ final class LyricsShellEmptyStateController {
             LinearLayout.LayoutParams skeletonLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            skeletonLp.topMargin = dp(72);
+            skeletonLp.topMargin = loadingTopMargin(
+                    lyricsScroll.getHeight(), lyricsScroll.getPaddingTop());
             lyricsColumn.addView(skeleton, skeletonLp);
+            alignLoadingStart(lyricsScroll, lyricsColumn, skeleton);
             return;
         }
         TextView loading = textFactory.createText(
@@ -56,6 +60,35 @@ final class LyricsShellEmptyStateController {
         lyricsColumn.addView(loading, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void alignLoadingStart(
+            ScrollView lyricsScroll,
+            LinearLayout lyricsColumn,
+            View loadingView
+    ) {
+        Runnable align = () -> {
+            if (loadingView.getParent() != lyricsColumn) return;
+            ViewGroup.LayoutParams rawParams = loadingView.getLayoutParams();
+            if (!(rawParams instanceof LinearLayout.LayoutParams)) return;
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) rawParams;
+            int topMargin = loadingTopMargin(
+                    lyricsScroll.getHeight(), lyricsScroll.getPaddingTop());
+            if (params.topMargin != topMargin) {
+                params.topMargin = topMargin;
+                loadingView.setLayoutParams(params);
+            }
+            // A song change can leave the prior document's scroll offset in place. Reset both now
+            // and after layout, when ScrollView has recalculated the shorter loading content range.
+            lyricsScroll.scrollTo(0, 0);
+        };
+        align.run();
+        lyricsScroll.post(align);
+    }
+
+    static int loadingTopMargin(int viewportHeightPx, int paddingTopPx) {
+        if (viewportHeightPx <= 0) return 0;
+        return Math.max(0, viewportHeightPx / 2 - Math.max(0, paddingTopPx));
     }
 
     void showError(LinearLayout lyricsColumn, String error) {

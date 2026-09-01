@@ -239,6 +239,12 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
         return new AIPaidArtifactCache.Stats(entries, bytes, Integer.MAX_VALUE, maxBytes);
     }
 
+    /** Stored payload bytes only; used for the settings panel usage display. */
+    long usageBytes() {
+        return DatabaseUtils.longForQuery(getReadableDatabase(),
+                "SELECT COALESCE(SUM(raw_bytes), 0) FROM " + TABLE_ENTRIES, null);
+    }
+
     private static void putRaw(SQLiteDatabase db, String key, String layer, byte[] value, long bytes) {
         ContentValues values = new ContentValues();
         values.put("entry_key", key);

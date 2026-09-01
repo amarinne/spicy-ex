@@ -129,6 +129,7 @@ public class CanonicalSourceTest {
     public void canonicalRecordRoundTripsSourceTextTimingAndSpans() {
         LyricsDocument original = document("ichi", "ni");
         original.provider = "Spicy Lyrics";
+        original.fetchSource = "spotify_native_model:lyrics_view";
         original.type = "Syllable";
         original.songWriters = "someone";
         original.durationMs = 200_000L;
@@ -149,6 +150,7 @@ public class CanonicalSourceTest {
         assertEquals(3, restored.sourceRevision);
         assertEquals("digest-a", restored.canonicalDigest);
         assertEquals("Spicy Lyrics", restored.document.provider);
+        assertEquals("spotify_native_model:lyrics_view", restored.document.fetchSource);
         assertEquals("Syllable", restored.document.type);
         assertEquals("someone", restored.document.songWriters);
         assertEquals(200_000L, restored.document.durationMs);
@@ -187,6 +189,22 @@ public class CanonicalSourceTest {
         assertEquals("", restored.document.lines.get(0).syllables.get(0).romanizedText);
         assertFalse(restored.document.includesRomanization);
         assertFalse(restored.document.includesTranslation);
+    }
+
+    @Test
+    public void cachedCanonicalLineRestoresAuthoredFullwidthPunctuation() {
+        LyricsDocument original = document("君は誰?");
+        SyllableSegment segment = syllable("0", "誰?", 0L, 500L, false);
+        segment.sourceText = "誰？";
+        segment.canonicalStartCp = 2;
+        segment.canonicalEndCp = 4;
+        original.lines.get(0).syllables.add(segment);
+
+        CanonicalSourceCodec.Record restored = CanonicalSourceCodec.decode(
+                CanonicalSourceCodec.encode(original, 1, "digest", 0L));
+
+        assertEquals("君は誰？", restored.document.lines.get(0).text);
+        assertEquals("誰？", restored.document.lines.get(0).syllables.get(0).text);
     }
 
     @Test

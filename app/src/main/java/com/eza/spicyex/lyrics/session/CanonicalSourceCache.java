@@ -21,8 +21,6 @@ import com.eza.spicyex.lyrics.LyricsDocument;
 public final class CanonicalSourceCache {
     private static final String PREFS = "SpotifyPlusCanonicalSourceCache";
     private static final String ORDER_KEY = "__cache_order";
-    private static final int MAX_ENTRIES = 96;
-    private static final long MAX_BYTES = 8L * 1024L * 1024L;
     private static final Object LOCK = new Object();
 
     private CanonicalSourceCache() {
@@ -63,7 +61,12 @@ public final class CanonicalSourceCache {
             String key = entryKey(trackUri);
             long bytes = value.getBytes(StandardCharsets.UTF_8).length;
             synchronized (LOCK) {
-                Bound bound = plan(prefs.getString(ORDER_KEY, ""), key, bytes, MAX_ENTRIES, MAX_BYTES);
+                // Byte quota from the shared "Cache size" budget; the entry-count bound is passed
+                // non-binding so a store below quota never evicts on count alone. No age expiry.
+                Bound bound = plan(prefs.getString(ORDER_KEY, ""), key, bytes,
+                        Integer.MAX_VALUE,
+                        com.eza.spicyex.lyrics.CacheStoragePolicy.canonicalQuota(
+                                com.eza.spicyex.lyrics.CacheStoragePolicy.totalBudget(context)));
                 if (bound.rejectedWrite) return false;
                 SharedPreferences.Editor editor = prefs.edit();
                 for (String evicted : bound.evicted) editor.remove(evicted);
@@ -79,6 +82,21 @@ public final class CanonicalSourceCache {
     public static void clear(Context context) {
         if (context == null) return;
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+    }
+
+    /** Combined logical-payload usage of the canonical source store, for the settings panel. */
+    public static long usageBytes(Context context) {
+        return com.eza.spicyex.lyrics.CacheStoragePolicy.preferenceStoreUsage(context, PREFS, ORDER_KEY);
+    }
+
+    public static int entryCount(Context context) {
+        if (context == null) return 0;
+        int count = 0;
+        for (Map.Entry<String, ?> entry : context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getAll().entrySet()) {
+            if (!ORDER_KEY.equals(entry.getKey()) && entry.getValue() instanceof String) count++;
+        }
+        return count;
     }
 
     private static String entryKey(String trackUri) {

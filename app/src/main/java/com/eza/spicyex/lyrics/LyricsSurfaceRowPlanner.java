@@ -188,7 +188,8 @@ public final class LyricsSurfaceRowPlanner {
             return;
         }
         String[] parts;
-        if (isJapaneseLine(line)) {
+        boolean japaneseSyntheticWords = isJapaneseLine(line);
+        if (japaneseSyntheticWords) {
             List<DisplayLayoutGroup> groups = DisplayLayoutGroup.forLine("ja", text, line.japaneseReading);
             if (groups.size() < 2) return;
             ArrayList<String> japaneseParts = new ArrayList<>();
@@ -212,6 +213,7 @@ public final class LyricsSurfaceRowPlanner {
         long span = Math.max(1L, line.endMs - line.startMs);
         long cursor = line.startMs;
         int acc = 0;
+        int sourceUtf16 = 0;
         for (int i = 0; i < parts.length; i++) {
             acc += Math.max(1, parts[i].length());
             long end = (i == parts.length - 1)
@@ -219,10 +221,17 @@ public final class LyricsSurfaceRowPlanner {
                     : line.startMs + span * acc / totalChars;
             SyllableSegment seg = new SyllableSegment();
             seg.text = parts[i];
+            seg.canonicalStartCp = text.codePointCount(0, sourceUtf16);
+            sourceUtf16 = Math.min(text.length(), sourceUtf16 + parts[i].length());
+            seg.canonicalEndCp = text.codePointCount(0, sourceUtf16);
             seg.startMs = cursor;
             seg.endMs = Math.max(cursor + 1, end);
             seg.totalMs = seg.endMs - seg.startMs;
-            seg.boundaryAfter = i < parts.length - 1;
+            // Japanese layout groups are wrap/timing sections, not lexical spaces. Add renderer
+            // margin only where canonical source text actually has whitespace after this range.
+            seg.boundaryAfter = japaneseSyntheticWords
+                    ? sourceUtf16 < text.length() && Character.isWhitespace(text.codePointAt(sourceUtf16))
+                    : i < parts.length - 1;
             seg.boundaryProvenance = "syntheticLineWords";
             seg.partOfWord = !seg.boundaryAfter;
             line.words.add(seg);

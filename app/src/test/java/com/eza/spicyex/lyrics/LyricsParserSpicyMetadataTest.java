@@ -164,6 +164,33 @@ public class LyricsParserSpicyMetadataTest {
     }
 
     @Test
+    public void parseSyllableLyricsPreservesAuthoredFullwidthQuestionMark() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("君", true, 1.0, 1.3));
+        syllables.add(syllable("は", true, 1.3, 1.5));
+        syllables.add(syllable("誰？", false, 1.5, 2.0));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "君は誰？");
+        lead.addProperty("StartTime", 1.0);
+        lead.addProperty("EndTime", 2.0);
+        lead.add("Syllables", syllables);
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        JsonArray content = new JsonArray();
+        content.add(item);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+
+        assertEquals("君は誰？", doc.lines.get(0).text);
+        assertEquals("誰？", doc.lines.get(0).syllables.get(2).text);
+    }
+
+    @Test
     public void parseSyllableLyricsDoesNotInventJapaneseWordSpaceFromPackedFlags() {
         JsonArray syllables = new JsonArray();
         syllables.add(syllable("とて", false, 47.379, 48.580));

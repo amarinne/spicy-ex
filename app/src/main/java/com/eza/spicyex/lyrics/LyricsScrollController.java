@@ -60,6 +60,10 @@ public final class LyricsScrollController {
         return scrollY + Math.max(1, viewportHeight) / 2 - Math.max(0, paddingTop);
     }
 
+    public static boolean shouldScrollInstantly(boolean requested, int previousActiveIndex) {
+        return requested || previousActiveIndex < 0;
+    }
+
     public int contentYForTouch(float yInScroll) {
         if (scrollView == null) return Math.round(yInScroll);
         return scrollView.getScrollY() + Math.round(yInScroll) - scrollView.getPaddingTop();

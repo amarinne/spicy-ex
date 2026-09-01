@@ -136,6 +136,63 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
+    public void authoritativeLineFallbackDoesNotReRomanizeTimedChildren() {
+        AppliedLine line = line("嗚呼時過ぎる消えない Adore");
+        line.words.add(word("嗚呼", true));
+        line.words.add(word("時", true));
+        line.words.add(word("過ぎる", false));
+        line.words.add(word("消えない", true));
+        line.words.add(word("A", true));
+        line.words.add(word("dore", false));
+        line.readingRenderPlan = new RenderPlan("line", java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(), java.util.Collections.emptyList(),
+                "aa toki sugiru kienai Adore", null);
+
+        assertFalse(LyricsRowViewFactory.canBuildTimedRomanRow(line, true, true));
+        assertEquals("aa toki sugiru kienai Adore", LyricsRowViewFactory.displayReading(line));
+    }
+
+    @Test
+    public void syntheticJapaneseUsesAuthoritativeTokenizerSpacedRomajiLine() {
+        AppliedLine line = line("電車がホームに ホームに");
+        line.japaneseReading = SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line.text, null);
+        line.readingRenderPlan = new RenderPlan("line", java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(), java.util.Collections.singletonList(
+                new TimedReadingUnit("line", new TextRange(0, 12),
+                        line.japaneseReading.romaji, "jp-0")),
+                line.japaneseReading.romaji, null);
+        line.syntheticWords = true;
+        SyllableSegment first = word("電車が", false);
+        first.boundaryProvenance = "syntheticLineWords";
+        first.canonicalStartCp = 0;
+        first.canonicalEndCp = 3;
+        SyllableSegment second = word("ホームに", true);
+        second.boundaryProvenance = "syntheticLineWords";
+        second.canonicalStartCp = 3;
+        second.canonicalEndCp = 7;
+        SyllableSegment third = word("ホームに", false);
+        third.boundaryProvenance = "syntheticLineWords";
+        third.canonicalStartCp = 8;
+        third.canonicalEndCp = 12;
+        line.words.add(first);
+        line.words.add(second);
+        line.words.add(third);
+
+        assertEquals("densha ga hoomu ni hoomu ni", LyricsRowViewFactory.displayReading(line));
+        assertTrue(LyricsRowViewFactory.canBuildTimedRomanRow(line, true, true));
+        LyricsRowViewFactory.RomanizedWordProvider provider = (ignoredLine, segment, ignoredText) ->
+                LyricsLocalRomanizer.romanizeDisplaySegment(null, null, line, segment, line.text);
+        java.util.Map<String, TimedReadingUnit> noTimedMatches = java.util.Collections.emptyMap();
+        LyricsRowViewFactory.Options options = new LyricsRowViewFactory.Options();
+        assertEquals("densha ga", LyricsRowViewFactory.romanizedWordText(
+                line, first, 0, noTimedMatches, options, provider));
+        assertEquals("hoomu ni", LyricsRowViewFactory.romanizedWordText(
+                line, second, 1, noTimedMatches, options, provider));
+        assertEquals("hoomu ni", LyricsRowViewFactory.romanizedWordText(
+                line, third, 2, noTimedMatches, options, provider));
+    }
+
+    @Test
     public void unmatchedSyntheticSpanUsesProviderEvenWhenReadingPlanExists() {
         AppliedLine line = line("hello world");
         SyllableSegment synthetic = word("hello", false);
@@ -214,6 +271,30 @@ public class LyricsSurfaceRowPlannerTest {
 
         assertTrue(line.syntheticWords);
         assertTrue(line.words.size() >= 2);
+    }
+
+    @Test
+    public void japaneseSyntheticSectionsOnlyExposeAuthoredMainLineSpaces() {
+        AppliedLine line = line("銀河を超えて 君を探すの 行ったり来たり");
+        line.japaneseReading = SpicyJapaneseChineseProcessor.analyzeJapaneseLine(line.text, null);
+        LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(
+                1f, true, false, "romaji_only", false,
+                false, true, false, false, "Medium", "default", 1f,
+                false, true, false, false, true);
+
+        LyricsSurfaceRowPlanner.plan(line, document(line), policy);
+
+        assertTrue(line.syntheticWords);
+        int visibleBoundaries = 0;
+        for (SyllableSegment segment : line.words) {
+            if (segment == null || segment.text.trim().isEmpty() || !segment.boundaryAfter) continue;
+            visibleBoundaries++;
+            int end = com.eza.spicyex.lyrics.reading.CodePointRanges
+                    .codePointOffsetToUtf16Index(line.text, segment.canonicalEndCp);
+            assertTrue(end < line.text.length());
+            assertTrue(Character.isWhitespace(line.text.codePointAt(end)));
+        }
+        assertEquals(2, visibleBoundaries);
     }
 
     @Test

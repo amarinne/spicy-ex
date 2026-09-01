@@ -92,6 +92,14 @@ public final class SpicyJapaneseChineseProcessor {
         return null;
     }
 
+    public static JapaneseReading finalizeParsedJapaneseReading(JapaneseReading parsed) {
+        return parsed;
+    }
+
+    public static JapaneseReading finalizeParsedJapaneseReading(JapaneseReading parsed, String fallbackSourceText) {
+        return parsed;
+    }
+
     static JapaneseReading analyzeJapaneseLineWithProviderFurigana(
             String text, List<FuriganaSegment> furigana,
             List<JapaneseReadingPolicyModels.BoundaryEvidence> boundaries) {
@@ -120,6 +128,10 @@ public final class SpicyJapaneseChineseProcessor {
             for (int i = 0; i < syllableTexts.size(); i++) out.add("");
         }
         return out;
+    }
+
+    public static String romanizeJapaneseRange(JapaneseReading reading, int startCp, int endCp) {
+        return "";
     }
 
     public static String romanizeChineseLine(String text, String mode) {

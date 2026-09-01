@@ -180,13 +180,14 @@ public final class LyricsRowViewFactory {
 
     static boolean canBuildTimedRomanRow(AppliedLine line, boolean useSyllableWords,
                                          boolean hasRomanizedWordProvider) {
-        return useSyllableWords
-                && line != null
-                && line.words != null
-                && !line.words.isEmpty()
-                && (hasRomanizedWordProvider
-                || line.readingRenderPlan != null
-                && line.readingRenderPlan.timedReadingUnits.size() >= line.words.size());
+        if (!useSyllableWords || line == null || line.words == null || line.words.isEmpty()) {
+            return false;
+        }
+        if (line.readingRenderPlan != null) {
+            return line.readingRenderPlan.timedReadingUnits != null
+                    && !line.readingRenderPlan.timedReadingUnits.isEmpty();
+        }
+        return hasRomanizedWordProvider;
     }
 
     /** Plan text wins when aligned; AI and other whole-line readings use the legacy line slot. */
@@ -207,6 +208,9 @@ public final class LyricsRowViewFactory {
     ) {
         boolean wrapLongLines = options == null || options.wrapLongLines;
         ViewGroup words = wrapLongLines ? new GlowFlexbox(activity) : new LinearLayout(activity);
+        if (words instanceof GlowFlexbox && showJapaneseFurigana) {
+            ((GlowFlexbox) words).setGlowLayerEnabled(false);
+        }
         boolean rtlLine = isRtlLine(line);
         applyLineDirection(words, rtlLine);
         if (words instanceof FlexboxLayout) {
@@ -226,40 +230,91 @@ public final class LyricsRowViewFactory {
             words.setPadding(0, FuriganaText.rubyGapReservationPx(sp(LyricsLineViewState.baseTextSp(line))), 0, 0);
         }
         int furiganaOffset = 0;
-        int wordIndex = 0;
         Map<String, TimedReadingUnit> timedBySpanId = timedBySpanId(line);
+        List<String> mainTexts = new ArrayList<>();
+        for (SyllableSegment segment : line.words) {
+            mainTexts.add(segment == null ? "" : LyricUtils.safe(segment.text));
+        }
+        List<TimedTextRowProjection.Chunk> mainProjection = TimedTextRowProjection.project(
+                mainTexts, line.text);
+        List<TimedTextRowProjection.Chunk> romanizedWords = showAlignedRomaji
+                ? TimedTextRowProjection.project(
+                romanizedWordTexts(line, options, romanizedWordProvider, timedBySpanId),
+                displayReading(line)) : java.util.Collections.emptyList();
         // Adaptive sectioning candidate: only the wrapping word-row flexbox participates. The
         // LinearLayout Scroll/Clip path and line-level TextView rows keep their existing behavior.
         boolean adaptiveWordRow = words instanceof GlowFlexbox && wrapLongLines
                 && options != null && options.adaptiveSectioningEnabled;
         List<int[]> adaptiveChildRanges = adaptiveWordRow ? new ArrayList<>() : null;
-        for (SyllableSegment seg : line.words) {
-            if (seg == null || isBlank(seg.text)) continue;
-            int[] sourceRange = FuriganaText.wordRange(line, seg, wordIndex, furiganaOffset);
-            int wordStart = sourceRange[0];
-            furiganaOffset = Math.max(furiganaOffset, sourceRange[1]);
-            if (adaptiveChildRanges != null) {
-                adaptiveChildRanges.add(adaptiveRangeCertain(line.text, seg.text, sourceRange)
-                        ? sourceRange : null);
+        for (int groupStart = 0; groupStart < line.words.size();) {
+            int groupEnd = TimedWordGrouping.groupEnd(line, groupStart);
+            TimedWordMotionLayout motionGroup = groupEnd > groupStart
+                    ? new TimedWordMotionLayout(activity) : null;
+            if (motionGroup != null) {
+                applyLineDirection(motionGroup, rtlLine);
             }
-            View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
-                    options == null ? "Medium" : options.lyricWeight,
-                    options == null ? "spotify" : options.lyricsFont);
-            String romanizedWordText = showAlignedRomaji
-                    ? romanizedWordText(line, seg, wordIndex, timedBySpanId,
-                    options, romanizedWordProvider) : "";
-            if (showAlignedRomaji && !isBlank(romanizedWordText)) {
-                wordView = stackRomanizedWord(line, seg, wordView, romanizedWordText);
-            } else {
-                LyricsSyllableViewState.clearRomanizedTextView(seg);
+            View singleWord = null;
+            View spaceReference = null;
+            int firstVisible = -1;
+            int rangeStart = -1;
+            int rangeEnd = -1;
+            boolean certainRange = true;
+            for (int wordIndex = groupStart; wordIndex <= groupEnd; wordIndex++) {
+                SyllableSegment seg = line.words.get(wordIndex);
+                if (seg == null || isBlank(seg.text)) continue;
+                if (firstVisible < 0) firstVisible = wordIndex;
+                int[] sourceRange = FuriganaText.wordRange(line, seg, wordIndex, furiganaOffset);
+                int wordStart = sourceRange[0];
+                furiganaOffset = Math.max(furiganaOffset, sourceRange[1]);
+                if (!adaptiveRangeCertain(line.text, seg.text, sourceRange)) certainRange = false;
+                if (rangeStart < 0) rangeStart = sourceRange[0];
+                rangeEnd = sourceRange[1];
+                View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
+                        options == null ? "Medium" : options.lyricWeight,
+                        options == null ? "spotify" : options.lyricsFont);
+                TimedTextRowProjection.Chunk romanChunk = showAlignedRomaji
+                        && wordIndex < romanizedWords.size() ? romanizedWords.get(wordIndex) : null;
+                String romanizedWordText = romanChunk == null ? "" : romanChunk.text;
+                if (showAlignedRomaji && !isBlank(romanizedWordText)) {
+                    wordView = stackRomanizedWord(line, seg, wordView, romanizedWordText);
+                } else {
+                    LyricsSyllableViewState.clearRomanizedTextView(seg);
+                }
+                LyricsSyllableViewState.setWordView(seg, wordView);
+                if (motionGroup != null) {
+                    motionGroup.addView(wordView, new ViewGroup.MarginLayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                } else {
+                    singleWord = wordView;
+                }
+                if (spaceReference == null) spaceReference = wordView;
             }
-            ViewGroup.MarginLayoutParams wlp = words instanceof FlexboxLayout
-                    ? new FlexboxLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (seg.boundaryAfter) wlp.setMarginEnd(dp(8));
-            words.addView(wordView, wlp);
-            LyricsSyllableViewState.setWordView(seg, wordView);
-            wordIndex++;
+            View motionView = motionGroup == null ? singleWord : motionGroup;
+            if (motionView != null) {
+                for (int wordIndex = groupStart; wordIndex <= groupEnd; wordIndex++) {
+                    SyllableSegment seg = line.words.get(wordIndex);
+                    if (seg != null && !isBlank(seg.text)) {
+                        LyricsSyllableViewState.configureWordMotion(
+                                seg, motionView, words, wordIndex == firstVisible);
+                    }
+                }
+                ViewGroup.MarginLayoutParams wlp = words instanceof FlexboxLayout
+                        ? new FlexboxLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT)
+                        : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+                TimedTextRowProjection.Chunk mainChunk = groupEnd < mainProjection.size()
+                        ? mainProjection.get(groupEnd) : null;
+                if (mainChunk != null && mainChunk.spaceAfter) {
+                    wlp.setMarginEnd(measuredSpacePx(spaceReference));
+                }
+                words.addView(motionView, wlp);
+                if (adaptiveChildRanges != null) {
+                    adaptiveChildRanges.add(certainRange && rangeStart >= 0
+                            ? new int[]{rangeStart, rangeEnd} : null);
+                }
+            }
+            groupStart = groupEnd + 1;
         }
         applyAdaptiveWordSectioning(words, line, adaptiveChildRanges);
         row.addView(words, new LinearLayout.LayoutParams(
@@ -366,11 +421,15 @@ public final class LyricsRowViewFactory {
         romanWords.setClipChildren(false);
 
         Map<String, TimedReadingUnit> timedBySpanId = timedBySpanId(line);
+        List<TimedTextRowProjection.Chunk> romanizedWords = TimedTextRowProjection.project(
+                romanizedWordTexts(line, options, romanizedWordProvider, timedBySpanId),
+                displayReading(line));
         int wordIndex = 0;
         for (SyllableSegment seg : line.words) {
             if (seg == null) continue;
-            String romanized = romanizedWordText(line, seg, wordIndex, timedBySpanId,
-                    options, romanizedWordProvider);
+            TimedTextRowProjection.Chunk projected = wordIndex < romanizedWords.size()
+                    ? romanizedWords.get(wordIndex) : null;
+            String romanized = projected == null ? "" : projected.text;
             LyricsSyllableViewState.clearRomanizedTextView(seg);
             if (!isBlank(romanized)) {
                 SpicyAnimatedTextView romanWord = textFactory.createSecondaryAnimatedText(
@@ -385,7 +444,9 @@ public final class LyricsRowViewFactory {
                         ViewGroup.LayoutParams.WRAP_CONTENT)
                         : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT);
-                if (seg.boundaryAfter) wordLp.setMarginEnd(dp(8));
+                if (projected.spaceAfter) {
+                    wordLp.setMarginEnd(measuredSpacePx(romanWord));
+                }
                 romanWords.addView(romanWord, wordLp);
                 LyricsSyllableViewState.setRomanizedTextView(seg, romanWord);
             }
@@ -402,12 +463,27 @@ public final class LyricsRowViewFactory {
     static String romanizedWordText(AppliedLine line, SyllableSegment seg, int wordIndex,
                                     Map<String, TimedReadingUnit> timedBySpanId, Options options,
                                     RomanizedWordProvider romanizedWordProvider) {
-        String planned = timedTextForSpan(timedBySpanId, spanId(seg, wordIndex));
-        if (!isBlank(planned)) return planned;
+        TimedTextLookup planned = timedTextForSpan(timedBySpanId, spanId(seg, wordIndex));
+        if (planned.found) return planned.text;
         if (seg != null && !isBlank(seg.romanizedText)) return seg.romanizedText;
         return romanizedWordProvider == null ? ""
                 : LyricUtils.safe(romanizedWordProvider.romanizedText(
-                line, seg, options == null ? "" : options.documentText)).trim();
+                line, seg, options == null ? "" : options.documentText));
+    }
+
+    private static List<String> romanizedWordTexts(
+            AppliedLine line,
+            Options options,
+            RomanizedWordProvider romanizedWordProvider,
+            Map<String, TimedReadingUnit> timedBySpanId
+    ) {
+        ArrayList<String> out = new ArrayList<>();
+        if (line == null || line.words == null) return out;
+        for (int index = 0; index < line.words.size(); index++) {
+            out.add(romanizedWordText(line, line.words.get(index), index, timedBySpanId,
+                    options, romanizedWordProvider));
+        }
+        return out;
     }
 
     private static Map<String, TimedReadingUnit> timedBySpanId(AppliedLine line) {
@@ -426,16 +502,53 @@ public final class LyricsRowViewFactory {
 
     /** Surface-only groups can represent several provider spans. Preserve plan ownership and join
      * their already-derived timed text here instead of synthesizing a replacement timed unit. */
-    private static String timedTextForSpan(Map<String, TimedReadingUnit> timedBySpanId, String spanId) {
+    private static TimedTextLookup timedTextForSpan(
+            Map<String, TimedReadingUnit> timedBySpanId, String spanId) {
+        if (timedBySpanId == null || spanId == null) return TimedTextLookup.missing();
         TimedReadingUnit direct = timedBySpanId.get(spanId);
-        if (direct != null) return direct.text == null ? "" : direct.text.trim();
-        if (spanId == null || !spanId.contains("+")) return "";
+        if (direct != null) return TimedTextLookup.found(direct.text);
+        if (!spanId.contains("+")) return TimedTextLookup.missing();
         StringBuilder out = new StringBuilder();
         for (String id : spanId.split("\\+")) {
             TimedReadingUnit timed = timedBySpanId.get(id);
-            if (timed != null && timed.text != null) out.append(timed.text);
+            if (timed == null) return TimedTextLookup.missing();
+            if (timed.text != null) out.append(timed.text);
         }
-        return out.toString().trim();
+        return TimedTextLookup.found(out.toString());
+    }
+
+    private static final class TimedTextLookup {
+        final boolean found;
+        final String text;
+
+        private TimedTextLookup(boolean found, String text) {
+            this.found = found;
+            this.text = LyricUtils.safe(text);
+        }
+
+        static TimedTextLookup found(String text) {
+            return new TimedTextLookup(true, text);
+        }
+
+        static TimedTextLookup missing() {
+            return new TimedTextLookup(false, "");
+        }
+    }
+
+    private static int measuredSpacePx(View view) {
+        TextView text = firstTextView(view);
+        return text == null ? 1 : Math.max(1, Math.round(text.getPaint().measureText(" ")));
+    }
+
+    private static TextView firstTextView(View view) {
+        if (view instanceof TextView) return (TextView) view;
+        if (!(view instanceof ViewGroup)) return null;
+        ViewGroup group = (ViewGroup) view;
+        for (int index = 0; index < group.getChildCount(); index++) {
+            TextView found = firstTextView(group.getChildAt(index));
+            if (found != null) return found;
+        }
+        return null;
     }
 
     private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font) {

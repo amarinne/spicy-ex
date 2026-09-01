@@ -2,14 +2,16 @@ package com.eza.spicyex.lyrics;
 
 import com.eza.spicyex.Diagnostics;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /** Session-local, privacy-safe snapshot of last lyric fetch arbitration. */
 public final class LyricsFetchDiagnosticsState {
     private static volatile Snapshot last = new Snapshot(
-            "none", "none", "unknown", "", "Unknown", "", "", false,
+            "none", "", "none", "unknown", "", "Unknown", "", "", false,
             "unknown", false, "unknown", false, 0, 0L);
 
     private LyricsFetchDiagnosticsState() {
@@ -17,6 +19,8 @@ public final class LyricsFetchDiagnosticsState {
 
     public static void record(String sourceChosen, List<String> candidatesSeen, LyricsDocument chosen,
                               boolean tokenPresent, boolean cacheWrite) {
+        String normalizedSource = safeStatus(sourceChosen);
+        String cacheSource = "cache".equals(normalizedSource) ? sourceOrigin(chosen) : "";
         String status = chosen == null || chosen.spicyQueryStatus == null
                 ? "unknown"
                 : String.valueOf(chosen.spicyQueryStatus);
@@ -24,7 +28,8 @@ public final class LyricsFetchDiagnosticsState {
                 ? "ok"
                 : safeStatus(chosen.spicyQualityReason);
         last = new Snapshot(
-                safeStatus(sourceChosen),
+                normalizedSource,
+                cacheSource,
                 joinCandidates(candidatesSeen),
                 chosen == null ? "unknown" : safeStatus(chosen.provider),
                 chosen == null ? "" : safeStatus(chosen.language),
@@ -41,11 +46,17 @@ public final class LyricsFetchDiagnosticsState {
         Diagnostics.event("lyrics_fetch", "provider_arbitration",
                 Diagnostics.context(
                         "source", sourceChosen,
+                        "cacheSource", cacheSource,
                         "provider", chosen == null ? "unknown" : chosen.provider,
                         "status", status,
                         "language", chosen == null ? "" : chosen.language,
                         "timingType", chosen == null ? "Unknown" : chosen.type,
                         "cache", cacheWrite ? "write" : "no_write"));
+    }
+
+    /** Records a durable canonical-cache hit without pretending that a source fetch ran. */
+    public static void recordCached(LyricsDocument chosen) {
+        record("cache", Collections.emptyList(), chosen, false, false);
     }
 
     public static Snapshot get() {
@@ -69,8 +80,28 @@ public final class LyricsFetchDiagnosticsState {
         return value.replaceAll("[^0-9A-Za-z._:+,-]", "_");
     }
 
+    static String sourceOrigin(LyricsDocument chosen) {
+        if (chosen == null) return "unknown";
+        String fetchSource = safeLower(chosen.fetchSource);
+        if (fetchSource.contains("lrclib")) return "lrclib";
+        if (fetchSource.contains("native")) return "native";
+        if (fetchSource.contains("spicy")) return "spicy";
+
+        // Provider is only a compatibility fallback for records whose fetchSource was absent.
+        String provider = safeLower(chosen.provider);
+        if (provider.contains("lrclib")) return "lrclib";
+        if (provider.contains("spotify")) return "native";
+        if (provider.contains("spicy")) return "spicy";
+        return "unknown";
+    }
+
+    private static String safeLower(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
     public static final class Snapshot {
         public final String sourceChosen;
+        public final String cacheSource;
         public final String candidatesSeen;
         public final String provider;
         public final String language;
@@ -85,12 +116,14 @@ public final class LyricsFetchDiagnosticsState {
         public final int candidateCount;
         public final long recordedAtMs;
 
-        private Snapshot(String sourceChosen, String candidatesSeen, String provider, String language,
+        private Snapshot(String sourceChosen, String cacheSource, String candidatesSeen,
+                         String provider, String language,
                          String typeChosen,
                          String spicyVersionSent, String spicyLatestVersion, boolean tokenPresent,
                          String spicyQueryStatus, boolean packedPayload, String poisonResult,
                          boolean cacheWrite, int candidateCount, long recordedAtMs) {
             this.sourceChosen = sourceChosen;
+            this.cacheSource = cacheSource;
             this.candidatesSeen = candidatesSeen;
             this.provider = provider;
             this.language = language;
@@ -104,6 +137,11 @@ public final class LyricsFetchDiagnosticsState {
             this.cacheWrite = cacheWrite;
             this.candidateCount = candidateCount;
             this.recordedAtMs = recordedAtMs;
+        }
+
+        public String displayedSourceChosen() {
+            if (!"cache".equals(sourceChosen) || cacheSource.isEmpty()) return sourceChosen;
+            return "cache (" + cacheSource + ")";
         }
     }
 }

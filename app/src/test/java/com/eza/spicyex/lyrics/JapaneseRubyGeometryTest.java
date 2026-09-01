@@ -1,6 +1,8 @@
 package com.eza.spicyex.lyrics;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -18,5 +20,12 @@ public class JapaneseRubyGeometryTest {
         assertEquals(58, LyricsRowViewFactory.topClearancePx(10, 0.5f, 100f, true));
         assertEquals(70, LyricsRowViewFactory.topClearancePx(100, 0.7f, 100f, true));
         assertEquals(5, LyricsRowViewFactory.topClearancePx(10, 0.5f, 100f, false));
+    }
+
+    @Test
+    public void furiganaRowsCanDisableBlurGlowLayer() {
+        assertFalse(GlowFlexbox.shouldDrawGlow(false, 1f));
+        assertFalse(GlowFlexbox.shouldDrawGlow(true, 0.02f));
+        assertTrue(GlowFlexbox.shouldDrawGlow(true, 0.5f));
     }
 }

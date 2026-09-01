@@ -374,6 +374,7 @@ public final class LiveLyricCardView extends LinearLayout {
                 + "|" + config.liveCardScrollScope
                 + "|" + config.adaptiveSectioningEnabled
                 + "|" + config.spotlight
+                + "|" + config.wordBounceEnabled
                 + "|" + config.lineSyncFillMode
                 + "|" + config.glowBlurEnabled
                 + "|" + config.interludeNoteIcon

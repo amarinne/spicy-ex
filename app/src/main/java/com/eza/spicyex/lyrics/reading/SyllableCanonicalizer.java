@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics.reading;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -14,6 +15,7 @@ import com.eza.spicyex.lyrics.reading.ReadingModels.ParagraphProvenance;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ParsedLine;
 import com.eza.spicyex.lyrics.reading.ReadingModels.SourceSpan;
 import com.eza.spicyex.lyrics.reading.ReadingModels.SpanJoinEvidence;
+import com.eza.spicyex.lyrics.reading.ReadingModels.TextRange;
 
 /** Applies one canonical provider-boundary resolution to mutable adapter segments. */
 public final class SyllableCanonicalizer {
@@ -54,5 +56,76 @@ public final class SyllableCanonicalizer {
             segment.partOfWord = !segment.boundaryAfter;
         }
         return canonical;
+    }
+
+    /** Restores provider-authored glyph forms when they are NFKC-equivalent and range-safe.
+     * Canonical text still owns matching and ranges; display keeps Japanese punctuation such as ？. */
+    public static String displayText(CanonicalLine canonical, List<SyllableSegment> segments) {
+        if (canonical == null) return "";
+        return restoreAuthoredGlyphs(canonical.text, canonical.spanMappings, segments);
+    }
+
+    /** Applies display restoration to a cached canonical line without rebuilding provider joins. */
+    public static String restoreAuthoredGlyphs(String canonicalText, List<SyllableSegment> segments) {
+        if (canonicalText == null || segments == null) return canonicalText == null ? "" : canonicalText;
+        List<CanonicalSpanMapping> mappings = new ArrayList<>();
+        for (SyllableSegment segment : segments) {
+            if (segment == null || segment.canonicalStartCp < 0
+                    || segment.canonicalEndCp <= segment.canonicalStartCp) continue;
+            mappings.add(new CanonicalSpanMapping(segment.spanId,
+                    new TextRange(segment.canonicalStartCp, segment.canonicalEndCp)));
+        }
+        return restoreAuthoredGlyphs(canonicalText, mappings, segments);
+    }
+
+    private static String restoreAuthoredGlyphs(String canonicalText,
+                                                 List<CanonicalSpanMapping> spanMappings,
+                                                 List<SyllableSegment> segments) {
+        if (canonicalText == null || spanMappings == null || segments == null) return "";
+        Map<String, SyllableSegment> byId = new HashMap<>();
+        for (SyllableSegment segment : segments) {
+            if (segment != null && segment.spanId != null) byId.put(segment.spanId, segment);
+        }
+        StringBuilder out = new StringBuilder();
+        int cursorCp = 0;
+        for (CanonicalSpanMapping mapping : spanMappings) {
+            if (mapping == null || mapping.canonicalRange == null) continue;
+            if (cursorCp < mapping.canonicalRange.startCp) {
+                out.append(CodePointRanges.slice(canonicalText,
+                        new TextRange(cursorCp, mapping.canonicalRange.startCp)));
+            }
+            String canonicalPiece = CodePointRanges.slice(canonicalText, mapping.canonicalRange);
+            SyllableSegment segment = byId.get(mapping.spanId);
+            String authored = trimWhitespace(segment == null ? "" : segment.sourceText);
+            if (!authored.isEmpty()
+                    && authored.codePointCount(0, authored.length())
+                    == canonicalPiece.codePointCount(0, canonicalPiece.length())
+                    && Normalizer.normalize(authored, Normalizer.Form.NFKC).equals(canonicalPiece)) {
+                out.append(authored);
+                segment.text = authored;
+            } else {
+                out.append(canonicalPiece);
+            }
+            cursorCp = mapping.canonicalRange.endCp;
+        }
+        int totalCp = CodePointRanges.length(canonicalText);
+        if (cursorCp < totalCp) {
+            out.append(CodePointRanges.slice(canonicalText,
+                    new TextRange(cursorCp, totalCp)));
+        }
+        return out.toString();
+    }
+
+    private static String trimWhitespace(String value) {
+        if (value == null || value.isEmpty()) return "";
+        int start = 0;
+        int end = value.length();
+        while (start < end && Character.isWhitespace(value.codePointAt(start))) {
+            start += Character.charCount(value.codePointAt(start));
+        }
+        while (end > start && Character.isWhitespace(value.codePointBefore(end))) {
+            end -= Character.charCount(value.codePointBefore(end));
+        }
+        return value.substring(start, end);
     }
 }

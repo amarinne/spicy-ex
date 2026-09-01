@@ -29,6 +29,13 @@
     <string name="settings_label_lyric_auto_resume_follow">Auto-resume lyric follow</string>
     <string name="settings_label_lyric_sync_offset_ms">Sync offset</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">Publish lyrics to HyperGlow</string>
+    <string name="settings_label_cache_size">Cache size limit</string>
+    <string name="settings_option_cache_size_32_mb">32 MB</string>
+    <string name="settings_option_cache_size_128_mb">128 MB</string>
+    <string name="settings_option_cache_size_512_mb">512 MB</string>
+    <string name="settings_option_cache_size_1024_mb">1024 MB</string>
+    <string name="settings_option_cache_size_no_limit">No limit</string>
+    <string name="settings_cache_size_usage_suffix">%1$s · %2$s used</string>
     <string name="settings_label_lyrics_live_card_tap_mode">Tap card to open lyrics</string>
     <string name="settings_label_lyrics_live_card_tap_target">Card tap target</string>
     <string name="settings_label_lyrics_live_card_weight">Lyric weight</string>
@@ -55,6 +62,7 @@
     <string name="settings_option_30_seconds">30 seconds</string>
     <string name="settings_option_always_on">Always on</string>
     <string name="settings_label_lyric_animation_style">Animation style</string>
+    <string name="settings_label_lyric_word_bounce">Word bounce</string>
     <string name="settings_label_lyric_enable_glow_blur">Text glow</string>
     <string name="settings_label_lyric_enable_line_blur">Blur distant lines</string>
     <string name="settings_label_lyric_line_sync_fill">Lyric fill direction</string>
