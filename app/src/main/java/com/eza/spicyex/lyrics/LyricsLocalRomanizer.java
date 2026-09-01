@@ -78,7 +78,12 @@ public final class LyricsLocalRomanizer {
             ) {
                 KoreanDisplayMode mode = opts == null ? KoreanDisplayMode.RR_STANDARD : KoreanDisplayMode.fromSetting(opts.koreanMode);
                 line.readingRenderPlan = ReadingPlanFactory.korean(line, mode);
-                if (line.readingRenderPlan != null) return line.readingRenderPlan.joinedDisplayText;
+                if (line.readingRenderPlan != null) {
+                    // The plan is authoritative. Do not leave a provider line-level translit
+                    // beside it; that stale value can mount a duplicate legacy row.
+                    line.romanizedText = "";
+                    return line.readingRenderPlan.joinedDisplayText;
+                }
                 return "";
             }
             // Generic local modes (including Cyrillic Russian/Ukrainian) do not create a plan

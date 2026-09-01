@@ -178,7 +178,9 @@ public final class LyricsSurfaceRowPlanner {
         }
         if (!needsSyntheticWords) return;
         if (!line.words.isEmpty()) return;
-        if (isJapaneseLine(line) && !policy.lineLevelFillSentence) return;
+        if (isJapaneseLine(line) && !policy.lineLevelFillSentence
+                && (!policy.wordLevelFill || hasJapaneseReading(line))
+                && !needsAttachedRomanization) return;
         String text = line.text == null ? "" : line.text.trim();
         if (text.isEmpty()) return;
         if (needsAttachedRomanization
@@ -189,20 +191,23 @@ public final class LyricsSurfaceRowPlanner {
         }
         String[] parts;
         boolean japaneseSyntheticWords = isJapaneseLine(line);
-        if (japaneseSyntheticWords) {
-            List<DisplayLayoutGroup> groups = DisplayLayoutGroup.forLine("ja", text, line.japaneseReading);
+        boolean chineseSyntheticWords = !japaneseSyntheticWords
+                && SpicyTextDetection.itemChineseTest(text);
+        if (japaneseSyntheticWords || chineseSyntheticWords) {
+            List<DisplayLayoutGroup> groups = DisplayLayoutGroup.forLine(
+                    japaneseSyntheticWords ? "ja" : "zh", text, line.japaneseReading);
             if (groups.size() < 2) return;
-            ArrayList<String> japaneseParts = new ArrayList<>();
+            ArrayList<String> layoutParts = new ArrayList<>();
             int sourceCursor = 0;
             for (DisplayLayoutGroup group : groups) {
                 if (group == null || group.end <= group.start) continue;
-                if (group.start > sourceCursor) japaneseParts.add(text.substring(sourceCursor, group.start));
-                japaneseParts.add(text.substring(group.start, Math.min(text.length(), group.end)));
+                if (group.start > sourceCursor) layoutParts.add(text.substring(sourceCursor, group.start));
+                layoutParts.add(text.substring(group.start, Math.min(text.length(), group.end)));
                 sourceCursor = Math.max(sourceCursor, group.end);
             }
-            if (sourceCursor < text.length()) japaneseParts.add(text.substring(sourceCursor));
-            if (japaneseParts.size() < 2) return;
-            parts = japaneseParts.toArray(new String[0]);
+            if (sourceCursor < text.length()) layoutParts.add(text.substring(sourceCursor));
+            if (layoutParts.size() < 2) return;
+            parts = layoutParts.toArray(new String[0]);
         } else {
             if (!text.contains(" ")) return;
             parts = text.split("\\s+");
@@ -229,7 +234,7 @@ public final class LyricsSurfaceRowPlanner {
             seg.totalMs = seg.endMs - seg.startMs;
             // Japanese layout groups are wrap/timing sections, not lexical spaces. Add renderer
             // margin only where canonical source text actually has whitespace after this range.
-            seg.boundaryAfter = japaneseSyntheticWords
+            seg.boundaryAfter = japaneseSyntheticWords || chineseSyntheticWords
                     ? sourceUtf16 < text.length() && Character.isWhitespace(text.codePointAt(sourceUtf16))
                     : i < parts.length - 1;
             seg.boundaryProvenance = "syntheticLineWords";

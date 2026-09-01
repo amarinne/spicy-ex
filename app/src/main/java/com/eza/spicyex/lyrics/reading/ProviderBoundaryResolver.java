@@ -64,6 +64,20 @@ public final class ProviderBoundaryResolver {
 
     private static ResolvedJoin resolveJoin(SpanState current, SpanState next, String providerSeparator,
                                             boolean completeLineHasWhitespace) {
+        // Numeric-person compounds keep one ruby/timing owner even when provider text contains
+        // an accidental boundary (for example "1 " + "人" or a complete line "1 人").
+        boolean numericPerson = ("1".equals(current.core) || "2".equals(current.core))
+                && firstCodePoint(next.core) == '人';
+        boolean providerGap = endsWithWhitespace(current.normalizedRaw)
+                || startsWithWhitespace(next.normalizedRaw)
+                || (providerSeparator != null && containsWhitespace(providerSeparator));
+        if (numericPerson && providerGap) {
+            int previousCp = lastCodePoint(current.core);
+            int nextCp = firstCodePoint(next.core);
+            if ((previousCp == '1' || previousCp == '2') && nextCp == '人') {
+                return attached(0.95, "numericPerson");
+            }
+        }
         if (endsWithWhitespace(current.normalizedRaw) || startsWithWhitespace(next.normalizedRaw)) {
             return boundary(BoundaryKind.EXPLICIT_WHITESPACE, 1.0, "rawEdgeWhitespace");
         }

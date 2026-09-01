@@ -60,6 +60,11 @@
     <string name="settings_option_lyric_word_bounce_mode_off">Off</string>
     <string name="settings_option_lyric_word_bounce_mode_word_syllable_synced_only">Word/syllable synced only</string>
     <string name="settings_option_lyric_word_bounce_mode_all_synced_rows">All synced rows</string>
+    <string name="settings_label_lyric_word_bounce_style">Bounce style</string>
+    <string name="settings_option_lyric_word_bounce_style_phrase_zoom">Phrase zoom</string>
+    <string name="settings_option_lyric_word_bounce_style_word_zoom">Word zoom</string>
+    <string name="settings_option_lyric_word_bounce_style_phrase_lift">Phrase lift</string>
+    <string name="settings_option_lyric_word_bounce_style_word_lift">Word lift</string>
     <string name="settings_label_lyric_enable_glow_blur">Text glow</string>
     <string name="settings_label_lyric_enable_line_blur">Blur distant lines</string>
     <string name="settings_label_lyric_line_sync_fill">Lyric fill direction</string>

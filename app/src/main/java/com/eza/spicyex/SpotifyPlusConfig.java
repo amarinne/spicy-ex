@@ -11,24 +11,15 @@ import android.content.SharedPreferences;
 public final class SpotifyPlusConfig {
     public static final String PREFS_NAME = "SpotifyPlus";
 
-    // Legacy keys preserved for backward compatibility at call sites
-    public static final String KEY_DISPLAY_MODE = "lyrics_display_mode";
-    public static final String DISPLAY_ORIGINAL = "original";
-    public static final String DISPLAY_ROMANIZED = "romanized";
-    public static final String DISPLAY_ORIGINAL_ROMANIZED = "original_romanized";
-    public static final String DISPLAY_ORIGINAL_TRANSLATION = "original_translation";
-    public static final String DISPLAY_ORIGINAL_ROMANIZED_TRANSLATION = "original_romanized_translation";
-
+    // Value constants shared by Settings declarations and normalization helpers. The only raw-key
+    // reads left are the source-language/translation-target pair in LyricsTranslator.
     public static final String KEY_SOURCE_LANGUAGE_MODE = "lyrics_source_language_mode";
     public static final String SOURCE_LANGUAGE_AUTO = "auto";
     public static final String SOURCE_LANGUAGE_MANUAL = "manual";
     public static final String KEY_SOURCE_LANGUAGE = "lyrics_source_language";
-    public static final String KEY_CHINESE_MODE = "lyrics_chinese_mode";
+    public static final String KEY_TRANSLATION_TARGET = "lyrics_translation_target";
     public static final String CHINESE_MODE_PINYIN = "pinyin";
     public static final String CHINESE_MODE_JYUTPING = "jyutping";
-    public static final String KEY_TRANSLATION_BACKEND = "lyrics_translation_backend";
-    public static final String KEY_TRANSLATION_TARGET = "lyrics_translation_target";
-    public static final String KEY_JAPANESE_READING_MODE = "lyrics_japanese_reading_mode";
     public static final String JP_READING_FURIGANA_ONLY = "furigana_only";
     public static final String JP_READING_FURIGANA_ROMAJI = "furigana_romaji";
     public static final String JP_READING_ROMAJI_ONLY = "romaji_only";
@@ -80,29 +71,11 @@ public final class SpotifyPlusConfig {
         return get(Settings.DISPLAY_MODE);
     }
 
-    public boolean showOriginalLyrics() {
-        String mode = lyricsDisplayMode();
-        return !DISPLAY_ROMANIZED.equals(mode);
-    }
-
-    public boolean showRomanizedLyrics() {
-        String mode = lyricsDisplayMode();
-        return DISPLAY_ROMANIZED.equals(mode)
-                || DISPLAY_ORIGINAL_ROMANIZED.equals(mode)
-                || DISPLAY_ORIGINAL_ROMANIZED_TRANSLATION.equals(mode);
-    }
-
     public boolean showTranslationLyrics() {
+        // "original_translation" / "original_romanized_translation" — the translation-bearing
+        // members of Settings.DISPLAY_MODE's allowed values.
         String mode = lyricsDisplayMode();
-        return DISPLAY_ORIGINAL_TRANSLATION.equals(mode)
-                || DISPLAY_ORIGINAL_ROMANIZED_TRANSLATION.equals(mode);
-    }
-
-    public boolean romanizedOnly() {
-        return DISPLAY_ROMANIZED.equals(lyricsDisplayMode());
-    }
-
-    public String japaneseReadingMode() {
-        return get(Settings.JAPANESE_READING_MODE);
+        return "original_translation".equals(mode)
+                || "original_romanized_translation".equals(mode);
     }
 }

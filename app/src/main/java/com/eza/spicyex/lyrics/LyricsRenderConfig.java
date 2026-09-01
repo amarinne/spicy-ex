@@ -1,8 +1,6 @@
 package com.eza.spicyex.lyrics;
 
-import android.app.ActivityManager;
 import android.content.Context;
-import android.provider.Settings.Global;
 
 import com.eza.spicyex.FeatureAvailability;
 import com.eza.spicyex.Settings;
@@ -18,6 +16,7 @@ public final class LyricsRenderConfig {
     public final boolean spotlight;
     public final boolean wordBounceEnabled;
     public final String wordBounceScope;
+    public final String wordBounceStyle;
     public final boolean glowBlurEnabled;
     public final boolean lineBlurEnabled;
     public final float blurQuality;
@@ -71,6 +70,7 @@ public final class LyricsRenderConfig {
             boolean spotlight,
             boolean wordBounceEnabled,
             String wordBounceScope,
+            String wordBounceStyle,
             boolean glowBlurEnabled,
             boolean lineBlurEnabled,
             float blurQuality,
@@ -125,6 +125,7 @@ public final class LyricsRenderConfig {
         this.spotlight = spotlight;
         this.wordBounceEnabled = wordBounceEnabled;
         this.wordBounceScope = safe(wordBounceScope);
+        this.wordBounceStyle = safe(wordBounceStyle);
         this.glowBlurEnabled = glowBlurEnabled;
         this.lineBlurEnabled = lineBlurEnabled;
         this.blurQuality = blurQuality;
@@ -196,7 +197,7 @@ public final class LyricsRenderConfig {
             int syncOffsetMs
     ) {
         this(backgroundStyle, forceDarkBackground, lineGradientEnabled, spotlight,
-                wordBounceEnabled, "Word/syllable synced only", glowBlurEnabled,
+                wordBounceEnabled, "Word/syllable synced only", "Phrase zoom", glowBlurEnabled,
                 lineBlurEnabled, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
                 attachTransliterationToWords, transliterationEnabled, adaptiveSectioningEnabled,
                 lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont,
@@ -241,6 +242,8 @@ public final class LyricsRenderConfig {
         boolean wordBounceEnabled = !"Off".equals(wordBounceMode);
         String wordBounceScope = "All synced rows".equals(wordBounceMode)
                 ? "All synced rows" : "Word/syllable synced only";
+        String wordBounceStyle = cfg == null ? Settings.WORD_BOUNCE_STYLE.defaultValue
+                : cfg.get(Settings.WORD_BOUNCE_STYLE);
 
         return new LyricsRenderConfig(
                 FeatureAvailability.animatedBackgroundAvailable()
@@ -250,6 +253,7 @@ public final class LyricsRenderConfig {
                 shell.spotlightAnimation(),
                 wordBounceEnabled,
                 wordBounceScope,
+                wordBounceStyle,
                 get(cfg, Settings.ENABLE_GLOW_BLUR),
                 get(cfg, Settings.ENABLE_LINE_BLUR),
                 shell.lineBlurQualityMultiplier(),
@@ -335,6 +339,7 @@ public final class LyricsRenderConfig {
                 spotlightCard,
                  wordBounceEnabled,
                  wordBounceScope,
+                 wordBounceStyle,
                  glow,
                 false,
                 blurQuality,
@@ -395,36 +400,6 @@ public final class LyricsRenderConfig {
         if (config == null) return Settings.TRANSLATION_ENABLED.defaultValue;
         return config.get(Settings.TRANSLATION_ENABLED)
                 && !"disabled".equalsIgnoreCase(config.get(Settings.TRANSLATION_BACKEND));
-    }
-
-    private static boolean shouldAutoReduceMotion(Context context) {
-        if (context == null) return false;
-        try {
-            if (Global.getFloat(context.getContentResolver(), Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) return true;
-        } catch (Throwable ignored) {
-        }
-        try {
-            ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-            return manager != null && manager.isLowRamDevice();
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    private static boolean hasExplicitPref(Context context, String key) {
-        if (context == null || key == null) return false;
-        try {
-            return context.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE).contains(key);
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    private static float blurQualityMultiplier(String quality) {
-        if ("superLow".equalsIgnoreCase(quality)) return 0f;
-        if ("low".equalsIgnoreCase(quality)) return 0.35f;
-        if ("mid".equalsIgnoreCase(quality)) return 0.70f;
-        return 1f;
     }
 
     private static boolean changed(String a, String b) {
@@ -500,6 +475,7 @@ public final class LyricsRenderConfig {
                     || oldValue.spotlight != next.spotlight
                      || oldValue.wordBounceEnabled != next.wordBounceEnabled
                      || changed(oldValue.wordBounceScope, next.wordBounceScope)
+                     || changed(oldValue.wordBounceStyle, next.wordBounceStyle)
                     || oldValue.glowBlurEnabled != next.glowBlurEnabled
                     || oldValue.lineBlurEnabled != next.lineBlurEnabled
                     || changed(oldValue.blurQuality, next.blurQuality);

@@ -233,6 +233,7 @@ public class SpicyAnimatedTextView extends TextView {
 
     @Override
     protected void onDraw(Canvas canvas) {
+        FuriganaText.FuriganaSpan.onBeginDraw();
         Paint paint = getPaint();
         Shader oldShader = paint.getShader();
         int oldColor = paint.getColor();

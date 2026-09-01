@@ -47,6 +47,7 @@ public class SettingsDefaultsTest {
 
         // Text glow defaults ON since the B322+ desktop-parity rework made it subtle and cheap.
         assertEquals("Word/syllable synced only", Settings.WORD_BOUNCE.defaultValue);
+        assertEquals("Phrase zoom", Settings.WORD_BOUNCE_STYLE.defaultValue);
         assertFalse(Settings.ALIGNED_PER_WORD_ROMAJI.defaultValue);
         assertTrue(Settings.ENABLE_GLOW_BLUR.defaultValue);
         assertFalse(Settings.ENABLE_LINE_BLUR.defaultValue);

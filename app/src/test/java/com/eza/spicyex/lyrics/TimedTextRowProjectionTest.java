@@ -64,27 +64,38 @@ public class TimedTextRowProjectionTest {
         assertEquals(8834L, TimedWordGrouping.endMs(line, 2));
         assertEquals(2, TimedWordGrouping.focusIndex(line, 2, 3, 8100));
         assertEquals(3, TimedWordGrouping.focusIndex(line, 2, 3, 8400));
-        assertEquals(0.95f, LyricsAnimationApplier.wordMotionScale(false, false, 0f), 0.0001f);
-        assertEquals(1f, LyricsAnimationApplier.wordMotionScale(false, true, 1f), 0.0001f);
-        assertTrue(LyricsAnimationApplier.wordMotionScale(true, false, 0.5f) > 1f);
-        assertTrue(LyricsAnimationApplier.wordMotionY(true, false, 0.5f) < 0f);
+        assertEquals(0.95f, LyricsAnimationApplier.wordMotionScale(
+                false, false, false, 0f), 0.0001f);
+        assertEquals(1f, LyricsAnimationApplier.wordMotionScale(
+                false, false, true, 1f), 0.0001f);
+        assertTrue(LyricsAnimationApplier.wordMotionScale(
+                false, true, false, 0.5f) > 1f);
+        assertTrue(LyricsAnimationApplier.wordMotionY(
+                false, true, false, 0.5f) < 0f);
     }
 
     @Test
     public void groupedMotionKeepsCompletedFragmentsStillAndSeamsClosed() {
-        assertEquals(0.95f, LyricsAnimationApplier.groupedWrapperScale(true), 0.0001f);
+        assertEquals(1f, LyricsAnimationApplier.groupedWrapperScale(true), 0.0001f);
         assertEquals(1f, LyricsAnimationApplier.groupedWrapperScale(false), 0.0001f);
         assertEquals(0f, LyricsAnimationApplier.groupedWrapperY(true), 0.0001f);
-        assertEquals(1f, LyricsAnimationApplier.groupedLocalScaleX(), 0.0001f);
-        assertEquals(1f, LyricsAnimationApplier.groupedLocalScaleY(false, 0.5f), 0.0001f);
-        assertEquals(0f, LyricsAnimationApplier.groupedLocalY(false, 0.5f), 0.0001f);
-        assertTrue(LyricsAnimationApplier.groupedLocalScaleY(true, 0.5f) > 1f);
-        assertTrue(LyricsAnimationApplier.groupedLocalY(true, 0.5f) < 0f);
+        assertEquals(1f, LyricsAnimationApplier.groupedLocalScale(
+                false, false, true, false, 0.5f), 0.0001f);
+        assertEquals(0f, LyricsAnimationApplier.groupedLocalY(
+                false, false, true, false, 0.5f), 0.0001f);
+        assertTrue(LyricsAnimationApplier.groupedLocalScale(
+                true, false, true, false, 0.5f) > 1f);
+        assertEquals(1f, LyricsAnimationApplier.groupedLocalScale(
+                true, true, true, false, 0.5f), 0.0001f);
+        assertTrue(LyricsAnimationApplier.groupedLocalY(
+                true, true, true, false, 0.5f) < 0f);
     }
 
     @Test
     public void disabledWordBounceKeepsMotionTargetsNeutral() {
-        assertEquals(1f, LyricsAnimationApplier.inactiveWordScale(false), 0.0001f);
+        assertEquals(1f, LyricsAnimationApplier.inactiveWordScale(false, false), 0.0001f);
+        assertEquals(0.95f, LyricsAnimationApplier.inactiveWordScale(true, false), 0.0001f);
+        assertEquals(1f, LyricsAnimationApplier.inactiveWordScale(true, true), 0.0001f);
         assertEquals(1f, LyricsAnimationApplier.letterMotionScale(
                 false, 0.5f, 1f), 0.0001f);
         assertEquals(0f, LyricsAnimationApplier.letterMotionY(
@@ -94,10 +105,13 @@ public class TimedTextRowProjectionTest {
     }
 
     @Test
-    public void singleFragmentStillUsesFullWordBounce() {
-        float scale = LyricsAnimationApplier.wordMotionScale(true, false, 0.5f);
-        assertTrue(scale > 1f);
-        assertTrue(LyricsAnimationApplier.wordMotionY(true, false, 0.5f) < 0f);
+    public void bounceStylesKeepDistinctMotionContracts() {
+        assertTrue(LyricsAnimationApplier.wordMotionScale(
+                false, true, false, 0.5f) > 1f);
+        assertEquals(1f, LyricsAnimationApplier.wordMotionScale(
+                true, true, false, 0.5f), 0.0001f);
+        assertTrue(LyricsAnimationApplier.wordMotionY(
+                true, true, false, 0.5f) < 0f);
     }
 
     @Test

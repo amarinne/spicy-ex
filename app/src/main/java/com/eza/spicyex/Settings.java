@@ -219,6 +219,11 @@ public final class Settings {
             "Word/syllable synced only", "Off", "Word/syllable synced only", "All synced rows"
     );
 
+    public static final Setting<String> WORD_BOUNCE_STYLE = enumSetting(
+            "lyric_word_bounce_style", ANIMATION, "Bounce style",
+            "Phrase zoom", "Phrase zoom", "Word zoom", "Phrase lift", "Word lift"
+    );
+
 
     public static final Setting<Boolean> ENABLE_GLOW_BLUR = boolSetting(
             "lyric_enable_glow_blur", ANIMATION, "Text glow", true
@@ -490,20 +495,17 @@ public final class Settings {
             "lyrics_last_japanese_cycle_mode", "Last Japanese cycle mode",
             SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
             SpotifyPlusConfig.JP_READING_FURIGANA_ONLY,
-            SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
             SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI
     );
 
     public static final Setting<String> LAST_CHINESE_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_chinese_cycle_mode", "Last Chinese cycle mode",
             SpotifyPlusConfig.CHINESE_MODE_PINYIN,
-            SpotifyPlusConfig.CHINESE_MODE_PINYIN,
             SpotifyPlusConfig.CHINESE_MODE_JYUTPING
     );
 
     public static final Setting<String> LAST_KOREAN_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_korean_cycle_mode", "Last Korean cycle mode",
-            KoreanDisplayMode.RR_STANDARD.value,
             KoreanDisplayMode.RR_STANDARD.value,
             KoreanDisplayMode.WORD_TRANSLIT.value,
             KoreanDisplayMode.RR_PRONUNCIATION.value,
@@ -513,7 +515,7 @@ public final class Settings {
     public static final Setting<String> LAST_CYRILLIC_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_cyrillic_cycle_mode", "Last Cyrillic cycle mode",
             "Russian",
-            "Russian", "Ukrainian"
+            "Ukrainian"
     );
 
     public static final Setting<String> SOURCE_LANGUAGE_MODE = internalEnumSetting(

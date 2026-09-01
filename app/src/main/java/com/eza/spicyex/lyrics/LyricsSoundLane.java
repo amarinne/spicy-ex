@@ -151,7 +151,9 @@ public final class LyricsSoundLane {
                 String local = LyricsLocalRomanizer.romanizeLine(opts, workerSnapshot, line, fullText);
                 if (!isBlank(local) && !local.equals(line.text)
                         && !SpicyTextDetection.hasRomanizableScript(local)) {
-                    line.romanizedText = local;
+                    // A RenderPlan owns local Korean/Japanese/Chinese output. Keep the legacy
+                    // line slot empty so the same reading cannot mount a duplicate row.
+                    line.romanizedText = line.readingRenderPlan == null ? local : "";
                     LyricsLocalRomanizer.populateLocalSegmentRomanization(opts, workerSnapshot, line, fullText);
                     resolveReadingProjection(line);
                     addEntry(entries, run, index, line);
@@ -466,7 +468,7 @@ public final class LyricsSoundLane {
                         String local = LyricsLocalRomanizer.romanizeLine(opts, workerSnapshot, line, fullText);
                         if (!isBlank(local) && !local.equals(line.text)
                                 && !SpicyTextDetection.hasRomanizableScript(local)) {
-                            line.romanizedText = local;
+                            line.romanizedText = line.readingRenderPlan == null ? local : "";
                             if (!before.equals(local)) changed.incrementAndGet();
                         }
                         LyricsLocalRomanizer.populateLocalSegmentRomanization(opts, workerSnapshot, line, fullText);

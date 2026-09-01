@@ -147,21 +147,41 @@ public final class LyricsTextFactory {
     }
 
     static List<int[]> cjkFontRanges(String text) {
-        ArrayList<int[]> ranges = new ArrayList<>();
         String value = safe(text);
-        int start = -1;
-        for (int index = 0; index < value.length();) {
+        int n = value.length();
+        boolean[] cjk = new boolean[n];
+        for (int index = 0; index < n;) {
             int cp = value.codePointAt(index);
             int next = index + Character.charCount(cp);
-            boolean cjk = isCjkFontCodePoint(cp);
-            if (cjk && start < 0) start = index;
-            if (!cjk && start >= 0) {
-                ranges.add(new int[]{start, index});
-                start = -1;
+            if (isCjkFontCodePoint(cp)) {
+                for (int unit = index; unit < next; unit++) cjk[unit] = true;
             }
             index = next;
         }
-        if (start >= 0) ranges.add(new int[]{start, value.length()});
+        // ASCII digits immediately adjacent to CJK share the CJK font run. Without this, a ruby
+        // span over a numeric-person unit like 1人 = [0,2] splits at the digit/kanji font boundary
+        // into per-fragment replacement draws (B615), duplicating the reading (ひとりひとり) and
+        // later leaving it centered only over the digit.
+        for (int index = 1; index < n; index++) {
+            char c = value.charAt(index);
+            if (c >= '0' && c <= '9' && cjk[index - 1]) cjk[index] = true;
+        }
+        for (int index = n - 2; index >= 0; index--) {
+            char c = value.charAt(index);
+            if (c >= '0' && c <= '9' && cjk[index + 1]) cjk[index] = true;
+        }
+        ArrayList<int[]> ranges = new ArrayList<>();
+        int start = -1;
+        for (int index = 0; index < n;) {
+            boolean cjkHere = cjk[index];
+            if (cjkHere && start < 0) start = index;
+            if (!cjkHere && start >= 0) {
+                ranges.add(new int[]{start, index});
+                start = -1;
+            }
+            index += Character.charCount(value.codePointAt(index));
+        }
+        if (start >= 0) ranges.add(new int[]{start, n});
         return ranges;
     }
 

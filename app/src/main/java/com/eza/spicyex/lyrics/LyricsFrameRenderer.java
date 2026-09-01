@@ -130,23 +130,36 @@ public final class LyricsFrameRenderer {
                 applySecondaryGradient(line, positionMs, lineGlow, config);
                 WordGradientRoute wordGradientRoute = wordGradientRoute(config.lineSyncFillMode);
                 if (hasRealTimedWords(line)) {
+                    boolean degenerateWordTiming = wordGradientRoute == WordGradientRoute.TIMED_WORDS
+                            && hasDegenerateWordTiming(line);
                     if (lineState.active || lineState.sung) {
-                        LyricsAnimationApplier.animateSyllables(
-                                line,
-                                positionMs,
-                                deltaSeconds,
-                                spToPx(LyricsLineViewState.effectiveBaseTextSp(line)),
-                                styleSink,
-                                config.spotlight,
-                                config.glowBlurEnabled,
-                                wordBounceEnabled(config, line),
-                                true);
-                        if (wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
+                        if (degenerateWordTiming) {
+                            // Provider word spans are too compressed or malformed to light word by
+                            // word; neutralize word motion and sweep the line as one sentence so
+                            // the row matches line-synced rows instead of popping as a block.
+                            LyricsAnimationApplier.resetSyllables(line, styleSink, false);
                             applyContinuousWordGradient(line, lineState, lineGlow);
+                        } else {
+                            LyricsAnimationApplier.animateSyllables(
+                                    line,
+                                    positionMs,
+                                    deltaSeconds,
+                                    spToPx(LyricsLineViewState.effectiveBaseTextSp(line)),
+                                    styleSink,
+                                    config.spotlight,
+                                    config.glowBlurEnabled,
+                                    wordBounceEnabled(config, line),
+                                    true,
+                                    liftBounce(config),
+                                    individualWordBounce(config));
+                            if (wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
+                                applyContinuousWordGradient(line, lineState, lineGlow);
+                            }
                         }
                     } else {
                             LyricsAnimationApplier.resetSyllables(
-                                    line, styleSink, wordBounceEnabled(config, line));
+                                    line, styleSink, wordBounceEnabled(config, line),
+                                    liftBounce(config), individualWordBounce(config));
                     }
                 } else if (line.words != null && !line.words.isEmpty()
                         && wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
@@ -160,14 +173,19 @@ public final class LyricsFrameRenderer {
                             styleSink,
                             config.spotlight,
                             config.glowBlurEnabled,
-                            wordBounceEnabled(config, line));
+                            wordBounceEnabled(config, line),
+                            true,
+                            liftBounce(config),
+                            individualWordBounce(config));
                 } else {
                     if (config.lineSyncFillWord() || config.lineSyncFillSentence()) {
                         resetNearbySyllables(
-                                line, i, activeIndex, styleSink, wordBounceEnabled(config, line));
+                                line, i, activeIndex, styleSink, wordBounceEnabled(config, line),
+                                liftBounce(config), individualWordBounce(config));
                     } else {
                         LyricsAnimationApplier.resetSyllables(
-                                line, styleSink, wordBounceEnabled(config, line));
+                                line, styleSink, wordBounceEnabled(config, line),
+                                liftBounce(config), individualWordBounce(config));
                     }
                 }
             }
@@ -184,6 +202,14 @@ public final class LyricsFrameRenderer {
     private boolean wordBounceEnabled(LyricsRenderConfig config, AppliedLine line) {
         return config != null && config.wordBounceEnabled
                 && (config.wordBounceScope.equals("All synced rows") || hasRealTimedWords(line));
+    }
+
+    private boolean liftBounce(LyricsRenderConfig config) {
+        return config != null && config.wordBounceStyle.endsWith(" lift");
+    }
+
+    private boolean individualWordBounce(LyricsRenderConfig config) {
+        return config != null && config.wordBounceStyle.startsWith("Word ");
     }
 
     private boolean lineLevelBounceEnabled(LyricsRenderConfig config, AppliedLine line) {
@@ -245,11 +271,35 @@ public final class LyricsFrameRenderer {
         }
     }
 
+    /** True when provider word spans are too compressed or malformed to fill word by word — every
+     *  word would effectively light at once (the "full block" pop). Under "Left to right
+     *  (sentence)" those lines fall back to the continuous sentence sweep, matching line-synced
+     *  rows. A line whose words genuinely cover most of it keeps the timed word fill. */
+    static boolean hasDegenerateWordTiming(AppliedLine line) {
+        if (line == null || line.words == null || line.words.isEmpty()) return false;
+        long firstStart = Long.MAX_VALUE;
+        long lastEnd = Long.MIN_VALUE;
+        for (SyllableSegment seg : line.words) {
+            if (seg == null) continue;
+            if (seg.endMs <= seg.startMs) return true;
+            firstStart = Math.min(firstStart, seg.startMs);
+            lastEnd = Math.max(lastEnd, seg.endMs);
+        }
+        if (firstStart == Long.MAX_VALUE) return false;
+        long wordSpan = lastEnd - firstStart;
+        if (wordSpan <= 0) return true;
+        long lineSpan = line.endMs - line.startMs;
+        return lineSpan > 0 && wordSpan * 100L < lineSpan * 15L;
+    }
+
     private void resetNearbySyllables(AppliedLine line, int index, int activeIndex,
                                       LyricsAnimationApplier.StyleSink sink,
-                                      boolean motionEnabled) {
+                                      boolean motionEnabled,
+                                      boolean liftMotion,
+                                      boolean individualWordMotion) {
         if (activeIndex < 0 || Math.abs(index - activeIndex) <= 2) {
-            LyricsAnimationApplier.resetSyllables(line, sink, motionEnabled);
+            LyricsAnimationApplier.resetSyllables(
+                    line, sink, motionEnabled, liftMotion, individualWordMotion);
         }
     }
 

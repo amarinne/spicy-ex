@@ -187,10 +187,11 @@ public final class LyricsRowViewFactory {
             return false;
         }
         if (line.readingRenderPlan != null) {
-            return line.readingRenderPlan.timedReadingUnits != null
-                    && !line.readingRenderPlan.timedReadingUnits.isEmpty();
+            if (line.readingRenderPlan.timedReadingUnits != null
+                    && !line.readingRenderPlan.timedReadingUnits.isEmpty()) return true;
+            return !alignedCyrillicReadingWords(line).isEmpty();
         }
-        return hasRomanizedWordProvider;
+        return hasRomanizedWordProvider || !alignedCyrillicReadingWords(line).isEmpty();
     }
 
     /** Plan text wins when aligned; AI and other whole-line readings use the legacy line slot. */
@@ -427,6 +428,10 @@ public final class LyricsRowViewFactory {
         List<TimedTextRowProjection.Chunk> romanizedWords = TimedTextRowProjection.project(
                 romanizedWordTexts(line, options, romanizedWordProvider, timedBySpanId),
                 displayReading(line));
+        List<int[]> adaptiveRomanRanges = romanWords instanceof GlowFlexbox
+                && options != null && options.adaptiveSectioningEnabled
+                ? new ArrayList<>() : null;
+        int sourceCursorUtf16 = 0;
         int wordIndex = 0;
         for (SyllableSegment seg : line.words) {
             if (seg == null) continue;
@@ -452,8 +457,38 @@ public final class LyricsRowViewFactory {
                 }
                 romanWords.addView(romanWord, wordLp);
                 LyricsSyllableViewState.setRomanizedTextView(seg, romanWord);
+                if (adaptiveRomanRanges != null) {
+                    int start = seg.canonicalStartCp >= 0
+                            ? com.eza.spicyex.lyrics.reading.CodePointRanges
+                            .codePointOffsetToUtf16Index(line.text, seg.canonicalStartCp)
+                            : sourceCursorUtf16;
+                    int end = seg.canonicalEndCp > seg.canonicalStartCp
+                            ? com.eza.spicyex.lyrics.reading.CodePointRanges
+                            .codePointOffsetToUtf16Index(line.text, seg.canonicalEndCp)
+                            : Math.min(line.text == null ? 0 : line.text.length(),
+                            start + (seg.text == null ? 0 : seg.text.length()));
+                    if (seg.canonicalStartCp < 0 && line.text != null && seg.text != null) {
+                        int found = line.text.indexOf(seg.text, sourceCursorUtf16);
+                        if (found >= 0) {
+                            start = found;
+                            end = Math.min(line.text.length(), found + seg.text.length());
+                        }
+                    }
+                    sourceCursorUtf16 = Math.max(sourceCursorUtf16, end);
+                    adaptiveRomanRanges.add(new int[]{start, end});
+                }
             }
             wordIndex++;
+        }
+
+        if (adaptiveRomanRanges != null && !adaptiveRomanRanges.isEmpty()) {
+            GlowFlexbox flex = (GlowFlexbox) romanWords;
+            String source = LyricUtils.safe(line == null ? "" : line.text);
+            List<DisplayLayoutGroup> groups = DisplayLayoutGroup.forLine(
+                    adaptiveLayoutLanguage(line), source, line == null ? null : line.japaneseReading);
+            flex.setAdaptiveSectioning(true,
+                    adaptiveForbiddenBreaks(groups, adaptiveRomanRanges),
+                    adaptiveKeepTogetherGroups(groups, adaptiveRomanRanges));
         }
 
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
@@ -486,6 +521,29 @@ public final class LyricsRowViewFactory {
             out.add(romanizedWordText(line, line.words.get(index), index, timedBySpanId,
                     options, romanizedWordProvider));
         }
+        boolean allBlank = true;
+        for (String value : out) {
+            if (!isBlank(value)) {
+                allBlank = false;
+                break;
+            }
+        }
+        if (allBlank) {
+            List<String> cyrillic = alignedCyrillicReadingWords(line);
+            if (!cyrillic.isEmpty()) return cyrillic;
+        }
+        return out;
+    }
+
+    static List<String> alignedCyrillicReadingWords(AppliedLine line) {
+        if (line == null || line.words == null || line.words.isEmpty()
+                || !SpicyTextDetection.itemCyrillicTest(line.text)) return Collections.emptyList();
+        String trimmed = displayReading(line).trim();
+        if (trimmed.isEmpty()) return Collections.emptyList();
+        String[] pieces = trimmed.split("\\s+");
+        if (pieces.length != line.words.size()) return Collections.emptyList();
+        ArrayList<String> out = new ArrayList<>(pieces.length);
+        Collections.addAll(out, pieces);
         return out;
     }
 

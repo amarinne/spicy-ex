@@ -136,6 +136,59 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
+    public void alignedCyrillicReadingUsesTimedRomanRow() {
+        AppliedLine line = line("Я тебя люблю");
+        line.words.add(word("Я", false));
+        line.words.add(word("тебя", false));
+        line.words.add(word("люблю", false));
+        line.romanizedText = "Ya tebya lyublyu";
+
+        assertEquals(java.util.Arrays.asList("Ya", "tebya", "lyublyu"),
+                LyricsRowViewFactory.alignedCyrillicReadingWords(line));
+        assertTrue(LyricsRowViewFactory.canBuildTimedRomanRow(line, true, false));
+    }
+
+    @Test
+    public void authoritativeCyrillicFallbackReadingUsesTimedRomanRow() {
+        AppliedLine line = line("Я тебя люблю");
+        line.words.add(word("Я", false));
+        line.words.add(word("тебя", false));
+        line.words.add(word("люблю", false));
+        line.readingRenderPlan = ReadingPlanFactory.lineFallback(line.sourceLine, "Ya tebya lyublyu", "local");
+        line.romanizedText = "";
+
+        assertEquals(java.util.Arrays.asList("Ya", "tebya", "lyublyu"),
+                LyricsRowViewFactory.alignedCyrillicReadingWords(line));
+        assertTrue(LyricsRowViewFactory.canBuildTimedRomanRow(line, true, false));
+    }
+
+    @Test
+    public void japaneseWordModeCreatesSyntheticWordsForLineOnlyTiming() {
+        AppliedLine line = line("今年も早い");
+        LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(
+                1f, false, false, "off", false,
+                false, false, true, false,
+                "Medium", "default", 1f, false, true);
+
+        LyricsSurfaceRowPlanner.plan(line, document(line), policy);
+
+        assertTrue(line.syntheticWords);
+        assertTrue(line.words.size() >= 2);
+    }
+
+    @Test
+    public void mismatchedCyrillicReadingKeepsWholeLineFallback() {
+        AppliedLine line = line("Я тебя люблю");
+        line.words.add(word("Я", false));
+        line.words.add(word("тебя", false));
+        line.words.add(word("люблю", false));
+        line.romanizedText = "Ya tebya lyublyu segodnya";
+
+        assertTrue(LyricsRowViewFactory.alignedCyrillicReadingWords(line).isEmpty());
+        assertFalse(LyricsRowViewFactory.canBuildTimedRomanRow(line, true, false));
+    }
+
+    @Test
     public void authoritativeLineFallbackDoesNotReRomanizeTimedChildren() {
         AppliedLine line = line("嗚呼時過ぎる消えない Adore");
         line.words.add(word("嗚呼", true));
@@ -238,6 +291,26 @@ public class LyricsSurfaceRowPlannerTest {
         LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(line, doc, policy);
 
         assertFalse(plan.options.attachTransliterationToWords);
+    }
+
+    @Test
+    public void chineseSentenceSyncCreatesTimedLayoutGroupsWithoutSpaces() {
+        AppliedLine line = line("看看鏡子裡的你帶著");
+        line.startMs = 1000;
+        line.endMs = 5000;
+        LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(
+                1f, false, false, "off", false,
+                false, true, false, false,
+                "Medium", "default", 1f, false, true);
+
+        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(
+                line, document(line), policy);
+
+        assertTrue(plan.line.syntheticWords);
+        assertTrue(plan.line.words.size() > 1);
+        assertEquals(plan.line.startMs, plan.line.words.get(0).startMs);
+        assertEquals(plan.line.endMs,
+                plan.line.words.get(plan.line.words.size() - 1).endMs);
     }
 
     @Test

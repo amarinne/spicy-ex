@@ -29,12 +29,8 @@ public final class LyricsSyllableViewState {
         state.localScaleSpring = null;
         state.localYSpring = null;
         if (motionOwner && motionView != null) {
-            // Inactive word rows mount at the 0.95 recessed scale. The default center pivot would
-            // render that scale with a leading inset (and a baseline offset) until the row becomes
-            // active and animateSyllables applies updateTextPivot — visible as a gap that snaps
-            // away when the karaoke fill reaches the line. Pin the rest pivot at layout time with
-            // the same formula updateTextPivot resolves at rest, so the mount state and the
-            // animated state are pixel-identical (same pattern as LyricsLineViewState.setMainView).
+            // Pin the rest pivot at layout time with the same formula updateTextPivot resolves at
+            // rest, so the mount state and animated state stay pixel-identical near row edges.
             motionView.removeOnLayoutChangeListener(REST_MOTION_PIVOT_LISTENER);
             motionView.addOnLayoutChangeListener(REST_MOTION_PIVOT_LISTENER);
         }
@@ -105,7 +101,7 @@ public final class LyricsSyllableViewState {
         styleBatcher.applyAlphaIfChanged(state(segment).view, 1.0f);
         if (state(segment).motionOwner) {
             View motion = motionView(segment);
-            styleBatcher.applyScaleIfChanged(motion, 0.95f, 0.95f);
+            styleBatcher.applyScaleIfChanged(motion, 1f, 1f);
             styleBatcher.applyTranslationYIfChanged(motion, 0f);
         }
         if (hasGroupedMotion(segment)) {
@@ -243,7 +239,7 @@ public final class LyricsSyllableViewState {
     static float horizontalMotionPivot(int left, int right, int width, int parentWidth,
                                        float requestedPivot) {
         if (width <= 0) return 0f;
-        float expansion = width * ((1.0505f - 1f) * 0.5f);
+        float expansion = width * ((1.025f - 1f) * 0.5f);
         if (left < expansion) return 0f;
         if (parentWidth > 0 && parentWidth - right < expansion) return width;
         return Math.max(0f, Math.min(width, requestedPivot));
@@ -400,27 +396,37 @@ public final class LyricsSyllableViewState {
 
     public static void resetAnimatedWord(SyllableSegment segment,
                                          LyricsAnimationApplier.StyleSink sink,
-                                         boolean motionEnabled) {
+                                         boolean motionEnabled,
+                                         boolean liftMotion,
+                                         boolean individualWordMotion) {
         View motion = motionView(segment);
         if (segment == null || sink == null) return;
-        float resetScale = LyricsAnimationApplier.inactiveWordScale(motionEnabled);
-        snapWordSprings(segment, resetScale, 0f, 0f);
-        snapLocalWordSprings(segment, 1f, 0f);
+        float inactiveScale = LyricsAnimationApplier.inactiveWordScale(
+                motionEnabled, liftMotion);
+        boolean grouped = hasGroupedMotion(segment);
+        boolean letterUnits = individualWordMotion && letterCount(segment) > 1;
+        float wrapperScale = motionEnabled && (!individualWordMotion
+                || (!grouped && !letterUnits)) ? inactiveScale : 1f;
+        float localScale = motionEnabled && individualWordMotion
+                && grouped && !letterUnits ? inactiveScale : 1f;
+        float letterScale = motionEnabled && letterUnits ? inactiveScale : 1f;
+        snapWordSprings(segment, wrapperScale, 0f, 0f);
+        snapLocalWordSprings(segment, localScale, 0f);
         if (state(segment).motionOwner && motion != null) {
-            sink.applyScale(motion, resetScale, resetScale);
+            sink.applyScale(motion, wrapperScale, wrapperScale);
             sink.applyTranslationY(motion, 0f);
             sink.applyAlpha(motion, 1.0f);
         }
         if (hasGroupedMotion(segment) && state(segment).view != null) {
-            sink.applyScale(state(segment).view, 1f, 1f);
+            sink.applyScale(state(segment).view, localScale, localScale);
             sink.applyTranslationY(state(segment).view, 0f);
             sink.applyAlpha(state(segment).view, 1f);
         }
         applyWordGradient(segment, LyricAnimations.GRADIENT_UNSUNG, 0f);
         for (AnimatedLetterState letter : state(segment).letters) {
             if (letter == null || letter.view == null) continue;
-            snapLetterSprings(letter, 1f, 0f, 0f);
-            sink.applyScale(letter.view, 1.0f, 1.0f);
+            snapLetterSprings(letter, letterScale, 0f, 0f);
+            sink.applyScale(letter.view, letterScale, letterScale);
             sink.applyTranslationY(letter.view, 0f);
             sink.applyAlpha(letter.view, 1.0f);
             letter.view.setBrightnessMultiplier(1f);

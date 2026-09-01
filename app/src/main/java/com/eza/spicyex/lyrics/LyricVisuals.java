@@ -96,7 +96,10 @@ public final class LyricVisuals {
         if (seg == null || isBlank(seg.text)) return false;
         String text = safe(seg.text);
         int codePoints = text.codePointCount(0, text.length());
-        return seg.totalMs >= 1000
+        boolean multiCjk = codePoints > 1
+                && (SpicyTextDetection.itemJapaneseTest(text)
+                || SpicyTextDetection.itemKoreanTest(text));
+        return (seg.totalMs >= 1000 || multiCjk)
                 && codePoints > 0
                 && codePoints <= 12
                 && !SpicyTextDetection.containsRtl(text);

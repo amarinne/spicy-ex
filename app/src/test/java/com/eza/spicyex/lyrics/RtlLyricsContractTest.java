@@ -37,6 +37,24 @@ public class RtlLyricsContractTest {
     }
 
     @Test
+    public void shortMultiCjkSegmentsExposeCharacterMotionUnits() {
+        SyllableSegment chinese = new SyllableSegment();
+        chinese.text = "一梦红尘";
+        chinese.totalMs = 600;
+        assertTrue(LyricVisuals.shouldUseLetterAnimator(chinese));
+
+        SyllableSegment japanese = new SyllableSegment();
+        japanese.text = "かなかな";
+        japanese.totalMs = 600;
+        assertTrue(LyricVisuals.shouldUseLetterAnimator(japanese));
+
+        SyllableSegment korean = new SyllableSegment();
+        korean.text = "사랑해요";
+        korean.totalMs = 600;
+        assertTrue(LyricVisuals.shouldUseLetterAnimator(korean));
+    }
+
+    @Test
     public void timedRtlUnitMarksTheWholeRendererRow() {
         AppliedLine line = new AppliedLine();
         line.text = "(۱۲۳)";

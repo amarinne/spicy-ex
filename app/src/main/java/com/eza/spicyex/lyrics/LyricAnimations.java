@@ -24,16 +24,23 @@ public final class LyricAnimations {
 
     // --- word-level karaoke curves ---
 
-    /** Spicy 6 ScaleRange: 0 -> 0.95, 0.7 -> 1.0505, 1 -> 1. */
+    /** Zoom style: recessed rest -> gentle peak -> neutral sung state. */
     public static float scaleSpline(float t) {
-        if (t <= 0.7f) return lerp(0.95f, 1.0505f, t / 0.7f);
-        return lerp(1.0505f, 1.0f, (t - 0.7f) / 0.3f);
+        if (t <= 0.7f) return lerp(0.95f, 1.025f, smoothStep(t / 0.7f));
+        return lerp(1.025f, 1f, smoothStep((t - 0.7f) / 0.3f));
     }
 
-    /** Spicy 6 YOffsetRange: 0 -> 0.01, 0.9 -> -1/60, 1 -> 0. */
+    /** Zoom style Y range retained from the original Spicy curve. */
     public static float yOffsetSpline(float t) {
         if (t <= 0.9f) return lerp(0.01f, -(1f / 60f), t / 0.9f);
         return lerp(-(1f / 60f), 0f, (t - 0.9f) / 0.1f);
+    }
+
+    /** Lift style: smooth vertical-only arc, 0 -> -0.04em -> 0. */
+    public static float liftYOffsetSpline(float t) {
+        float progress = clamp01(t);
+        float wave = (float) Math.sin(Math.PI * progress);
+        return -0.04f * wave * wave;
     }
 
     /** Spicy 6 GlowRange: 0 -> 0, 0.15 -> 1, 0.6 -> 1, 1 -> 0. */
@@ -110,6 +117,11 @@ public final class LyricAnimations {
 
     public static float lerp(float a, float b, float t) {
         return a + (b - a) * Math.max(0f, Math.min(1f, t));
+    }
+
+    private static float smoothStep(float value) {
+        float t = clamp01(value);
+        return t * t * (3f - 2f * t);
     }
 
     public static float clamp01(float value) {

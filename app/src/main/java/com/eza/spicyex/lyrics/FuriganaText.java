@@ -183,9 +183,34 @@ public final class FuriganaText {
     static final class FuriganaSpan extends ReplacementSpan {
         private final String reading;
         private int spanWidth;
+        // Android's Layout can split one ReplacementSpan over multiple UTF-16 code units
+        // (e.g. 1人 = [0,2]) into per-glyph fragments and call draw() once per fragment,
+        // which previously rendered the reading twice ("ひとりひとり", B615). We render the
+        // reading only on the first fragment of each layout draw cycle.
+        private long lastDrawnCycle = -1L;
 
         FuriganaSpan(String reading) {
             this.reading = reading == null ? "" : reading;
+        }
+
+        /** Global draw-cycle counter; each SpicyAnimatedTextView.onDraw increments it once. */
+        private static final ThreadLocal<Long> DRAW_CYCLE = new ThreadLocal<Long>() {
+            @Override
+            protected Long initialValue() {
+                return 0L;
+            }
+        };
+
+        /** Call at the start of a view's onDraw so every span's reading is eligible again. */
+        static void onBeginDraw() {
+            DRAW_CYCLE.set(DRAW_CYCLE.get() + 1L);
+        }
+
+        private boolean consumeToDraw() {
+            long cycle = DRAW_CYCLE.get();
+            if (lastDrawnCycle == cycle) return false;
+            lastDrawnCycle = cycle;
+            return true;
         }
 
         @Override
@@ -212,6 +237,7 @@ public final class FuriganaText {
 
         @Override
         public void draw(Canvas canvas, CharSequence text, int start, int end, float x, int top, int y, int bottom, Paint paint) {
+            boolean drawReading = consumeToDraw();
             float baseSize = paint.getTextSize();
             float readingSize = rubyTextSize(baseSize);
             float gap = baseSize * RUBY_GAP_RATIO;
@@ -222,23 +248,28 @@ public final class FuriganaText {
             int oldColor = paint.getColor();
             float oldSize = paint.getTextSize();
             Typeface oldTypeface = paint.getTypeface();
-            paint.setTextSize(readingSize);
-            paint.setTypeface(oldTypeface);
-            paint.setColor(Color.rgb(150, 150, 150));
-            Paint.FontMetricsInt readingFm = paint.getFontMetricsInt();
+            Paint.FontMetricsInt readingFm = new Paint.FontMetricsInt();
             Paint.FontMetricsInt baseFm = new Paint.FontMetricsInt();
+            if (drawReading) {
+                paint.setTextSize(readingSize);
+                paint.setTypeface(oldTypeface);
+                paint.setColor(Color.rgb(150, 150, 150));
+                paint.getFontMetricsInt(readingFm);
+            }
             paint.setTextSize(oldSize);
             paint.setTypeface(oldTypeface);
             paint.setColor(oldColor);
             paint.getFontMetricsInt(baseFm);
 
-            paint.setTextSize(readingSize);
-            paint.setTypeface(oldTypeface);
-            paint.setColor(Color.rgb(150, 150, 150));
-            float readingWidth = paint.measureText(reading);
-            float readingX = x + (width - readingWidth) / 2f;
-            float readingBaseline = y + baseFm.ascent - gap - readingFm.descent;
-            canvas.drawText(reading, readingX, readingBaseline, paint);
+            if (drawReading) {
+                paint.setTextSize(readingSize);
+                paint.setTypeface(oldTypeface);
+                paint.setColor(Color.rgb(150, 150, 150));
+                float readingWidth = paint.measureText(reading);
+                float readingX = x + (width - readingWidth) / 2f;
+                float readingBaseline = y + baseFm.ascent - gap - readingFm.descent;
+                canvas.drawText(reading, readingX, readingBaseline, paint);
+            }
 
             paint.setTextSize(oldSize);
             paint.setTypeface(oldTypeface);
@@ -246,4 +277,5 @@ public final class FuriganaText {
             canvas.drawText(text, start, end, baseX, y, paint);
         }
     }
+
 }

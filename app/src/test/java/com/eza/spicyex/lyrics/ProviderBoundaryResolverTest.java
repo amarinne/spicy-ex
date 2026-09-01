@@ -26,6 +26,37 @@ import com.google.gson.JsonParser;
 
 public class ProviderBoundaryResolverTest {
     @Test
+    public void numericPersonIgnoresProviderSpaceBetweenSpans() {
+        List<SourceSpan> spans = new ArrayList<>();
+        spans.add(new SourceSpan("number", "1 ", "1 ", 0L, 500L, null, null));
+        spans.add(new SourceSpan("person", "人", "人", 500L, 1000L, null, null));
+        ParsedLine line = new ParsedLine("numeric-person", "1人", spans, null,
+                ParagraphProvenance.UNAVAILABLE, Collections.emptyMap());
+
+        ProviderBoundaryResolver.Resolution resolution = new ProviderBoundaryResolver().resolve(line);
+
+        assertEquals("1人", resolution.canonical.text);
+        assertTrue(resolution.canonical.boundaries.isEmpty());
+    }
+
+    @Test
+    public void numericPersonIgnoresCompleteLineSpaceBetweenSpans() {
+        for (String digit : new String[]{"1", "2"}) {
+            List<SourceSpan> spans = new ArrayList<>();
+            spans.add(new SourceSpan("number", digit, digit, 0L, 500L, null, null));
+            spans.add(new SourceSpan("person", "人", "人", 500L, 1000L, null, null));
+            ParsedLine line = new ParsedLine("numeric-person-complete-space-" + digit,
+                    digit + " 人", spans, null, ParagraphProvenance.UNAVAILABLE,
+                    Collections.emptyMap());
+
+            ProviderBoundaryResolver.Resolution resolution = new ProviderBoundaryResolver().resolve(line);
+
+            assertEquals(digit + "人", resolution.canonical.text);
+            assertTrue(resolution.canonical.boundaries.isEmpty());
+        }
+    }
+
+    @Test
     public void sharedProviderBoundaryCorpusMatches() {
         InputStream stream = getClass().getClassLoader().getResourceAsStream(
                 "lyrics-reading/v2/provider-boundary-corpus.json");

@@ -165,6 +165,7 @@ final class NowPlayingLyricController {
                 || !renderConfig.lineSyncFillMode.equals(next.lineSyncFillMode)
                 || renderConfig.spotlight != next.spotlight
                 || renderConfig.wordBounceEnabled != next.wordBounceEnabled
+                || !renderConfig.wordBounceStyle.equals(next.wordBounceStyle)
                 || renderConfig.lineGradientEnabled != next.lineGradientEnabled
                 || renderConfig.glowBlurEnabled != next.glowBlurEnabled
                 || !renderConfig.liveCardWeight.equals(next.liveCardWeight)
