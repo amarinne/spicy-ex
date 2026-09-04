@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
@@ -92,7 +92,7 @@ public final class LyricsLocalRomanizer {
             line.romanizedText = "";
             return SpicyRomanizer.romanizeLine(line.text, scripts, doc == null ? "" : doc.language, opts);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " local romanization failed: " + t);
+            XpLog.log(TAG + " local romanization failed: " + t);
             return "";
         }
     }
@@ -201,7 +201,7 @@ public final class LyricsLocalRomanizer {
             }
             return SpicyRomanizer.romanizeLine(text, scripts, language, opts);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " local segment romanization failed: " + t);
+            XpLog.log(TAG + " local segment romanization failed: " + t);
             return "";
         }
     }

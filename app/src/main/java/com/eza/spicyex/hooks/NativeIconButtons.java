@@ -12,9 +12,9 @@ import android.view.View;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 
-import com.eza.spicyex.References;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
+import com.eza.spicyex.xposed.XpRes;
 
 final class NativeIconButtons {
     private NativeIconButtons() {
@@ -79,7 +79,8 @@ final class NativeIconButtons {
     static void setModuleIcon(ImageButton button, Context context, int drawableRes) {
         if (button == null) return;
         try {
-            Drawable drawable = References.modResources == null ? null : References.modResources.getDrawable(drawableRes);
+            android.content.res.Resources moduleResources = XpRes.moduleResources(context);
+            Drawable drawable = moduleResources == null ? null : moduleResources.getDrawable(drawableRes);
             if (drawable == null && context != null) {
                 drawable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
                         ? context.getResources().getDrawable(drawableRes, context.getTheme())
@@ -87,7 +88,7 @@ final class NativeIconButtons {
             }
             button.setImageDrawable(drawable);
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " failed to load module icon " + drawableRes + ": " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " failed to load module icon " + drawableRes + ": " + t);
             button.setImageDrawable(null);
         }
     }

@@ -115,10 +115,17 @@ public final class LyricsRowViewFactory {
         boolean hasSyllableWords = line.words != null && !line.words.isEmpty();
         boolean hasRealTimedWords = hasSyllableWords && !line.syntheticWords;
         boolean indicLine = SpicyTextDetection.hasIndicScript(line.text);
+        Map<String, TimedReadingUnit> timedReadingBySpanId = timedBySpanId(line);
+        List<String> timedReadingTexts = hasSyllableWords
+                ? romanizedWordTexts(line, options, romanizedWordProvider, timedReadingBySpanId)
+                : Collections.emptyList();
+        boolean exactTimedReading = TimedTextRowProjection.exactlyReconstructs(
+                timedReadingTexts, readingText);
         boolean showAlignedRomaji = !indicLine
                 && hasSyllableWords
                 && !showJapaneseFurigana
                 && options.attachTransliterationToWords
+                && exactTimedReading
                 && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji);
         // Ruby groups remain visual-only; timed provider children keep their existing word path.
         boolean useSyllableWords = !indicLine && (hasRealTimedWords || (hasSyllableWords
@@ -139,6 +146,7 @@ public final class LyricsRowViewFactory {
         boolean showTimedRomanRow = !line.bgLine
                 && !showAlignedRomaji
                 && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)
+                && exactTimedReading
                 && canBuildTimedRomanRow(line, useSyllableWords, romanizedWordProvider != null);
         if (showTimedRomanRow) {
             buildTimedRomanRow(row, line, options, romanizedWordProvider, wrapLongLines);

@@ -13,7 +13,7 @@ import android.os.RemoteException;
 import com.eza.hyperglow.bridge.ISpicyLyricBridge;
 import com.eza.spicyex.Diagnostics;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -70,7 +70,7 @@ final class SpicyLyricBridgePublisher {
                 Diagnostics.setHyperGlowBridgeStatus("provider_fallback");
                 Diagnostics.event("hyperglow_bridge", "connection_state",
                         Diagnostics.context("status", "provider_fallback"));
-                XposedBridge.log("[SpotifyPlusBridge] bindService returned false");
+                XpLog.log("[SpotifyPlusBridge] bindService returned false");
                 publishPendingLocked();
             } else {
                 bound = true;
@@ -295,7 +295,7 @@ final class SpicyLyricBridgePublisher {
                 Diagnostics.setHyperGlowBridgeStatus("connected");
                 Diagnostics.event("hyperglow_bridge", "connection_state",
                         Diagnostics.context("status", "connected"));
-                XposedBridge.log("[SpotifyPlusBridge] connected");
+                XpLog.log("[SpotifyPlusBridge] connected");
                 publishPendingLocked();
             }
         }
@@ -322,6 +322,6 @@ final class SpicyLyricBridgePublisher {
     };
 
     private static void log(String message, Throwable t) {
-        XposedBridge.log("[SpotifyPlusBridge] " + message + ": " + t.getClass().getSimpleName());
+        XpLog.log("[SpotifyPlusBridge] " + message + ": " + t.getClass().getSimpleName());
     }
 }

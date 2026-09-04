@@ -30,9 +30,8 @@ import java.util.ArrayDeque;
 import java.util.Locale;
 import java.util.WeakHashMap;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.eza.spicyex.xposed.XpHooks;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Owns Spotify activity takeover, entry injection, keepalive, and native shell root mount. */
 final class LyricsActivityTakeoverHook {
@@ -65,94 +64,73 @@ final class LyricsActivityTakeoverHook {
 
     void hook() {
         NativeSpicyLyricsHook.dbgEnter("hookLyricsActivityLifecycle");
-        XposedHelpers.findAndHookMethod(Activity.class, "onCreate", android.os.Bundle.class, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                Activity activity = (Activity) param.thisObject;
-                if (isLyricsFullscreenActivity(activity)) {
-                    registerSystemBackCallback(activity);
-                    if (activateNativeTakeover(activity)) {
-                        XposedBridge.log(NativeSpicyLyricsHook.TAG
-                                + " lyrics activity onCreate (takeover) " + activity.getClass().getName());
+        XpHooks.findAfter(Activity.class, "onCreate", "takeover:Activity#onCreate", param -> {
+            Activity activity = (Activity) param.thisObject;
+            if (isLyricsFullscreenActivity(activity)) {
+                registerSystemBackCallback(activity);
+                if (activateNativeTakeover(activity)) {
+                    XpLog.log(NativeSpicyLyricsHook.TAG
+                            + " lyrics activity onCreate (takeover) " + activity.getClass().getName());
+                }
+                // else: opened via Spotify's native lyric card - leave Spotify's screen untouched.
+            } else {
+                scheduleExtraLyricsButtonInjection(activity);
+            }
+        }, android.os.Bundle.class);
+
+        XpHooks.findAfter(Activity.class, "onResume", "takeover:Activity#onResume", param -> {
+            Activity activity = (Activity) param.thisObject;
+            References.setCurrentActivity(activity);
+            if (isLyricsFullscreenActivity(activity)) {
+                activateNativeTakeover(activity);
+                // else: native lyric card opened Spotify's own screen - do not take over.
+            } else {
+                scheduleExtraLyricsButtonInjection(activity);
+            }
+        });
+
+        XpHooks.findAfter(Activity.class, "onWindowFocusChanged", "takeover:Activity#onWindowFocusChanged",
+                param -> {
+                    if (!((boolean) param.args[0])) return;
+                    Activity activity = (Activity) param.thisObject;
+                    if (isLyricsFullscreenActivity(activity) && activateNativeTakeover(activity)) {
+                        mountNativeSpicyRoot(activity);
                     }
-                    // else: opened via Spotify's native lyric card - leave Spotify's screen untouched.
-                } else {
-                    scheduleExtraLyricsButtonInjection(activity);
-                }
-            }
+                }, boolean.class);
+
+        XpHooks.findBefore(Activity.class, "onDestroy", "takeover:Activity#onDestroy", param -> {
+            Activity activity = (Activity) param.thisObject;
+            cancelExtraLyricsButtonInjection(activity);
+            nowPlayingInjector.destroy(activity);
+            if (!isLyricsFullscreenActivity(activity)) return;
+            unregisterSystemBackCallback(activity);
+            // Keep takeover state through every lyrics-page destroy. Spotify may report a
+            // track-change rotation as a normal destroy, and the old content root can already
+            // be detached before this hook runs. Non-lyrics onResume and explicit back clear it.
+            removeNativeSpicyRoot(activity);
         });
 
-        XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                Activity activity = (Activity) param.thisObject;
-                References.setCurrentActivity(activity);
-                if (isLyricsFullscreenActivity(activity)) {
-                    activateNativeTakeover(activity);
-                    // else: native lyric card opened Spotify's own screen - do not take over.
-                } else {
-                    scheduleExtraLyricsButtonInjection(activity);
-                }
-            }
+        XpHooks.findAfter(Activity.class, "onPause", "takeover:Activity#onPause", param -> {
+            Activity activity = (Activity) param.thisObject;
+            cancelExtraLyricsButtonInjection(activity);
+            nowPlayingInjector.stop(activity); // quiet the now-playing card ticker
         });
 
-        XposedHelpers.findAndHookMethod(Activity.class, "onWindowFocusChanged", boolean.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        if (!((boolean) param.args[0])) return;
-                        Activity activity = (Activity) param.thisObject;
-                        if (isLyricsFullscreenActivity(activity) && activateNativeTakeover(activity)) {
-                            mountNativeSpicyRoot(activity);
-                        }
-                    }
-                });
-
-        XposedHelpers.findAndHookMethod(Activity.class, "onDestroy", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                Activity activity = (Activity) param.thisObject;
-                cancelExtraLyricsButtonInjection(activity);
-                nowPlayingInjector.destroy(activity);
-                if (!isLyricsFullscreenActivity(activity)) return;
-                unregisterSystemBackCallback(activity);
-                // Keep takeover state through every lyrics-page destroy. Spotify may report a
-                // track-change rotation as a normal destroy, and the old content root can already
-                // be detached before this hook runs. Non-lyrics onResume and explicit back clear it.
-                removeNativeSpicyRoot(activity);
+        XpHooks.findBefore(Activity.class, "onBackPressed", "takeover:Activity#onBackPressed", param -> {
+            Activity activity = (Activity) param.thisObject;
+            if (!isLyricsFullscreenActivity(activity)) {
+                if (nowPlayingInjector.consumeArtworkBack(activity)) param.setResult(null);
+                return;
             }
+            markExplicitLyricsExit(activity);
         });
 
-        XposedHelpers.findAndHookMethod(Activity.class, "onPause", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                Activity activity = (Activity) param.thisObject;
-                cancelExtraLyricsButtonInjection(activity);
-                nowPlayingInjector.stop(activity); // quiet the now-playing card ticker
-            }
-        });
-
-        XposedHelpers.findAndHookMethod(Activity.class, "onBackPressed", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                Activity activity = (Activity) param.thisObject;
-                if (!isLyricsFullscreenActivity(activity)) {
-                    if (nowPlayingInjector.consumeArtworkBack(activity)) param.setResult(null);
-                    return;
-                }
-                markExplicitLyricsExit(activity);
-            }
-        });
-
-        XposedHelpers.findAndHookMethod(Activity.class, "finish", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                Activity activity = (Activity) param.thisObject;
-                if (!shouldKeepLyricsActivityOpen(activity)) return;
-                XposedBridge.log(NativeSpicyLyricsHook.TAG
-                        + " suppressed non-explicit lyrics activity finish to keep native renderer open");
-                param.setResult(null);
-            }
+        XpHooks.findBefore(Activity.class, "finish", "takeover:Activity#finish", param -> {
+            Activity activity = (Activity) param.thisObject;
+            if (!shouldKeepLyricsActivityOpen(activity)) return;
+            XpLog.log(NativeSpicyLyricsHook.TAG
+                    + " suppressed non-explicit lyrics activity finish to keep native renderer open");
+            param.setResult(null);
         });
     }
 
@@ -219,7 +197,7 @@ final class LyricsActivityTakeoverHook {
             retry.postNext();
             nowPlayingInjector.schedule(activity);
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " schedule extra lyrics injection failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " schedule extra lyrics injection failed: " + t);
         }
     }
 
@@ -237,7 +215,7 @@ final class LyricsActivityTakeoverHook {
             // entry button to its parent and position it into the empty footer space after layout.
             View rowView = findViewByResourceEntryName(content, "accessory_row");
             if (rowView == null || !rowView.isShown() || rowView.getWidth() == 0) {
-                XposedBridge.log(NativeSpicyLyricsHook.TAG
+                XpLog.log(NativeSpicyLyricsHook.TAG
                         + " Extra lyrics: accessory_row not laid out yet in " + activity.getClass().getName());
                 return false;
             }
@@ -249,11 +227,11 @@ final class LyricsActivityTakeoverHook {
             buttonHost.addView(button, new ViewGroup.LayoutParams(side, side));
             button.setTranslationX((buttonHost.getWidth() - side) / 2f);
             button.setTranslationY(rowView.getTop() + (rowView.getHeight() - side) / 2f);
-            XposedBridge.log(NativeSpicyLyricsHook.TAG
+            XpLog.log(NativeSpicyLyricsHook.TAG
                     + " inserted Extra lyrics ♪ centered in footer in " + activity.getClass().getName());
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " inject extra lyrics button failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " inject extra lyrics button failed: " + t);
             return false;
         }
     }
@@ -396,10 +374,10 @@ final class LyricsActivityTakeoverHook {
             intent.setClassName(activity.getPackageName(), LYRICS_FULLSCREEN_ACTIVITY);
             intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             activity.startActivity(intent);
-            XposedBridge.log(NativeSpicyLyricsHook.TAG
+            XpLog.log(NativeSpicyLyricsHook.TAG
                     + " launched native lyrics fullscreen (takeover armed) from Extra lyrics button");
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " launch native lyrics fullscreen failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " launch native lyrics fullscreen failed: " + t);
         }
     }
 
@@ -465,7 +443,7 @@ final class LyricsActivityTakeoverHook {
 
             FrameLayout content = activity.findViewById(android.R.id.content);
             if (content == null) {
-                XposedBridge.log(NativeSpicyLyricsHook.TAG + " content root missing");
+                XpLog.log(NativeSpicyLyricsHook.TAG + " content root missing");
                 return;
             }
 
@@ -486,11 +464,11 @@ final class LyricsActivityTakeoverHook {
             markLyricsActivityKeepWindow(activity);
             root.start();
             root.animate().alpha(1f).translationY(0f).setDuration(260).start();
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " mounted native Spicy renderer shell");
+            XpLog.log(NativeSpicyLyricsHook.TAG + " mounted native Spicy renderer shell");
             Diagnostics.event("renderer", "mount_state",
                     Diagnostics.context("surface", "fullscreen", "mounted", "true"));
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " mount failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " mount failed: " + t);
             Diagnostics.event("renderer", "mount_state", t,
                     Diagnostics.context("surface", "fullscreen", "mounted", "false"));
         }
@@ -518,13 +496,13 @@ final class LyricsActivityTakeoverHook {
                         shell.stop();
                         content.removeView(shell);
                     } catch (Throwable t) {
-                        XposedBridge.log(NativeSpicyLyricsHook.TAG + " remove animation cleanup failed: " + t);
+                        XpLog.log(NativeSpicyLyricsHook.TAG + " remove animation cleanup failed: " + t);
                     }
                 }).start();
-                XposedBridge.log(NativeSpicyLyricsHook.TAG + " removed native Spicy shell");
+                XpLog.log(NativeSpicyLyricsHook.TAG + " removed native Spicy shell");
             }
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " remove failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " remove failed: " + t);
         }
     }
 

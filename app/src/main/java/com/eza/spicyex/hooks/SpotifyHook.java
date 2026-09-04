@@ -1,13 +1,13 @@
 package com.eza.spicyex.hooks;
 
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.eza.spicyex.xposed.XpPackage;
 import org.luckypray.dexkit.DexKitBridge;
 
 public abstract class SpotifyHook {
-    protected XC_LoadPackage.LoadPackageParam lpparm;
+    protected XpPackage lpparm;
     protected DexKitBridge bridge;
 
-    public void init(XC_LoadPackage.LoadPackageParam lpparm, DexKitBridge bridge) {
+    public void init(XpPackage lpparm, DexKitBridge bridge) {
         this.lpparm = lpparm;
         this.bridge = bridge;
         hook();

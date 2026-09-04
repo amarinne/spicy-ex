@@ -73,7 +73,7 @@ public class DiagnosticReportContractTest {
         SpicySetupCheckPolicy.Result checks = SpicySetupCheckPolicy.resolve(
                 new SpicySetupCheckPolicy.Input(
                         true, true, "lspatch", true, true,
-                        "not_visible_or_missing", true, true, false, "disabled"));
+                        "not_visible_or_missing", true, true, false, "disabled", true));
 
         JsonObject json = checks.toJson();
 

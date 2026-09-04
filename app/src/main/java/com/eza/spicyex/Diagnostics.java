@@ -9,7 +9,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Privacy-safe, rate-limited diagnostics for defensive hook/cache paths. */
 public final class Diagnostics {
@@ -97,7 +97,7 @@ public final class Diagnostics {
                 .append(error.getClass().getSimpleName());
         String context = sanitize(safeContext);
         if (!context.isEmpty()) message.append(" context=").append(context);
-        XposedBridge.log(message.toString());
+        XpLog.log(message.toString());
     }
 
     private static String sanitize(String value) {

@@ -64,6 +64,9 @@ public final class SpicySetupCheckPolicy {
         if (input.hyperGlowEnabled && !bridgeReady(input.hyperGlowBridgeStatus)) {
             failures.add("hyperglow_bridge");
         }
+        if (!input.moduleResourcesAvailable) {
+            failures.add("module_resources");
+        }
         return new Result(
                 input.runtimeHookActive,
                 input.xposedApiAvailable,
@@ -75,6 +78,7 @@ public final class SpicySetupCheckPolicy {
                 input.requiredFeaturesAvailable,
                 input.hyperGlowEnabled,
                 input.hyperGlowBridgeStatus,
+                input.moduleResourcesAvailable,
                 hardFailure ? "failed" : failures.isEmpty() ? "ready" : "warning",
                 failures
         );
@@ -95,12 +99,13 @@ public final class SpicySetupCheckPolicy {
         final boolean requiredFeaturesAvailable;
         final boolean hyperGlowEnabled;
         final String hyperGlowBridgeStatus;
+        final boolean moduleResourcesAvailable;
 
         Input(boolean runtimeHookActive, boolean xposedApiAvailable, String installationMode,
               boolean spotifyMainProcess, boolean moduleRuntimeAvailable,
               String modulePackageStatus, boolean internetPermissionGranted,
               boolean requiredFeaturesAvailable, boolean hyperGlowEnabled,
-              String hyperGlowBridgeStatus) {
+              String hyperGlowBridgeStatus, boolean moduleResourcesAvailable) {
             this.runtimeHookActive = runtimeHookActive;
             this.xposedApiAvailable = xposedApiAvailable;
             this.installationMode = installationMode;
@@ -111,6 +116,7 @@ public final class SpicySetupCheckPolicy {
             this.requiredFeaturesAvailable = requiredFeaturesAvailable;
             this.hyperGlowEnabled = hyperGlowEnabled;
             this.hyperGlowBridgeStatus = hyperGlowBridgeStatus;
+            this.moduleResourcesAvailable = moduleResourcesAvailable;
         }
     }
 
@@ -126,6 +132,7 @@ public final class SpicySetupCheckPolicy {
         public final boolean requiredFeaturesAvailable;
         public final boolean hyperGlowEnabled;
         public final String hyperGlowBridgeStatus;
+        public final boolean moduleResourcesAvailable;
         public final String setupState;
         public final List<String> setupFailures;
 
@@ -133,7 +140,8 @@ public final class SpicySetupCheckPolicy {
                boolean spotifyMainProcess, boolean moduleRuntimeAvailable,
                String modulePackageStatus, boolean internetPermissionGranted,
                boolean requiredFeaturesAvailable, boolean hyperGlowEnabled,
-               String hyperGlowBridgeStatus, String setupState, List<String> setupFailures) {
+               String hyperGlowBridgeStatus, boolean moduleResourcesAvailable,
+               String setupState, List<String> setupFailures) {
             this.runtimeHookActive = runtimeHookActive;
             this.xposedApiAvailable = xposedApiAvailable;
             this.installationMode = installationMode;
@@ -144,6 +152,7 @@ public final class SpicySetupCheckPolicy {
             this.requiredFeaturesAvailable = requiredFeaturesAvailable;
             this.hyperGlowEnabled = hyperGlowEnabled;
             this.hyperGlowBridgeStatus = hyperGlowBridgeStatus;
+            this.moduleResourcesAvailable = moduleResourcesAvailable;
             this.setupState = setupState;
             this.setupFailures = Collections.unmodifiableList(new ArrayList<>(setupFailures));
         }
@@ -161,6 +170,7 @@ public final class SpicySetupCheckPolicy {
             object.addProperty("requiredFeaturesAvailable", requiredFeaturesAvailable);
             object.addProperty("hyperGlowEnabled", hyperGlowEnabled);
             object.addProperty("hyperGlowBridgeStatus", hyperGlowBridgeStatus);
+            object.addProperty("moduleResourcesAvailable", moduleResourcesAvailable);
             object.addProperty("setupState", setupState);
             JsonArray failures = new JsonArray();
             for (String failure : setupFailures) failures.add(failure);
@@ -170,7 +180,7 @@ public final class SpicySetupCheckPolicy {
 
         static Result unknown() {
             return new Result(false, false, "xposed_unknown", false, false,
-                    "not_visible_or_missing", false, false, false, "unknown",
+                    "not_visible_or_missing", false, false, false, "unknown", false,
                     "warning", Collections.singletonList("requirements_not_checked"));
         }
     }

@@ -11,9 +11,9 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Locale;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.eza.spicyex.xposed.XpHooks;
+import com.eza.spicyex.xposed.XpLog;
+import com.eza.spicyex.xposed.XpReflect;
 
 /** Captures Spotify access tokens from OkHttp headers and Spotify auth response objects. */
 final class AuthTokenCaptureHook {
@@ -52,63 +52,58 @@ final class AuthTokenCaptureHook {
     private void hookAccessTokenCapture() {
         NativeSpicyLyricsHook.dbgEnter("hookAccessTokenCapture");
         try {
-            Class<?> requestBuilder = XposedHelpers.findClass("okhttp3.Request$Builder", classLoader);
-            XC_MethodHook headerPairHook = new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    if (param.args == null || param.args.length < 2) return;
-                    Object nameObj = param.args[0];
-                    Object valueObj = param.args[1];
-                    if (!(nameObj instanceof String) || !(valueObj instanceof String)) return;
-                    captureAuthHeader((String) nameObj, (String) valueObj);
-                }
+            Class<?> requestBuilder = XpReflect.findClass("okhttp3.Request$Builder", classLoader);
+            XpHooks.Before headerPairHook = param -> {
+                if (param.args == null || param.args.length < 2) return;
+                Object nameObj = param.args[0];
+                Object valueObj = param.args[1];
+                if (!(nameObj instanceof String) || !(valueObj instanceof String)) return;
+                captureAuthHeader((String) nameObj, (String) valueObj);
             };
-            tryHookAll(requestBuilder, "header", headerPairHook);
-            tryHookAll(requestBuilder, "addHeader", headerPairHook);
-            tryHookAll(requestBuilder, "headers", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    if (param.args == null || param.args.length < 1) return;
-                    captureAuthorizationValue(readHeaderValue(param.args[0], "Authorization"));
-                }
+            tryHookAll(requestBuilder, "header", "auth:RequestBuilder#header", headerPairHook);
+            tryHookAll(requestBuilder, "addHeader", "auth:RequestBuilder#addHeader", headerPairHook);
+            tryHookAll(requestBuilder, "headers", "auth:RequestBuilder#headers", (XpHooks.Before) param -> {
+                if (param.args == null || param.args.length < 1) return;
+                captureAuthorizationValue(readHeaderValue(param.args[0], "Authorization"));
             });
-            tryHookAll(requestBuilder, "build", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    captureAuthorizationValue(readHeaderValue(param.getResult(), "Authorization"));
-                    logBuiltRequestProbe(param.getResult());
-                }
+            tryHookAll(requestBuilder, "build", "auth:RequestBuilder#build", (XpHooks.After) param -> {
+                captureAuthorizationValue(readHeaderValue(param.getResult(), "Authorization"));
+                logBuiltRequestProbe(param.getResult());
             });
 
             try {
-                Class<?> headersBuilder = XposedHelpers.findClass("okhttp3.Headers$Builder", classLoader);
-                tryHookAll(headersBuilder, "add", headerPairHook);
-                tryHookAll(headersBuilder, "set", headerPairHook);
-                tryHookAll(headersBuilder, "addUnsafeNonAscii", headerPairHook);
+                Class<?> headersBuilder = XpReflect.findClass("okhttp3.Headers$Builder", classLoader);
+                tryHookAll(headersBuilder, "add", "auth:HeadersBuilder#add", headerPairHook);
+                tryHookAll(headersBuilder, "set", "auth:HeadersBuilder#set", headerPairHook);
+                tryHookAll(headersBuilder, "addUnsafeNonAscii", "auth:HeadersBuilder#addUnsafeNonAscii", headerPairHook);
             } catch (Throwable ignored) {
             }
 
             try {
-                Class<?> requestClass = XposedHelpers.findClass("okhttp3.Request", classLoader);
-                XposedBridge.hookAllConstructors(requestClass, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        captureAuthorizationValue(readHeaderValue(param.thisObject, "Authorization"));
-                        logBuiltRequestProbe(param.thisObject);
-                    }
+                Class<?> requestClass = XpReflect.findClass("okhttp3.Request", classLoader);
+                XpHooks.hookAllConstructors(requestClass, "auth:Request#ctor", (XpHooks.After) param -> {
+                    captureAuthorizationValue(readHeaderValue(param.thisObject, "Authorization"));
+                    logBuiltRequestProbe(param.thisObject);
                 });
             } catch (Throwable ignored) {
             }
 
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " OkHttp auth capture hooks installed");
+            XpLog.log(NativeSpicyLyricsHook.TAG + " OkHttp auth capture hooks installed");
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " auth capture hook failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " auth capture hook failed: " + t);
         }
     }
 
-    private static void tryHookAll(Class<?> clazz, String methodName, XC_MethodHook hook) {
+    private static void tryHookAll(Class<?> clazz, String methodName, String id, XpHooks.Before hook) {
         try {
-            XposedBridge.hookAllMethods(clazz, methodName, hook);
+            XpHooks.hookAllMethods(clazz, methodName, id, hook);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void tryHookAll(Class<?> clazz, String methodName, String id, XpHooks.After hook) {
+        try {
+            XpHooks.hookAllMethods(clazz, methodName, id, hook);
         } catch (Throwable ignored) {
         }
     }
@@ -117,7 +112,7 @@ final class AuthTokenCaptureHook {
         if (headersOrRequest == null || isBlank(name)) return null;
         for (String methodName : new String[]{"header", "get"}) {
             try {
-                Object result = XposedHelpers.callMethod(headersOrRequest, methodName, name);
+                Object result = XpReflect.callMethod(headersOrRequest, methodName, name);
                 if (result instanceof String) return (String) result;
             } catch (Throwable ignored) {
             }
@@ -132,7 +127,7 @@ final class AuthTokenCaptureHook {
     private static void logBuiltRequestProbe(Object request) {
         if (request == null || authRequestDebugCount >= AUTH_REQUEST_DEBUG_LIMIT) return;
         try {
-            Object rawUrl = XposedHelpers.callMethod(request, "url");
+            Object rawUrl = XpReflect.callMethod(request, "url");
             if (rawUrl == null) return;
             String url = rawUrl.toString();
             String lower = url.toLowerCase(Locale.ROOT);
@@ -142,7 +137,7 @@ final class AuthTokenCaptureHook {
             String host = safe(uri.getHost());
             String path = safe(uri.getPath());
             authRequestDebugCount++;
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " okhttp request#" + authRequestDebugCount
+            XpLog.log(NativeSpicyLyricsHook.TAG + " okhttp request#" + authRequestDebugCount
                     + " host=" + host
                     + " path=" + path
                     + " auth=" + (!isBlank(auth)));
@@ -176,12 +171,9 @@ final class AuthTokenCaptureHook {
         int hooked = 0;
         for (String className : SPOTIFY_AUTH_TOKEN_CLASSES) {
             try {
-                Class<?> clazz = XposedHelpers.findClass(className, classLoader);
-                XposedBridge.hookAllConstructors(clazz, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        captureAccessTokenObject(param.thisObject, className + "#ctor");
-                    }
+                Class<?> clazz = XpReflect.findClass(className, classLoader);
+                XpHooks.hookAllConstructors(clazz, "auth:" + className + "#ctor", (XpHooks.After) param -> {
+                    captureAccessTokenObject(param.thisObject, className + "#ctor");
                 });
                 for (Method method : clazz.getDeclaredMethods()) {
                     if (method.getParameterTypes().length != 0) continue;
@@ -192,11 +184,8 @@ final class AuthTokenCaptureHook {
                             || !rt.getName().toLowerCase(Locale.ROOT).contains("token")) continue;
                     final String name = method.getName();
                     try {
-                        XposedBridge.hookMethod(method, new XC_MethodHook() {
-                            @Override
-                            protected void afterHookedMethod(MethodHookParam param) {
-                                captureAccessTokenObject(param.getResult(), className + "#" + name);
-                            }
+                        XpHooks.hookAfter(method, "auth:" + className + "#" + name, param -> {
+                            captureAccessTokenObject(param.getResult(), className + "#" + name);
                         });
                     } catch (Throwable ignored) {
                     }
@@ -205,7 +194,7 @@ final class AuthTokenCaptureHook {
             } catch (Throwable ignored) {
             }
         }
-        XposedBridge.log(NativeSpicyLyricsHook.TAG
+        XpLog.log(NativeSpicyLyricsHook.TAG
                 + " Spotify auth token object hooks installed classes=" + hooked);
     }
 

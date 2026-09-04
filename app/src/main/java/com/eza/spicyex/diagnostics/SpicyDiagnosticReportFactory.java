@@ -25,7 +25,7 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonElement;
 
 import java.time.Instant;
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Maps allowlisted Spotify-process state to the shared product-neutral intake envelope. */
 public final class SpicyDiagnosticReportFactory {
@@ -127,7 +127,7 @@ public final class SpicyDiagnosticReportFactory {
         product.addProperty("networkCacheEpoch", bounded(BuildStamp.NETWORK_CACHE_EPOCH, 128));
         product.addProperty("flavor", "lite".equals(BuildConfig.FLAVOR) ? "lite" : "full");
         try {
-            product.addProperty("xposedApiVersion", XposedBridge.getXposedVersion());
+            product.addProperty("xposedApiVersion", XpLog.apiVersion());
         } catch (Throwable ignored) {
             product.add("xposedApiVersion", JsonNull.INSTANCE);
         }
@@ -496,6 +496,16 @@ public final class SpicyDiagnosticReportFactory {
         return safe.isEmpty() ? "unknown" : safe;
     }
 
+    private static boolean optBoolean(JsonObject object, String key, boolean fallback) {
+        try {
+            if (object.has(key) && object.get(key).isJsonPrimitive()) {
+                return object.get(key).getAsBoolean();
+            }
+        } catch (Throwable ignored) {
+        }
+        return fallback;
+    }
+
     public static Draft fromJson(String json) {
         try {
             if (json == null || DiagnosticReportContract.utf8Bytes(json) > DiagnosticReportContract.CLIENT_BODY_BYTES) return null;
@@ -550,6 +560,7 @@ public final class SpicyDiagnosticReportFactory {
                     object.get("requiredFeaturesAvailable").getAsBoolean(),
                     object.get("hyperGlowEnabled").getAsBoolean(),
                     boundedToken(object.get("hyperGlowBridgeStatus").getAsString(), 32),
+                    optBoolean(object, "moduleResourcesAvailable", true),
                     boundedToken(object.get("setupState").getAsString(), 16),
                     failureKeys
             );

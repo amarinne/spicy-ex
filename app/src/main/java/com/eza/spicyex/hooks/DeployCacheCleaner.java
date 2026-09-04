@@ -7,7 +7,7 @@ import com.eza.spicyex.BuildStamp;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.lyrics.LyricCaches;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 final class DeployCacheCleaner {
     private static final String PREFS_DEPLOY_STATE = "SpotifyPlusNativeDeployState";
@@ -33,10 +33,10 @@ final class DeployCacheCleaner {
             LyricCaches.clearGoogle(context);
             LyricCaches.clearProcessed(context);
             prefs.edit().putString(Settings.LAST_CACHE_CLEAR_VERSION.key, currentVersion).apply();
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " deploy cache clear epoch=" + currentVersion
+            XpLog.log(NativeSpicyLyricsHook.TAG + " deploy cache clear epoch=" + currentVersion
                     + " build=" + BuildStamp.FULL);
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " deploy cache clear failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " deploy cache clear failed: " + t);
         }
     }
 }

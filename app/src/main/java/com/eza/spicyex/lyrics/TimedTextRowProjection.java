@@ -22,9 +22,15 @@ final class TimedTextRowProjection {
         return out;
     }
 
+    static boolean exactlyReconstructs(List<String> rawChunks, String authoritativeText) {
+        return rawChunks != null && !rawChunks.isEmpty()
+                && !safe(authoritativeText).isEmpty()
+                && compact(rawChunks).equals(compact(authoritativeText));
+    }
+
     private static List<String> alignedPieces(List<String> rawChunks, String authoritativeText) {
         String authoritative = safe(authoritativeText);
-        if (authoritative.isEmpty() || !compact(rawChunks).equals(compact(authoritative))) {
+        if (!exactlyReconstructs(rawChunks, authoritative)) {
             return new ArrayList<>(rawChunks);
         }
 

@@ -36,7 +36,7 @@ import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.session.SoundArtifact;
 import com.eza.spicyex.lyrics.session.SoundEntry;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 import okhttp3.OkHttpClient;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
@@ -229,7 +229,7 @@ public final class LyricsSoundLane {
                     }
                     changed.incrementAndGet();
                 } catch (Throwable t) {
-                    XposedBridge.log(TAG + " reading fallback line failed: " + t.getClass().getSimpleName());
+                    XpLog.log(TAG + " reading fallback line failed: " + t.getClass().getSimpleName());
                 } finally {
                     int processed = done.incrementAndGet();
                     if (processed % 12 == 0) {
@@ -357,7 +357,7 @@ public final class LyricsSoundLane {
                         recordAiOutcome("request_failed", "failed",
                                 result.outcome.failureToken,
                                 result.outcome.failure.httpStatus);
-                        XposedBridge.log(TAG + " ai reading outcome=failed token="
+                        XpLog.log(TAG + " ai reading outcome=failed token="
                                 + result.outcome.failureToken + " status="
                                 + result.outcome.failure.httpStatus + " rule="
                                 + result.outcome.failureDetail);
@@ -367,7 +367,7 @@ public final class LyricsSoundLane {
                         recordAiOutcome("request_settled",
                                 result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT),
                                 "", 0);
-                        XposedBridge.log(TAG + " ai reading outcome="
+                        XpLog.log(TAG + " ai reading outcome="
                                 + result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT)
                                 + " durable=" + result.outcome.durable);
                     }
@@ -376,7 +376,7 @@ public final class LyricsSoundLane {
                     recordAiOutcome("request_settled", "cancelled", "", 0);
                     return;
                 } catch (Throwable failure) {
-                    XposedBridge.log(TAG + " ai reading failed: "
+                    XpLog.log(TAG + " ai reading failed: "
                             + AiRuntimeFailureLog.describe(failure));
                     result = null;
                     aiFailure = new LayerFailure(LayerFailure.Reason.UNAVAILABLE,
@@ -476,7 +476,7 @@ public final class LyricsSoundLane {
                     }
                 }
             } catch (Throwable t) {
-                XposedBridge.log(TAG + " local mode reprocess failed: " + t.getClass().getSimpleName());
+                XpLog.log(TAG + " local mode reprocess failed: " + t.getClass().getSimpleName());
             }
             patch.changed = changed.get();
             handler.post(() -> {

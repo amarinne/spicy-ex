@@ -3,15 +3,13 @@ package com.eza.spicyex;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.content.res.XModuleResources;
-import android.content.res.XResources;
+import android.content.res.Resources;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.Pair;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.eza.spicyex.xposed.XpLog;
+import com.eza.spicyex.xposed.XpReflect;
 import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindField;
@@ -50,8 +48,7 @@ public class References {
      */
     public static String accessToken = "";
     public static WeakReference<Typeface> beautifulFont = new WeakReference<>(null);
-    public static XModuleResources modResources = null;
-    public static XResources xresources = null;
+    public static Resources modResources = null;
 
     private static final Pattern DIGITS = Pattern.compile("\\d+");
     private static Method hasTrackMethod;
@@ -70,41 +67,41 @@ public class References {
         if (current == activity) currentActivity.clear();
     }
 
-    public static SpotifyTrack getTrackTitle(XC_LoadPackage.LoadPackageParam lpparam, DexKitBridge bridge) {
+    public static SpotifyTrack getTrackTitle(ClassLoader classLoader, DexKitBridge bridge) {
         Object strongState = playerStateStrong;
         Object weakState = playerState == null ? null : playerState.get();
         if(strongState == null && weakState == null) {
-            XposedBridge.log("[SpotifyPlus] playerState is null");
+            XpLog.log("[SpotifyPlus] playerState is null");
             return null;
         }
 
         Object state = strongState != null ? strongState : weakState;
 
         try {
-            Object wrapper = XposedHelpers.callMethod(state, "track");
+            Object wrapper = XpReflect.callMethod(state, "track");
 
             var className = wrapper.getClass().getName();
             if(hasTrackMethod == null) {
                 var clazz = bridge.findClass(FindClass.create().matcher(ClassMatcher.create().className(className)));
-                hasTrackMethod = bridge.findMethod(FindMethod.create().searchInClass(clazz).matcher(MethodMatcher.create().modifiers(Modifier.PUBLIC | Modifier.FINAL).returnType(boolean.class).paramCount(0))).get(0).getMethodInstance(lpparam.classLoader);
+                hasTrackMethod = bridge.findMethod(FindMethod.create().searchInClass(clazz).matcher(MethodMatcher.create().modifiers(Modifier.PUBLIC | Modifier.FINAL).returnType(boolean.class).paramCount(0))).get(0).getMethodInstance(classLoader);
             }
 
-            boolean hasTrack = (Boolean) XposedHelpers.callMethod(wrapper, hasTrackMethod.getName());
+            boolean hasTrack = (Boolean) XpReflect.callMethod(wrapper, hasTrackMethod.getName());
             if(hasTrack) {
                 if(getContextTrack == null) {
                     var clazz = bridge.findClass(FindClass.create().matcher(ClassMatcher.create().className(className)));
-                    getContextTrack = bridge.findMethod(FindMethod.create().searchInClass(clazz).matcher(MethodMatcher.create().modifiers(Modifier.PUBLIC | Modifier.FINAL).paramCount(0).returnType(Object.class))).get(0).getMethodInstance(lpparam.classLoader);
+                    getContextTrack = bridge.findMethod(FindMethod.create().searchInClass(clazz).matcher(MethodMatcher.create().modifiers(Modifier.PUBLIC | Modifier.FINAL).paramCount(0).returnType(Object.class))).get(0).getMethodInstance(classLoader);
                 }
 
-                Object ct = XposedHelpers.callMethod(wrapper, getContextTrack.getName());
-                Class<?> contextClass = XposedHelpers.findClass("com.spotify.player.model.ContextTrack", lpparam.classLoader);
+                Object ct = XpReflect.callMethod(wrapper, getContextTrack.getName());
+                Class<?> contextClass = XpReflect.findClass("com.spotify.player.model.ContextTrack", classLoader);
                 if(contextClass.isInstance(ct)) {
                     Object track = contextClass.cast(ct);
 
-                    String uri = (String) XposedHelpers.callMethod(track, "uri");
+                    String uri = (String) XpReflect.callMethod(track, "uri");
 
                     @SuppressWarnings("unchecked")
-                    Map<String, String> md = (Map<String, String>) XposedHelpers.callMethod(track, "metadata");
+                    Map<String, String> md = (Map<String, String>) XpReflect.callMethod(track, "metadata");
 
                     String title = md.get("title");
                     String artist = md.get("artist_name");
@@ -122,21 +119,21 @@ public class References {
                     } catch (Throwable ignored) {
                     }
                     try {
-                        if (duration <= 0) duration = (Long) XposedHelpers.callMethod(state, "duration");
+                        if (duration <= 0) duration = (Long) XpReflect.callMethod(state, "duration");
                     } catch (Throwable ignored) {
                     }
                     long position = 0;
                     long timestamp = 0;
 
-                    Object posOpt = XposedHelpers.callMethod(state, "positionAsOfTimestamp");
+                    Object posOpt = XpReflect.callMethod(state, "positionAsOfTimestamp");
                     Matcher m = DIGITS.matcher(posOpt.toString());
                     if(m.find()) {
                         long basePos = Long.parseLong(m.group());
-                        timestamp = (Long) XposedHelpers.callMethod(state, "timestamp");
+                        timestamp = (Long) XpReflect.callMethod(state, "timestamp");
                         position = basePos + (System.currentTimeMillis() - timestamp);
                     }
 
-                    Map<?, ?> metadata = (Map<?, ?>) XposedHelpers.getObjectField(track, "metadata");
+                    Map<?, ?> metadata = (Map<?, ?>) XpReflect.getObjectField(track, "metadata");
                     boolean saved = false;
 
                     if(metadata.containsKey("collection.in_collection")) {
@@ -146,11 +143,11 @@ public class References {
 
                     return new SpotifyTrack(title, artist, album, uri, position, color, timestamp, imageId, duration, saved);
                 } else {
-                    XposedBridge.log("[SpotifyPlus] ContextTrack not found!");
+                    XpLog.log("[SpotifyPlus] ContextTrack not found!");
                     return null;
                 }
             } else {
-                XposedBridge.log("[SpotifyPlus] No track found");
+                XpLog.log("[SpotifyPlus] No track found");
                 return null;
             }
         } catch(Exception e) {
@@ -160,7 +157,7 @@ public class References {
     }
 
     private static long previousMs;
-    public static long getCurrentPlaybackPosition(DexKitBridge bridge, XC_LoadPackage.LoadPackageParam lpparam) {
+    public static long getCurrentPlaybackPosition(DexKitBridge bridge, ClassLoader classLoader) {
         Object wrapper = playerStateWrapperStrong != null
                 ? playerStateWrapperStrong
                 : (References.playerStateWrapper == null ? null : References.playerStateWrapper.get());
@@ -168,7 +165,7 @@ public class References {
 
         Object state;
         try {
-            state = XposedHelpers.callMethod(wrapper, "getState");
+            state = XpReflect.callMethod(wrapper, "getState");
 
             if (state == null) return -1;
         } catch (Throwable t) {
@@ -178,13 +175,13 @@ public class References {
         try {
             var progressList = bridge.findField(FindField.create().searchInClass(Arrays.asList(bridge.getClassData(state.getClass()))).matcher(FieldMatcher.create().type(long.class)));
             if(progressList.isEmpty()) {
-                XposedBridge.log("[SpotifyPlus] Failed to get progress: " + state.getClass().getName());
+                XpLog.log("[SpotifyPlus] Failed to get progress: " + state.getClass().getName());
                 return -1;
             }
 
-            return progressList.get(0).getFieldInstance(lpparam.classLoader).getLong(state);
+            return progressList.get(0).getFieldInstance(classLoader).getLong(state);
         } catch(Exception e) {
-            XposedBridge.log(e);
+            XpLog.log(e);
         }
 
         return -1;
@@ -199,7 +196,7 @@ public class References {
 
     public static SharedPreferences getScriptPreferences(String name, Context activity) {
         if(activity == null) {
-            XposedBridge.log("[SpotifyPlus] No activity found");
+            XpLog.log("[SpotifyPlus] No activity found");
             return null;
         }
 

@@ -13,7 +13,7 @@ import com.eza.spicyex.lyrics.session.LayerKind;
 import com.eza.spicyex.lyrics.session.LayerFailure;
 import com.eza.spicyex.lyrics.ai.AiSettings;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /**
  * Reads layer settings and starts the derived lanes for one document.
@@ -90,7 +90,7 @@ public final class LyricsSecondaryProcessingSession {
                         "language", effectiveSourceLang,
                         "status", targetLang));
 
-        XposedBridge.log(logTag + " derived lanes start backend=" + backend
+        XpLog.log(logTag + " derived lanes start backend=" + backend
                 + " target=" + targetLang + " source=" + sourceLanguage);
         return processor.start(id, generation, snapshot, showRomanization, options, displayedSound,
                 backend, targetLang,
@@ -120,7 +120,7 @@ public final class LyricsSecondaryProcessingSession {
                             callback.complete(layer, artifact, failure, snapshot, message, changed);
                         }
                         persist(layer, artifact, snapshot, options);
-                        XposedBridge.log(logTag + " " + layer.name().toLowerCase(java.util.Locale.ROOT)
+                        XpLog.log(logTag + " " + layer.name().toLowerCase(java.util.Locale.ROOT)
                                 + " lane complete changed=" + changed + " lines=" + snapshot.lines.size());
                     }
                 });

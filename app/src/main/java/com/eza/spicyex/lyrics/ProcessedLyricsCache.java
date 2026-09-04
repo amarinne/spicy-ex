@@ -23,7 +23,7 @@ import com.eza.spicyex.lyrics.session.SoundArtifact;
 import com.eza.spicyex.lyrics.session.SoundEntry;
 import com.eza.spicyex.SpotifyPlusConfig;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
@@ -88,7 +88,7 @@ public final class ProcessedLyricsCache {
             if (item == null || !safe(line.text).equals(Json.optString(item, "text"))) continue;
             if (applySoundRow(line, item, record)) applied++;
         }
-        XposedBridge.log(TAG + " sound applied rows=" + applied + "/" + base.rows.size()
+        XpLog.log(TAG + " sound applied rows=" + applied + "/" + base.rows.size()
                 + " complete=" + Json.optBoolean(record, false, "complete"));
         return new Applied(applied > 0, Json.optBoolean(record, false, "complete"), applied);
     }
@@ -124,7 +124,7 @@ public final class ProcessedLyricsCache {
                     LyricCaches.soundArtifactKey(base.digest, soundConfigId), record.toString());
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " sound save failed: " + t);
+            XpLog.log(TAG + " sound save failed: " + t);
             return false;
         }
     }
@@ -171,7 +171,7 @@ public final class ProcessedLyricsCache {
                     LyricCaches.soundArtifactKey(base.digest, artifact.configId), record.toString());
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " sound save failed: " + t);
+            XpLog.log(TAG + " sound save failed: " + t);
             return false;
         }
     }
@@ -198,7 +198,7 @@ public final class ProcessedLyricsCache {
                     LyricCaches.meaningArtifactKey(base.digest, artifact.configId), record.toString());
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " meaning save failed: " + t);
+            XpLog.log(TAG + " meaning save failed: " + t);
             return false;
         }
     }
@@ -222,7 +222,7 @@ public final class ProcessedLyricsCache {
             line.translatedText = translated;
             applied++;
         }
-        XposedBridge.log(TAG + " meaning applied rows=" + applied + "/" + base.rows.size()
+        XpLog.log(TAG + " meaning applied rows=" + applied + "/" + base.rows.size()
                 + " complete=" + Json.optBoolean(record, false, "complete"));
         return new Applied(applied > 0, Json.optBoolean(record, false, "complete"), applied);
     }
@@ -247,7 +247,7 @@ public final class ProcessedLyricsCache {
                     LyricCaches.meaningArtifactKey(base.digest, meaningConfigId), record.toString());
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " meaning save failed: " + t);
+            XpLog.log(TAG + " meaning save failed: " + t);
             return false;
         }
     }
@@ -285,7 +285,7 @@ public final class ProcessedLyricsCache {
             if (!recordMatches(record, base.digest, configId)) return null;
             return record;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " read failed: " + t);
+            XpLog.log(TAG + " read failed: " + t);
             return null;
         }
     }

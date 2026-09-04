@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.WeakHashMap;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Owns injection and lifecycle for the now-playing live lyric card. */
 final class NowPlayingInjector {
@@ -56,7 +56,7 @@ final class NowPlayingInjector {
             }
             state.postNext();
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " schedule live card injection failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " schedule live card injection failed: " + t);
         }
     }
 
@@ -155,12 +155,12 @@ final class NowPlayingInjector {
                 }
                 alignment.postNext();
             }
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " live lyric card injected in " + activity.getClass().getName());
+            XpLog.log(NativeSpicyLyricsHook.TAG + " live lyric card injected in " + activity.getClass().getName());
             Diagnostics.event("renderer", "mount_state",
                     Diagnostics.context("surface", "now_playing", "mounted", "true"));
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " live card inject failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " live card inject failed: " + t);
             Diagnostics.event("renderer", "mount_state", t,
                     Diagnostics.context("surface", "now_playing", "mounted", "false"));
             return false;

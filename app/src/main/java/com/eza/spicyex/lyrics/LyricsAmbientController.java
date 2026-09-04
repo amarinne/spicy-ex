@@ -17,7 +17,7 @@ import com.eza.spicyex.beautifullyrics.entities.KawarpBackgroundView;
 
 import java.io.IOException;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.OkHttpClient;
@@ -130,7 +130,7 @@ public final class LyricsAmbientController {
             background.setMotionEnabled(animated);
             animatedBackground = background;
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " ambient background unavailable: " + t);
+            XpLog.log(TAG + " ambient background unavailable: " + t);
             animatedBackground = null;
             return;
         }
@@ -220,7 +220,7 @@ public final class LyricsAmbientController {
         artCall.enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                XposedBridge.log(TAG + " album art fetch failed: " + e.getMessage());
+                XpLog.log(TAG + " album art fetch failed: " + e.getMessage());
                 if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) {
                     inFlightArtImageId = "";
                     inFlightArtTarget = null;
@@ -252,7 +252,7 @@ public final class LyricsAmbientController {
                     background.updateImage(art);
                     appliedArtImageId = imageId;
                 } catch (Throwable t) {
-                    XposedBridge.log(TAG + " album art decode failed: " + t);
+                    XpLog.log(TAG + " album art decode failed: " + t);
                 } finally {
                     if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) {
                         inFlightArtImageId = "";

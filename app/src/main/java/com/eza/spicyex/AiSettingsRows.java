@@ -23,7 +23,7 @@ import com.eza.spicyex.ui.PanelPickerPopup;
 
 import java.util.List;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /**
  * The AI section's rows: the key, the endpoint, and the model.
@@ -151,7 +151,7 @@ final class AiSettingsRows {
             try {
                 outcome = AiModelProbe.probe(settings, null);
             } catch (Throwable failure) {
-                XposedBridge.log("[SpotifyPlusAiSettings] initial model probe failed: "
+                XpLog.log("[SpotifyPlusAiSettings] initial model probe failed: "
                         + AiRuntimeFailureLog.describe(failure));
             }
             if (outcome != null) {
@@ -242,7 +242,7 @@ final class AiSettingsRows {
                 final AiModelListResult result = settings.provider().listModels(null);
                 handler.post(() -> showModels(anchor, result));
             } catch (Throwable failure) {
-                XposedBridge.log("[SpotifyPlusAiSettings] model discovery failed: "
+                XpLog.log("[SpotifyPlusAiSettings] model discovery failed: "
                         + AiRuntimeFailureLog.describe(failure));
                 handler.post(() -> toast(host.string("settings_ai_runtime_unavailable",
                         "AI runtime unavailable")));
@@ -293,7 +293,7 @@ final class AiSettingsRows {
                     host.updateAiBadge(result.ok);
                 });
             } catch (Throwable failure) {
-                XposedBridge.log("[SpotifyPlusAiSettings] model probe failed: "
+                XpLog.log("[SpotifyPlusAiSettings] model probe failed: "
                         + AiRuntimeFailureLog.describe(failure));
                 handler.post(() -> {
                     AiModelLiveState.finish(settings, false);

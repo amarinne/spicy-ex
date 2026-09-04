@@ -73,7 +73,7 @@ public class SpicySetupCheckPolicyTest {
                         base.runtimeHookActive, false, base.installationMode,
                         base.spotifyMainProcess, base.moduleRuntimeAvailable,
                         base.modulePackageStatus, false, base.requiredFeaturesAvailable,
-                        base.hyperGlowEnabled, base.hyperGlowBridgeStatus));
+                        base.hyperGlowEnabled, base.hyperGlowBridgeStatus, true));
 
         assertEquals("failed", result.setupState);
         assertTrue(result.setupFailures.contains("xposed_api"));
@@ -91,7 +91,7 @@ public class SpicySetupCheckPolicyTest {
     }
 
     private static SpicySetupCheckPolicy.Input input(String mode, String packageStatus,
-                                                     boolean internet, boolean bridgeReady) {
+                                                      boolean internet, boolean bridgeReady) {
         return new SpicySetupCheckPolicy.Input(
                 true,
                 true,
@@ -102,7 +102,24 @@ public class SpicySetupCheckPolicyTest {
                 internet,
                 true,
                 true,
-                bridgeReady ? "connected" : "disconnected"
+                bridgeReady ? "connected" : "disconnected",
+                true
         );
+    }
+
+    @Test
+    public void missingModuleResourcesIsWarningOnly() {
+        SpicySetupCheckPolicy.Input base = input("lsposed", "present", true, true);
+        SpicySetupCheckPolicy.Result result = SpicySetupCheckPolicy.resolve(
+                new SpicySetupCheckPolicy.Input(
+                        base.runtimeHookActive, base.xposedApiAvailable, base.installationMode,
+                        base.spotifyMainProcess, base.moduleRuntimeAvailable,
+                        base.modulePackageStatus, base.internetPermissionGranted,
+                        base.requiredFeaturesAvailable, base.hyperGlowEnabled,
+                        base.hyperGlowBridgeStatus, false));
+
+        assertEquals("warning", result.setupState);
+        assertTrue(result.setupFailures.contains("module_resources"));
+        assertFalse(result.moduleResourcesAvailable);
     }
 }

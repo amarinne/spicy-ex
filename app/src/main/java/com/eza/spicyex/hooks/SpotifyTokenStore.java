@@ -5,7 +5,8 @@ import android.content.SharedPreferences;
 
 import com.eza.spicyex.References;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
+import com.eza.spicyex.xposed.XpReflect;
 
 /**
  * Process-wide owner of the captured Spotify access-token lifecycle (packet M2).
@@ -94,7 +95,7 @@ final class SpotifyTokenStore {
         }
         syncMirror();
         if (advanced) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " captured Spotify access token"
+            XpLog.log(NativeSpicyLyricsHook.TAG + " captured Spotify access token"
                     + " source=" + source
                     + " generation=" + STATE.generation()
                     + " hasObservedExpiry=" + (STATE.expiresAtMillis() > 0));
@@ -121,13 +122,13 @@ final class SpotifyTokenStore {
                 // Legacy raw-token entry: no captured timestamp, freshness unverifiable. Clear it
                 // (value and length are never logged) so only metadata-complete captures survive.
                 clearPersisted(prefs);
-                XposedBridge.log(NativeSpicyLyricsHook.TAG
+                XpLog.log(NativeSpicyLyricsHook.TAG
                         + " legacy token preference migrated: freshness unverifiable, cleared for repopulation");
                 return;
             }
             if (!isFreshForRestore(now, capturedAt, expiresAt)) {
                 clearPersisted(prefs);
-                XposedBridge.log(NativeSpicyLyricsHook.TAG
+                XpLog.log(NativeSpicyLyricsHook.TAG
                         + " persisted token rejected by freshness rule"
                         + " ageMillis=" + Math.max(0L, now - capturedAt)
                         + " hasObservedExpiry=" + (expiresAt > 0));
@@ -136,12 +137,12 @@ final class SpotifyTokenStore {
             STATE.restore(token.trim(), capturedAt, expiresAt, generation);
             persistValues(prefs, token.trim(), capturedAt, expiresAt, STATE.generation());
             syncMirror();
-            XposedBridge.log(NativeSpicyLyricsHook.TAG
+            XpLog.log(NativeSpicyLyricsHook.TAG
                     + " restored persisted Spotify access token"
                     + " generation=" + STATE.generation()
                     + " hasObservedExpiry=" + (STATE.expiresAtMillis() > 0));
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG
+            XpLog.log(NativeSpicyLyricsHook.TAG
                     + " token restore failed type=" + t.getClass().getName());
         }
     }
@@ -170,7 +171,7 @@ final class SpotifyTokenStore {
                 try {
                     clearPersisted(prefs(context));
                 } catch (Throwable t) {
-                    XposedBridge.log(NativeSpicyLyricsHook.TAG
+                    XpLog.log(NativeSpicyLyricsHook.TAG
                             + " token persist failed op=invalidate type=" + t.getClass().getName());
                 }
             }
@@ -199,7 +200,7 @@ final class SpotifyTokenStore {
             persistValues(prefs(context), tokenText,
                     STATE.capturedAtMillis(), STATE.expiresAtMillis(), STATE.generation());
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG
+            XpLog.log(NativeSpicyLyricsHook.TAG
                     + " token persist failed op=capture type=" + t.getClass().getName());
         }
     }
@@ -245,8 +246,8 @@ final class SpotifyTokenStore {
         android.app.Activity activity = References.currentActivity();
         if (activity != null) return activity.getApplicationContext();
         try {
-            Object app = de.robv.android.xposed.XposedHelpers.callStaticMethod(
-                    de.robv.android.xposed.XposedHelpers.findClass("android.app.ActivityThread", null),
+            Object app = XpReflect.callStaticMethod(
+                    XpReflect.findClass("android.app.ActivityThread", null),
                     "currentApplication");
             if (app instanceof Context) return ((Context) app).getApplicationContext();
         } catch (Throwable ignored) {

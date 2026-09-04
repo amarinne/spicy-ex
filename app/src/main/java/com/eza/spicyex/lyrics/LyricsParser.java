@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 import static com.eza.spicyex.lyrics.LyricUtils.cleanInvisibles;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
@@ -523,7 +523,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
 
     private static void log(String message) {
         try {
-            XposedBridge.log(message);
+            XpLog.log(message);
         } catch (Throwable ignored) {
         }
     }

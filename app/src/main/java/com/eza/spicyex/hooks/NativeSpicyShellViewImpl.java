@@ -90,7 +90,7 @@ import com.eza.spicyex.lyrics.SyllableSegment;
 
 import java.util.List;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 import com.eza.spicyex.hooks.NativeSpicyLyricsHook.LyricsResultCallback;
 
@@ -643,7 +643,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             document = null;
             String id = trackIdFromUri(uri);
             ambientController.updateForTrack(track, () -> running);
-            XposedBridge.log(TAG + " active track uri=" + uri + " title=\"" + safe(track.title) + "\"");
+            XpLog.log(TAG + " active track uri=" + uri + " title=\"" + safe(track.title) + "\"");
             showLoading("Loading lyrics…");
             loadLyrics(track, id);
         }
@@ -856,7 +856,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             String currentId = current == null ? "" : trackIdFromUri(current.uri);
             if (!running || !documentGate.accepts(candidate, currentId)) {
                 if (running && !id.equals(currentId)) {
-                    XposedBridge.log(TAG + " stale lyrics ignored id=" + id + " current=" + currentId);
+                    XpLog.log(TAG + " stale lyrics ignored id=" + id + " current=" + currentId);
                 }
                 return;
             }
@@ -883,7 +883,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             observeAiRequestFeedback(document);
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
             renderDocument(false);
-            XposedBridge.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider="
+            XpLog.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider="
                     + doc.provider + " type=" + doc.type + " lines=" + doc.lines.size());
         });
     }
@@ -1181,10 +1181,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             setActiveLine(index, lyricTarget, host.getCurrentTrackSafely(), true);
             frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
                     renderConfig, lyricTarget, index, 1f / 60f, false, 0, Integer.MAX_VALUE);
-            XposedBridge.log(TAG + " seek line index=" + index + " ms=" + target + " lyricMs=" + lyricTarget);
+            XpLog.log(TAG + " seek line index=" + index + " ms=" + target + " lyricMs=" + lyricTarget);
         } else {
             followState.holdUntil(SystemClock.elapsedRealtime() + 2500);
-            XposedBridge.log(TAG + " seek line failed index=" + index + " ms=" + target);
+            XpLog.log(TAG + " seek line failed index=" + index + " ms=" + target);
         }
     }
 
@@ -1314,7 +1314,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             applyRenderConfigChanges("settings closed", true);
             ambientController.applySettings(renderConfig.backgroundStyle, renderConfig.forceDarkBackground);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " onSettingsClosed failed: " + t);
+            XpLog.log(TAG + " onSettingsClosed failed: " + t);
         }
     }
 
@@ -2004,7 +2004,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                         if (changed > 0) {
                             host.refreshLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind.SOUND);
                         }
-                        XposedBridge.log(TAG + " local mode reprocess complete changed=" + changed + " reason=" + completedReason);
+                        XpLog.log(TAG + " local mode reprocess complete changed=" + changed + " reason=" + completedReason);
                     }
 
                     @Override

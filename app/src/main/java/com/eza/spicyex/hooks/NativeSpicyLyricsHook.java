@@ -14,8 +14,8 @@ import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import com.eza.spicyex.xposed.XpLog;
+import com.eza.spicyex.xposed.XpReflect;
 
 /**
  * Native Spicy shell.
@@ -54,7 +54,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
 
     static void dbg(String function, String message) {
         if (!DEBUG_LOGGING) return;
-        XposedBridge.log(TAG + " [" + BUILD_CLUE + "] " + function + "() " + safe(message));
+        XpLog.log(TAG + " [" + BUILD_CLUE + "] " + function + "() " + safe(message));
     }
 
     static void dbgEnter(String function) {
@@ -66,9 +66,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         Diagnostics.event("bootstrap", "hook_start",
                 Diagnostics.context("process", Application.getProcessName()));
         dbg("hook", "native Spicy renderer hook enabled version=" + BuildStamp.FULL);
-        new AuthTokenCaptureHook(lpparm.classLoader).hook();
+        new AuthTokenCaptureHook(lpparm.classLoader()).hook();
         new NativeLyricsCaptureHook(
-                lpparm.classLoader,
+                lpparm.classLoader(),
                 bridge,
                 lyricsFetchCoordinator.nativeLyricsSource(),
                 this::getCurrentTrackSafely
@@ -76,9 +76,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         playbackBridge.install(lpparm, bridge);
         activityTakeoverHook.hook();
         String processName = Application.getProcessName();
-        XposedBridge.log(TAG + " bridge init package=" + lpparm.packageName
-                + " loadProcess=" + lpparm.processName + " appProcess=" + processName);
-        if (lpparm.packageName.equals(processName)) {
+        XpLog.log(TAG + " bridge init package=" + lpparm.packageName()
+                + " appProcess=" + processName);
+        if (lpparm.packageName().equals(processName)) {
             // At process start, not only on fullscreen open: a user who never opens the fullscreen
             // screen would otherwise keep derived data from a retired cache epoch indefinitely.
             DeployCacheCleaner.ensureCleared(applicationContext);
@@ -92,7 +92,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "main_process"));
         } else {
-            XposedBridge.log(TAG + " bridge skipped outside main Spotify process");
+            XpLog.log(TAG + " bridge skipped outside main Spotify process");
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "secondary_process"));
         }
@@ -115,8 +115,8 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         Activity activity = References.currentActivity();
         if (activity != null) return activity.getApplicationContext();
         try {
-            Object app = XposedHelpers.callStaticMethod(
-                    XposedHelpers.findClass("android.app.ActivityThread", null), "currentApplication");
+            Object app = XpReflect.callStaticMethod(
+                    XpReflect.findClass("android.app.ActivityThread", null), "currentApplication");
             if (app instanceof Context) return ((Context) app).getApplicationContext();
         } catch (Throwable ignored) {
         }
@@ -131,9 +131,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         dbgEnter("getCurrentTrackSafely");
         try {
             if (References.playerState == null || References.playerState.get() == null) return null;
-            return References.getTrackTitle(lpparm, bridge);
+            return References.getTrackTitle(lpparm.classLoader(), bridge);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " track read failed: " + t);
+            XpLog.log(TAG + " track read failed: " + t);
             return null;
         }
     }

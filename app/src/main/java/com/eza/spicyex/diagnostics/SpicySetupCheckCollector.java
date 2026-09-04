@@ -9,7 +9,7 @@ import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Bounded runtime checks only. Never invokes root or reads logs/files. */
 public final class SpicySetupCheckCollector {
@@ -49,8 +49,18 @@ public final class SpicySetupCheckCollector {
                         == PackageManager.PERMISSION_GRANTED,
                 Diagnostics.hookBootstrapComplete(),
                 settings != null && settings.get(Settings.HYPERGLOW_ENABLED),
-                bridgeStatus
+                bridgeStatus,
+                moduleResourcesAvailable(context)
         ));
+    }
+
+    private static boolean moduleResourcesAvailable(Context context) {
+        try {
+            return com.eza.spicyex.xposed.XpRes.moduleResources(context) != null
+                    || com.eza.spicyex.References.modResources != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     private static boolean hasLspatchMarker(Context context) {
@@ -70,7 +80,7 @@ public final class SpicySetupCheckCollector {
 
     private static int xposedApiVersion() {
         try {
-            return Math.max(0, XposedBridge.getXposedVersion());
+            return Math.max(0, XpLog.apiVersion());
         } catch (Throwable ignored) {
             return 0;
         }
@@ -116,7 +126,7 @@ public final class SpicySetupCheckCollector {
 
     private static ClassLoader[] runtimeClassLoaders() {
         return new ClassLoader[]{
-                XposedBridge.class.getClassLoader(),
+                XpLog.class.getClassLoader(),
                 SpicySetupCheckCollector.class.getClassLoader(),
                 Thread.currentThread().getContextClassLoader()
         };

@@ -5,7 +5,7 @@ import android.os.Build;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Android shell lifecycle glue that should not live in renderer state. */
 public final class LyricsShellLifecycle {
@@ -39,7 +39,7 @@ public final class LyricsShellLifecycle {
                     backInvokedCallback);
         } catch (Throwable t) {
             backInvokedCallback = null;
-            XposedBridge.log(TAG + " back gesture callback registration failed: " + t);
+            XpLog.log(TAG + " back gesture callback registration failed: " + t);
         }
     }
 
@@ -48,7 +48,7 @@ public final class LyricsShellLifecycle {
         try {
             activity.getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " back gesture callback unregister failed: " + t);
+            XpLog.log(TAG + " back gesture callback unregister failed: " + t);
         } finally {
             backInvokedCallback = null;
         }

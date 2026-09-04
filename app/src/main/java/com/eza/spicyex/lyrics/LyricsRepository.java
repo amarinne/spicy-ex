@@ -13,7 +13,7 @@ import java.io.IOException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.MediaType;
@@ -65,19 +65,19 @@ public final class LyricsRepository {
         String trackId = trackIdFromUri(uri);
         if (trackId.isEmpty()) {
             if (uri.startsWith("spotify:local:")) {
-                XposedBridge.log(TAG + " skipping fetch: local file uri=" + safe(uri));
+                XpLog.log(TAG + " skipping fetch: local file uri=" + safe(uri));
                 callback.onError("Lyrics unavailable for local files");
             } else if (uri.startsWith("spotify:episode:")) {
-                XposedBridge.log(TAG + " skipping fetch: episode uri=" + safe(uri));
+                XpLog.log(TAG + " skipping fetch: episode uri=" + safe(uri));
                 callback.onError("Lyrics unavailable for podcasts/episodes");
             } else {
-                XposedBridge.log(TAG + " skipping fetch: unsupported uri=" + safe(uri));
+                XpLog.log(TAG + " skipping fetch: unsupported uri=" + safe(uri));
                 callback.onError("Lyrics unavailable for this media");
             }
             return;
         }
         if (NO_LYRICS.contains(trackId)) {
-            XposedBridge.log(TAG + " skip fetch: no lyrics from any source this session, id=" + trackId);
+            XpLog.log(TAG + " skip fetch: no lyrics from any source this session, id=" + trackId);
             callback.onError("Lyrics unavailable (cached no-result)");
             return;
         }
@@ -97,7 +97,7 @@ public final class LyricsRepository {
                 //   transient  -> "LRCLIB failed: <io>", "LRCLIB HTTP 5xx"
                 if (LyricsFetchErrors.isDurableNoLyrics(error)) {
                     NO_LYRICS.add(negId);
-                    XposedBridge.log(TAG + " cached no-lyrics for id=" + negId + " (" + error + ")");
+                    XpLog.log(TAG + " cached no-lyrics for id=" + negId + " (" + error + ")");
                 }
                 callback.onError(error);
             }
@@ -133,7 +133,7 @@ public final class LyricsRepository {
                 LyricsDocument doc = parser.parseSpicyLyrics(context, track, cached, true);
                 LyricsProviderChain.Decision decision = chain.acceptCached(doc);
                 if (doc.spicyPoisoned) {
-                    XposedBridge.log(TAG + " warning: ignored suspicious cached Spicy response reason="
+                    XpLog.log(TAG + " warning: ignored suspicious cached Spicy response reason="
                             + safe(doc.spicyQualityReason)
                             + " status=" + (doc.spicyQueryStatus == null ? "unknown" : doc.spicyQueryStatus)
                             + " format=" + safe(doc.spicyFormat)
@@ -144,7 +144,7 @@ public final class LyricsRepository {
                     callback.onSuccess(doc);
                 }
             } catch (Throwable t) {
-                XposedBridge.log(TAG + " cached parse failed: " + t);
+                XpLog.log(TAG + " cached parse failed: " + t);
             }
         }
 
@@ -188,7 +188,7 @@ public final class LyricsRepository {
                             doc = parser.parseSpicyLyrics(context, track, raw, false);
                         } catch (Throwable parseErr) {
                             if (chain.deliveredCachedSynced()) return;
-                            XposedBridge.log(TAG + " parse failed: " + parseErr);
+                            XpLog.log(TAG + " parse failed: " + parseErr);
                             fetchNativeThenLrclib(context, track, generation, callback, 0,
                                     "Spicy parse failed: " + parseErr.getMessage(), chain, hasToken);
                             return;
@@ -211,7 +211,7 @@ public final class LyricsRepository {
                         return;
                     }
                     if (doc.spicyPoisoned) {
-                        XposedBridge.log(TAG + " warning: rejected suspicious Spicy response reason="
+                        XpLog.log(TAG + " warning: rejected suspicious Spicy response reason="
                                 + safe(doc.spicyQualityReason)
                                 + " status=" + (doc.spicyQueryStatus == null ? "unknown" : doc.spicyQueryStatus)
                                 + " format=" + safe(doc.spicyFormat)
@@ -227,16 +227,16 @@ public final class LyricsRepository {
                             LyricsResponseCache.put(context, trackId, decision.rawToCache);
                             cacheWrite = true;
                         }
-                        XposedBridge.log(TAG + " using Spicy synced lyrics type=" + doc.type + " provider=" + doc.provider + " lines=" + doc.lines.size());
+                        XpLog.log(TAG + " using Spicy synced lyrics type=" + doc.type + " provider=" + doc.provider + " lines=" + doc.lines.size());
                         LyricsFetchDiagnosticsState.record("spicy", chain.candidatesSeen(), doc, hasToken, cacheWrite);
                         callback.onSuccess(doc);
                         return;
                     }
-                    XposedBridge.log(TAG + " Spicy returned static type=" + doc.type + "; probing native synced upgrade");
+                    XpLog.log(TAG + " Spicy returned static type=" + doc.type + "; probing native synced upgrade");
                     fetchNativeThenLrclib(context, track, generation, callback, 0, "Spicy static", chain, hasToken);
                 } catch (Throwable t) {
                     if (chain.deliveredCachedSynced()) return;
-                    XposedBridge.log(TAG + " response handling failed: " + t);
+                    XpLog.log(TAG + " response handling failed: " + t);
                     fetchNativeThenLrclib(context, track, generation, callback, 0,
                             "Spicy response failed: " + t.getMessage(), chain, hasToken);
                 }
@@ -264,14 +264,14 @@ public final class LyricsRepository {
             boolean hasToken,
             int rejectionStatus
     ) {
-        XposedBridge.log(TAG + " inner Spicy auth rejection status=" + rejectionStatus
+        XpLog.log(TAG + " inner Spicy auth rejection status=" + rejectionStatus
                 + " tokenGeneration=" + rejectedTokenGeneration
                 + (authRetryUsed ? " retryAlreadyUsed" : ""));
         Authorization replacement = authRecovery == null
                 ? null : authRecovery.afterAuthRejection(rejectedTokenGeneration);
         if (chain.deliveredCachedSynced()) return; // cached synced already delivered; nothing to do
         if (shouldRetryWithNewerGeneration(rejectedTokenGeneration, authRetryUsed, replacement)) {
-            XposedBridge.log(TAG + " retrying Spicy once with newer token generation="
+            XpLog.log(TAG + " retrying Spicy once with newer token generation="
                     + replacement.generation());
             fetchSpicyLyricsFallback(context, track, generation, sendToken,
                     replacement.token(), replacement.generation(), authRecovery, true, callback);
@@ -393,7 +393,7 @@ public final class LyricsRepository {
                     }
                     SpicyVersionProbeState.recordSuccess(requestVersion, latest);
                     if (SpicyVersionProbeState.spicyVersionOutdated) {
-                        XposedBridge.log(TAG + " warning: Spicy client version outdated sent="
+                        XpLog.log(TAG + " warning: Spicy client version outdated sent="
                                 + SpicyVersionProbeState.spicyVersionSent
                                 + " latest=" + SpicyVersionProbeState.spicyLatestVersion);
                     }
@@ -426,7 +426,7 @@ public final class LyricsRepository {
             if (chain.hasPendingStatic()) {
                 if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
                 if (decision.document == nativeDoc) {
-                    XposedBridge.log(TAG + " using native lyrics (" + safe(reason) + ") type=" + nativeDoc.type
+                    XpLog.log(TAG + " using native lyrics (" + safe(reason) + ") type=" + nativeDoc.type
                             + " provider=" + nativeDoc.provider + " lines=" + nativeDoc.lines.size()
                             + " score=" + LyricQualityRanker.score(nativeDoc));
                     LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
@@ -434,7 +434,7 @@ public final class LyricsRepository {
                 } else {
                     LyricsDocument spicyStatic = chain.pendingStatic();
                     boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
-                    XposedBridge.log(TAG + " keeping Spicy static over native static score="
+                    XpLog.log(TAG + " keeping Spicy static over native static score="
                             + LyricQualityRanker.score(spicyStatic) + " nativeScore=" + LyricQualityRanker.score(nativeDoc));
                     LyricsFetchDiagnosticsState.record(sourceLabel(spicyStatic, "spicy"), chain.candidatesSeen(), spicyStatic, tokenPresent, cacheWrite);
                     callback.onSuccess(spicyStatic);
@@ -442,13 +442,13 @@ public final class LyricsRepository {
                 return;
             }
             if (LyricsProviderChain.isSyncedType(nativeDoc.type)) {
-                XposedBridge.log(TAG + " using native synced lyrics (" + safe(reason) + ") type=" + nativeDoc.type
+                XpLog.log(TAG + " using native synced lyrics (" + safe(reason) + ") type=" + nativeDoc.type
                         + " provider=" + nativeDoc.provider + " lines=" + nativeDoc.lines.size());
                 LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
                 callback.onSuccess(nativeDoc);
                 return;
             }
-            XposedBridge.log(TAG + " using native static lyrics (" + safe(reason) + ") lines=" + nativeDoc.lines.size());
+            XpLog.log(TAG + " using native static lyrics (" + safe(reason) + ") lines=" + nativeDoc.lines.size());
             LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
             callback.onSuccess(nativeDoc);
             return;
@@ -456,7 +456,7 @@ public final class LyricsRepository {
 
         if (nativeRetryCount < NATIVE_LYRICS_RETRY_LIMIT) {
             int nextRetry = nativeRetryCount + 1;
-            XposedBridge.log(TAG + " waiting for native lyrics (" + safe(reason) + ") retry=" + nextRetry);
+            XpLog.log(TAG + " waiting for native lyrics (" + safe(reason) + ") retry=" + nextRetry);
             ioScheduler.schedule(
                     () -> fetchNativeThenLrclibWithStatic(context, track, generation, callback, nextRetry,
                             reason, chain, tokenPresent),
@@ -467,11 +467,11 @@ public final class LyricsRepository {
 
         chain.nativeMissAfterRetries(reason);
         if (chain.hasPendingStatic()) {
-            XposedBridge.log(TAG + " native absent; probing LRCLIB against Spicy static lines=" + chain.pendingStatic().lines.size());
+            XpLog.log(TAG + " native absent; probing LRCLIB against Spicy static lines=" + chain.pendingStatic().lines.size());
             fetchLrclibWithSpicyFallback(context, track, generation, callback, reason, chain, tokenPresent);
             return;
         }
-        XposedBridge.log(TAG + " native lyrics miss (" + safe(reason) + "); falling back to LRCLIB");
+        XpLog.log(TAG + " native lyrics miss (" + safe(reason) + "); falling back to LRCLIB");
         fetchLrclib(context, track, generation, callback, reason, chain, tokenPresent);
     }
 
@@ -484,7 +484,7 @@ public final class LyricsRepository {
                 LyricsProviderChain.Decision decision = chain.acceptLrclib(lrclibDoc);
                 LyricsDocument spicyStatic = chain.pendingStatic();
                 if (decision.document == lrclibDoc) {
-                    XposedBridge.log(TAG + " using LRCLIB lyrics over Spicy static type=" + lrclibDoc.type
+                    XpLog.log(TAG + " using LRCLIB lyrics over Spicy static type=" + lrclibDoc.type
                             + " lines=" + lrclibDoc.lines.size()
                             + " score=" + LyricQualityRanker.score(lrclibDoc)
                             + " spicyScore=" + LyricQualityRanker.score(spicyStatic));
@@ -494,7 +494,7 @@ public final class LyricsRepository {
                 }
                 if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
                 boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
-                XposedBridge.log(TAG + " native/LRCLIB lower ranked; delivering Spicy static lines="
+                XpLog.log(TAG + " native/LRCLIB lower ranked; delivering Spicy static lines="
                         + spicyStatic.lines.size() + " score=" + LyricQualityRanker.score(spicyStatic));
                 LyricsFetchDiagnosticsState.record(sourceLabel(spicyStatic, "spicy"), chain.candidatesSeen(), spicyStatic, tokenPresent, cacheWrite);
                 callback.onSuccess(spicyStatic);
@@ -506,7 +506,7 @@ public final class LyricsRepository {
                 if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
                 LyricsDocument spicyStatic = chain.pendingStatic();
                 boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
-                XposedBridge.log(TAG + " LRCLIB miss; delivering Spicy static lines=" + spicyStatic.lines.size());
+                XpLog.log(TAG + " LRCLIB miss; delivering Spicy static lines=" + spicyStatic.lines.size());
                 LyricsFetchDiagnosticsState.record(sourceLabel(spicyStatic, "spicy"), chain.candidatesSeen(), spicyStatic, tokenPresent, cacheWrite);
                 callback.onSuccess(spicyStatic);
             }
@@ -560,7 +560,7 @@ public final class LyricsRepository {
                     callback.onSuccess(doc);
                 } catch (Throwable t) {
                     reportLrclibError(chain, callback, reason + "; LRCLIB parse failed: " + t.getMessage());
-                    XposedBridge.log(TAG + " LRCLIB parse failed: " + t);
+                    XpLog.log(TAG + " LRCLIB parse failed: " + t);
                 }
             }
         });

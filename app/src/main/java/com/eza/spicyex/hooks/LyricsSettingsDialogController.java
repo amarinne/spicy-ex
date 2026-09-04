@@ -12,7 +12,7 @@ import com.eza.spicyex.beautifullyrics.entities.VsyncFrameScheduler;
 import com.eza.spicyex.lyrics.LyricsAmbientController;
 import com.eza.spicyex.ui.Motion;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Owns the in-Spotify settings modal lifecycle and render-loop pause/resume. */
 final class LyricsSettingsDialogController {
@@ -78,7 +78,7 @@ final class LyricsSettingsDialogController {
             dialog.show();
             Motion.enterCard(panelView);
         } catch (Throwable t) {
-            XposedBridge.log(logTag + " settings dialog failed: " + t);
+            XpLog.log(logTag + " settings dialog failed: " + t);
         }
     }
 

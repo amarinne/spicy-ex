@@ -18,7 +18,7 @@ import com.eza.spicyex.lyrics.LyricsDocument;
 
 import java.util.UUID;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Optional HyperGlow consumer of the process-level lyric session. */
 final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener {
@@ -171,7 +171,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                             generation,
                             revision,
                             documentRevision)) {
-                        XposedBridge.log("[SpotifyPlusBridge] document publication superseded"
+                        XpLog.log("[SpotifyPlusBridge] document publication superseded"
                                 + " generation=" + generation + " revision=" + revision
                                 + " current=" + documentRevision);
                         documentSkipped("superseded");
@@ -180,7 +180,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                     publisher.publishDocument(metadata, encoded);
                 });
             } catch (Exception e) {
-                XposedBridge.log("[SpotifyPlusBridge] document encode failed: "
+                XpLog.log("[SpotifyPlusBridge] document encode failed: "
                         + e.getClass().getSimpleName());
             }
         });

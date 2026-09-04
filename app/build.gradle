@@ -77,8 +77,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 616
-        versionName "1.58.341-furigana-duplication-fix+B616-20260901T2226Z"
+        versionCode 622
+        versionName "1.58.347-libxposed-api-102+B622-20260904T1948Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
@@ -157,7 +157,10 @@ android {
 dependencies {
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
     testImplementation 'junit:junit:4.13.2'
-    compileOnly 'de.robv.android.xposed:api:82'
+    // Test-runtime copy of the hook API so adapter seam tests can drive a fake
+    // interceptor chain on the JVM. Production stays compileOnly (no API in APK).
+    testImplementation 'io.github.libxposed:api:102.0.0'
+    compileOnly 'io.github.libxposed:api:102.0.0'
     implementation 'com.google.android.flexbox:flexbox:3.0.0'
     implementation 'com.google.code.gson:gson:2.13.1'
     implementation 'org.luckypray:dexkit:2.0.0'

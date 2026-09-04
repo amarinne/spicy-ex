@@ -20,7 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
@@ -94,7 +94,7 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
                 byTrack.remove(eldest);
             }
         }
-        XposedBridge.log(TAG + " captured native lyrics track=" + trackId
+        XpLog.log(TAG + " captured native lyrics track=" + trackId
                 + " type=" + doc.type
                 + " provider=" + doc.provider
                 + " lines=" + doc.lines.size()
@@ -127,13 +127,13 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
                     cursor.close();
                     cursor = null;
                     if (doc != null && !doc.lines.isEmpty()) {
-                        XposedBridge.log(TAG + " native DB read hit track=" + trackId + " type=" + doc.type + " lines=" + doc.lines.size());
+                        XpLog.log(TAG + " native DB read hit track=" + trackId + " type=" + doc.type + " lines=" + doc.lines.size());
                         return doc;
                     }
                 }
                 if (cursor != null) { cursor.close(); cursor = null; }
             }
-            XposedBridge.log(TAG + " native DB read miss track=" + trackId);
+            XpLog.log(TAG + " native DB read miss track=" + trackId);
             return null;
         } catch (Throwable t) {
             Diagnostics.warn(TAG, "native DB read failed", t);
@@ -646,7 +646,7 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
 
     private static void dbg(String function, String message) {
         if (!DEBUG_LOGGING) return;
-        XposedBridge.log(TAG + " " + function + "() " + safe(message));
+        XpLog.log(TAG + " " + function + "() " + safe(message));
     }
 
     public interface ContextProvider {

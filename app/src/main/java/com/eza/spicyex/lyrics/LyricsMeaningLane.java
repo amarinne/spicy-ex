@@ -38,7 +38,7 @@ import com.eza.spicyex.lyrics.session.LayerRunCoalescer;
 import com.eza.spicyex.lyrics.session.LayerRunIdentity;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 
-import de.robv.android.xposed.XposedBridge;
+import com.eza.spicyex.xposed.XpLog;
 import okhttp3.OkHttpClient;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
@@ -252,7 +252,7 @@ public final class LyricsMeaningLane {
                             1, 512);
                 }
             } catch (Throwable t) {
-                XposedBridge.log(TAG + " translation pass failed: " + t.getClass().getSimpleName());
+                XpLog.log(TAG + " translation pass failed: " + t.getClass().getSimpleName());
             } finally {
                 // Release before publishing so a deferred surface re-runs against the fresh cache.
                 COALESCER.finish(runIdentity);
@@ -372,7 +372,7 @@ public final class LyricsMeaningLane {
                         recordAiOutcome("request_failed", "failed",
                                 result.outcome.failureToken,
                                 result.outcome.failure.httpStatus);
-                        XposedBridge.log(TAG + " ai translation outcome=failed token="
+                        XpLog.log(TAG + " ai translation outcome=failed token="
                                 + result.outcome.failureToken + " status="
                                 + result.outcome.failure.httpStatus + " rule="
                                 + result.outcome.failureDetail);
@@ -382,7 +382,7 @@ public final class LyricsMeaningLane {
                         recordAiOutcome("request_settled",
                                 result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT),
                                 "", 0);
-                        XposedBridge.log(TAG + " ai translation outcome="
+                        XpLog.log(TAG + " ai translation outcome="
                                 + result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT)
                                 + " durable=" + result.outcome.durable);
                     }
@@ -392,7 +392,7 @@ public final class LyricsMeaningLane {
                     recordAiOutcome("request_settled", "cancelled", "", 0);
                     return;
                 } catch (Throwable failure) {
-                    XposedBridge.log(TAG + " ai translation failed: "
+                    XpLog.log(TAG + " ai translation failed: "
                             + AiRuntimeFailureLog.describe(failure));
                     aiFailure = new LayerFailure(LayerFailure.Reason.UNAVAILABLE,
                             "runtime_unavailable", 0);
@@ -441,7 +441,7 @@ public final class LyricsMeaningLane {
         } catch (RuntimeException notDispatched) {
             COALESCER.finish(runIdentity);
             AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(), run.tag);
-            XposedBridge.log(TAG + " ai translation not dispatched: "
+            XpLog.log(TAG + " ai translation not dispatched: "
                     + notDispatched.getClass().getSimpleName());
             return false;
         }
@@ -522,7 +522,7 @@ public final class LyricsMeaningLane {
                         google = googleResult.artifact;
                         googleFailure = googleResult.failure;
                     } catch (Throwable failure) {
-                        XposedBridge.log(TAG + " preview google failed: "
+                        XpLog.log(TAG + " preview google failed: "
                                 + failure.getClass().getSimpleName());
                     }
                     final MeaningPreviewRace.Outcome googleOutcome = race.onGoogleSettled(google);
@@ -559,7 +559,7 @@ public final class LyricsMeaningLane {
             MeaningPreviewRace.Outcome googleOutcome = race.onGoogleSettled(null);
             completePreviewRun(run, id, generation, snapshot, currentGuard, callback,
                     runIdentity, googleOutcome);
-            XposedBridge.log(TAG + " preview google not dispatched: "
+            XpLog.log(TAG + " preview google not dispatched: "
                     + notDispatched.getClass().getSimpleName());
         }
 
@@ -603,7 +603,7 @@ public final class LyricsMeaningLane {
                             recordAiOutcome("request_failed", "failed",
                                     result.outcome.failureToken,
                                     result.outcome.failure.httpStatus);
-                            XposedBridge.log(TAG + " ai translation outcome=failed token="
+                            XpLog.log(TAG + " ai translation outcome=failed token="
                                     + result.outcome.failureToken + " status="
                                     + result.outcome.failure.httpStatus + " rule="
                                     + result.outcome.failureDetail);
@@ -613,7 +613,7 @@ public final class LyricsMeaningLane {
                             recordAiOutcome("request_settled",
                                     result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT),
                                     "", 0);
-                            XposedBridge.log(TAG + " ai translation outcome="
+                            XpLog.log(TAG + " ai translation outcome="
                                     + result.outcome.kind.name().toLowerCase(java.util.Locale.ROOT)
                                     + " durable=" + result.outcome.durable);
                         }
@@ -625,7 +625,7 @@ public final class LyricsMeaningLane {
                         COALESCER.finish(runIdentity);
                         return;
                     } catch (Throwable failure) {
-                        XposedBridge.log(TAG + " ai translation failed: "
+                        XpLog.log(TAG + " ai translation failed: "
                                 + AiRuntimeFailureLog.describe(failure));
                         aiFailure = new LayerFailure(LayerFailure.Reason.UNAVAILABLE,
                                 "runtime_unavailable", 0);
@@ -653,7 +653,7 @@ public final class LyricsMeaningLane {
             AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(), run.tag);
             // The same tag owns both children's calls, so this aborts the Google child too.
             provider.cancel(http, run.tag);
-            XposedBridge.log(TAG + " preview ai translation not dispatched: "
+            XpLog.log(TAG + " preview ai translation not dispatched: "
                     + notDispatched.getClass().getSimpleName());
             return false;
         }
@@ -732,7 +732,7 @@ public final class LyricsMeaningLane {
                             entries, translated, changed, false, run.tag, run, stats, 1, 512);
                 }
             } catch (Throwable failure) {
-                XposedBridge.log(TAG + " google fallback failed: "
+                XpLog.log(TAG + " google fallback failed: "
                         + failure.getClass().getSimpleName());
             }
         }
@@ -878,7 +878,7 @@ public final class LyricsMeaningLane {
         String result = complete ? "complete" : translated > 0 ? "partial" : "empty";
         String reason = safe(stats.lastReason);
         if (complete && !reason.isEmpty()) reason = "recovered_" + reason;
-        XposedBridge.log(TAG + " google settled result=" + result
+        XpLog.log(TAG + " google settled result=" + result
                 + " requested=" + stats.requested
                 + " translated=" + translated
                 + " cacheHits=" + stats.cacheHits.size()

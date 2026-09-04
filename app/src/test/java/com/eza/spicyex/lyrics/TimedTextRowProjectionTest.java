@@ -21,6 +21,29 @@ import com.eza.spicyex.lyrics.reading.SyllableCanonicalizer;
 
 public class TimedTextRowProjectionTest {
     @Test
+    public void exactReconstructionRejectsDuplicatedTimedSuffix() {
+        assertFalse(TimedTextRowProjection.exactlyReconstructs(
+                Arrays.asList("najě yolgiga sigun gorirô", "yolgigasigungorirô"),
+                "najě yolgiga sigun gorirô"));
+        assertTrue(TimedTextRowProjection.exactlyReconstructs(
+                Arrays.asList("najě yolgiga", " sigun gorirô"),
+                "najě yolgiga sigun gorirô"));
+    }
+
+    @Test
+    public void exactReconstructionGuardIsLanguageIndependent() {
+        assertExactReading("kimi no na wa", "kimi no", " na wa");
+        assertExactReading("nǐ hǎo shìjiè", "nǐ hǎo", " shìjiè");
+        assertExactReading("privet mir", "privet", " mir");
+        assertExactReading("sawasdee khrap", "sawasdee", " khrap");
+
+        assertDuplicatedReading("kimi no na wa", "kimi no na wa", "nawa");
+        assertDuplicatedReading("nǐ hǎo shìjiè", "nǐ hǎo shìjiè", "shìjiè");
+        assertDuplicatedReading("privet mir", "privet mir", "mir");
+        assertDuplicatedReading("sawasdee khrap", "sawasdee khrap", "khrap");
+    }
+
+    @Test
     public void plannedLeadingSpacesBecomeSingleSeams() {
         List<TimedTextRowProjection.Chunk> chunks = TimedTextRowProjection.project(
                 Arrays.asList("bai", " bai", " sekai"), "bai bai sekai");
@@ -405,5 +428,15 @@ public class TimedTextRowProjectionTest {
                                     boolean spaceAfter) {
         assertEquals(text, chunk.text);
         assertEquals(spaceAfter, chunk.spaceAfter);
+    }
+
+    private static void assertExactReading(String authoritative, String... chunks) {
+        assertTrue(authoritative, TimedTextRowProjection.exactlyReconstructs(
+                Arrays.asList(chunks), authoritative));
+    }
+
+    private static void assertDuplicatedReading(String authoritative, String... chunks) {
+        assertFalse(authoritative, TimedTextRowProjection.exactlyReconstructs(
+                Arrays.asList(chunks), authoritative));
     }
 }

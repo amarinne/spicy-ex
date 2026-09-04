@@ -26,6 +26,7 @@ import com.eza.spicyex.lyrics.LyricsShellLifecycle;
 import com.eza.spicyex.lyrics.RomanizationOptions;
 import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.SpicyTextDetection;
+import com.eza.spicyex.xposed.XpLog;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -122,7 +123,7 @@ final class NowPlayingLyricController {
             } catch (Throwable t) {
                 if (!frameErrorLogged) {
                     frameErrorLogged = true;
-                    de.robv.android.xposed.XposedBridge.log(NativeSpicyLyricsHook.TAG + " live card frame error: " + android.util.Log.getStackTraceString(t));
+                    XpLog.log(NativeSpicyLyricsHook.TAG + " live card frame error: " + android.util.Log.getStackTraceString(t));
                 }
             }
             Choreographer.getInstance().postFrameCallback(this);

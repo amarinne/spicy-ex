@@ -16,10 +16,10 @@ import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import com.eza.spicyex.xposed.XpHooks;
+import com.eza.spicyex.xposed.XpLog;
+import com.eza.spicyex.xposed.XpPackage;
+import com.eza.spicyex.xposed.XpReflect;
 import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindMethod;
@@ -39,30 +39,28 @@ final class PlaybackBridge {
     private volatile WeakReference<MediaSession> currentMediaSession = new WeakReference<>(null);
     private Method playerWrapperGetStateMethod;
 
-    void install(XC_LoadPackage.LoadPackageParam lpparm, DexKitBridge bridge) {
+    void install(XpPackage lpparm, DexKitBridge bridge) {
         hookPlayerStateBridge(lpparm, bridge);
         installMediaSessionHook();
     }
 
-    private void hookPlayerStateBridge(XC_LoadPackage.LoadPackageParam lpparm, DexKitBridge bridge) {
+    private void hookPlayerStateBridge(XpPackage lpparm, DexKitBridge bridge) {
         NativeSpicyLyricsHook.dbgEnter("hookPlayerStateBridge");
         try {
-            XposedHelpers.findAndHookMethod(
+            XpHooks.findAfter(
                     "com.spotify.player.model.AutoValue_PlayerState$Builder",
-                    lpparm.classLoader,
+                    lpparm.classLoader(),
                     "build",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            Object state = param.getResult();
-                            if (state == null) return;
-                            References.playerStateStrong = state;
-                            References.playerState = new WeakReference<>(state);
-                        }
+                    "playback:PlayerStateBuilder#build",
+                    param -> {
+                        Object state = param.getResult();
+                        if (state == null) return;
+                        References.playerStateStrong = state;
+                        References.playerState = new WeakReference<>(state);
                     });
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " player state builder hook installed");
+            XpLog.log(NativeSpicyLyricsHook.TAG + " player state builder hook installed");
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " player state builder hook failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " player state builder hook failed: " + t);
         }
 
         try {
@@ -84,39 +82,34 @@ final class PlaybackBridge {
                             .searchInClass(stateWrapperClasses)
                             .matcher(MethodMatcher.create().name("getState")))
                     .get(0)
-                    .getMethodInstance(lpparm.classLoader);
-            XposedBridge.hookMethod(playerWrapperGetStateMethod, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    References.playerStateWrapperStrong = param.thisObject;
-                    References.playerStateWrapper = new WeakReference<>(param.thisObject);
-                }
+                    .getMethodInstance(lpparm.classLoader());
+            XpHooks.hookAfter(playerWrapperGetStateMethod, "playback:PlayerWrapper#getState", param -> {
+                References.playerStateWrapperStrong = param.thisObject;
+                References.playerStateWrapper = new WeakReference<>(param.thisObject);
             });
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " player wrapper getState hook installed");
+            XpLog.log(NativeSpicyLyricsHook.TAG + " player wrapper getState hook installed");
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " player wrapper getState hook failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " player wrapper getState hook failed: " + t);
         }
     }
 
     private void installMediaSessionHook() {
         try {
-            XposedHelpers.findAndHookMethod(MediaSession.class, "setPlaybackState", PlaybackState.class, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    currentMediaSession = new WeakReference<>((MediaSession) param.thisObject);
-                    PlaybackState playbackState = (PlaybackState) param.args[0];
-                    if (playbackState == null) return;
-                    isPlaying = playbackState.getState() == PlaybackState.STATE_PLAYING;
-                    long position = playbackState.getPosition();
-                    if (position >= 0) {
-                        mediaPositionMs = position;
-                        mediaPositionUpdatedAtElapsedMs = SystemClock.elapsedRealtime();
-                    }
-                }
-            });
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " MediaSession playback hook installed");
+            XpHooks.findAfter(MediaSession.class, "setPlaybackState",
+                    "playback:MediaSession#setPlaybackState", param -> {
+                        currentMediaSession = new WeakReference<>((MediaSession) param.thisObject);
+                        PlaybackState playbackState = (PlaybackState) param.args[0];
+                        if (playbackState == null) return;
+                        isPlaying = playbackState.getState() == PlaybackState.STATE_PLAYING;
+                        long position = playbackState.getPosition();
+                        if (position >= 0) {
+                            mediaPositionMs = position;
+                            mediaPositionUpdatedAtElapsedMs = SystemClock.elapsedRealtime();
+                        }
+                    }, PlaybackState.class);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " MediaSession playback hook installed");
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " MediaSession playback hook failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " MediaSession playback hook failed: " + t);
         }
     }
 
@@ -130,7 +123,7 @@ final class PlaybackBridge {
             forcePosition(positionMs);
             return true;
         } catch (Throwable t) {
-            XposedBridge.log(NativeSpicyLyricsHook.TAG + " media seek failed: " + t);
+            XpLog.log(NativeSpicyLyricsHook.TAG + " media seek failed: " + t);
             return false;
         }
     }
@@ -173,7 +166,7 @@ final class PlaybackBridge {
             if (state != null) {
                 for (String method : new String[]{"isPaused", "paused"}) {
                     try {
-                        Object result = XposedHelpers.callMethod(state, method);
+                        Object result = XpReflect.callMethod(state, method);
                         if (result instanceof Boolean && (Boolean) result) return false;
                     } catch (Throwable ignored) {
                     }
@@ -194,14 +187,14 @@ final class PlaybackBridge {
         try {
             Object state = References.playerState == null ? null : References.playerState.get();
             if (state == null) return -1;
-            Object posOpt = XposedHelpers.callMethod(state, "positionAsOfTimestamp");
+            Object posOpt = XpReflect.callMethod(state, "positionAsOfTimestamp");
             if (posOpt == null) return -1;
             Matcher matcher = DIGITS.matcher(posOpt.toString());
             if (!matcher.find()) return -1;
             long basePos = Long.parseLong(matcher.group());
             long timestamp = 0;
             try {
-                Object rawTimestamp = XposedHelpers.callMethod(state, "timestamp");
+                Object rawTimestamp = XpReflect.callMethod(state, "timestamp");
                 if (rawTimestamp instanceof Long) timestamp = (Long) rawTimestamp;
             } catch (Throwable ignored) {
             }
