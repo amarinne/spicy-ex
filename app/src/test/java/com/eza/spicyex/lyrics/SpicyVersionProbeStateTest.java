@@ -16,21 +16,21 @@ public class SpicyVersionProbeStateTest {
 
     @Test
     public void parseLatestVersionFromStringData() {
-        String raw = "{\"queries\":[{\"result\":{\"data\":\"6.2.0\"}}]}";
+        String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"data\":\"6.2.0\"}}]}";
 
         assertEquals("6.2.0", SpicyVersionProbeState.parseLatestVersion(raw));
     }
 
     @Test
     public void parseLatestVersionFromObjectData() {
-        String raw = "{\"queries\":[{\"result\":{\"data\":{\"latestVersion\":\"6.10.0\"}}}]}";
+        String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"data\":{\"latestVersion\":\"6.10.0\"}}}]}";
 
         assertEquals("6.10.0", SpicyVersionProbeState.parseLatestVersion(raw));
     }
 
     @Test
     public void parseLatestVersionReturnsEmptyForInvalidPayload() {
-        assertEquals("", SpicyVersionProbeState.parseLatestVersion("{\"queries\":[{\"result\":{\"data\":\"ok\"}}]}"));
+        assertEquals("", SpicyVersionProbeState.parseLatestVersion("{\"queries\":[{\"operationId\":\"0\",\"result\":{\"data\":\"ok\"}}]}"));
         assertEquals("", SpicyVersionProbeState.parseLatestVersion("not-json"));
     }
 

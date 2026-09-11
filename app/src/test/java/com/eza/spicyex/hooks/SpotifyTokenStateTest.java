@@ -53,6 +53,16 @@ public class SpotifyTokenStateTest {
     }
 
     @Test
+    public void webApiTokenCannotBeDowngradedByLogin5Token() {
+        SpotifyTokenState state = new SpotifyTokenState();
+        assertTrue(state.capture("BQC_web_api_token", NOW, 0L));
+        assertEquals("BQC_web_api_token", state.authorization(NOW).token());
+
+        assertFalse(state.capture("BQB_login5_session_token", NOW + 1000L, 0L));
+        assertEquals("BQC_web_api_token", state.authorization(NOW + 2000L).token());
+    }
+
+    @Test
     public void diagnosticsNeverContainTokenText() {
         SpotifyTokenState state = new SpotifyTokenState();
         String secret = "do-not-print-this-value";

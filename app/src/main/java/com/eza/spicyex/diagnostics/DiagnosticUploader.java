@@ -20,19 +20,21 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
-/** One-shot asynchronous uploader. OkHttp retries and redirects are disabled. */
+/** One-shot asynchronous uploader. Redirects are disabled; dead-route fallback stays on so a blackholed IPv6 route falls back to IPv4 (retries only pre-dispatch, never a double upload). */
 public final class DiagnosticUploader {
-    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final int RESPONSE_LIMIT_BYTES = 32 * 1024;
     private static final String REPORT_PATH = "/v1/reports";
     private static final String RETENTION_POLICY_INDEFINITE = "indefinite";
     private final OkHttpClient client = new OkHttpClient.Builder()
+            // Happy Eyeballs: race IPv4/IPv6 instead of trying routes in order.
+            .fastFallback(true)
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .callTimeout(15, TimeUnit.SECONDS)
             .followRedirects(false)
             .followSslRedirects(false)
-            .retryOnConnectionFailure(false)
+            .retryOnConnectionFailure(true)
             .build();
 
     public void upload(String endpoint, SpicyDiagnosticReportFactory.Draft draft,

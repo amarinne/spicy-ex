@@ -865,9 +865,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             // on screen: swapping the object would rebuild the timeline and reset the active row
             // and scroll position mid-song.
             LyricsDocument mounted = document;
-            if (mounted != null && LyricsDocumentProcessor.sameCanonicalBase(mounted, doc)) {
+            LyricsDocumentProcessor.DerivedMergeResult merge =
+                    LyricsDocumentProcessor.mergeDerivedPublication(mounted, doc);
+            if (merge != LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE) {
                 loadingTrackId = "";
-                if (LyricsDocumentProcessor.mergeDerivedLayers(mounted, doc)) {
+                if (merge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED) {
                     LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
                     refreshSecondaryRows("");
                 }

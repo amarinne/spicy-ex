@@ -4,14 +4,13 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.eza.spicyex.Diagnostics;
+import com.eza.spicyex.lyrics.session.Digests;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Locale;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
@@ -97,19 +96,19 @@ public final class LyricCaches {
     }
 
     public static String getSoundArtifact(Context context, String key) {
-        return getBoundedRecord(context, PREFS_SOUND_CACHE, key, soundQuotaBytes(context));
+        return getBoundedRecord(context, PREFS_SOUND_CACHE, key);
     }
 
-    public static void putSoundArtifact(Context context, String key, String value) {
-        putBoundedRecord(context, PREFS_SOUND_CACHE, key, value, soundQuotaBytes(context));
+    public static boolean putSoundArtifact(Context context, String key, String value) {
+        return putBoundedRecord(context, PREFS_SOUND_CACHE, key, value, soundQuotaBytes(context));
     }
 
     public static String getMeaningArtifact(Context context, String key) {
-        return getBoundedRecord(context, PREFS_MEANING_CACHE, key, meaningQuotaBytes(context));
+        return getBoundedRecord(context, PREFS_MEANING_CACHE, key);
     }
 
-    public static void putMeaningArtifact(Context context, String key, String value) {
-        putBoundedRecord(context, PREFS_MEANING_CACHE, key, value, meaningQuotaBytes(context));
+    public static boolean putMeaningArtifact(Context context, String key, String value) {
+        return putBoundedRecord(context, PREFS_MEANING_CACHE, key, value, meaningQuotaBytes(context));
     }
 
     public static String sourceLanguageForCache(String sourceLang) {
@@ -126,13 +125,8 @@ public final class LyricCaches {
         return "translate|" + safe(trackId) + "|" + sourceLanguageForCache(sourceLang) + "|" + safe(targetLang) + "|" + safe(text);
     }
 
-    /**
-     * Quota-bounded record read. Byte budget is authoritative; no age expiry; the entry-count
-     * parameter of the order planner is passed non-binding (Integer.MAX_VALUE) so a store below
-     * its byte quota never evicts on count alone. Reads refresh LRU recency via the order key.
-     */
-    private static String getBoundedRecord(Context context, String prefsName, String key,
-                                           long quotaBytes) {
+    /** Reads retained artifacts even when the owner has reduced the storage budget. */
+    private static String getBoundedRecord(Context context, String prefsName, String key) {
         if (context == null) return null;
         try {
             SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
@@ -140,19 +134,7 @@ public final class LyricCaches {
             synchronized (PROCESSED_CACHE_LOCK) {
                 String value = prefs.getString(hashedKey, null);
                 if (value == null) return null;
-                ProcessedCacheOrderUpdate update = boundedProcessedCacheOrder(
-                        prefs.getString(PREFS_PROCESSED_CACHE_ORDER_KEY, ""), hashedKey,
-                        value.getBytes(StandardCharsets.UTF_8).length, System.currentTimeMillis(),
-                        Integer.MAX_VALUE, quotaBytes, 0L);
-                SharedPreferences.Editor editor = prefs.edit();
-                for (String evicted : update.evictedKeys) editor.remove(evicted);
-                String nextOrder = update.evictedKeys.contains(hashedKey)
-                        ? removeProcessedOrderEntry(update.nextOrder, hashedKey)
-                        : update.nextOrder;
-                if (!update.evictedKeys.isEmpty() || update.changed) {
-                    editor.putString(PREFS_PROCESSED_CACHE_ORDER_KEY, nextOrder).apply();
-                }
-                return update.evictedKeys.contains(hashedKey) ? null : value;
+                return value;
             }
         } catch (Throwable t) {
             Diagnostics.warn("LyricCaches", "getBoundedRecord", t);
@@ -160,10 +142,10 @@ public final class LyricCaches {
         }
     }
 
-    /** Quota-bounded record write; byte budget authoritative, no age expiry, no entry cap. */
-    private static void putBoundedRecord(Context context, String prefsName, String key, String value,
+    /** Refuses writes that would evict saved artifacts; successful writes are durable. */
+    private static boolean putBoundedRecord(Context context, String prefsName, String key, String value,
                                          long quotaBytes) {
-        if (context == null || isBlank(value)) return;
+        if (context == null || isBlank(value)) return false;
         try {
             SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
             String hashedKey = sha256(key);
@@ -175,16 +157,13 @@ public final class LyricCaches {
                 SharedPreferences.Editor editor = prefs.edit();
                 if (update.evictedKeys.contains(hashedKey)) editor.remove(hashedKey);
                 else editor.putString(hashedKey, value);
-                for (String evicted : update.evictedKeys) {
-                    if (!hashedKey.equals(evicted)) editor.remove(evicted);
-                }
-                String nextOrder = update.evictedKeys.contains(hashedKey)
-                        ? removeProcessedOrderEntry(update.nextOrder, hashedKey)
-                        : update.nextOrder;
-                editor.putString(PREFS_PROCESSED_CACHE_ORDER_KEY, nextOrder).apply();
+                for (String evicted : update.evictedKeys) if (!hashedKey.equals(evicted)) editor.remove(evicted);
+                editor.putString(PREFS_PROCESSED_CACHE_ORDER_KEY, update.nextOrder).apply();
+                return true;
             }
         } catch (Throwable t) {
             Diagnostics.warn("LyricCaches", "putBoundedRecord", t);
+            return false;
         }
     }
 
@@ -269,7 +248,7 @@ public final class LyricCaches {
                     editor.putString(hashedKey, entry.getValue());
                 }
                 if (newEntries.isEmpty()) return;
-                recordBoundedGoogleCachePut(context, prefs, editor, newEntries);
+                if (!recordBoundedGoogleCachePut(context, prefs, editor, newEntries)) return;
                 editor.apply();
             }
         } catch (Throwable t) {
@@ -283,7 +262,7 @@ public final class LyricCaches {
      * ({@code key|bytes}); legacy plain-key lines are sized once from the store and migrated on
      * the first write. Under {@link CacheStoragePolicy#UNLIMITED} nothing is evicted.
      */
-    private static void recordBoundedGoogleCachePut(Context context, SharedPreferences prefs,
+    private static boolean recordBoundedGoogleCachePut(Context context, SharedPreferences prefs,
                                                     SharedPreferences.Editor editor,
                                                     Map<String, Long> newEntries) {
         String rawOrder = prefs.getString(PREFS_GOOGLE_CACHE_ORDER_KEY, "");
@@ -292,6 +271,7 @@ public final class LyricCaches {
                 googleQuotaBytes(context));
         for (String evicted : update.evictedKeys) editor.remove(evicted);
         editor.putString(PREFS_GOOGLE_CACHE_ORDER_KEY, update.nextOrder);
+        return true;
     }
 
     /** Legacy order lines carry no size; fetch payload sizes only when one is present. */
@@ -317,40 +297,6 @@ public final class LyricCaches {
         } catch (Throwable ignored) {
         }
         return sizes;
-    }
-
-    static CacheOrderUpdate boundedGoogleCacheOrder(String rawOrder, String hashedKey, int maxEntries) {
-        return boundedGoogleCacheOrder(rawOrder, java.util.Collections.singletonList(hashedKey), maxEntries);
-    }
-
-    static CacheOrderUpdate boundedGoogleCacheOrder(String rawOrder, Collection<String> hashedKeys,
-                                                    int maxEntries) {
-        LinkedHashSet<String> order = new LinkedHashSet<>();
-        if (!isBlank(rawOrder)) {
-            String[] entries = rawOrder.split("\n");
-            for (String entry : entries) {
-                if (!isBlank(entry) && !PREFS_GOOGLE_CACHE_ORDER_KEY.equals(entry)) order.add(entry);
-            }
-        }
-        if (hashedKeys != null) {
-            for (String hashedKey : hashedKeys) {
-                if (isBlank(hashedKey) || PREFS_GOOGLE_CACHE_ORDER_KEY.equals(hashedKey)) continue;
-                order.remove(hashedKey);
-                order.add(hashedKey);
-            }
-        }
-        LinkedHashSet<String> evicted = new LinkedHashSet<>();
-        while (order.size() > Math.max(0, maxEntries)) {
-            String oldest = order.iterator().next();
-            order.remove(oldest);
-            evicted.add(oldest);
-        }
-        StringBuilder nextOrder = new StringBuilder();
-        for (String entry : order) {
-            if (nextOrder.length() > 0) nextOrder.append('\n');
-            nextOrder.append(entry);
-        }
-        return new CacheOrderUpdate(nextOrder.toString(), evicted);
     }
 
     static GoogleQuotaUpdate boundedGoogleCacheOrderByBytes(String rawOrder,
@@ -408,6 +354,10 @@ public final class LyricCaches {
     }
 
     static final class GoogleQuotaUpdate {
+        boolean canRetainWrite() {
+            return evictedKeys.isEmpty();
+        }
+
         final String nextOrder;
         final LinkedHashSet<String> evictedKeys;
 
@@ -433,16 +383,6 @@ public final class LyricCaches {
     public static long meaningStoreUsageBytes(Context context) {
         return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_MEANING_CACHE,
                 PREFS_PROCESSED_CACHE_ORDER_KEY);
-    }
-
-    static final class CacheOrderUpdate {
-        final String nextOrder;
-        final LinkedHashSet<String> evictedKeys;
-
-        CacheOrderUpdate(String nextOrder, LinkedHashSet<String> evictedKeys) {
-            this.nextOrder = nextOrder;
-            this.evictedKeys = evictedKeys;
-        }
     }
 
     static ProcessedCacheOrderUpdate boundedProcessedCacheOrder(
@@ -483,6 +423,10 @@ public final class LyricCaches {
     }
 
     static final class ProcessedCacheOrderUpdate {
+        boolean canRetainWrite() {
+            return evictedKeys.isEmpty();
+        }
+
         final String nextOrder;
         final LinkedHashSet<String> evictedKeys;
         final boolean changed;
@@ -520,9 +464,7 @@ public final class LyricCaches {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(safe(value).getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder();
-            for (byte b : hash) hex.append(String.format(Locale.ROOT, "%02x", b));
-            return hex.toString();
+            return Digests.hex(hash);
         } catch (Throwable t) {
             Diagnostics.warn("LyricCaches", "sha256", t);
             return String.valueOf(safe(value).hashCode());

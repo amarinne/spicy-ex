@@ -32,6 +32,7 @@ public final class LyricsRenderConfig {
     public final String lyricsFont;
     public final String lyricsTextSizeMode;
     public final float lyricsTextSizeMultiplier;
+    public final boolean adaptiveTextSizeEnabled;
     public final String liveCardTextSizeMode;
     public final float liveCardTextSizeMultiplier;
     public final String liveCardSecondaryMode;
@@ -86,6 +87,7 @@ public final class LyricsRenderConfig {
             String lyricsFont,
             String lyricsTextSizeMode,
             float lyricsTextSizeMultiplier,
+            boolean adaptiveTextSizeEnabled,
             String liveCardTextSizeMode,
             float liveCardTextSizeMultiplier,
             String liveCardSecondaryMode,
@@ -141,6 +143,7 @@ public final class LyricsRenderConfig {
         this.lyricsFont = safe(lyricsFont);
         this.lyricsTextSizeMode = safe(lyricsTextSizeMode);
         this.lyricsTextSizeMultiplier = lyricsTextSizeMultiplier;
+        this.adaptiveTextSizeEnabled = adaptiveTextSizeEnabled;
         this.liveCardTextSizeMode = safe(liveCardTextSizeMode);
         this.liveCardTextSizeMultiplier = liveCardTextSizeMultiplier;
         this.liveCardSecondaryMode = safe(liveCardSecondaryMode);
@@ -201,7 +204,7 @@ public final class LyricsRenderConfig {
                 lineBlurEnabled, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
                 attachTransliterationToWords, transliterationEnabled, adaptiveSectioningEnabled,
                 lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont,
-                lyricsTextSizeMode, lyricsTextSizeMultiplier, liveCardTextSizeMode,
+                lyricsTextSizeMode, lyricsTextSizeMultiplier, true, liveCardTextSizeMode,
                 liveCardTextSizeMultiplier, liveCardSecondaryMode, liveCardShowTransliteration,
                 liveCardShowTranslation, liveCardMinimalAnimation, liveCardAnimationMode,
                 liveCardGlowMode, liveCardLineSyncFillMode, liveCardTransitionMode,
@@ -269,6 +272,7 @@ public final class LyricsRenderConfig {
                 get(cfg, Settings.LYRICS_FONT),
                 shell.lyricsTextSizeMode(),
                 shell.lyricsTextSizeMultiplier(),
+                shell.adaptiveTextSizeEnabled(),
                 shell.liveCardTextSizeMode(),
                 shell.liveCardTextSizeMultiplier(),
                 shell.liveCardSecondaryMode(),
@@ -355,6 +359,7 @@ public final class LyricsRenderConfig {
                 lyricsFont,
                 lyricsTextSizeMode,
                 lyricsTextSizeMultiplier,
+                adaptiveTextSizeEnabled,
                 liveCardTextSizeMode,
                 liveCardTextSizeMultiplier,
                 liveCardSecondaryMode,
@@ -453,7 +458,8 @@ public final class LyricsRenderConfig {
             boolean fontChanged = changed(oldValue.lyricsFont, next.lyricsFont);
             boolean weightChanged = changed(oldValue.lyricWeight, next.lyricWeight) || fontChanged;
             boolean textSizeChanged = changed(oldValue.lyricsTextSizeMode, next.lyricsTextSizeMode)
-                    || changed(oldValue.lyricsTextSizeMultiplier, next.lyricsTextSizeMultiplier);
+                    || changed(oldValue.lyricsTextSizeMultiplier, next.lyricsTextSizeMultiplier)
+                    || oldValue.adaptiveTextSizeEnabled != next.adaptiveTextSizeEnabled;
             boolean attachChanged = oldValue.attachTransliterationToWords != next.attachTransliterationToWords;
             boolean transliterationChanged = oldValue.transliterationEnabled != next.transliterationEnabled;
             boolean adaptiveSectioningChanged = oldValue.adaptiveSectioningEnabled != next.adaptiveSectioningEnabled;

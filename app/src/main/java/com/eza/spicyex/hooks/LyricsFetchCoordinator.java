@@ -13,6 +13,7 @@ import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.LyricsParser;
 import com.eza.spicyex.lyrics.LyricsRepository;
 import com.eza.spicyex.lyrics.NativeLyricsSource;
+import com.eza.spicyex.lyrics.SpicyManualTokenStore;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -58,6 +59,7 @@ final class LyricsFetchCoordinator {
                 if (operation.expiry != null) operation.expiry.cancel(false);
                 operation.callbacks.clear();
                 operation.latest = null;
+                if (operation.fetchFuture != null) operation.fetchFuture.cancel(false);
             }
         }
     }
@@ -74,7 +76,16 @@ final class LyricsFetchCoordinator {
                 "fetchLyrics",
                 "start generation=" + generation + " track=" + (track == null ? "null" : safe(track.uri))
         );
-        boolean sendToken = SpotifyPlusConfig.from(context).get(Settings.SEND_TOKEN);
+        SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
+        boolean sendToken = config.get(Settings.SEND_TOKEN);
+        // Source selection is owned by LyricsSourcePreferences toggles/order. The retired
+        // global override must not bypass that policy.
+        String sourceOverride = "Auto";
+        String manualSpicyToken = SpicyManualTokenStore.load(context);
+        boolean strictSpicy = false;
+        if (strictSpicy && manualSpicyToken != null && !manualSpicyToken.trim().isEmpty()) {
+            sendToken = true;
+        }
         // M3: in-flight identity uses the non-secret token generation from the token store
         // (never the raw token, never a token-present boolean), so a fresh token generation
         // can never join an in-flight stale-token request. The snapshot binds the token text
@@ -82,7 +93,11 @@ final class LyricsFetchCoordinator {
         SpotifyTokenState.Authorized authorized = sendToken
                 ? SpotifyTokenStore.authorization(System.currentTimeMillis())
                 : null;
-        String operationKey = fetchKey(track, sendToken, authorized);
+        String operationKey = fetchKey(track, sendToken, authorized)
+                + "|source=" + sourceOverride
+                + "|sel=" + selectionIdentity(context, track)
+                + "|manual=" + (manualSpicyToken == null || manualSpicyToken.trim().isEmpty()
+                ? "none" : Integer.toHexString(manualSpicyToken.hashCode()));
         InFlightFetch existing;
         LyricsDocument replay = null;
         boolean joined = false;
@@ -108,14 +123,19 @@ final class LyricsFetchCoordinator {
                 NativeRuntime.LYRICS_IO
         );
         String accessToken = authorized == null ? "" : authorized.token();
+        if (strictSpicy && manualSpicyToken != null && !manualSpicyToken.trim().isEmpty()) {
+            accessToken = manualSpicyToken.trim();
+        }
+        final boolean requestSendToken = sendToken;
+        final String requestAccessToken = accessToken;
         int tokenGeneration = authorized == null ? TOKEN_GENERATION_NONE : authorized.generation();
         LyricsRepository.AuthRecovery authRecovery = authRecovery();
-        NativeRuntime.LYRICS_IO.execute(() -> repository.fetchLyrics(
+        operation.fetchFuture = NativeRuntime.LYRICS_IO.submit(() -> repository.fetchLyrics(
                 context,
                 track,
                 generation,
-                sendToken,
-                accessToken,
+                requestSendToken,
+                requestAccessToken,
                 tokenGeneration,
                 authRecovery,
                 new LyricsRepository.ResultCallback() {
@@ -142,13 +162,17 @@ final class LyricsFetchCoordinator {
             if (inFlight.get(operation.key) != operation) return;
             operation.latest = LyricsDocument.copyOf(document);
             callbacks = new ArrayList<>(operation.callbacks);
-            if (operation.expiry != null) operation.expiry.cancel(false);
             boolean cachePreview = "spicy_api_cache".equals(document == null ? "" : document.fetchSource);
-            if (!cachePreview || !operation.networkUpgradeExpected) {
+            boolean baselineUpgrade = document != null && document.fetchSource != null
+                    && document.fetchSource.startsWith("spotify_native") && operation.latestWasBaseline == false;
+            operation.latestWasBaseline = true;
+            if ((!cachePreview && !baselineUpgrade) || !operation.networkUpgradeExpected) {
                 inFlight.remove(operation.key);
+                if (operation.expiry != null) operation.expiry.cancel(false);
                 operation.callbacks.clear();
                 operation.latest = null;
-            } else {
+                if (operation.fetchFuture != null) operation.fetchFuture.cancel(false);
+            } else if (operation.expiry == null) {
                 operation.expiry = NativeRuntime.LYRICS_IO.schedule(
                         () -> expire(operation), 20L, TimeUnit.SECONDS);
             }
@@ -214,6 +238,15 @@ final class LyricsFetchCoordinator {
      * Non-secret in-flight identity: track URI plus the token generation actually bound to the
      * request (or {@code none} when no usable token is sent). Token text never participates.
      */
+    static String selectionIdentity(Context context, com.eza.spicyex.SpotifyTrack track) {
+        try {
+            String trackId = track == null || track.uri == null ? "" : track.uri;
+            return com.eza.spicyex.lyrics.session.LyricsSourcePreferences
+                    .selectionIdentity(context, trackId);
+        } catch (Throwable ignored) {
+            return "unknown";
+        }
+    }
     static String fetchKey(SpotifyTrack track, boolean sendToken, SpotifyTokenState.Authorized authorized) {
         String uri = track == null ? "" : safe(track.uri);
         boolean tokenUsable = sendToken && authorized != null;
@@ -225,7 +258,9 @@ final class LyricsFetchCoordinator {
         final boolean networkUpgradeExpected;
         final List<NativeSpicyLyricsHook.LyricsResultCallback> callbacks = new ArrayList<>();
         LyricsDocument latest;
+        boolean latestWasBaseline;
         ScheduledFuture<?> expiry;
+        java.util.concurrent.Future<?> fetchFuture;
 
         InFlightFetch(String key, boolean networkUpgradeExpected) {
             this.key = key;

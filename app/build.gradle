@@ -77,8 +77,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 622
-        versionName "1.58.347-libxposed-api-102+B622-20260904T1948Z"
+        versionCode 673
+        versionName "1.58.398+B673-20260911T0725Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
@@ -164,7 +164,11 @@ dependencies {
     implementation 'com.google.android.flexbox:flexbox:3.0.0'
     implementation 'com.google.code.gson:gson:2.13.1'
     implementation 'org.luckypray:dexkit:2.0.0'
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // OkHttp 5 races IPv4/IPv6 (Happy Eyeballs fast fallback, on by default) instead of
+    // trying routes in order. Required baseline on networks with a blackholed IPv6 route,
+    // where 4.x burned the full connect timeout per new connection. See
+    // docs/backlog/HAPPY_EYEBALLS_TRANSPORT_REQUIREMENTS.md.
+    implementation 'com.squareup.okhttp3:okhttp:5.0.0'
     fullImplementation 'com.github.pemistahl:lingua:1.2.2'
     fullImplementation 'com.atilika.kuromoji:kuromoji-unidic:0.9.0'
     fullImplementation 'com.belerweb:pinyin4j:2.5.1'

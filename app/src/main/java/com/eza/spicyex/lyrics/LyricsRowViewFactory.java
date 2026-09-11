@@ -105,7 +105,8 @@ public final class LyricsRowViewFactory {
                 && !isBlank(readingText);
 
         float sizeMultiplier = options == null ? 1f : options.textSizeMultiplier;
-        LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(LyricVisuals.lyricTextSizeSp(line.text) * sizeMultiplier)));
+        boolean adaptiveTextSize = options == null || options.adaptiveTextSizeEnabled;
+        LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(LyricVisuals.lyricTextSizeSp(line.text, adaptiveTextSize) * sizeMultiplier)));
         float baseTextPx = sp(LyricsLineViewState.baseTextSp(line));
         row.setPaddingRelative(leadingPadding, topClearancePx(dp(10), multiplier, baseTextPx, showJapaneseFurigana),
                 trailingPadding, Math.round(dp(13) * multiplier));
@@ -833,6 +834,7 @@ public final class LyricsRowViewFactory {
         public String lyricWeight = "Medium";
         public String lyricsFont = "spotify";
         public float textSizeMultiplier = 1f;
+        public boolean adaptiveTextSizeEnabled = true;
         public boolean translationBright;
         public boolean wrapLongLines = true;
         public boolean adaptiveSectioningEnabled = true;

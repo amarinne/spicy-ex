@@ -11,6 +11,7 @@ import java.util.Map;
 
 /** Stable content digests for canonical and derived-layer identity. */
 public final class Digests {
+    private static final String HEX = "0123456789abcdef";
     /** ASCII unit separator: cannot occur in lyric text, so digest payloads stay unambiguous. */
     static final char SEP = 0x1f;
 
@@ -22,12 +23,21 @@ public final class Digests {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(nz(value).getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(hash.length * 2);
-            for (byte b : hash) hex.append(String.format(Locale.ROOT, "%02x", b));
-            return hex.toString();
+            return hex(hash);
         } catch (Throwable ignored) {
             return "h" + Integer.toHexString(nz(value).hashCode());
         }
+    }
+
+    /** Lowercase hexadecimal with two digits per byte, including leading zeroes. */
+    public static String hex(byte[] bytes) {
+        char[] encoded = new char[bytes.length * 2];
+        for (int i = 0; i < bytes.length; i++) {
+            int value = bytes[i] & 0xff;
+            encoded[i * 2] = HEX.charAt(value >>> 4);
+            encoded[i * 2 + 1] = HEX.charAt(value & 0x0f);
+        }
+        return new String(encoded);
     }
 
     /** Short digest used inside stable row identifiers. */

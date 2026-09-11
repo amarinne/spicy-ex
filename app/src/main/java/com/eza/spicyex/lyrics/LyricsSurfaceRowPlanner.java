@@ -42,6 +42,7 @@ public final class LyricsSurfaceRowPlanner {
         options.lyricWeight = safePolicy.lyricWeight;
         options.lyricsFont = safePolicy.lyricsFont;
         options.textSizeMultiplier = safePolicy.textSizeMultiplier;
+        options.adaptiveTextSizeEnabled = safePolicy.adaptiveTextSizeEnabled;
         options.translationBright = safePolicy.translationBright;
         options.wrapLongLines = safePolicy.wrapLongLines;
         options.adaptiveSectioningEnabled = safePolicy.adaptiveSectioningEnabled;
@@ -278,6 +279,7 @@ public final class LyricsSurfaceRowPlanner {
         public final String lyricWeight;
         public final String lyricsFont;
         public final float textSizeMultiplier;
+        public final boolean adaptiveTextSizeEnabled;
         public final boolean translationBright;
         public final boolean wrapLongLines;
         public final boolean adaptiveSectioningEnabled;
@@ -372,6 +374,33 @@ public final class LyricsSurfaceRowPlanner {
                 boolean horizontalSafetyPadding,
                 boolean adaptiveSectioningEnabled
         ) {
+            this(lineSpacingMultiplier, showRomanization, showTranslation, japaneseReadingMode,
+                    attachTransliterationToWords, lineLevelFillTopDown, lineLevelFillSentence,
+                    wordLevelFill, interludeNoteIcon, lyricWeight, lyricsFont, textSizeMultiplier,
+                    translationBright, wrapLongLines, forceStartAligned, horizontalSafetyPadding,
+                    adaptiveSectioningEnabled, true);
+        }
+
+        public SurfacePolicy(
+                float lineSpacingMultiplier,
+                boolean showRomanization,
+                boolean showTranslation,
+                String japaneseReadingMode,
+                boolean attachTransliterationToWords,
+                boolean lineLevelFillTopDown,
+                boolean lineLevelFillSentence,
+                boolean wordLevelFill,
+                boolean interludeNoteIcon,
+                String lyricWeight,
+                String lyricsFont,
+                float textSizeMultiplier,
+                boolean translationBright,
+                boolean wrapLongLines,
+                boolean forceStartAligned,
+                boolean horizontalSafetyPadding,
+                boolean adaptiveSectioningEnabled,
+                boolean adaptiveTextSizeEnabled
+        ) {
             this.lineSpacingMultiplier = lineSpacingMultiplier;
             this.showRomanization = showRomanization;
             this.showTranslation = showTranslation;
@@ -387,6 +416,7 @@ public final class LyricsSurfaceRowPlanner {
             this.translationBright = translationBright;
             this.wrapLongLines = wrapLongLines;
             this.adaptiveSectioningEnabled = adaptiveSectioningEnabled;
+            this.adaptiveTextSizeEnabled = adaptiveTextSizeEnabled;
             this.forceStartAligned = forceStartAligned;
             this.horizontalSafetyPadding = horizontalSafetyPadding;
         }
@@ -415,7 +445,8 @@ public final class LyricsSurfaceRowPlanner {
                     true,
                     false,
                     false,
-                    cfg == null || cfg.adaptiveSectioningEnabled);
+                    cfg == null || cfg.adaptiveSectioningEnabled,
+                    cfg == null || cfg.adaptiveTextSizeEnabled);
         }
 
         public static SurfacePolicy liveCard(LyricsRenderConfig config) {
@@ -439,7 +470,8 @@ public final class LyricsSurfaceRowPlanner {
                     wrapOverflow,
                     scrollOverflow,
                     wrapOverflow,
-                    cfg == null || cfg.adaptiveSectioningEnabled);
+                    cfg == null || cfg.adaptiveSectioningEnabled,
+                    cfg == null || cfg.adaptiveTextSizeEnabled);
         }
 
         /**
@@ -465,7 +497,8 @@ public final class LyricsSurfaceRowPlanner {
                     true,
                     false,
                     true,
-                    cfg == null || cfg.adaptiveSectioningEnabled);
+                    cfg == null || cfg.adaptiveSectioningEnabled,
+                    cfg == null || cfg.adaptiveTextSizeEnabled);
         }
 
         public static SurfacePolicy defaultPolicy() {

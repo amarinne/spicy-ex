@@ -68,6 +68,41 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
+    public void adaptiveTextSizeIsPublicAndDefaultsOn() {
+        assertEquals("lyrics_adaptive_text_size", Settings.LYRICS_ADAPTIVE_TEXT_SIZE.key);
+        assertSame(Settings.TEXT, Settings.LYRICS_ADAPTIVE_TEXT_SIZE.section);
+        assertTrue(Settings.LYRICS_ADAPTIVE_TEXT_SIZE.defaultValue);
+    }
+
+    @Test
+    public void adaptiveTextSizeOffKeepsBaseSizeConstant() {
+        String longLine = "Yeah, I always know the truth";
+        assertTrue(LyricVisuals.lyricTextSizeSp(longLine) < LyricVisuals.lyricTextSizeSp("Moving on"));
+        assertEquals(28, LyricVisuals.lyricTextSizeSp(longLine, false));
+        assertEquals(28, LyricVisuals.lyricTextSizeSp("Moving on", false));
+    }
+
+    @Test
+    public void adaptiveTextSizePolicyThreadsToMountedRowOptions() {
+        AppliedLine source = line("plain upstream wrapping");
+        LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(
+                1f, false, false, "off", false,
+                false, false, false, false,
+                "Medium", "default", 1f, false, true,
+                false, false, false, false);
+
+        LyricsSurfaceRowPlanner.RowPlan plan = LyricsSurfaceRowPlanner.plan(source, document(source), policy);
+
+        assertFalse(plan.options.adaptiveTextSizeEnabled);
+
+        LyricsSurfaceRowPlanner.RowPlan defaultPlan = LyricsSurfaceRowPlanner.plan(
+                line("plain upstream wrapping"), document(source),
+                LyricsSurfaceRowPlanner.SurfacePolicy.defaultPolicy());
+
+        assertTrue(defaultPlan.options.adaptiveTextSizeEnabled);
+    }
+
+    @Test
     public void fullscreenDisablesLiveCardHorizontalSafetyPadding() {
         AppliedLine fullscreen = line("hello bright world");
 

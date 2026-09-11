@@ -143,7 +143,6 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
             documentSkipped("unchanged_fingerprint");
             return;
         }
-        publishedFingerprint = fingerprint;
         LyricsDocument workerSnapshot = LyricsDocument.copyOf(source);
         if (workerSnapshot == null) {
             documentSkipped("copy_failed");
@@ -178,6 +177,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                         return;
                     }
                     publisher.publishDocument(metadata, encoded);
+                    publishedFingerprint = fingerprint;
                 });
             } catch (Exception e) {
                 XpLog.log("[SpotifyPlusBridge] document encode failed: "
@@ -194,15 +194,8 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
     /**
      * Whether a document serialized off the main thread may still be handed to the consumer.
      *
-     * <p>The revision is the ordering authority: a newer publication bumps it, so a serialization
-     * it overtook is dropped here. The instance the payload was built from is deliberately not
-     * compared. A later notification always replaces the coordinator's document reference — the
-     * session publishes a fresh copy every time — but a notification whose content matched the last
-     * publication returns at the fingerprint check without bumping the revision. Comparing
-     * instances therefore discarded the only publication carrying new content whenever a lane
-     * finished with no changes inside the serialization window, and the fingerprint was already
-     * recorded as published, so nothing re-sent it. The consumer then ran the whole song with no
-     * timed document and its keepalive expired with the song-change lease.
+     * <p>The revision rejects work overtaken by a newer encode request. Only successful handoff
+     * commits the fingerprint, so copy/encode failures and superseded work remain retryable.
      */
     static boolean shouldPublishSerializedDocument(
             boolean enabled,

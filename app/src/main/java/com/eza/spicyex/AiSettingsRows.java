@@ -14,6 +14,7 @@ import com.eza.spicyex.lyrics.ai.AiGeminiProvider;
 import com.eza.spicyex.lyrics.ai.AiModelDescriptor;
 import com.eza.spicyex.lyrics.ai.AiModelLiveState;
 import com.eza.spicyex.lyrics.ai.AiModelListResult;
+import com.eza.spicyex.lyrics.ai.AiProviderFailure;
 import com.eza.spicyex.lyrics.ai.AiModelProbe;
 import com.eza.spicyex.lyrics.ai.AiRuntimeFailureLog;
 import com.eza.spicyex.lyrics.ai.AiSettings;
@@ -237,14 +238,29 @@ final class AiSettingsRows {
         }
         toast(host.string("settings_ai_checking", "Checking…"));
         final Handler handler = new Handler(context.getMainLooper());
+        final java.util.concurrent.atomic.AtomicBoolean finished = new java.util.concurrent.atomic.AtomicBoolean();
+        final com.eza.spicyex.lyrics.ai.AiSignal discoverySignal = new com.eza.spicyex.lyrics.ai.AiSignal();
+        // Backstop only: paged discovery on a slow link (dead-route fallback plus several
+        // model-list pages) legitimately exceeds 30s. The transport enforces its own ceiling;
+        // this only reclaims a hung settings action so it never spins forever.
+        handler.postDelayed(() -> {
+            discoverySignal.abort("model_discovery_timeout");
+            if (finished.compareAndSet(false, true)) {
+                toast(host.string("settings_ai_runtime_unavailable", "AI runtime unavailable"));
+            }
+        }, 60000L);
         new Thread(() -> {
             try {
-                final AiModelListResult result = settings.provider().listModels(null);
-                handler.post(() -> showModels(anchor, result));
+                XpLog.log("[SpotifyPlusAiSettings] model discovery started provider="
+                        + settings.providerChoice());
+                final AiModelListResult result = settings.provider().listModels(discoverySignal);
+                XpLog.log("[SpotifyPlusAiSettings] model discovery finished ok=" + result.ok
+                        + failureToken(result));
+                if (finished.compareAndSet(false, true)) handler.post(() -> showModels(anchor, result));
             } catch (Throwable failure) {
                 XpLog.log("[SpotifyPlusAiSettings] model discovery failed: "
                         + AiRuntimeFailureLog.describe(failure));
-                handler.post(() -> toast(host.string("settings_ai_runtime_unavailable",
+                if (finished.compareAndSet(false, true)) handler.post(() -> toast(host.string("settings_ai_runtime_unavailable",
                         "AI runtime unavailable")));
             }
         }, "ai-model-discovery").start();
@@ -312,7 +328,8 @@ final class AiSettingsRows {
             case AUTH: return host.string("settings_ai_key_rejected_by_provider", "Key rejected");
             case RATE_LIMITED: return host.string("settings_ai_rate_limited", "Rate limited");
             case QUOTA: return host.string("settings_ai_quota", "Quota exhausted");
-            case DELIVERY_UNKNOWN: return host.string("settings_ai_no_response", "No response");
+            case DELIVERY_UNKNOWN: return withCause(
+                    host.string("settings_ai_no_response", "No response"), result.failure);
             // Reaching the endpoint and refusing what it sent is not the same as never reaching it,
             // and saying otherwise sends the owner to check their network and their key.
             case OVERSIZED: return host.string("settings_ai_response_too_large",
@@ -321,6 +338,33 @@ final class AiSettingsRows {
                     "No usable models for this key");
             default: return host.string("settings_ai_unreachable", "Could not reach provider");
         }
+    }
+
+    /**
+     * Names the transport cause behind a "No response" so the next attempt is diagnosable:
+     * {@code network} (DNS/refused/reset), {@code timeout}, or {@code server <status>}.
+     * Machine tokens only; the failure carries no provider body by design.
+     */
+    private static String withCause(String base, AiProviderFailure failure) {
+        if (failure == null) return base;
+        String cause = failure.cause == null ? ""
+                : failure.cause.name().toLowerCase(java.util.Locale.ROOT);
+        String detail = "none".equals(cause) ? "" : cause;
+        if (failure.status > 0) {
+            detail = detail.isEmpty() ? "server " + failure.status
+                    : detail + " " + failure.status;
+        }
+        return detail.isEmpty() ? base : base + " (" + detail + ")";
+    }
+
+    /** Privacy-safe failure token for the discovery log line. */
+    private static String failureToken(AiModelListResult result) {
+        if (result == null || result.ok || result.failure == null) return "";
+        String kind = result.failure.kind == null ? "unknown"
+                : result.failure.kind.name().toLowerCase(java.util.Locale.ROOT);
+        String cause = result.failure.cause == null ? ""
+                : result.failure.cause.name().toLowerCase(java.util.Locale.ROOT);
+        return " failure=" + kind + "/" + cause + ":" + result.failure.status;
     }
 
     private String endpointProblem(AiEndpoint.Problem problem) {

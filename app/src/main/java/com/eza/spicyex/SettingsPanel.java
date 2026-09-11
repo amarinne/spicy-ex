@@ -25,15 +25,18 @@ import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
 import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.CacheStoragePolicy;
 import com.eza.spicyex.lyrics.session.CanonicalSourceCache;
+import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.lyrics.LyricsBackgroundStyle;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
+import com.eza.spicyex.lyrics.SpicyManualTokenStore;
 import com.eza.spicyex.lyrics.GlyphIconDrawable;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.ActionIconDrawable.Kind;
 import com.eza.spicyex.ui.Motion;
+import com.eza.spicyex.ui.PanelDialog;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -121,9 +124,6 @@ public final class SettingsPanel {
         }
         String storedLanguage = store.get(Settings.UI_LANGUAGE);
         this.uiStrings = new SettingsUiStrings(context, storedLanguage);
-        if (!uiStrings.selectedLanguage().equals(storedLanguage)) {
-            store.put(Settings.UI_LANGUAGE, uiStrings.selectedLanguage());
-        }
     }
 
     /** Builds the card view; the host sizes/centers it. */
@@ -358,6 +358,18 @@ public final class SettingsPanel {
     }
 
     private void renderSetting(LinearLayout content, Settings.Setting<?> setting) {
+            if (setting == Settings.LYRICS_SOURCE_MODE) {
+                mergedSourceRow(content);
+                return;
+            }
+            if (setting == Settings.LYRICS_SOURCE_OVERRIDE
+                    || setting == Settings.LYRICS_SOURCE_ORDER) {
+                return;
+            }
+            if (setting == Settings.SPICY_MANUAL_TOKEN) {
+                spicyTokenRow(content);
+                return;
+            }
             if (setting instanceof Settings.BooleanSetting) {
                 switchRow(content, (Settings.BooleanSetting) setting);
             } else if (setting instanceof Settings.IntegerSetting) {
@@ -437,6 +449,9 @@ public final class SettingsPanel {
     }
 
     private boolean shouldRender(Settings.Setting<?> setting) {
+        if (setting == Settings.SPICY_MANUAL_TOKEN) {
+            return LyricsSourcePreferences.sourceEnabled(context, LyricsSourcePreferences.Source.SPICY);
+        }
         if (setting == Settings.AI_ENABLED) return aiAvailable();
         if (setting == Settings.AI_DEEPSEEK_REASONING) {
             return AiSettings.PROVIDER_DEEPSEEK.equals(store.get(Settings.AI_PROVIDER))
@@ -490,6 +505,10 @@ public final class SettingsPanel {
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     private void onSettingChanged(Settings.Setting<?> setting) {
+        if (setting == Settings.LYRICS_SOURCE_MODE) {
+            LyricsSourcePreferences.setRankingMode(context,
+                    LyricsSourcePreferences.RankingMode.parse(String.valueOf(store.get(setting))));
+        }
         if (setting == Settings.UI_LANGUAGE) {
             rebuildSections();
         } else if (shouldRebuildSectionAfterChange(setting)) {
@@ -507,7 +526,10 @@ public final class SettingsPanel {
                 || setting == Settings.LIVE_CARD_ANIMATION
                 || setting == Settings.LYRICS_TEXT_SIZE
                 || setting == Settings.LINE_SPACING
-                || setting == Settings.LIVE_CARD_TEXT_SIZE;
+                || setting == Settings.LIVE_CARD_TEXT_SIZE
+                || setting == Settings.LYRICS_SOURCE_OVERRIDE
+                || setting == Settings.LYRICS_SOURCE_MODE;
+
     }
 
     /**
@@ -602,13 +624,8 @@ public final class SettingsPanel {
         infoRow(content, uiStrings.get("settings_diagnostic_source_chosen", "Source chosen"),
                 s.displayedSourceChosen());
         infoRow(content, uiStrings.get("settings_diagnostic_candidates_seen", "Candidates seen"), s.candidatesSeen);
+        infoRow(content, uiStrings.get("settings_diagnostic_provider", "Provider"), s.provider);
         infoRow(content, uiStrings.get("settings_diagnostic_type_chosen", "Type chosen"), s.typeChosen);
-        infoRow(content, uiStrings.get("settings_diagnostic_spicy_version_sent", "Spicy version sent"), emptyDash(s.spicyVersionSent));
-        infoRow(content, uiStrings.get("settings_diagnostic_spicy_latest_version", "Spicy latest version"), emptyDash(s.spicyLatestVersion));
-        infoRow(content, uiStrings.get("settings_diagnostic_token_present", "Token present"), yesNo(s.tokenPresent));
-        infoRow(content, uiStrings.get("settings_diagnostic_spicy_query_status", "Spicy query status"), s.spicyQueryStatus);
-        infoRow(content, uiStrings.get("settings_diagnostic_packed_payload", "Packed payload"), yesNo(s.packedPayload));
-        infoRow(content, uiStrings.get("settings_diagnostic_poison_result", "Poison result"), s.poisonResult);
         infoRow(content, uiStrings.get("settings_diagnostic_cache_write", "Cache write"), yesNo(s.cacheWrite));
     }
 
@@ -999,6 +1016,12 @@ public final class SettingsPanel {
         optRow.setAlpha(unavailable ? 0.48f : 1f);
         if (!unavailable) {
             optRow.setOnClickListener(v -> {
+                // Selecting the already-applied value is a true no-op. In particular,
+                // opening and dismissing the language picker must not rebuild the panel.
+                if (selected) {
+                    Motion.exitCardThen(card, dialog::isShowing, dialog::dismiss);
+                    return;
+                }
                 if (deferCommit) {
                     pendingValue[0] = value;
                     Motion.exitCardThen(card, dialog::isShowing, dialog::dismiss);
@@ -1051,6 +1074,10 @@ public final class SettingsPanel {
         row.addView(text(uiStrings.setting(setting), 14, COL_SUMMARY, false));
         EditText field = new EditText(context);
         field.setText(store.get(setting));
+        if (setting == Settings.SPICY_MANUAL_TOKEN) {
+            field.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                    | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        }
         field.setTextColor(COL_TITLE);
         field.setTextSize(15);
         field.setSingleLine(true);
@@ -1062,6 +1089,324 @@ public final class SettingsPanel {
         });
         row.addView(field, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void spicyTokenRow(LinearLayout content) {
+        String masked = SpicyManualTokenStore.masked(context);
+        java.util.List<AiSettingsRows.IconAction> actions = new java.util.ArrayList<>();
+        actions.add(new AiSettingsRows.IconAction(Kind.EDIT,
+                uiStrings.get("settings_spicy_token_edit", "Edit token"), v -> promptForSpicyToken()));
+        if (!masked.isEmpty()) {
+            actions.add(new AiSettingsRows.IconAction(Kind.VISIBILITY,
+                    uiStrings.get("settings_spicy_token_reveal", "Reveal token"), v -> revealSpicyToken()));
+            actions.add(new AiSettingsRows.IconAction(Kind.DELETE,
+                    uiStrings.get("settings_spicy_token_delete", "Delete token"), v -> {
+                SpicyManualTokenStore.delete(context);
+                rebuildSection(Settings.LYRICS);
+            }));
+        }
+        aiFieldRow(content, uiStrings.setting(Settings.SPICY_MANUAL_TOKEN),
+                masked.isEmpty() ? uiStrings.get("settings_spicy_token_absent", "Not set") : masked,
+                false, v -> promptForSpicyToken(), actions.toArray(new AiSettingsRows.IconAction[0]));
+    }
+
+    private void promptForSpicyToken() {
+        PanelDialog dialog = new PanelDialog(context, uiStrings.setting(Settings.SPICY_MANUAL_TOKEN)).secure();
+        EditText field = dialog.field(true, "");
+        dialog.primary(uiStrings.get("settings_ai_save", "Save"), () -> {
+            if (SpicyManualTokenStore.save(context, field.getText().toString().trim())) {
+                rebuildSection(Settings.LYRICS);
+            } else {
+                android.widget.Toast.makeText(context,
+                        uiStrings.get("settings_spicy_token_rejected", "Token not saved"),
+                        android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
+        dialog.secondary(uiStrings.get("settings_ai_cancel", "Cancel"), null);
+        dialog.show();
+    }
+
+    private void revealSpicyToken() {
+        String token = SpicyManualTokenStore.load(context);
+        if (token.isEmpty()) return;
+        PanelDialog dialog = new PanelDialog(context, uiStrings.setting(Settings.SPICY_MANUAL_TOKEN))
+                .secure().closeIcon(uiStrings.get("lyrics_ai_close", "Close"));
+        dialog.secretValue(token);
+        dialog.show();
+    }
+
+    /** Single merged "Lyrics source" row: pinned source, ranking, and order summary. */
+    private void mergedSourceRow(LinearLayout content) {
+        String ranking = store.get(Settings.LYRICS_SOURCE_MODE);
+        StringBuilder order = new StringBuilder();
+        for (LyricsSourcePreferences.Source source : LyricsSourcePreferences.enabledSourceOrder(context)) {
+            if (order.length() > 0) order.append(" · ");
+            order.append(sourceLabel(source));
+        }
+        String rankLabel = uiStrings.option((Settings.StringSetting) Settings.LYRICS_SOURCE_MODE, ranking);
+        String summary = order.length() == 0
+                ? rankLabel + " · " + uiStrings.get("settings_source_none_enabled", "None enabled")
+                : rankLabel + " · " + order;
+        LinearLayout row = newRow(content);
+        TextView value = titleColumn(row, uiStrings.setting(Settings.LYRICS_SOURCE_OVERRIDE), summary);
+        value.setTextColor(COL_ACCENT);
+        row.addView(kindView(Kind.CHEVRON_RIGHT, COL_SECTION, 18),
+                new LinearLayout.LayoutParams(dp(24), dp(30)));
+        row.setOnClickListener(v -> showMergedSourceDialog());
+    }
+
+    private String sourceLabel(LyricsSourcePreferences.Source source) {
+        if (source == LyricsSourcePreferences.Source.APPLE_MUSIC) return "Apple Music";
+        if (source == LyricsSourcePreferences.Source.SPICY) return "Spicy";
+        if (source == LyricsSourcePreferences.Source.SPOTIFY) return "Spotify";
+        return "LRCLIB";
+    }
+
+    private void showMergedSourceDialog() {
+        final String[] ranking = new String[]{ store.get(Settings.LYRICS_SOURCE_MODE) };
+        if (!"Source order".equals(ranking[0])) ranking[0] = "Auto";
+        final java.util.ArrayList<LyricsSourcePreferences.Source> order =
+                new java.util.ArrayList<>(LyricsSourcePreferences.sourceOrder(context));
+        final java.util.EnumMap<LyricsSourcePreferences.Source, GlossyToggle> toggles =
+                new java.util.EnumMap<>(LyricsSourcePreferences.Source.class);
+
+        PanelDialog dialog = new PanelDialog(context, uiStrings.setting(Settings.LYRICS_SOURCE_OVERRIDE));
+
+        // The order list only takes effect in Source order mode. In Auto, arbitration is by
+        // sync level and quality score, so the reorder UI is hidden to avoid implying priority.
+        final LinearLayout orderSection = new LinearLayout(context);
+        orderSection.setOrientation(LinearLayout.VERTICAL);
+        final Runnable refreshOrderVisibility = () -> orderSection.setVisibility(
+                "Source order".equals(ranking[0]) ? View.VISIBLE : View.GONE);
+
+        dialog.paragraph(uiStrings.get("settings_source_ranking_title", "Ranking"));
+        final java.util.ArrayList<View> rankingRows = new java.util.ArrayList<>();
+        final java.util.ArrayList<ImageView> rankingDots = new java.util.ArrayList<>();
+        final String[] rankingOptions = new String[]{"Auto", "Source order"};
+        for (String option : rankingOptions) {
+            LinearLayout row = radioRow(
+                    option + ("Auto".equals(option) ? "" : " — "
+                            + uiStrings.get("settings_source_ranking_order_desc",
+                            "follow the order below")),
+                    option.equals(ranking[0]));
+            rankingRows.add(row);
+            rankingDots.add((ImageView) row.getTag());
+            final String value = option;
+            row.setOnClickListener(v -> {
+                ranking[0] = value;
+                refreshRadios(rankingRows, rankingDots, ranking[0]);
+                refreshOrderVisibility.run();
+            });
+            dialog.add(row);
+        }
+
+        TextView orderTitle = text(uiStrings.get("settings_source_order_title", "Order"),
+                15, COL_SECTION, true);
+        orderTitle.setPadding(dp(12), dp(12), dp(8), dp(2));
+        orderSection.addView(orderTitle);
+        LinearLayout list = new LinearLayout(context);
+        list.setOrientation(LinearLayout.VERTICAL);
+        orderSection.addView(list);
+        dialog.add(orderSection);
+        refreshOrderVisibility.run();
+        for (LyricsSourcePreferences.Source source : order) {
+            // SpicyLyrics.org is retired from the user selectable source set. Keep its
+            // implementation for compatibility with old persisted data, but do not expose it.
+            if (source == LyricsSourcePreferences.Source.SPICY) continue;
+            LinearLayout row = new LinearLayout(context);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(12), dp(8), dp(8), dp(8));
+            row.setTag(source);
+            GlossyToggle toggle = new GlossyToggle(context);
+            toggle.setAccent(COL_ACCENT);
+            toggle.setChecked(LyricsSourcePreferences.sourceEnabled(context, source), false);
+            toggles.put(source, toggle);
+            row.addView(toggle, new LinearLayout.LayoutParams(dp(44), dp(30)));
+            TextView label = text(sourceLabel(source), 16, COL_TITLE, false);
+            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            labelParams.leftMargin = dp(12);
+            row.addView(label, labelParams);
+            ImageView grip = kindView(Kind.CHEVRONS_UP_DOWN, COL_SUMMARY, 20);
+            grip.setContentDescription(uiStrings.get("settings_source_drag", "Drag to reorder"));
+            row.addView(grip, new LinearLayout.LayoutParams(dp(40), dp(40)));
+            attachSourceDrag(grip, row, list, order);
+            list.addView(row, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        dialog.primary(uiStrings.get("settings_ai_save", "Save"), () -> {
+            store.put(Settings.LYRICS_SOURCE_OVERRIDE, "Auto");
+            store.put(Settings.LYRICS_SOURCE_MODE, ranking[0]);
+            LyricsSourcePreferences.setRankingMode(context,
+                    LyricsSourcePreferences.RankingMode.parse(ranking[0]));
+            LyricsSourcePreferences.setSourceOrder(context, order);
+            for (LyricsSourcePreferences.Source source : LyricsSourcePreferences.Source.values()) {
+                GlossyToggle toggle = toggles.get(source);
+                LyricsSourcePreferences.setSourceEnabled(context, source,
+                        toggle != null && toggle.isChecked());
+            }
+            onSettingChanged(Settings.LYRICS_SOURCE_MODE);
+            rebuildSection(Settings.LYRICS);
+        });
+        dialog.secondary(uiStrings.get("settings_ai_cancel", "Cancel"), null);
+        dialog.show();
+        refreshRadios(rankingRows, rankingDots, ranking[0]);
+    }
+
+    private LinearLayout radioRow(String label, boolean selected) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(11), dp(10), dp(11));
+        ImageView dot = new ImageView(context);
+        dot.setPadding(dp(4), dp(4), dp(4), dp(4));
+        row.addView(dot, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        TextView text = text(label, 15, selected ? COL_ACCENT : COL_TITLE, false);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        params.leftMargin = dp(12);
+        row.addView(text, params);
+        row.setTag(dot);
+        return row;
+    }
+
+    private void refreshRadios(java.util.ArrayList<View> rows, java.util.ArrayList<ImageView> dots,
+                               String selected) {
+        for (int i = 0; i < rows.size(); i++) {
+            View row = rows.get(i);
+            ImageView dot = dots.get(i);
+            TextView label = null;
+            if (row instanceof LinearLayout) {
+                LinearLayout linear = (LinearLayout) row;
+                if (linear.getChildCount() > 1 && linear.getChildAt(1) instanceof TextView) {
+                    label = (TextView) linear.getChildAt(1);
+                }
+            }
+            String rowLabel = label == null ? "" : String.valueOf(label.getText());
+            boolean isSelected = rowLabel.equals(selected)
+                    || rowLabel.startsWith(selected + " ");
+            dot.setImageDrawable(new ActionIconDrawable(
+                    isSelected ? Kind.CIRCLE : Kind.CIRCLE,
+                    isSelected ? COL_ACCENT : COL_SUMMARY, density(), isSelected));
+            if (label != null) label.setTextColor(isSelected ? COL_ACCENT : COL_TITLE);
+        }
+    }
+
+    /**
+     * Grip drag with sliding neighbors: the dragged row follows the finger via translationY
+     * while the rows it passes slide out of the way. Order commits on release.
+     */
+    private void attachSourceDrag(View handle, LinearLayout row, LinearLayout list,
+                                  java.util.ArrayList<LyricsSourcePreferences.Source> order) {
+        final float[] startRawY = new float[1];
+        final int[] fromIndex = new int[1];
+        final int[] rowHeight = new int[1];
+        final int[] targetIndex = new int[1];
+        final boolean[] dragging = new boolean[1];
+        handle.setOnTouchListener(new View.OnTouchListener() {
+            @Override public boolean onTouch(View view, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        if (row.getHeight() <= 0) return false;
+                        startRawY[0] = event.getRawY();
+                        fromIndex[0] = list.indexOfChild(row);
+                        targetIndex[0] = fromIndex[0];
+                        if (fromIndex[0] < 0) return false;
+                        rowHeight[0] = row.getHeight();
+                        dragging[0] = true;
+                        disallowIntercept(list, true);
+                        if (android.os.Build.VERSION.SDK_INT >= 21) row.setElevation(dp(6));
+                        row.setAlpha(0.92f);
+                        return true;
+                    case MotionEvent.ACTION_MOVE: {
+                        if (!dragging[0]) return false;
+                        float dy = event.getRawY() - startRawY[0];
+                        row.setTranslationY(dy);
+                        float center = row.getTop() + dy + rowHeight[0] / 2f;
+                        int target = insertionIndex(list, row, center);
+                        targetIndex[0] = target;
+                        slideNeighbors(list, row, fromIndex[0], target, rowHeight[0]);
+                        return true;
+                    }
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL: {
+                        if (!dragging[0]) return false;
+                        dragging[0] = false;
+                        boolean commit = event.getActionMasked() == MotionEvent.ACTION_UP;
+                        int from = fromIndex[0];
+                        int target = commit ? targetIndex[0] : from;
+                        // Stop neighbor animations before moving the child. Pending animator
+                        // writes were racing the reparent and caused overlap/jumps on release.
+                        for (int i = 0; i < list.getChildCount(); i++) {
+                            View child = list.getChildAt(i);
+                            child.animate().cancel();
+                            if (child != row) child.setTranslationY(0f);
+                        }
+                        if (commit && target != from && target >= 0
+                                && from >= 0 && from < order.size() && target <= order.size()) {
+                            LyricsSourcePreferences.Source source = order.remove(from);
+                            order.add(Math.min(target, order.size()), source);
+                            list.removeView(row);
+                            list.addView(row, Math.min(target, list.getChildCount()));
+                        }
+                        if (android.os.Build.VERSION.SDK_INT >= 21) row.setElevation(0);
+                        row.setAlpha(1f);
+                        settleTranslations(list);
+                        disallowIntercept(list, false);
+                        return true;
+                    }
+                    default:
+                        return false;
+                }
+            }
+        });
+    }
+
+    /** Insertion index after the dragged row is removed: non-row children above the finger point. */
+    private int insertionIndex(LinearLayout list, LinearLayout row, float centerY) {
+        int position = 0;
+        for (int i = 0; i < list.getChildCount(); i++) {
+            View child = list.getChildAt(i);
+            if (child == row) continue;
+            float mid = child.getTop() + child.getHeight() / 2f;
+            if (centerY > mid) position++;
+        }
+        return Math.max(0, Math.min(list.getChildCount() - 1, position));
+    }
+
+    /** Slides the rows between the drag origin and the insertion point out of the way. */
+    private void slideNeighbors(LinearLayout list, LinearLayout row, int from, int target, int height) {
+        for (int i = 0; i < list.getChildCount(); i++) {
+            View child = list.getChildAt(i);
+            if (child == row) continue;
+            float shift = 0f;
+            if (target > from && i > from && i <= target) shift = -height;
+            else if (target < from && i >= target && i < from) shift = height;
+            if (child.getTranslationY() != shift) {
+                child.animate().translationY(shift).setDuration(120).start();
+            }
+        }
+    }
+
+    private void settleTranslations(LinearLayout list) {
+        for (int i = 0; i < list.getChildCount(); i++) {
+            View child = list.getChildAt(i);
+            if (child.getTranslationY() != 0f) {
+                child.animate().translationY(0f).setDuration(120).start();
+            }
+        }
+    }
+
+    private void disallowIntercept(View view, boolean disallow) {
+        View current = view;
+        while (current != null) {
+            android.view.ViewParent parent = current.getParent();
+            if (parent == null) return;
+            parent.requestDisallowInterceptTouchEvent(disallow);
+            if (!(parent instanceof View)) return;
+            current = (View) parent;
+        }
     }
 
     private void actionRow(LinearLayout content, Kind lead, String label, View.OnClickListener listener) {

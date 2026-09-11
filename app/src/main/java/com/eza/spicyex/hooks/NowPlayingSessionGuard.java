@@ -24,15 +24,15 @@ final class NowPlayingSessionGuard {
                 || !expectedTrackId.equals(currentTrackId);
     }
 
+    /** Checks lifecycle eligibility only; the merge operation validates canonical identity. */
     static boolean mayMergeMountedProjection(
             boolean authoritativeReplayRequired,
             boolean loadedTrackMatches,
             boolean cardMounted,
-            boolean artworkMounted,
-            boolean sameCanonicalBase
+            boolean artworkMounted
     ) {
         return !authoritativeReplayRequired && loadedTrackMatches && cardMounted
-                && artworkMounted && sameCanonicalBase;
+                && artworkMounted;
     }
 
     private static boolean isBlank(String value) {

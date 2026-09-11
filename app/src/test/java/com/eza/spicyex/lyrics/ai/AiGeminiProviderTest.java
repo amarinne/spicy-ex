@@ -244,6 +244,19 @@ public class AiGeminiProviderTest {
     }
 
     @Test
+    public void anInvalidKeyArrivesAs400WithApiKeyInvalid() {
+        String body = "{\"error\":{\"code\":400,\"message\":\"API key not valid.\","
+                + "\"errors\":[{\"reason\":\"API_KEY_INVALID\"}],\"status\":\"INVALID_ARGUMENT\"}}";
+        StubTransport generate = new StubTransport(status(400, body));
+        assertEquals(AiProviderFailure.Kind.AUTH,
+                provider(generate).generateChunk(request(), config(), null).failure.kind);
+
+        StubTransport discovery = new StubTransport(status(400, body));
+        assertEquals(AiProviderFailure.Kind.AUTH,
+                provider(discovery).listModels(null).failure.kind);
+    }
+
+    @Test
     public void aRateLimitSurrendersItsRetryAfter() {
         StubTransport transport = new StubTransport(result(429, "{}", 5_000L));
 

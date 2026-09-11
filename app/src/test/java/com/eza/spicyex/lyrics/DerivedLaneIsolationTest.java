@@ -223,8 +223,8 @@ public class DerivedLaneIsolationTest {
         published.includesTranslation = true;
         LyricsLine mountedFirst = mounted.lines.get(0);
 
-        assertTrue(LyricsDocumentProcessor.sameCanonicalBase(mounted, published));
-        assertTrue(LyricsDocumentProcessor.mergeDerivedLayers(mounted, published));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.CHANGED,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
 
         assertSame("row objects must survive so timing and view state are preserved",
                 mountedFirst, mounted.lines.get(0));
@@ -241,7 +241,8 @@ public class DerivedLaneIsolationTest {
         LyricsDocument published = document("ichi");
         published.lines.get(0).romanizedText = "ichi-r";
 
-        assertFalse(LyricsDocumentProcessor.mergeDerivedLayers(mounted, published));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.UNCHANGED,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
     }
 
     @Test
@@ -250,9 +251,48 @@ public class DerivedLaneIsolationTest {
         LyricsDocument replacement = document("ichi", "ni", "san");
         replacement.lines.get(0).romanizedText = "ichi-r";
 
-        assertFalse(LyricsDocumentProcessor.sameCanonicalBase(mounted, replacement));
-        assertFalse(LyricsDocumentProcessor.mergeDerivedLayers(mounted, replacement));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, replacement));
         assertEquals("", mounted.lines.get(0).romanizedText);
+    }
+
+    @Test
+    public void mergeRejectsMissingDocumentsAndRetimedSourcesWithoutMutation() {
+        LyricsDocument mounted = document("ichi");
+        LyricsDocument published = document("ichi");
+        published.lines.get(0).endMs++;
+        published.lines.get(0).translatedText = "one";
+        published.translationAiPending = true;
+
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE,
+                LyricsDocumentProcessor.mergeDerivedPublication(null, published));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, null));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
+        assertEquals("", mounted.lines.get(0).translatedText);
+        assertFalse(mounted.translationAiPending);
+    }
+
+    @Test
+    public void mergeUsesDocumentIndicesAcrossNullRows() {
+        LyricsDocument mounted = document("ichi", "ni");
+        LyricsDocument published = document("ichi", "ni");
+        mounted.lines.add(0, null);
+        published.lines.add(0, null);
+        LyricsLine first = mounted.lines.get(1);
+        LyricsLine second = mounted.lines.get(2);
+        published.lines.get(1).translatedText = "one";
+        published.lines.get(2).translatedText = "two";
+
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.CHANGED,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
+        assertSame(first, mounted.lines.get(1));
+        assertSame(second, mounted.lines.get(2));
+        assertEquals("one", first.translatedText);
+        assertEquals("two", second.translatedText);
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.UNCHANGED,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
     }
 
     @Test
@@ -267,7 +307,7 @@ public class DerivedLaneIsolationTest {
         published.translationPending = true;
         published.processingPending = true;
 
-        LyricsDocumentProcessor.mergeDerivedLayers(mounted, published);
+        LyricsDocumentProcessor.mergeDerivedPublication(mounted, published);
 
         assertFalse(mounted.romanizationPending);
         assertTrue(mounted.translationPending);
@@ -286,7 +326,8 @@ public class DerivedLaneIsolationTest {
         published.readingAiFailureToken = "protocol_invalid";
         published.translationAiFailureToken = "rate_limited";
 
-        assertFalse(LyricsDocumentProcessor.mergeDerivedLayers(mounted, published));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.UNCHANGED,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
 
         assertTrue(mounted.readingFromAi);
         assertTrue(mounted.translationFromAi);
@@ -332,7 +373,8 @@ public class DerivedLaneIsolationTest {
         published.lines.get(0).backgroundLines.add(background("hey"));
         published.lines.get(0).backgroundLines.get(0).translatedText = "hey!";
 
-        assertTrue(LyricsDocumentProcessor.mergeDerivedLayers(mounted, published));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.CHANGED,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
 
         assertEquals("i-r", mounted.lines.get(0).syllables.get(0).romanizedText);
         assertEquals("hey!", mounted.lines.get(0).backgroundLines.get(0).translatedText);
@@ -350,7 +392,8 @@ public class DerivedLaneIsolationTest {
         published.lines.get(0).syllables.add(segment("i"));
         published.lines.get(0).translatedText = "uno";
 
-        assertTrue(LyricsDocumentProcessor.mergeDerivedLayers(mounted, published));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.CHANGED,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
 
         assertEquals("ichi-r", mounted.lines.get(0).romanizedText);
         assertEquals("i-r", mounted.lines.get(0).syllables.get(0).romanizedText);
@@ -365,7 +408,8 @@ public class DerivedLaneIsolationTest {
         published.lines.get(0).readingRenderPlan = new com.eza.spicyex.lyrics.reading.ReadingModels
                 .RenderPlan("l0", null, null, null, "ICHI", null);
 
-        assertTrue(LyricsDocumentProcessor.mergeDerivedLayers(mounted, published));
+        assertEquals(LyricsDocumentProcessor.DerivedMergeResult.CHANGED,
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, published));
 
         assertEquals("", mounted.lines.get(0).romanizedText);
         assertEquals("ICHI", mounted.lines.get(0).readingRenderPlan.joinedDisplayText);

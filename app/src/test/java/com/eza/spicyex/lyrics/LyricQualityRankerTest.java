@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class LyricQualityRankerTest {
@@ -63,6 +64,41 @@ public class LyricQualityRankerTest {
     @Test
     public void nativeStaticBeatsPlainSpicyStatic() {
         assertTrue(score(nativeDoc("Static")) > score(spicy("Static", false, false)));
+    }
+
+    @Test
+    public void autoRankingOrdersSyllableAboveWordAboveLineAboveStatic() {
+        assertTrue(LyricQualityRanker.syncLevel("Syllable") > LyricQualityRanker.syncLevel("Word"));
+        assertTrue(LyricQualityRanker.syncLevel("Word") > LyricQualityRanker.syncLevel("Line"));
+        assertTrue(LyricQualityRanker.syncLevel("Line") > LyricQualityRanker.syncLevel("Static"));
+    }
+
+    @Test
+    public void autoPrefersWordOverLineAcrossSources() {
+        assertTrue(LyricQualityRanker.preferAuto(lrclib("Word"), nativeDoc("Line")));
+    }
+
+    @Test
+    public void autoPrefersSyllableOverWordAcrossSources() {
+        assertTrue(LyricQualityRanker.preferAuto(spicy("Syllable", true, false), lrclib("Word")));
+    }
+
+    @Test
+    public void autoBreaksSyncTieBySourceTier() {
+        assertTrue(LyricQualityRanker.preferAuto(nativeDoc("Line"), lrclib("Line")));
+        assertTrue(LyricQualityRanker.preferAuto(appleDoc("Line"), nativeDoc("Line")));
+        assertTrue(LyricQualityRanker.preferAuto(appleDoc("Static"), lrclib("Line")) == false);
+        assertFalse(LyricQualityRanker.preferAuto(lrclib("Line"), nativeDoc("Line")));
+        assertFalse(LyricQualityRanker.preferAuto(nativeDoc("Line"), nativeDoc("Line")));
+    }
+
+    @Test
+    public void autoNeverPrefersAPoisonedCandidate() {
+        assertFalse(LyricQualityRanker.preferAuto(spicy("Syllable", true, true), lrclib("Static")));
+    }
+
+    private static LyricsDocument appleDoc(String type) {
+        return doc(type, "apple_music_lenerd", "Apple Music");
     }
 
     private static int score(LyricsDocument doc) {

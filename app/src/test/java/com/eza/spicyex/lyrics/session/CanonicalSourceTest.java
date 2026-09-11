@@ -295,6 +295,51 @@ public class CanonicalSourceTest {
         assertTrue(b.nextOrder.contains("b"));
     }
 
+    // --- quality-gated supersede ------------------------------------------------
+
+    private static LyricsDocument scoredDoc(String type, String fetchSource, String provider) {
+        LyricsDocument doc = document("hello");
+        doc.type = type;
+        doc.fetchSource = fetchSource;
+        doc.provider = provider;
+        return doc;
+    }
+
+    @Test
+    public void anythingSupersedesNoBaseButNothingSupersedesOnEmptyResult() {
+        LyricsDocument incoming = scoredDoc("Static", "lrclib", "LRCLIB");
+        assertTrue(CanonicalBaseAdoption.shouldSupersede(null, incoming));
+        assertFalse(CanonicalBaseAdoption.shouldSupersede(null, null));
+        assertFalse(CanonicalBaseAdoption.shouldSupersede(null, new LyricsDocument()));
+    }
+
+    @Test
+    public void emptyResultsNeverSupersedeAnExistingBase() {
+        LyricsDocument current = scoredDoc("Static", "lrclib", "LRCLIB");
+        assertFalse(CanonicalBaseAdoption.shouldSupersede(current, null));
+        assertFalse(CanonicalBaseAdoption.shouldSupersede(current, new LyricsDocument()));
+    }
+
+    @Test
+    public void lowerQualityRefetchNeverOverwritesABetterBase() {
+        LyricsDocument spicySynced = scoredDoc("Syllable", "spicy_api_cache", "Spicy Lyrics");
+        LyricsDocument nativeStatic = scoredDoc("Static", "spotify_native_model", "Musixmatch");
+        assertFalse(CanonicalBaseAdoption.shouldSupersede(spicySynced, nativeStatic));
+        assertFalse(CanonicalBaseAdoption.shouldSupersede(
+                scoredDoc("Line", "lrclib", "LRCLIB"), nativeStatic));
+    }
+
+    @Test
+    public void equalOrBetterQualitySupersedes() {
+        LyricsDocument lrclibStatic = scoredDoc("Static", "lrclib", "LRCLIB");
+        LyricsDocument nativeStatic = scoredDoc("Static", "spotify_native_model", "Musixmatch");
+        assertTrue(CanonicalBaseAdoption.shouldSupersede(lrclibStatic, nativeStatic));
+        assertTrue(CanonicalBaseAdoption.shouldSupersede(lrclibStatic,
+                scoredDoc("Static", "lrclib", "LRCLIB")));
+        assertTrue(CanonicalBaseAdoption.shouldSupersede(lrclibStatic,
+                scoredDoc("Line", "lrclib", "LRCLIB")));
+    }
+
     // --- helpers ------------------------------------------------------------
 
     private static LyricsDocument document(String... texts) {

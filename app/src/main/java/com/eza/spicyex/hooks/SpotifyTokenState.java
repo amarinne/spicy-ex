@@ -65,6 +65,10 @@ final class SpotifyTokenState {
             if (expiresAtMillis > 0) this.expiresAtMillis = expiresAtMillis;
             return false;
         }
+        // Protect Web API token (BQC...) from being downgraded to a Login5 session token (BQB...)
+        if (token.startsWith("BQC") && !tokenText.startsWith("BQC")) {
+            return false;
+        }
         this.token = tokenText;
         this.capturedAtMillis = capturedAtMillis;
         this.expiresAtMillis = expiresAtMillis;

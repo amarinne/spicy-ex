@@ -67,6 +67,33 @@ public final class Settings {
             "lyrics_hyper_aod_lyrics_enabled", LYRICS, "Publish lyrics to HyperGlow", false
     );
 
+    /** Automatic lyric source arbitration mode shared by fullscreen and now-playing. */
+    public static final Setting<String> LYRICS_SOURCE_MODE = enumSetting(
+            "lyrics_source_selection_mode", LYRICS, "Lyrics source ranking", "Auto",
+            "Auto", "Source order"
+    );
+
+    /** Experimental strict source switch. Spicy restores the retired remote provider path. */
+    public static final Setting<String> LYRICS_SOURCE_OVERRIDE = enumSetting(
+            "lyrics_source_override", LYRICS, "Lyrics source", "Auto",
+            "Auto", "Apple Music", "Spicy", "Spotify", "LRCLIB"
+    );
+
+    /** Optional desktop-captured Spotify token used only by strict Spicy requests. */
+    public static final Setting<String> SPICY_MANUAL_TOKEN = stringSetting(
+            "lyrics_spicy_manual_token", LYRICS, "Spicy manual token", ""
+    );
+
+    /** JSON array of source ids, persisted in the desktop-compatible order. */
+    public static final Setting<String> LYRICS_SOURCE_ORDER = stringSetting(
+            "lyrics_source_order", LYRICS, "Lyrics source order", "managed"
+    );
+
+    /** Bounded JSON map of spotify track URI to source id; auto is represented by omission. */
+    public static final Setting<String> LYRICS_SOURCE_OVERRIDES = internalSetting(
+            "lyrics_source_overrides", "Per-track lyric sources", "{}"
+    );
+
     // Stored values are the exact display labels; allocation is in CacheStoragePolicy.
     public static final StringSetting CACHE_SIZE =
             (StringSetting) enumSetting(
@@ -192,6 +219,12 @@ public final class Settings {
     public static final IntegerSetting LYRICS_TEXT_SIZE_CUSTOM = intSetting(
             "lyrics_text_size_custom", TEXT, "Custom size",
             100, 0, 500, 5
+    );
+
+    // When on, long lines shrink (23-28sp by length) so they fit; when off, every line
+    // uses the same base size and long lines wrap instead.
+    public static final Setting<Boolean> LYRICS_ADAPTIVE_TEXT_SIZE = boolSetting(
+            "lyrics_adaptive_text_size", TEXT, "Adaptive text size", true
     );
 
     public static final Setting<String> INTERLUDE_ICON = enumSetting(

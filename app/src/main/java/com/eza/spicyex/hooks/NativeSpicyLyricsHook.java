@@ -66,7 +66,6 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         Diagnostics.event("bootstrap", "hook_start",
                 Diagnostics.context("process", Application.getProcessName()));
         dbg("hook", "native Spicy renderer hook enabled version=" + BuildStamp.FULL);
-        new AuthTokenCaptureHook(lpparm.classLoader()).hook();
         new NativeLyricsCaptureHook(
                 lpparm.classLoader(),
                 bridge,

@@ -97,6 +97,8 @@ final class SpotifyTokenStore {
         if (advanced) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " captured Spotify access token"
                     + " source=" + source
+                    + " tokenPreview=" + tokenPreview(tokenText)
+                    + " tokenLength=" + tokenText.length()
                     + " generation=" + STATE.generation()
                     + " hasObservedExpiry=" + (STATE.expiresAtMillis() > 0));
         }
@@ -139,6 +141,8 @@ final class SpotifyTokenStore {
             syncMirror();
             XpLog.log(NativeSpicyLyricsHook.TAG
                     + " restored persisted Spotify access token"
+                    + " tokenPreview=" + tokenPreview(token)
+                    + " tokenLength=" + token.length()
                     + " generation=" + STATE.generation()
                     + " hasObservedExpiry=" + (STATE.expiresAtMillis() > 0));
         } catch (Throwable t) {
@@ -253,6 +257,12 @@ final class SpotifyTokenStore {
         } catch (Throwable ignored) {
         }
         return null;
+    }
+
+    static String tokenPreview(String token) {
+        if (token == null) return "<absent>";
+        if (token.length() <= 10) return "<redacted>";
+        return token.substring(0, 5) + "…" + token.substring(token.length() - 5);
     }
 
     private static boolean isBlank(String value) {

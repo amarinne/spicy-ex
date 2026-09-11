@@ -15,7 +15,12 @@ public class LyricsDocument {
     public String type = "Unknown";
     public String language = "";
     public String fetchSource = "unknown";
+    /** Source-selection metadata shared by fullscreen and now-playing surfaces. */
+    public String selectedSource = "";
+    public String selectionMode = "smart";
+    public String selectionOverride = "auto";
     public boolean spicyPackedPayload;
+    public boolean spicyEnvelopeNoticePresent;
     public Integer spicyQueryStatus;
     public String spicyFormat = "";
     public boolean spicyPoisoned;
@@ -64,7 +69,11 @@ public class LyricsDocument {
         copy.type = safe(source.type);
         copy.language = safe(source.language);
         copy.fetchSource = safe(source.fetchSource);
+        copy.selectedSource = safe(source.selectedSource);
+        copy.selectionMode = safe(source.selectionMode);
+        copy.selectionOverride = safe(source.selectionOverride);
         copy.spicyPackedPayload = source.spicyPackedPayload;
+        copy.spicyEnvelopeNoticePresent = source.spicyEnvelopeNoticePresent;
         copy.spicyQueryStatus = source.spicyQueryStatus;
         copy.spicyFormat = safe(source.spicyFormat);
         copy.spicyPoisoned = source.spicyPoisoned;

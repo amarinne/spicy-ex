@@ -7,7 +7,6 @@ import com.eza.spicyex.lyrics.session.LayerConfigIds;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -123,48 +122,79 @@ public class LyricCachesTest {
 
     @Test
     public void boundedGoogleCacheOrderMovesExistingKeyToNewest() {
-        LyricCaches.CacheOrderUpdate update = LyricCaches.boundedGoogleCacheOrder("a\nb\nc", "b", 3);
+        Map<String, Long> writes = new LinkedHashMap<>();
+        writes.put("b", 7L);
+        LyricCaches.GoogleQuotaUpdate update = LyricCaches.boundedGoogleCacheOrderByBytes(
+                "a|4\nb|4\nc|4", null, writes, 15L);
 
-        assertEquals("a\nc\nb", update.nextOrder);
+        assertEquals("a|4\nc|4\nb|7", update.nextOrder);
         assertTrue(update.evictedKeys.isEmpty());
     }
 
     @Test
-    public void boundedGoogleCacheOrderEvictsOldestEntries() {
-        LyricCaches.CacheOrderUpdate update = LyricCaches.boundedGoogleCacheOrder("a\nb\nc", "d", 3);
+    public void googleCacheMigratesPlainKeysUsingKnownSizes() {
+        Map<String, Long> sizes = new LinkedHashMap<>();
+        sizes.put("a", 6L);
+        sizes.put("b", 4L);
+        Map<String, Long> writes = new LinkedHashMap<>();
+        writes.put("c", 4L);
+        LyricCaches.GoogleQuotaUpdate update = LyricCaches.boundedGoogleCacheOrderByBytes(
+                "a\nb", sizes, writes, 8L);
 
-        assertEquals("b\nc\nd", update.nextOrder);
+        assertEquals("b|4\nc|4", update.nextOrder);
         assertEquals(1, update.evictedKeys.size());
         assertTrue(update.evictedKeys.contains("a"));
     }
 
     @Test
     public void boundedGoogleCacheOrderIgnoresBlankAndSentinelEntries() {
-        LyricCaches.CacheOrderUpdate update = LyricCaches.boundedGoogleCacheOrder("\n__cache_order\na\n", "b", 5);
+        Map<String, Long> writes = new LinkedHashMap<>();
+        writes.put("b", 4L);
+        LyricCaches.GoogleQuotaUpdate update = LyricCaches.boundedGoogleCacheOrderByBytes(
+                "\n__cache_order\na|4\n", null, writes, 8L);
 
-        assertEquals("a\nb", update.nextOrder);
+        assertEquals("a|4\nb|4", update.nextOrder);
         assertTrue(update.evictedKeys.isEmpty());
     }
 
     @Test
     public void boundedGoogleCacheOrderAddsBatchAndMovesDuplicatesOnce() {
-        LyricCaches.CacheOrderUpdate update = LyricCaches.boundedGoogleCacheOrder(
-                "a\nb\nc", Arrays.asList("b", "d", "e", "d"), 4);
+        Map<String, Long> writes = new LinkedHashMap<>();
+        writes.put("b", 4L);
+        writes.put("d", 3L);
+        writes.put("e", 4L);
+        writes.put("d", 4L);
+        LyricCaches.GoogleQuotaUpdate update = LyricCaches.boundedGoogleCacheOrderByBytes(
+                "a|4\nb|4\nc|4", null, writes, 16L);
 
-        assertEquals("c\nb\ne\nd", update.nextOrder);
+        assertEquals("c|4\nb|4\nd|4\ne|4", update.nextOrder);
         assertEquals(1, update.evictedKeys.size());
         assertTrue(update.evictedKeys.contains("a"));
     }
 
     @Test
     public void boundedGoogleCacheOrderEvictsWholeOverflowForBatch() {
-        LyricCaches.CacheOrderUpdate update = LyricCaches.boundedGoogleCacheOrder(
-                "a\nb\nc", Arrays.asList("d", "e"), 3);
+        Map<String, Long> writes = new LinkedHashMap<>();
+        writes.put("d", 4L);
+        writes.put("e", 4L);
+        LyricCaches.GoogleQuotaUpdate update = LyricCaches.boundedGoogleCacheOrderByBytes(
+                "a|4\nb|4\nc|4", null, writes, 12L);
 
-        assertEquals("c\nd\ne", update.nextOrder);
+        assertEquals("c|4\nd|4\ne|4", update.nextOrder);
         assertEquals(2, update.evictedKeys.size());
         assertTrue(update.evictedKeys.contains("a"));
         assertTrue(update.evictedKeys.contains("b"));
+    }
+
+    @Test
+    public void unlimitedGoogleCacheKeepsAllEntries() {
+        Map<String, Long> writes = new LinkedHashMap<>();
+        writes.put("b", Long.MAX_VALUE);
+        LyricCaches.GoogleQuotaUpdate update = LyricCaches.boundedGoogleCacheOrderByBytes(
+                "a|8", null, writes, CacheStoragePolicy.UNLIMITED);
+
+        assertEquals("a|8\nb|" + Long.MAX_VALUE, update.nextOrder);
+        assertTrue(update.evictedKeys.isEmpty());
     }
 
     @Test

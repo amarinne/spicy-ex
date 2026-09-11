@@ -85,6 +85,55 @@ public class LyricTimelineTest {
         assertEquals(5_000 + LyricTimeline.DEFAULT_LINE_DURATION_MS, lines.get(0).endMs);
     }
 
+    // --- Spotify-native gap hold (no synthesized interludes) ---
+
+    private static LyricsDocument nativeDoc(LyricsLine... lines) {
+        LyricsDocument doc = lineDoc(lines);
+        doc.fetchSource = "spotify_native_model";
+        doc.provider = "Musixmatch";
+        return doc;
+    }
+
+    @Test
+    public void spotifyNativeSourceIsDetected() {
+        assertTrue(LyricTimeline.isSpotifyNativeSource(nativeDoc(vocal("a", 0, 1_000))));
+        assertFalse(LyricTimeline.isSpotifyNativeSource(lineDoc(vocal("a", 0, 1_000))));
+        LyricsDocument lrclib = lineDoc(vocal("a", 0, 1_000));
+        lrclib.fetchSource = "lrclib";
+        assertFalse(LyricTimeline.isSpotifyNativeSource(lrclib));
+        assertFalse(LyricTimeline.isSpotifyNativeSource(null));
+    }
+
+    @Test
+    public void spotifyNativeHoldExtendsVocalAcrossLargeGap() {
+        LyricsDocument doc = nativeDoc(vocal("a", 0, 0), vocal("b", 20_000, 0));
+        LyricTimeline.fillMissingEndTimes(doc);
+        assertEquals(20_000, doc.lines.get(0).endMs);
+    }
+
+    @Test
+    public void spotifyNativeSynthesizesNoDotRowsAndHoldsTheLine() {
+        LyricsDocument doc = nativeDoc(vocal("a", 8_000, 11_000), vocal("b", 30_000, 33_000));
+        doc.durationMs = 240_000;
+        LyricTimeline.applySyncedRows(doc);
+        assertEquals(2, doc.appliedLines.size());
+        for (AppliedLine row : doc.appliedLines) assertFalse(row.dotLine);
+        // Mid-gap the highlight stays on the current line until the next one starts.
+        assertEquals(0, LyricTimeline.findPrimaryActiveRow(doc.appliedLines, 20_000));
+        assertEquals(1, LyricTimeline.findPrimaryActiveRow(doc.appliedLines, 31_000));
+    }
+
+    @Test
+    public void spotifyNativeKeepsAuthoredInterludeMarkers() {
+        LyricsLine mid = marker(11_000);
+        mid.endMs = 30_000;
+        LyricsDocument doc = nativeDoc(vocal("a", 8_000, 11_000), mid, vocal("b", 30_000, 33_000));
+        LyricTimeline.applySyncedRows(doc);
+        int dotRows = 0;
+        for (AppliedLine row : doc.appliedLines) if (row.dotLine) dotRows++;
+        assertEquals(1, dotRows);
+    }
+
     // --- applySyncedRows / row planning ---
 
     @Test
@@ -264,5 +313,10 @@ public class LyricTimelineTest {
         assertEquals("one", row.translatedText);
         assertFalse("a second pass over unchanged text reports nothing",
                 LyricTimeline.refreshAppliedDerivedText(doc));
+    }
+    @Test public void backgroundVocalBeatsOverlappingDot() {
+        AppliedLine dot = new AppliedLine(); dot.dotLine = true; dot.startMs = 0; dot.endMs = 5100;
+        AppliedLine bg = new AppliedLine(); bg.bgLine = true; bg.startMs = 5000; bg.endMs = 8000;
+        assertEquals(1, LyricTimeline.findPrimaryActiveRow(java.util.Arrays.asList(dot, bg), 5050));
     }
 }

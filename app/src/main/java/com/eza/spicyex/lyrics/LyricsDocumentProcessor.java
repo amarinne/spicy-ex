@@ -20,7 +20,7 @@ public final class LyricsDocumentProcessor {
     public static void finalizeParsedDocument(Context context, LyricsDocument doc, int processingVersion) {
         if (doc == null) return;
         LyricTimeline.rebalanceStaticTimings(doc);
-        LyricTimeline.fillMissingEndTimes(doc.lines);
+        LyricTimeline.fillMissingEndTimes(doc);
         applyProviderTranslations(context, doc);
         applyCachedGoogleEnhancements(context, doc, processingVersion);
         initProcessing(context, doc);
@@ -220,13 +220,8 @@ public final class LyricsDocumentProcessor {
         return doc != null && !hasDisplayedSound(doc) && !hasSpanReadings(doc);
     }
 
-    /**
-     * True when two documents describe the same canonical source: same original text, timing, and
-     * spans. Derived text is not part of the comparison.
-     */
-    public static boolean sameCanonicalBase(LyricsDocument first, LyricsDocument second) {
-        if (first == null || second == null) return false;
-        return canonicalBaseOf(first).digest.equals(canonicalBaseOf(second).digest);
+    public enum DerivedMergeResult {
+        DIFFERENT_BASE, UNCHANGED, CHANGED
     }
 
     /**
@@ -235,19 +230,21 @@ public final class LyricsDocumentProcessor {
      *
      * <p>Lets a surface absorb a derived-layer update without swapping the document object, which
      * is what preserves the lyric timeline, mounted rows, active-row state, and scroll position
-     * across a reading or translation completion. Callers must already have established that both
-     * documents share a canonical base.
+     * across a reading or translation completion. This operation validates the canonical base
+     * before any mutation, so callers do not need a separate comparison pass.
      *
-     * @return true when any displayed derived value changed
+     * @return DIFFERENT_BASE when a replacement is required; otherwise CHANGED or UNCHANGED refers
+     *         to displayed text. Compatible publications always copy readiness and provenance.
      */
-    public static boolean mergeDerivedLayers(LyricsDocument target, LyricsDocument source) {
-        if (target == null || source == null) return false;
+    public static DerivedMergeResult mergeDerivedPublication(LyricsDocument target, LyricsDocument source) {
+        if (target == null || source == null) return DerivedMergeResult.DIFFERENT_BASE;
         CanonicalBase targetBase = canonicalBaseOf(target);
         CanonicalBase sourceBase = canonicalBaseOf(source);
-        if (!targetBase.digest.equals(sourceBase.digest)) return false;
+        if (!targetBase.digest.equals(sourceBase.digest)) return DerivedMergeResult.DIFFERENT_BASE;
         boolean changed = false;
         for (CanonicalRow row : sourceBase.rows) {
-            int targetIndex = targetBase.indexOfRow(row.rowId);
+            CanonicalRow targetRow = targetBase.row(row.rowId);
+            int targetIndex = targetRow == null ? -1 : targetRow.index;
             if (targetIndex < 0 || targetIndex >= target.lines.size()
                     || row.index >= source.lines.size()) {
                 continue;
@@ -268,7 +265,7 @@ public final class LyricsDocumentProcessor {
         target.translationAiModel = source.translationAiModel;
         target.readingAiFailureToken = safeText(source.readingAiFailureToken);
         target.translationAiFailureToken = safeText(source.translationAiFailureToken);
-        return changed;
+        return changed ? DerivedMergeResult.CHANGED : DerivedMergeResult.UNCHANGED;
     }
 
     /**

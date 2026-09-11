@@ -27,8 +27,8 @@ import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 
 /** Fetch/fallback coordinator for native Spicy lyrics. */
 public final class LyricsRepository {
-    private static final String TAG = "[SpotifyPlusSpicyRepository]";
-    private static final MediaType JSON = MediaType.parse("application/json");
+    private static final String TAG = "[SpotifyPlusLyricsRepository]";
+    private static final MediaType JSON = MediaType.get("application/json");
     private static final int NATIVE_LYRICS_RETRY_LIMIT = 4;
     private static final long NATIVE_LYRICS_RETRY_DELAY_MS = 125;
 
@@ -36,7 +36,13 @@ public final class LyricsRepository {
     // in-player card and the fullscreen screen both fetch through here), so a no-lyric song isn't
     // re-queried (and re-billed against the Spicy quota) when the other surface opens. In-memory:
     // resets on process restart so a track that later gains lyrics is re-checked next launch.
-    private static final java.util.Set<String> NO_LYRICS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final int NO_LYRICS_LIMIT = 256;
+    private static final java.util.Map<String, Boolean> NO_LYRICS = java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<String, Boolean>(NO_LYRICS_LIMIT, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, Boolean> eldest) {
+                    return size() > NO_LYRICS_LIMIT;
+                }
+            });
 
     private final OkHttpClient http;
     private final Parser parser;
@@ -76,7 +82,28 @@ public final class LyricsRepository {
             }
             return;
         }
-        if (NO_LYRICS.contains(trackId)) {
+        // Source toggles and order are the single source of truth. The legacy pinned
+        // preference is intentionally ignored so a disabled provider can never be queried.
+        com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode rankingMode =
+                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.rankingMode(context);
+        java.util.List<com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source> enabledOrder =
+                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.enabledSourceOrder(context);
+        if (rankingMode == com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode.SOURCE_ORDER) {
+            fetchOrderedSources(context, track, generation, enabledOrder, accessToken, callback);
+            return;
+        }
+        if (enabledOrder.isEmpty()) {
+            callback.onError("All lyric sources disabled");
+            return;
+        }
+        boolean remoteEnabled = isStepEnabled(enabledOrder,
+                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.APPLE_MUSIC,
+                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPICY);
+        boolean nativeEnabled = enabledOrder.contains(
+                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPOTIFY);
+        boolean lrclibEnabled = enabledOrder.contains(
+                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.LRCLIB);
+        if (NO_LYRICS.containsKey(trackId)) {
             XpLog.log(TAG + " skip fetch: no lyrics from any source this session, id=" + trackId);
             callback.onError("Lyrics unavailable (cached no-result)");
             return;
@@ -96,14 +123,134 @@ public final class LyricsRepository {
                 //   not-found  -> "LRCLIB empty", "no LRCLIB result", "LRCLIB HTTP 404"
                 //   transient  -> "LRCLIB failed: <io>", "LRCLIB HTTP 5xx"
                 if (LyricsFetchErrors.isDurableNoLyrics(error)) {
-                    NO_LYRICS.add(negId);
+                    NO_LYRICS.put(negId, Boolean.TRUE);
                     XpLog.log(TAG + " cached no-lyrics for id=" + negId + " (" + error + ")");
                 }
                 callback.onError(error);
             }
         };
         fetchSpicyLyricsFallback(context, track, generation, sendToken, accessToken,
-                tokenGeneration, authRecovery, false, gated);
+                tokenGeneration, authRecovery, false, gated,
+                remoteEnabled, nativeEnabled, lrclibEnabled);
+    }
+
+    /** Source-order Auto: first enabled source in user order that yields lyrics wins. */
+    private void fetchOrderedSources(Context context, SpotifyTrack track, int generation,
+                                     java.util.List<com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source> enabledOrder,
+                                     String accessToken, ResultCallback callback) {
+        if (enabledOrder == null || enabledOrder.isEmpty()) {
+            callback.onError("All lyric sources disabled");
+            return;
+        }
+        attemptOrderedSource(context, track, generation, enabledOrder, 0, accessToken, callback);
+    }
+
+    private void attemptOrderedSource(Context context, SpotifyTrack track, int generation,
+                                      java.util.List<com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source> enabledOrder,
+                                      int index, String accessToken, ResultCallback callback) {
+        if (index >= enabledOrder.size()) {
+            callback.onError("No lyric source in order produced lyrics");
+            return;
+        }
+        String source = labelFor(enabledOrder.get(index));
+        fetchSingleSource(context, track, generation, source, accessToken, new ResultCallback() {
+            @Override public void onSuccess(LyricsDocument document) {
+                callback.onSuccess(document);
+            }
+            @Override public void onError(String error) {
+                attemptOrderedSource(context, track, generation, enabledOrder, index + 1, accessToken, callback);
+            }
+        }, 0);
+    }
+
+    private static String labelFor(com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source source) {
+        if (source == null) return "Auto";
+        switch (source) {
+            case APPLE_MUSIC: return "Apple Music";
+            case SPICY: return "Spicy";
+            case SPOTIFY: return "Spotify";
+            case LRCLIB: return "LRCLIB";
+            default: return "Auto";
+        }
+    }
+
+    private static boolean isStepEnabled(
+            java.util.List<com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source> enabledOrder,
+            com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source... anyOf) {
+        if (enabledOrder == null || anyOf == null) return false;
+        for (com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source source : anyOf) {
+            if (enabledOrder.contains(source)) return true;
+        }
+        return false;
+    }
+
+    private void fetchSingleSource(Context context, SpotifyTrack track, int generation,
+                                   String source, String accessToken, ResultCallback callback,
+                                   int nativeRetryCount) {
+        if ("Apple Music".equals(source) || "Spicy".equals(source)) {
+            Request request = "Spicy".equals(source)
+                    ? SpicyLyricsRequestContract.buildLyricsRequest(trackIdFromUri(track.uri), accessToken)
+                    : buildLenerdLyricsRequest(trackIdFromUri(track.uri));
+            http.newCall(request).enqueue(new Callback() {
+                @Override public void onFailure(Call call, IOException error) {
+                    callback.onError(source + " source unavailable: " + safe(error.getMessage()));
+                }
+
+                @Override public void onResponse(Call call, Response response) throws IOException {
+                    try (Response ignored = response) {
+                        if (!response.isSuccessful() || response.body() == null) {
+                            callback.onError(source + " source unavailable: HTTP " + response.code());
+                            return;
+                        }
+                        LyricsDocument document = parser.parseSpicyLyrics(
+                                context, track, response.body().string(), false);
+                        document.fetchSource = "Spicy".equals(source) ? "spicy_api" : "apple_music_lenerd";
+                        document.selectedSource = source;
+                        document.selectionMode = "strict";
+                        document.selectionOverride = source;
+                        if (document.lines.isEmpty() || LyricQualityRanker.score(document) == LyricQualityRanker.REJECT) {
+                            callback.onError(source + " source unavailable: rejected candidate");
+                            return;
+                        }
+                        callback.onSuccess(document);
+                    } catch (Throwable parseError) {
+                        callback.onError(source + " source unavailable: " + safe(parseError.getMessage()));
+                    }
+                }
+            });
+            return;
+        }
+        if ("Spotify".equals(source)) {
+            LyricsDocument document = nativeLyricsProvider.getNativeLyricsDocument(track);
+            if (document != null && !document.lines.isEmpty()) {
+                document.selectedSource = "Spotify";
+                document.selectionMode = "strict";
+                document.selectionOverride = "Spotify";
+                callback.onSuccess(document);
+            } else if (nativeRetryCount < NATIVE_LYRICS_RETRY_LIMIT) {
+                ioScheduler.schedule(() -> fetchSingleSource(context, track, generation, source,
+                                accessToken, callback, nativeRetryCount + 1),
+                        NATIVE_LYRICS_RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
+            } else {
+                callback.onError("Spotify source unavailable");
+            }
+            return;
+        }
+        if ("LRCLIB".equals(source)) {
+            fetchLrclib(context, track, generation, new ResultCallback() {
+                @Override public void onSuccess(LyricsDocument document) {
+                    document.selectedSource = "LRCLIB";
+                    document.selectionMode = "strict";
+                    document.selectionOverride = "LRCLIB";
+                    callback.onSuccess(document);
+                }
+                @Override public void onError(String error) {
+                    callback.onError("LRCLIB source unavailable: " + safe(error));
+                }
+            }, "strict LRCLIB");
+            return;
+        }
+        callback.onError("Unknown lyrics source");
     }
 
     private void fetchSpicyLyricsFallback(
@@ -115,7 +262,10 @@ public final class LyricsRepository {
             int tokenGeneration,
             AuthRecovery authRecovery,
             boolean authRetryUsed,
-            ResultCallback callback
+            ResultCallback callback,
+            boolean remoteEnabled,
+            boolean nativeEnabled,
+            boolean lrclibEnabled
     ) {
         String trackId = trackIdFromUri(track == null ? "" : track.uri);
         if (trackId.isEmpty()) {
@@ -123,12 +273,24 @@ public final class LyricsRepository {
             return;
         }
 
-        probeSpicyVersionOnce();
+        OkHttpClient spicyHttp = SpicyTransport.client(http, SpicyTransport.breaker(context));
 
         final boolean hasToken = hasUsableToken(sendToken, accessToken);
-        final String cached = LyricsResponseCache.get(context, trackId);
+        final String cached = remoteEnabled ? LyricsResponseCache.get(context, trackId) : null;
         final LyricsProviderChain chain = new LyricsProviderChain(generation, cached);
-        if (!isBlank(cached)) {
+        // Native Spotify lyrics are the baseline. They are read from the existing captured
+        // document/cache and published immediately; Spicy may replace them only during the
+        // bounded upgrade window when a usable token is available.
+        LyricsDocument nativeBaseline = nativeEnabled
+                ? nativeLyricsProvider.getNativeLyricsDocument(track) : null;
+        if (nativeBaseline != null && nativeBaseline.lines != null && !nativeBaseline.lines.isEmpty()) {
+            LyricsProviderChain.Decision baseline = chain.acceptNative(nativeBaseline);
+            if (baseline.action == LyricsProviderChain.Action.DELIVER) {
+                LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeBaseline, hasToken, false);
+                callback.onSuccess(nativeBaseline);
+            }
+        }
+        if (remoteEnabled && !isBlank(cached)) {
             try {
                 LyricsDocument doc = parser.parseSpicyLyrics(context, track, cached, true);
                 LyricsProviderChain.Decision decision = chain.acceptCached(doc);
@@ -148,20 +310,25 @@ public final class LyricsRepository {
             }
         }
 
-        if (!hasToken) {
-            if (chain.deliveredCachedSynced()) return;
-            fetchNativeThenLrclib(context, track, generation, callback, 0,
-                    "Spicy token unavailable", chain, false);
+        Request request = buildLenerdLyricsRequest(trackId).newBuilder()
+                .tag(SpicyTransport.Probe.class, authRetryUsed ? null : new SpicyTransport.Probe()).build();
+        logSpicyWireRequest(request, tokenGeneration, authRetryUsed);
+
+        if (!remoteEnabled) {
+            if (!chain.deliveredCachedSynced()) {
+                fetchNativeThenLrclib(context, track, generation, callback, 0,
+                        "Remote source disabled", chain, hasToken, nativeEnabled, lrclibEnabled);
+            }
             return;
         }
-        Request request = buildSpicyLyricsRequest(trackId, accessToken);
-
-        http.newCall(request).enqueue(new Callback() {
+        spicyHttp.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
                 if (chain.deliveredCachedSynced()) return;
                 fetchNativeThenLrclib(context, track, generation, callback, 0,
-                        "Spicy network failed: " + e.getMessage(), chain, hasToken);
+                        (authRetryUsed && e instanceof SpicyCircuitBreaker.Suppressed
+                                ? "Spicy auth rejected HTTP 401" : "Spicy upstream-error status 0: " + e.getMessage()), chain, hasToken,
+                        nativeEnabled, lrclibEnabled);
             }
 
             @Override
@@ -170,18 +337,30 @@ public final class LyricsRepository {
                     if (!response.isSuccessful() || response.body() == null) {
                         if (chain.deliveredCachedSynced()) return;
                         fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                "Spicy API HTTP " + response.code(), chain, hasToken);
+                                (response.code() == 429 ? "Spicy rate-limited HTTP 429" : "Spicy upstream-error HTTP " + response.code()), chain, hasToken,
+                                nativeEnabled, lrclibEnabled);
                         return;
                     }
                     String raw = response.body().string();
-                    // M3: an HTTP-200 envelope can still carry an inner result status of 401/403.
+                    logSpicyWireResponse(response.code(), raw);
+                    // M3: an HTTP-200 envelope can still carry an inner result status of 401.
                     // Check the raw body first (the auth-error shape has no lyrics data, so the
                     // parser would only throw), then the parsed document (covers packed payloads
                     // whose status is invisible to a plain scan). Only token-bearing requests are
                     // treated as auth rejections; anonymous rejections have no generation to
                     // invalidate and must not retry.
-                    Integer authRejection = hasUsableToken(sendToken, accessToken)
+                    JsonElement envelope = JsonParser.parseString(raw);
+                    boolean isEnveloped = envelope.isJsonObject() && envelope.getAsJsonObject().has("queries");
+                    Integer authRejection = isEnveloped && hasUsableToken(sendToken, accessToken)
                             ? innerSpicyAuthRejectionStatus(raw) : null;
+                    JsonObject queryResult = isEnveloped ? SpicyQueryEnvelope.result(envelope) : null;
+                    String queryFailure = isEnveloped ? SpicyNetworkDiagnostics.recordEnvelope(envelope, queryResult) : null;
+                    if (isEnveloped && authRejection == null && (queryResult == null || queryFailure != null)) {
+                        if (!chain.deliveredCachedSynced()) fetchNativeThenLrclib(context, track, generation,
+                                callback, 0, queryFailure == null ? "Spicy operation 0 missing" : queryFailure, chain, hasToken,
+                                nativeEnabled, lrclibEnabled);
+                        return;
+                    }
                     LyricsDocument doc = null;
                     if (authRejection == null) {
                         try {
@@ -190,7 +369,8 @@ public final class LyricsRepository {
                             if (chain.deliveredCachedSynced()) return;
                             XpLog.log(TAG + " parse failed: " + parseErr);
                             fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                    "Spicy parse failed: " + parseErr.getMessage(), chain, hasToken);
+                                    "Spicy parse failed: " + parseErr.getMessage(), chain, hasToken,
+                                    nativeEnabled, lrclibEnabled);
                             return;
                         }
                         if (hasUsableToken(sendToken, accessToken) && isInnerSpicyAuthRejection(doc)) {
@@ -199,15 +379,15 @@ public final class LyricsRepository {
                     }
                     if (authRejection != null) {
                         handleSpicyAuthRejection(context, track, generation, sendToken,
-                                tokenGeneration, authRecovery, authRetryUsed, callback,
-                                chain, hasToken, authRejection);
+                                accessToken, tokenGeneration, authRecovery, authRetryUsed, callback,
+                                chain, hasToken, authRejection, remoteEnabled, nativeEnabled, lrclibEnabled);
                         return;
                     }
                     LyricsProviderChain.Decision decision = chain.acceptSpicyNetwork(doc, raw);
                     if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
                     if (doc.lines.isEmpty()) {
                         fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                "Spicy lyrics empty", chain, hasToken);
+                                "Spicy lyrics empty", chain, hasToken, nativeEnabled, lrclibEnabled);
                         return;
                     }
                     if (doc.spicyPoisoned) {
@@ -218,7 +398,8 @@ public final class LyricsRepository {
                                 + " packed=" + doc.spicyPackedPayload
                                 + " type=" + safe(doc.type));
                         fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                "Spicy response suspicious: " + safe(doc.spicyQualityReason), chain, hasToken);
+                                "Spicy response suspicious: " + safe(doc.spicyQualityReason), chain, hasToken,
+                                nativeEnabled, lrclibEnabled);
                         return;
                     }
                     if (decision.action == LyricsProviderChain.Action.DELIVER) {
@@ -227,25 +408,34 @@ public final class LyricsRepository {
                             LyricsResponseCache.put(context, trackId, decision.rawToCache);
                             cacheWrite = true;
                         }
-                        XpLog.log(TAG + " using Spicy synced lyrics type=" + doc.type + " provider=" + doc.provider + " lines=" + doc.lines.size());
-                        LyricsFetchDiagnosticsState.record("spicy", chain.candidatesSeen(), doc, hasToken, cacheWrite);
+                        XpLog.log(TAG + " using Apple Music synced lyrics type=" + doc.type + " provider=" + doc.provider + " lines=" + doc.lines.size());
+                        LyricsFetchDiagnosticsState.record("apple_music", chain.candidatesSeen(), doc, false, cacheWrite);
                         callback.onSuccess(doc);
                         return;
                     }
-                    XpLog.log(TAG + " Spicy returned static type=" + doc.type + "; probing native synced upgrade");
-                    fetchNativeThenLrclib(context, track, generation, callback, 0, "Spicy static", chain, hasToken);
+                    XpLog.log(TAG + " remote returned static type=" + doc.type + "; probing native synced upgrade");
+                    fetchNativeThenLrclib(context, track, generation, callback, 0, "Spicy static", chain, hasToken,
+                            nativeEnabled, lrclibEnabled);
+                } catch (java.util.concurrent.CancellationException cancelled) {
+                    if (!chain.deliveredCachedSynced()) callback.onError("Spicy request cancelled");
+                } catch (IOException networkFailure) {
+                    SpicyNetworkDiagnostics.recordTransport("upstream-error", 0, null);
+                    if (!chain.deliveredCachedSynced()) fetchNativeThenLrclib(context, track, generation,
+                            callback, 0, "Spicy upstream-error status 0", chain, hasToken,
+                            nativeEnabled, lrclibEnabled);
                 } catch (Throwable t) {
                     if (chain.deliveredCachedSynced()) return;
                     XpLog.log(TAG + " response handling failed: " + t);
                     fetchNativeThenLrclib(context, track, generation, callback, 0,
-                            "Spicy response failed: " + t.getMessage(), chain, hasToken);
+                            "Spicy response failed: " + t.getMessage(), chain, hasToken,
+                            nativeEnabled, lrclibEnabled);
                 }
             }
         });
     }
 
     /**
-     * M3: an inner Spicy result status of 401/403 rejects the token epoch this request was issued
+     * M3: an inner Spicy result status of 401 rejects the token epoch this request was issued
      * under. The coordinator-owned {@link AuthRecovery} seam tombstones exactly that generation via
      * the token store and returns a replacement authorization only when a newer generation already
      * exists. One retry maximum; with no newer generation the request proceeds to the normal
@@ -256,29 +446,51 @@ public final class LyricsRepository {
             SpotifyTrack track,
             int generation,
             boolean sendToken,
+            String rejectedToken,
             int rejectedTokenGeneration,
             AuthRecovery authRecovery,
             boolean authRetryUsed,
             ResultCallback callback,
             LyricsProviderChain chain,
             boolean hasToken,
-            int rejectionStatus
+            int rejectionStatus,
+            boolean remoteEnabled,
+            boolean nativeEnabled,
+            boolean lrclibEnabled
     ) {
         XpLog.log(TAG + " inner Spicy auth rejection status=" + rejectionStatus
                 + " tokenGeneration=" + rejectedTokenGeneration
                 + (authRetryUsed ? " retryAlreadyUsed" : ""));
-        Authorization replacement = authRecovery == null
-                ? null : authRecovery.afterAuthRejection(rejectedTokenGeneration);
+        Authorization replacement = resolveAfterAuthRejection(authRecovery, rejectedTokenGeneration);
         if (chain.deliveredCachedSynced()) return; // cached synced already delivered; nothing to do
-        if (shouldRetryWithNewerGeneration(rejectedTokenGeneration, authRetryUsed, replacement)) {
+        if (shouldRetryAuthorization(rejectedToken, rejectedTokenGeneration, authRetryUsed, replacement)) {
             XpLog.log(TAG + " retrying Spicy once with newer token generation="
                     + replacement.generation());
             fetchSpicyLyricsFallback(context, track, generation, sendToken,
-                    replacement.token(), replacement.generation(), authRecovery, true, callback);
+                    replacement.token(), replacement.generation(), authRecovery, true, callback,
+                    remoteEnabled, nativeEnabled, lrclibEnabled);
             return;
         }
         fetchNativeThenLrclib(context, track, generation, callback, 0,
-                "Spicy auth rejected HTTP " + rejectionStatus, chain, hasToken);
+                "Spicy auth rejected HTTP " + rejectionStatus, chain, hasToken,
+                nativeEnabled, lrclibEnabled);
+    }
+
+    static Authorization resolveAfterAuthRejection(AuthRecovery recovery, int rejectedGeneration) {
+        try {
+            return recovery == null ? null : recovery.afterAuthRejection(rejectedGeneration);
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            throw cancelled;
+        } catch (RuntimeException ignored) {
+            // Preserve the original rejection when refresh fails.
+            return null;
+        }
+    }
+
+    static boolean shouldRetryAuthorization(String rejectedToken, int rejectedGeneration,
+                                             boolean retryUsed, Authorization replacement) {
+        return shouldRetryWithNewerGeneration(rejectedGeneration, retryUsed, replacement)
+                && hasUsableToken(true, replacement.token()) && !replacement.token().equals(rejectedToken);
     }
 
     /**
@@ -290,11 +502,11 @@ public final class LyricsRepository {
             int rejectedTokenGeneration, boolean authRetryUsed, Authorization replacement) {
         return replacement != null
                 && !authRetryUsed
-                && replacement.generation() != rejectedTokenGeneration;
+                && replacement.generation() > rejectedTokenGeneration;
     }
 
     /**
-     * Scans a raw Spicy HTTP-200 body for an inner query-result status of 401/403 (the shape
+     * Scans a raw Spicy HTTP-200 body for an inner query-result status of 401 (the shape
      * {@code {"queries":[{"result":{"status":401,...}}]}}). Returns the rejecting status, or null
      * when the body is absent, malformed, or carries no rejecting inner status. Statuses outside
      * the query-result objects are deliberately ignored to avoid false positives.
@@ -309,47 +521,20 @@ public final class LyricsRepository {
     }
 
     private static Integer innerAuthRejectionInQueries(JsonElement root) {
-        if (root == null || !root.isJsonObject()) return null;
-        JsonObject object = root.getAsJsonObject();
-        JsonArray queries = Json.optArray(object, "queries", "Queries");
-        if (queries != null) {
-            for (JsonElement queryElement : queries) {
-                Integer rejection = innerAuthRejectionInResult(queryElement);
-                if (rejection != null) return rejection;
-            }
-            return null;
-        }
-        return innerAuthRejectionInResult(object);
-    }
-
-    private static Integer innerAuthRejectionInResult(JsonElement queryElement) {
-        if (queryElement == null || !queryElement.isJsonObject()) return null;
-        JsonObject result = Json.optObject(queryElement.getAsJsonObject(), "result", "Result");
-        if (result == null) return null;
-        Integer status = optStatusInteger(result);
+        Integer status = SpicyQueryEnvelope.status(SpicyQueryEnvelope.result(root));
         return isAuthRejectionStatus(status) ? status : null;
     }
 
-    private static Integer optStatusInteger(JsonObject result) {
-        JsonElement element = Json.optElement(result, "httpStatus", "HttpStatus", "status", "Status");
-        if (element == null) return null;
-        try {
-            return element.getAsInt();
-        } catch (Throwable ignored) {
-            return null;
-        }
-    }
-
-    /** Pure M3 seam: inner Spicy query status 401/403 on a parsed document means auth rejection. */
+    /** Pure M3 seam: inner Spicy query status 401 on a parsed document means auth rejection. */
     static boolean isInnerSpicyAuthRejection(LyricsDocument doc) {
         return doc != null && isAuthRejectionStatus(doc.spicyQueryStatus);
     }
 
     private static boolean isAuthRejectionStatus(Integer status) {
-        return status != null && (status == 401 || status == 403);
+        return status != null && status == 401;
     }
 
-    private void probeSpicyVersionOnce() {
+    private void probeSpicyVersionOnce(OkHttpClient spicyHttp) {
         final String requestVersion = SpicyLyricsRequestContract.UPSTREAM_VERSION;
         if (!SpicyVersionProbeState.beginProbe(requestVersion)) return;
 
@@ -372,7 +557,7 @@ public final class LyricsRepository {
                 .header("User-Agent", SpicyLyricsRequestContract.SPICY_USER_AGENT)
                 .build();
 
-        http.newCall(request).enqueue(new Callback() {
+        spicyHttp.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
                 String type = e == null ? "unknown" : e.getClass().getSimpleName();
@@ -407,20 +592,30 @@ public final class LyricsRepository {
     private void fetchNativeThenLrclib(Context context, SpotifyTrack track, int generation,
                                        ResultCallback callback, int nativeRetryCount, String reason) {
         fetchNativeThenLrclib(context, track, generation, callback, nativeRetryCount, reason,
-                new LyricsProviderChain(generation, null), false);
+                new LyricsProviderChain(generation, null), false, true, true);
     }
 
     private void fetchNativeThenLrclib(Context context, SpotifyTrack track, int generation,
                                        ResultCallback callback, int nativeRetryCount, String reason,
                                        LyricsProviderChain chain, boolean tokenPresent) {
         fetchNativeThenLrclibWithStatic(context, track, generation, callback, nativeRetryCount,
-                reason, chain, tokenPresent);
+                reason, chain, tokenPresent, true, true);
+    }
+
+    private void fetchNativeThenLrclib(Context context, SpotifyTrack track, int generation,
+                                       ResultCallback callback, int nativeRetryCount, String reason,
+                                       LyricsProviderChain chain, boolean tokenPresent,
+                                       boolean nativeEnabled, boolean lrclibEnabled) {
+        fetchNativeThenLrclibWithStatic(context, track, generation, callback, nativeRetryCount,
+                reason, chain, tokenPresent, nativeEnabled, lrclibEnabled);
     }
 
     private void fetchNativeThenLrclibWithStatic(Context context, SpotifyTrack track, int generation,
                                                  ResultCallback callback, int nativeRetryCount, String reason,
-                                                 LyricsProviderChain chain, boolean tokenPresent) {
-        LyricsDocument nativeDoc = nativeLyricsProvider.getNativeLyricsDocument(track);
+                                                 LyricsProviderChain chain, boolean tokenPresent,
+                                                 boolean nativeEnabled, boolean lrclibEnabled) {
+        LyricsDocument nativeDoc = nativeEnabled
+                ? nativeLyricsProvider.getNativeLyricsDocument(track) : null;
         if (nativeDoc != null && !nativeDoc.lines.isEmpty()) {
             LyricsProviderChain.Decision decision = chain.acceptNative(nativeDoc);
             if (chain.hasPendingStatic()) {
@@ -454,12 +649,12 @@ public final class LyricsRepository {
             return;
         }
 
-        if (nativeRetryCount < NATIVE_LYRICS_RETRY_LIMIT) {
+        if (nativeRetryCount < NATIVE_LYRICS_RETRY_LIMIT && nativeEnabled) {
             int nextRetry = nativeRetryCount + 1;
             XpLog.log(TAG + " waiting for native lyrics (" + safe(reason) + ") retry=" + nextRetry);
             ioScheduler.schedule(
                     () -> fetchNativeThenLrclibWithStatic(context, track, generation, callback, nextRetry,
-                            reason, chain, tokenPresent),
+                            reason, chain, tokenPresent, nativeEnabled, lrclibEnabled),
                     NATIVE_LYRICS_RETRY_DELAY_MS,
                     TimeUnit.MILLISECONDS);
             return;
@@ -467,8 +662,22 @@ public final class LyricsRepository {
 
         chain.nativeMissAfterRetries(reason);
         if (chain.hasPendingStatic()) {
+            if (!lrclibEnabled) {
+                LyricsDocument spicyStatic = chain.pendingStatic();
+                XpLog.log(TAG + " native absent and LRCLIB disabled; delivering Spicy static lines="
+                        + spicyStatic.lines.size());
+                LyricsFetchDiagnosticsState.record(sourceLabel(spicyStatic, "spicy"), chain.candidatesSeen(),
+                        spicyStatic, tokenPresent, false);
+                callback.onSuccess(spicyStatic);
+                return;
+            }
             XpLog.log(TAG + " native absent; probing LRCLIB against Spicy static lines=" + chain.pendingStatic().lines.size());
             fetchLrclibWithSpicyFallback(context, track, generation, callback, reason, chain, tokenPresent);
+            return;
+        }
+        if (!lrclibEnabled) {
+            XpLog.log(TAG + " native lyrics miss (" + safe(reason) + "); LRCLIB disabled");
+            callback.onError(reason + "; native miss, LRCLIB disabled");
             return;
         }
         XpLog.log(TAG + " native lyrics miss (" + safe(reason) + "); falling back to LRCLIB");
@@ -573,6 +782,20 @@ public final class LyricsRepository {
         callback.onError(error);
     }
 
+    private static final boolean WIRE_DEBUG_CAPTURE = false;
+
+    private static void logSpicyWireRequest(Request request, int generation, boolean retry) {
+        if (!WIRE_DEBUG_CAPTURE || request == null) return;
+        try {
+            XpLog.log(TAG + " remote request url=" + request.url());
+        } catch (Throwable ignored) { }
+    }
+
+    private static void logSpicyWireResponse(int status, String raw) {
+        if (!WIRE_DEBUG_CAPTURE) return;
+        XpLog.log(TAG + " remote response status=" + status + " bytes=" + (raw == null ? 0 : raw.length()));
+    }
+
     static String buildSpicyLyricsQueryBody(String trackId) {
         return new String(SpicyLyricsRequestContract.buildLyricsQueryBytes(trackId),
                 java.nio.charset.StandardCharsets.UTF_8);
@@ -582,8 +805,19 @@ public final class LyricsRepository {
         return SpicyLyricsRequestContract.hasUsableToken(sendToken, accessToken);
     }
 
+    private static final String LENERD_ENDPOINT_URL = "https://spotifyplus-api.devon-shoutz.workers.dev/api/lyrics/";
+
     static Request buildSpicyLyricsRequest(String trackId, String accessToken) {
         return SpicyLyricsRequestContract.buildLyricsRequest(trackId, accessToken);
+    }
+
+    static Request buildLenerdLyricsRequest(String trackId) {
+        return new Request.Builder()
+                .url(LENERD_ENDPOINT_URL + trackId)
+                .get()
+                .header("User-Agent", "SpotifyPlus-Mobile")
+                .header("Accept", "application/json")
+                .build();
     }
 
     private static String sourceLabel(LyricsDocument doc, String fallback) {
@@ -602,7 +836,7 @@ public final class LyricsRepository {
 
     /**
      * M3 seam implemented hook-side (the lyrics layer must never depend on hooks). Reports that an
-     * inner Spicy 401/403 rejected the request issued under {@code rejectedTokenGeneration}; the
+     * inner Spicy 401 rejected the request issued under {@code rejectedTokenGeneration}; the
      * implementation tombstones exactly that generation in the token store and returns a
      * replacement {@link Authorization} only when a newer usable generation already exists, or
      * {@code null} to let the caller proceed to the native/LRCLIB fallback.

@@ -42,7 +42,8 @@ final class SpicyLyricBridgeDocumentSerializer {
         root.addProperty("provider", bounded(document.provider));
         root.addProperty("language", bounded(document.language));
         root.addProperty("type", bounded(document.type));
-        root.addProperty("durationMs", Math.max(0L, document.durationMs));
+        long durationMs = Math.max(0L, document.durationMs);
+        root.addProperty("durationMs", durationMs);
         root.addProperty("processingVersion", document.processingVersion);
 
         JsonArray rows = new JsonArray();
@@ -50,13 +51,16 @@ final class SpicyLyricBridgeDocumentSerializer {
         int rowCount = Math.min(document.appliedLines.size(), MAX_ROWS);
         for (int i = 0; i < rowCount; i++) {
             AppliedLine row = document.appliedLines.get(i);
-            if (row == null) continue;
-            long encodedStartMs = Math.max(0L, row.startMs);
+            if (row == null || (durationMs > 0L && row.startMs >= durationMs)) continue;
+            long encodedStartMs = clampTiming(row.startMs, 0L, durationMs > 0L ? durationMs : Long.MAX_VALUE);
+            long encodedEndMs = clampTiming(row.endMs, encodedStartMs,
+                    durationMs > 0L ? durationMs : Long.MAX_VALUE);
             JsonObject encoded = new JsonObject();
             encoded.addProperty("role", row.dotLine ? "INTERLUDE" : row.bgLine ? "BACKGROUND" : "LEAD");
             encoded.addProperty("startMs", encodedStartMs);
-            encoded.addProperty("endMs", Math.max(encodedStartMs, row.endMs));
-            encoded.addProperty("fillEndMs", Math.max(encodedStartMs, LyricTimeline.fillEndMs(row)));
+            encoded.addProperty("endMs", encodedEndMs);
+            encoded.addProperty("fillEndMs", clampTiming(LyricTimeline.fillEndMs(row),
+                    encodedStartMs, durationMs > 0L ? durationMs : Long.MAX_VALUE));
             encoded.addProperty("alignedRight", row.oppositeAligned);
             encoded.addProperty("text", bounded(row.text));
             encoded.addProperty("romanized", bounded(readingText(row)));
@@ -93,13 +97,18 @@ final class SpicyLyricBridgeDocumentSerializer {
             for (int wordIndex = 0; wordIndex < row.words.size(); wordIndex++) {
                 SyllableSegment word = row.words.get(wordIndex);
                 if (word == null || wordCount >= MAX_WORDS) break;
-                long encodedWordStartMs = Math.max(0L, word.startMs);
+                long encodedWordStartMs = clampTiming(word.startMs, encodedStartMs, encodedEndMs);
+                long encodedWordEndMs = clampTiming(word.endMs, encodedWordStartMs, encodedEndMs);
                 int[] sourceRange = wordSourceRange(row, word, wordIndex, sourceCursor);
+                if (durationMs > 0L && encodedWordEndMs <= encodedWordStartMs) {
+                    if (sourceRange[1] >= 0) sourceCursor = Math.max(sourceCursor, sourceRange[1]);
+                    continue;
+                }
                 JsonObject encodedWord = new JsonObject();
                 encodedWord.addProperty("text", bounded(word.text));
                 encodedWord.addProperty("romanized", bounded(word.romanizedText));
                 encodedWord.addProperty("startMs", encodedWordStartMs);
-                encodedWord.addProperty("endMs", Math.max(encodedWordStartMs, word.endMs));
+                encodedWord.addProperty("endMs", encodedWordEndMs);
                 encodedWord.addProperty("boundaryAfter", word.boundaryAfter);
                 encodedWord.addProperty("partOfWord", !word.boundaryAfter);
                 encodedWord.addProperty("sourceStart", sourceRange[0]);
@@ -122,6 +131,10 @@ final class SpicyLyricBridgeDocumentSerializer {
         byte[] compressed = output.toByteArray();
         if (compressed.length > MAX_COMPRESSED_BYTES) throw new IOException("document too large");
         return compressed;
+    }
+
+    private static long clampTiming(long value, long startMs, long endMs) {
+        return Math.max(startMs, Math.min(endMs, value));
     }
 
     private static String bounded(String value) {

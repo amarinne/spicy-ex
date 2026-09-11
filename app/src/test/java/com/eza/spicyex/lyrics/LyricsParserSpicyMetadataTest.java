@@ -260,8 +260,43 @@ public class LyricsParserSpicyMetadataTest {
         assertFalse(doc.lines.get(0).syllables.get(2).boundaryAfter);
     }
 
+    @Test
+    public void noticeFirstPackedSuccessIgnoresOtherOperationAndMetadata() {
+        JsonObject root = queryResponse(queryResult(packedStaticLyrics()));
+        JsonArray jobs = new JsonArray();
+        JsonObject notice = new JsonObject();
+        notice.addProperty("_notice", "Access policy");
+        jobs.add(notice);
+        JsonObject unrelated = new JsonObject();
+        unrelated.addProperty("operationId", "1");
+        JsonObject failure = new JsonObject();
+        failure.addProperty("httpStatus", 401);
+        failure.addProperty("format", "plain");
+        failure.add("data", unpackedStaticLyrics());
+        unrelated.add("result", failure);
+        jobs.add(unrelated);
+        jobs.add(root.getAsJsonArray("queries").get(0));
+        root.add("queries", jobs);
+        LyricsDocument doc = parser.parseSpicyLyrics(null, track, root.toString(), false);
+        SpicyResponseClassifier.apply(doc);
+        assertTrue(doc.spicyEnvelopeNoticePresent);
+        assertTrue(doc.spicyPackedPayload);
+        assertEquals(Integer.valueOf(200), doc.spicyQueryStatus);
+        assertFalse(doc.spicyPoisoned);
+        assertEquals("hello", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void missingOperationIdNeverFallsBackToStructuralLyricsScan() {
+        JsonObject root = queryResponse(queryResult(packedStaticLyrics()));
+        root.getAsJsonArray("queries").get(0).getAsJsonObject().remove("operationId");
+        assertThrows(IllegalStateException.class,
+                () -> parser.parseSpicyLyrics(null, track, root.toString(), false));
+    }
+
     private static JsonObject queryResponse(JsonObject result) {
         JsonObject query = new JsonObject();
+        query.addProperty("operationId", "0");
         query.add("result", result);
         JsonArray queries = new JsonArray();
         queries.add(query);
@@ -270,7 +305,7 @@ public class LyricsParserSpicyMetadataTest {
         return root;
     }
 
-    private static JsonObject queryResult(JsonObject lyrics) {
+    private static JsonObject queryResult(com.google.gson.JsonElement lyrics) {
         JsonObject result = new JsonObject();
         result.addProperty("httpStatus", 200);
         result.addProperty("format", "json");

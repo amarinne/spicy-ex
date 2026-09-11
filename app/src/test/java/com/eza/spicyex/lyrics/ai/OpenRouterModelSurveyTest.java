@@ -199,7 +199,7 @@ public class OpenRouterModelSurveyTest {
             @Override public AiHttp.Result postJson(String url, Map<String, String> headers,
                                                     String json, AiSignal signal, int maxBytes) {
                 RequestBody payload = RequestBody.create(json,
-                        MediaType.parse("application/json; charset=utf-8"));
+                        MediaType.get("application/json; charset=utf-8"));
                 return send(http, new Request.Builder().url(url).post(payload), headers, maxBytes);
             }
         };

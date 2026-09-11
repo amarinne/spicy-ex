@@ -19,8 +19,7 @@ public final class LyricsResponseCache {
         String response = prefs.getString(cacheKey, null);
         if (response == null) return null;
 
-        // No age expiry: an unchanged compatible response stays reusable until byte-quota
-        // eviction or explicit clear. The :updated stamp is only backfilled for order metadata.
+        // No age expiry: an unchanged compatible response stays reusable until explicit clear. The :updated stamp is only backfilled for order metadata.
         String updatedKey = cacheKey + UPDATED_SUFFIX;
         if (prefs.getLong(updatedKey, 0L) <= 0L) {
             prefs.edit().putLong(updatedKey, System.currentTimeMillis()).apply();
@@ -46,23 +45,26 @@ public final class LyricsResponseCache {
                 com.eza.spicyex.lyrics.CacheStoragePolicy.rawResponseQuota(totalBudget)
         );
 
+        // Capacity may refuse a new write, but must never delete saved lyrics.
         SharedPreferences.Editor editor = prefs.edit();
-        for (String removedKey : decision.removedPayloadKeys) {
-            editor.remove(removedKey).remove(removedKey + UPDATED_SUFFIX);
-        }
+        for (String removedKey : decision.removedPayloadKeys) editor.remove(removedKey).remove(removedKey + UPDATED_SUFFIX);
         for (String legacyKey : decision.legacyPayloadKeys) {
             editor.putLong(legacyKey + UPDATED_SUFFIX, now);
         }
-        if (decision.retainWrite) {
-            editor.putString(cacheKey, response).putLong(cacheKey + UPDATED_SUFFIX, now);
-        } else {
-            editor.remove(cacheKey).remove(cacheKey + UPDATED_SUFFIX);
-        }
+        if (decision.retainWrite) editor.putString(cacheKey, response).putLong(cacheKey + UPDATED_SUFFIX, now);
         editor.apply();
     }
 
     public static synchronized void clear(Context context) {
         context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+    }
+
+    /** Drops only one track's raw response (and its order stamp), keeping every other song. */
+    public static synchronized void remove(Context context, String trackId) {
+        if (context == null || trackId == null || trackId.isEmpty()) return;
+        String cacheKey = key(trackId);
+        context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE).edit()
+                .remove(cacheKey).remove(cacheKey + UPDATED_SUFFIX).apply();
     }
 
     /** Combined logical-payload usage of the raw response store, for the settings panel. */

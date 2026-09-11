@@ -21,9 +21,17 @@ public final class LyricsFetchDiagnosticsState {
                               boolean tokenPresent, boolean cacheWrite) {
         String normalizedSource = safeStatus(sourceChosen);
         String cacheSource = "cache".equals(normalizedSource) ? sourceOrigin(chosen) : "";
-        String status = chosen == null || chosen.spicyQueryStatus == null
-                ? "unknown"
-                : String.valueOf(chosen.spicyQueryStatus);
+        String status;
+        if (chosen != null && chosen.spicyQueryStatus != null) {
+            status = String.valueOf(chosen.spicyQueryStatus);
+        } else if (SpicyNetworkDiagnostics.spicyQueryStatus != null) {
+            status = String.valueOf(SpicyNetworkDiagnostics.spicyQueryStatus);
+        } else if (!isBlank(SpicyNetworkDiagnostics.reason)
+                && !"ok".equals(SpicyNetworkDiagnostics.reason)) {
+            status = safeStatus(SpicyNetworkDiagnostics.reason);
+        } else {
+            status = "unknown";
+        }
         String poison = chosen == null || isBlank(chosen.spicyQualityReason)
                 ? "ok"
                 : safeStatus(chosen.spicyQualityReason);

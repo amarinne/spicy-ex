@@ -59,7 +59,7 @@ public class LyricsProviderChainTest {
     }
 
     @Test
-    public void nativeStaticOnlyReplacesSpicyStaticWhenRankerPrefersIt() {
+    public void nativeStaticDoesNotReplaceSpicyStaticOnSyncTie() {
         LyricsProviderChain chain = new LyricsProviderChain(5, "raw-static");
         LyricsDocument spicyStatic = doc("Static", "spicy_api", "Spicy Lyrics", true);
         LyricsDocument nativeStatic = doc("Static", "spotify_native_model", "Musixmatch", false);
@@ -67,8 +67,8 @@ public class LyricsProviderChainTest {
         chain.acceptSpicyNetwork(spicyStatic, "raw-static");
         LyricsProviderChain.Decision decision = chain.acceptNative(nativeStatic);
 
-        assertTrue(LyricQualityRanker.prefer(nativeStatic, spicyStatic));
-        assertSame(nativeStatic, decision.document);
+        assertFalse(LyricQualityRanker.preferAuto(nativeStatic, spicyStatic));
+        assertSame(spicyStatic, decision.document);
         assertFalse(decision.cacheDeliveredRaw);
     }
 

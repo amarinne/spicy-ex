@@ -25,6 +25,20 @@ public final class LyricTimeline {
     private LyricTimeline() {
     }
 
+    /**
+     * True for Spotify-native documents, whose timing is approximate: a gap between lines is
+     * not an instrumental break. Gap synthesis never applies to these — no dot row is built
+     * from a gap and a vocal row holds until the next line starts. Authored interlude markers
+     * still render.
+     */
+    public static boolean isSpotifyNativeSource(LyricsDocument doc) {
+        if (doc == null) return false;
+        String hay = (LyricsDocument.safe(doc.fetchSource) + " " + LyricsDocument.safe(doc.provider)
+                + " " + LyricsDocument.safe(doc.selectedSource))
+                .toLowerCase(java.util.Locale.ROOT);
+        return hay.contains("spotify") || hay.contains("native") || hay.contains("musixmatch");
+    }
+
     /** Spread synthetic static-lyrics timings across the track instead of a fixed cadence. */
     public static void rebalanceStaticTimings(LyricsDocument doc) {
         if (doc == null || !"Static".equalsIgnoreCase(doc.type) || doc.lines.isEmpty()) return;
@@ -49,11 +63,23 @@ public final class LyricTimeline {
      *   {@link #INTERLUDE_SHOW_THRESHOLD_MS}); a large gap is an instrumental break that must
      *   stay open so {@link #applySyncedRows} can synthesize a dot row instead of the vocal
      *   highlight swallowing it.
+     * - Spotify-native documents hold every gap: their timing is approximate, so a vocal always
+     *   extends to the next start and the highlight stays on the current line.
      * - Lines that already carry a real end time (endMs > startMs) are left untouched, so
      *   adapters MUST NOT pre-fill synthetic end times (the old LRCLIB adapter did, which
      *   disabled all of the above).
      */
     public static void fillMissingEndTimes(List<LyricsLine> lines) {
+        fillMissingEndTimes(lines, false);
+    }
+
+    /** Document form: Spotify-native sources hold every gap (see {@link #isSpotifyNativeSource}). */
+    public static void fillMissingEndTimes(LyricsDocument doc) {
+        if (doc == null) return;
+        fillMissingEndTimes(doc.lines, isSpotifyNativeSource(doc));
+    }
+
+    static void fillMissingEndTimes(List<LyricsLine> lines, boolean holdGaps) {
         if (lines == null) return;
         for (int i = 0; i < lines.size(); i++) {
             LyricsLine line = lines.get(i);
@@ -68,7 +94,7 @@ public final class LyricTimeline {
             }
             if (next > line.startMs) {
                 long gap = next - line.startMs;
-                if (line.interlude || gap < INTERLUDE_SHOW_THRESHOLD_MS) {
+                if (line.interlude || holdGaps || gap < INTERLUDE_SHOW_THRESHOLD_MS) {
                     line.endMs = next;
                 } else {
                     line.endMs = line.startMs + DEFAULT_LINE_DURATION_MS;
@@ -96,8 +122,12 @@ public final class LyricTimeline {
     }
 
     private static void applyTimedRows(LyricsDocument doc) {
+        // Spotify-native timing is approximate: never synthesize a dot row from a gap — the
+        // highlight holds the current line until the next one starts. Authored interlude
+        // markers still render as dot rows.
+        boolean holdGaps = isSpotifyNativeSource(doc);
         int firstVocal = firstNonInterludeIndex(doc.lines);
-        if (firstVocal >= 0) {
+        if (!holdGaps && firstVocal >= 0) {
             LyricsLine first = doc.lines.get(firstVocal);
             // Key the intro dot row off the FIRST VOCAL line's start, not doc.startTimeMs —
             // several sources never set startTimeMs. Matches Spicy desktop behavior.
@@ -119,13 +149,14 @@ public final class LyricTimeline {
             // Extend the row's ACTIVE window across small gaps so the highlight/scroll-follow
             // carries to the next line instead of dropping to "no active row" between lines.
             // The karaoke fill still uses the source line's own end (fillEndMs()).
-            long appliedEndMs = resolveAppliedEndMs(line.endMs, nextStartMs);
+            long appliedEndMs = resolveAppliedEndMs(line.endMs, nextStartMs, holdGaps);
             doc.appliedLines.add(createAppliedVocalRow(line, line.startMs, appliedEndMs));
             for (BackgroundLine bg : line.backgroundLines) {
                 if (bg == null) continue;
                 doc.appliedLines.add(createAppliedBackgroundRow(line, bg));
             }
-            if (nextIndex >= 0 && !hasExplicitInterludeBetween(doc.lines, i + 1, nextIndex - 1)) {
+            if (!holdGaps && nextIndex >= 0
+                    && !hasExplicitInterludeBetween(doc.lines, i + 1, nextIndex - 1)) {
                 LyricsLine next = doc.lines.get(nextIndex);
                 if (next.startMs - line.endMs >= INTERLUDE_SHOW_THRESHOLD_MS) {
                     doc.appliedLines.add(createAppliedDotRow(line.endMs, next.startMs, next.oppositeAligned));
@@ -134,7 +165,7 @@ public final class LyricTimeline {
         }
         // End-of-song interlude: a long instrumental tail between the last lyric line and the track
         // end gets its own dot row (no following line would otherwise trigger one).
-        if (doc.durationMs > 0 && !doc.lines.isEmpty()) {
+        if (!holdGaps && doc.durationMs > 0 && !doc.lines.isEmpty()) {
             LyricsLine last = doc.lines.get(doc.lines.size() - 1);
             if (!last.interlude && doc.durationMs - last.endMs >= INTERLUDE_SHOW_THRESHOLD_MS) {
                 doc.appliedLines.add(createAppliedDotRow(last.endMs, doc.durationMs, last.oppositeAligned));
@@ -144,7 +175,16 @@ public final class LyricTimeline {
 
     /** Extend a vocal row's active end to the next start when the gap is small. */
     static long resolveAppliedEndMs(long endMs, long nextStartMs) {
+        return resolveAppliedEndMs(endMs, nextStartMs, false);
+    }
+
+    /**
+     * Holding variant for approximate sources: the row stays active until the next line starts,
+     * however long the gap, instead of dropping to "no active row" past the threshold.
+     */
+    static long resolveAppliedEndMs(long endMs, long nextStartMs, boolean holdGaps) {
         if (nextStartMs <= endMs) return endMs;
+        if (holdGaps) return nextStartMs;
         long gap = nextStartMs - endMs;
         if (gap < INTERLUDE_SHOW_THRESHOLD_MS) return nextStartMs;
         return endMs;
@@ -168,8 +208,8 @@ public final class LyricTimeline {
     /**
      * The row the renderer should treat as THE active line (scroll anchor, highlight,
      * CurrentLyricState). Multiple rows can be time-active at once (lead + background vocal,
-     * lines extended across a gap); prefer the most recently started lead vocal, then fall back
-     * to whatever else is active (dot/background row).
+     * lines extended across a gap); prefer the most recently started lead vocal, then the most recently
+     * started background vocal, and finally an active dot row.
      *
      * Animation must NOT key off this single index — animate every row for which
      * {@link #isRowActiveAt} holds, otherwise concurrent background vocals never fill.
@@ -177,17 +217,22 @@ public final class LyricTimeline {
     public static int findPrimaryActiveRow(List<AppliedLine> rows, long positionMs) {
         if (rows == null || rows.isEmpty() || positionMs < 0) return -1;
         int bestLead = -1;
-        int firstOther = -1;
+        int bestBackground = -1;
+        int bestDot = -1;
         for (int i = 0; i < rows.size(); i++) {
             AppliedLine row = rows.get(i);
             if (!isRowActiveAt(row, positionMs)) continue;
             if (!row.bgLine && !row.dotLine) {
                 if (bestLead < 0 || row.startMs >= rows.get(bestLead).startMs) bestLead = i;
-            } else if (firstOther < 0) {
-                firstOther = i;
+            } else if (!row.dotLine) {
+                if (bestBackground < 0 || row.startMs >= rows.get(bestBackground).startMs) {
+                    bestBackground = i;
+                }
+            } else if (bestDot < 0 || row.startMs >= rows.get(bestDot).startMs) {
+                bestDot = i;
             }
         }
-        return bestLead >= 0 ? bestLead : firstOther;
+        return bestLead >= 0 ? bestLead : bestBackground >= 0 ? bestBackground : bestDot;
     }
 
     public static int firstNonInterludeIndex(List<LyricsLine> lines) {

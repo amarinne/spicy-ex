@@ -433,7 +433,6 @@ final class LyricsActivityTakeoverHook {
             if (activity == null || activity.isFinishing()
                     || (Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) return;
             DeployCacheCleaner.ensureCleared(activity);
-            AuthTokenCaptureHook.restorePersistedAccessToken(activity);
             if (!isLyricsFullscreenActivity(activity)) return;
             if (!isNativeSpicyEnabled(activity)) {
                 removeNativeSpicyRoot(activity);

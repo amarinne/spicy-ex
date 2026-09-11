@@ -162,6 +162,45 @@ public class SpicyLyricBridgeDocumentSerializerTest {
         assertEquals(0L, encodedWord.get("endMs").getAsLong());
     }
 
+    @Test
+    public void clampsRowsAndWordsToTrackDurationAndOmitsTrailingRows() throws Exception {
+        LyricsDocument document = new LyricsDocument();
+        document.durationMs = 5000;
+        AppliedLine row = new AppliedLine();
+        row.startMs = 4900;
+        row.endMs = 9000;
+        row.sourceLine = new LyricsLine();
+        row.sourceLine.endMs = 10000;
+        SyllableSegment crossing = word("crossing", "last");
+        crossing.startMs = 4800;
+        crossing.endMs = 7000;
+        row.words.add(crossing);
+        SyllableSegment beyond = word("beyond", "late");
+        beyond.startMs = 6000;
+        beyond.endMs = 7000;
+        row.words.add(beyond);
+        document.appliedLines.add(row);
+        for (long start : new long[]{5000, 6000}) {
+            AppliedLine trailing = new AppliedLine();
+            trailing.startMs = start;
+            trailing.endMs = 7000;
+            document.appliedLines.add(trailing);
+        }
+        JsonObject json = JsonParser.parseString(unzip(SpicyLyricBridgeDocumentSerializer.serialize(
+                document, "producer", 1, "spotify:track:test"))).getAsJsonObject();
+        assertEquals(1, json.getAsJsonArray("rows").size());
+        JsonObject encoded = json.getAsJsonArray("rows").get(0).getAsJsonObject();
+        assertEquals(4900, encoded.get("startMs").getAsLong());
+        assertEquals(5000, encoded.get("endMs").getAsLong());
+        assertEquals(5000, encoded.get("fillEndMs").getAsLong());
+        assertEquals(1, encoded.getAsJsonArray("words").size());
+        JsonObject word = encoded.getAsJsonArray("words").get(0).getAsJsonObject();
+        assertEquals(4900, word.get("startMs").getAsLong());
+        assertEquals(5000, word.get("endMs").getAsLong());
+        assertEquals(9000, row.endMs);
+        assertEquals(7000, crossing.endMs);
+    }
+
     private static SyllableSegment word(String spanId, String text) {
         SyllableSegment word = new SyllableSegment();
         word.spanId = spanId;

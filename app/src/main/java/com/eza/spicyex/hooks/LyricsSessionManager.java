@@ -31,6 +31,7 @@ import com.eza.spicyex.lyrics.session.LayerStatus;
 import com.eza.spicyex.lyrics.session.LegacyDocumentComposer;
 import com.eza.spicyex.lyrics.session.LyricSession;
 import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
+import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
 import com.eza.spicyex.lyrics.ai.AiRequestStartResult;
 import com.eza.spicyex.lyrics.ai.AiSettings;
@@ -232,6 +233,30 @@ final class LyricsSessionManager {
         loadCanonicalBase(uri, policy.generation());
     }
 
+    /** True when a legacy cached record survives an explicit per-track source override. */
+    private static boolean overrideAcceptsRecord(LyricsSourcePreferences.Source override,
+                                                 LyricsDocument record) {
+        if (override == null || record == null) return true;
+        String hay = (nz(record.fetchSource) + " " + nz(record.provider))
+                .toLowerCase(java.util.Locale.ROOT);
+        switch (override) {
+            case LRCLIB:
+                return hay.contains("lrclib");
+            case SPOTIFY:
+                return hay.contains("native") || hay.contains("musixmatch") || hay.contains("spotify");
+            case SPICY:
+            case APPLE_MUSIC:
+                return hay.contains("spicy") || hay.contains("apple") || hay.contains("aml")
+                        || hay.contains("lenerd");
+            default:
+                return true;
+        }
+    }
+
+    private static String nz(String value) {
+        return value == null ? "" : value;
+    }
+
     /**
      * Cache-first entry point: a durable canonical base renders before any derived processing and
      * without a source request. Only a miss, or an explicit policy probe, reaches the network.
@@ -244,7 +269,22 @@ final class LyricsSessionManager {
         NativeRuntime.LYRICS_IO.execute(() -> {
             CanonicalSourceCodec.Record record = null;
             try {
-                record = CanonicalSourceCache.load(context, requestedUri);
+                String selectionIdentity = LyricsSourcePreferences.selectionIdentity(context, requestedUri);
+                record = CanonicalSourceCache.load(context, requestedUri, selectionIdentity);
+                if (record == null) {
+                    // Migration: a record orphaned by a retired source (or any identity change)
+                    // stays display-authoritative. Serve it unless an explicit per-track override
+                    // rejects its source; the refresh policy still probes when the base leaves
+                    // room for better, and the adoption gate refuses any lower-quality replace.
+                    CanonicalSourceCodec.Record legacy =
+                            CanonicalSourceCache.load(context, requestedUri);
+                    if (legacy != null && legacy.document != null && overrideAcceptsRecord(
+                            LyricsSourcePreferences.trackOverride(context,
+                                    com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(requestedUri)),
+                            legacy.document)) {
+                        record = legacy;
+                    }
+                }
                 if (record != null) {
                     // Reproduce exactly what a fresh parse produces: timeline repair, provider
                     // translations, compatible cached derived values, and pending flags.
@@ -321,23 +361,49 @@ final class LyricsSessionManager {
             status = "loading";
             notifyState(snapshot());
         }
-        fetchCoordinator.fetchLyrics(context, requestedTrack, requestedGeneration,
-                new NativeSpicyLyricsHook.LyricsResultCallback() {
-                    @Override public void onSuccess(LyricsDocument result) {
-                        handler.post(() -> acceptDocument(requestedTrack, requestedUri, requestedGeneration, result));
-                    }
+        try {
+            fetchCoordinator.fetchLyrics(context, requestedTrack, requestedGeneration,
+                    new NativeSpicyLyricsHook.LyricsResultCallback() {
+                        @Override public void onSuccess(LyricsDocument result) {
+                            handler.post(() -> acceptDocument(requestedTrack, requestedUri, requestedGeneration, result));
+                        }
 
-                    @Override public void onError(String error) {
-                        handler.post(() -> acceptError(requestedUri, requestedGeneration, error));
-                    }
-                });
+                        @Override public void onError(String error) {
+                            handler.post(() -> acceptError(requestedUri, requestedGeneration, error));
+                        }
+                    });
+        } catch (Throwable launchFailed) {
+            // A fetch that never starts must not keep the fetch gate armed: that strands the
+            // session on stale rows with every later maybeFetch declining to run.
+            NativeSpicyLyricsHook.dbg("maybeFetch",
+                    "fetch launch failed: " + launchFailed.getClass().getSimpleName());
+            loadingUri = "";
+            nextFetchAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
+        }
     }
 
     private void acceptDocument(SpotifyTrack requestedTrack, String requestedUri,
-                                int requestedGeneration, LyricsDocument result) {
-        if (result == null || result.lines.isEmpty()) return;
+                                 int requestedGeneration, LyricsDocument result) {
+        if (result == null || result.lines.isEmpty()) {
+            // An empty success is a failed fetch, not a document: release the fetch gate so a
+            // later poll can retry instead of stranding the session on stale rows forever.
+            NativeSpicyLyricsHook.dbg("acceptDocument", "empty result; releasing fetch gate");
+            loadingUri = "";
+            nextFetchAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
+            if (document != null) return;
+            status = "no_lyrics";
+            notifyState(snapshot());
+            return;
+        }
         if (!policy.accepts(requestedGeneration, requestedUri)) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
+            return;
+        }
+        if (!CanonicalBaseAdoption.shouldSupersede(document, result)) {
+            // A lower-quality refetch never overwrites the better base, on screen or in the
+            // cache. Release the fetch gate so later polls are not stranded behind it.
+            NativeSpicyLyricsHook.dbg("acceptDocument", "keeping higher-quality base");
+            loadingUri = "";
             return;
         }
         loadingUri = "";
@@ -378,7 +444,8 @@ final class LyricsSessionManager {
                                       String digest) {
         final LyricsDocument snapshot = LyricsDocument.copyOf(result);
         NativeRuntime.LYRICS_IO.execute(
-                () -> CanonicalSourceCache.save(context, requestedUri, snapshot, revision, digest));
+                () -> CanonicalSourceCache.save(context, requestedUri, snapshot, revision, digest,
+                        LyricsSourcePreferences.selectionIdentity(context, requestedUri)));
     }
 
     private void acceptError(String requestedUri, int requestedGeneration, String error) {
@@ -470,8 +537,9 @@ final class LyricsSessionManager {
      *
      * <p>Retiring the lanes before deleting storage prevents an already-running completion from
      * immediately writing the stale artifact back. Derived clears then reset and re-run that layer
-     * so every mounted surface receives the newly computed result. A lyrics-response clear also
-     * drops the durable canonical source and reloads the current track from providers.
+     * so every mounted surface receives the newly computed result. A lyrics-response clear drops
+     * only the current track's cached response and canonical source, then reloads that track
+     * from providers; the rest of the cached library is left intact.
      */
     void clearCache(CacheClearKind kind) {
         if (kind == null) return;
@@ -502,8 +570,12 @@ final class LyricsSessionManager {
                 }
                 break;
             case LYRICS_RESPONSE:
-                LyricsResponseCache.clear(context);
-                CanonicalSourceCache.clear(context);
+                String currentUri = policy.trackUri();
+                if (!currentUri.isEmpty()) {
+                    LyricsResponseCache.remove(context,
+                            com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(currentUri));
+                    CanonicalSourceCache.remove(context, currentUri);
+                }
                 reloadCurrentSource();
                 break;
         }
@@ -514,6 +586,8 @@ final class LyricsSessionManager {
         fetchCoordinator.invalidate(track);
         loadingUri = "";
         canonicalLoadingUri = "";
+        // An explicit reload bypasses the error backoff: the owner just asked for this track now.
+        nextFetchAtMs = 0L;
         document = null;
         canonicalSource = null;
         session = null;

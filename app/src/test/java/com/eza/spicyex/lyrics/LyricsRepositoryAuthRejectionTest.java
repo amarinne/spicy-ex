@@ -9,7 +9,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Packet M3: inner Spicy 401/403 detection, retry-once-only guard, and token-privacy of the
+ * Packet M3: inner Spicy 401 detection, retry-once-only guard, and token-privacy of the
  * {@link LyricsRepository.Authorization} snapshot. All seams are pure JVM statics.
  */
 public class LyricsRepositoryAuthRejectionTest {
@@ -18,26 +18,26 @@ public class LyricsRepositoryAuthRejectionTest {
 
     @Test
     public void innerResultStatus401IsDetectedInRawBody() {
-        String raw = "{\"queries\":[{\"result\":{\"status\":401,\"message\":\"Unauthorized\"}}]}";
+        String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":401,\"message\":\"Unauthorized\"}}]}";
         assertEquals(Integer.valueOf(401), LyricsRepository.innerSpicyAuthRejectionStatus(raw));
     }
 
     @Test
-    public void innerResultStatus403IsDetectedInRawBody() {
-        String raw = "{\"queries\":[{\"result\":{\"status\":403}}]}";
-        assertEquals(Integer.valueOf(403), LyricsRepository.innerSpicyAuthRejectionStatus(raw));
+    public void innerResultStatus403DoesNotRefreshToken() {
+        String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":403}}]}";
+        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(raw));
     }
 
     @Test
     public void nonAuthInnerStatusIsNotAuthRejection() {
-        String raw = "{\"queries\":[{\"result\":{\"status\":404}}]}";
+        String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":404}}]}";
         assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(raw));
     }
 
     @Test
     public void statusOutsideResultObjectIsNotAuthRejection() {
         // A top-level status must not trigger scoped invalidation; only the inner query result counts.
-        String raw = "{\"status\":401,\"queries\":[{\"result\":{\"status\":200}}]}";
+        String raw = "{\"status\":401,\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":200}}]}";
         assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(raw));
     }
 
@@ -51,9 +51,9 @@ public class LyricsRepositoryAuthRejectionTest {
     }
 
     @Test
-    public void nonRejectionQueriesDoNotHideLaterRejection() {
-        String raw = "{\"queries\":[{\"result\":{\"status\":200}},{\"result\":{\"status\":401}}]}";
-        assertEquals(Integer.valueOf(401), LyricsRepository.innerSpicyAuthRejectionStatus(raw));
+    public void otherOperationRejectionDoesNotRejectRequestedOperation() {
+        String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":200}},{\"operationId\":\"1\",\"result\":{\"status\":401}}]}";
+        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(raw));
     }
 
     // ---------- inner auth-rejection detection (parsed document) ----------
@@ -61,7 +61,7 @@ public class LyricsRepositoryAuthRejectionTest {
     @Test
     public void parsedDocumentWithAuthRejectionStatusIsDetected() {
         LyricsDocument doc = new LyricsDocument();
-        doc.spicyQueryStatus = 403;
+        doc.spicyQueryStatus = 401;
         assertTrue(LyricsRepository.isInnerSpicyAuthRejection(doc));
     }
 
@@ -69,6 +69,8 @@ public class LyricsRepositoryAuthRejectionTest {
     public void parsedDocumentWithOtherStatusIsNotAuthRejection() {
         LyricsDocument doc = new LyricsDocument();
         doc.spicyQueryStatus = 200;
+        assertFalse(LyricsRepository.isInnerSpicyAuthRejection(doc));
+        doc.spicyQueryStatus = 403;
         assertFalse(LyricsRepository.isInnerSpicyAuthRejection(doc));
         doc.spicyQueryStatus = 404;
         assertFalse(LyricsRepository.isInnerSpicyAuthRejection(doc));
@@ -104,6 +106,30 @@ public class LyricsRepositoryAuthRejectionTest {
     public void retryWithoutNewerAuthorizationGoesToFallback() {
         // No newer generation exists: no retry, straight to native/LRCLIB.
         assertFalse(LyricsRepository.shouldRetryWithNewerGeneration(6, false, null));
+    }
+
+    @Test
+    public void sameTokenOrOlderGenerationCannotBeRetried() {
+        assertFalse(LyricsRepository.shouldRetryAuthorization("same", 6, false,
+                LyricsRepository.Authorization.of("same", 7)));
+        assertFalse(LyricsRepository.shouldRetryAuthorization("old", 6, false,
+                LyricsRepository.Authorization.of("new", 5)));
+        assertFalse(LyricsRepository.shouldRetryAuthorization("old", 6, false,
+                LyricsRepository.Authorization.of("0", 7)));
+        assertTrue(LyricsRepository.shouldRetryAuthorization("old", 6, false,
+                LyricsRepository.Authorization.of("new", 7)));
+    }
+
+    @Test
+    public void refreshFailurePreservesRejectionAndCancellationRemainsCancellation() {
+        assertNull(LyricsRepository.resolveAfterAuthRejection(generation -> {
+            assertEquals(6, generation);
+            throw new IllegalStateException("refresh failed");
+        }, 6));
+        org.junit.Assert.assertThrows(java.util.concurrent.CancellationException.class,
+                () -> LyricsRepository.resolveAfterAuthRejection(generation -> {
+                    throw new java.util.concurrent.CancellationException();
+                }, 6));
     }
 
     // ---------- authorization snapshot privacy ----------

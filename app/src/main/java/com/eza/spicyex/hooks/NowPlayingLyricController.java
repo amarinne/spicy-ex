@@ -564,16 +564,19 @@ final class NowPlayingLyricController {
                 // track as the lanes settle, and the artwork overlay keeps its document identity.
                 LyricsDocument mountedCard = cardDocument;
                 LyricsDocument mountedArtwork = artworkDocument;
-                if (NowPlayingSessionGuard.mayMergeMountedProjection(
+                LyricsDocumentProcessor.DerivedMergeResult cardMerge =
+                        NowPlayingSessionGuard.mayMergeMountedProjection(
                         replayRequired,
                         id.equals(loadedId),
                         mountedCard != null,
-                        mountedArtwork != null,
-                        mountedCard != null && LyricsDocumentProcessor.sameCanonicalBase(
-                                mountedCard, nextCardDocument))) {
-                    boolean cardChanged = LyricsDocumentProcessor.mergeDerivedLayers(mountedCard, nextCardDocument);
+                        mountedArtwork != null)
+                        ? LyricsDocumentProcessor.mergeDerivedPublication(mountedCard, nextCardDocument)
+                        : LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE;
+                if (cardMerge != LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE) {
+                    boolean cardChanged = cardMerge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED;
                     boolean artworkChanged =
-                            LyricsDocumentProcessor.mergeDerivedLayers(mountedArtwork, nextCardDocument);
+                            LyricsDocumentProcessor.mergeDerivedPublication(mountedArtwork, nextCardDocument)
+                                    == LyricsDocumentProcessor.DerivedMergeResult.CHANGED;
                     boolean cardRowsChanged = LyricTimeline.refreshAppliedDerivedText(mountedCard);
                     boolean artworkRowsChanged =
                             LyricTimeline.refreshAppliedDerivedText(mountedArtwork);

@@ -79,6 +79,10 @@ final class RawLyricsCachePolicy {
     }
 
     static final class Decision {
+        boolean canRetainWrite() {
+            return retainWrite && removedPayloadKeys.isEmpty();
+        }
+
         final boolean retainWrite;
         final Set<String> removedPayloadKeys;
         final Set<String> legacyPayloadKeys;

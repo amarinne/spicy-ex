@@ -29,14 +29,23 @@ public final class CanonicalSourceCodec {
 
     public static String encode(LyricsDocument document, int sourceRevision, String canonicalDigest,
                                 long savedAtMs) {
+        return encode(document, sourceRevision, canonicalDigest, savedAtMs, "");
+    }
+
+    public static String encode(LyricsDocument document, int sourceRevision, String canonicalDigest,
+                                long savedAtMs, String selectionIdentity) {
         if (document == null) return "";
         JsonObject root = new JsonObject();
         root.addProperty("schema", SCHEMA_VERSION);
         root.addProperty("sourceRevision", sourceRevision);
         root.addProperty("canonicalDigest", nz(canonicalDigest));
         root.addProperty("savedAtMs", savedAtMs);
+        root.addProperty("selectionIdentity", nz(selectionIdentity));
         root.addProperty("trackId", nz(document.trackId));
         root.addProperty("provider", nz(document.provider));
+        root.addProperty("selectedSource", nz(document.selectedSource));
+        root.addProperty("selectionMode", nz(document.selectionMode));
+        root.addProperty("selectionOverride", nz(document.selectionOverride));
         root.addProperty("songWriters", nz(document.songWriters));
         root.addProperty("type", nz(document.type));
         root.addProperty("language", nz(document.language));
@@ -90,6 +99,9 @@ public final class CanonicalSourceCodec {
             LyricsDocument document = new LyricsDocument();
             document.trackId = Json.optString(root, "trackId");
             document.provider = Json.optString(root, "provider");
+            document.selectedSource = Json.optString(root, "selectedSource");
+            document.selectionMode = Json.optString(root, "selectionMode");
+            document.selectionOverride = Json.optString(root, "selectionOverride");
             document.songWriters = Json.optString(root, "songWriters");
             document.type = Json.optString(root, "type");
             document.language = Json.optString(root, "language");
@@ -134,7 +146,8 @@ public final class CanonicalSourceCodec {
             }
             if (document.lines.isEmpty()) return null;
             return new Record(document, (int) Json.optDouble(root, 1, "sourceRevision"),
-                    Json.optString(root, "canonicalDigest"), (long) Json.optDouble(root, 0, "savedAtMs"));
+                    Json.optString(root, "canonicalDigest"), (long) Json.optDouble(root, 0, "savedAtMs"),
+                    Json.optString(root, "selectionIdentity"));
         } catch (Throwable ignored) {
             return null;
         }
@@ -202,12 +215,20 @@ public final class CanonicalSourceCodec {
         public final int sourceRevision;
         public final String canonicalDigest;
         public final long savedAtMs;
+        /** Selection settings used when this record was acquired (empty for legacy records). */
+        public final String selectionIdentity;
 
         Record(LyricsDocument document, int sourceRevision, String canonicalDigest, long savedAtMs) {
+            this(document, sourceRevision, canonicalDigest, savedAtMs, "");
+        }
+
+        Record(LyricsDocument document, int sourceRevision, String canonicalDigest, long savedAtMs,
+               String selectionIdentity) {
             this.document = document;
             this.sourceRevision = Math.max(1, sourceRevision);
             this.canonicalDigest = nz(canonicalDigest);
             this.savedAtMs = savedAtMs;
+            this.selectionIdentity = nz(selectionIdentity);
         }
     }
 }

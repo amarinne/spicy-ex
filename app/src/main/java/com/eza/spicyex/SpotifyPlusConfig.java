@@ -78,4 +78,5 @@ public final class SpotifyPlusConfig {
         return "original_translation".equals(mode)
                 || "original_romanized_translation".equals(mode);
     }
+
 }

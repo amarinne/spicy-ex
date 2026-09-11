@@ -80,6 +80,15 @@ public final class LyricVisuals {
     }
 
     public static int lyricTextSizeSp(String text) {
+        return lyricTextSizeSp(text, true);
+    }
+
+    /**
+     * Base lyric size. Adaptive mode shrinks long lines so they fit; with adaptive off every
+     * line uses the short-line size and long lines wrap instead.
+     */
+    public static int lyricTextSizeSp(String text, boolean adaptive) {
+        if (!adaptive) return 28;
         String safeText = safe(text);
         int length = safeText.codePointCount(0, safeText.length());
         if (length >= 30) return 23;

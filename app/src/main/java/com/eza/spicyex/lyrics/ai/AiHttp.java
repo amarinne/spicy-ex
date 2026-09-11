@@ -41,7 +41,7 @@ import okio.BufferedSource;
  */
 public final class AiHttp {
 
-    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final String TAG = "AiHttp";
 
     /** Generous, because a long document legitimately takes a while and there is no fallback. */
@@ -103,6 +103,8 @@ public final class AiHttp {
                 local = client;
                 if (local == null) {
                     local = new OkHttpClient.Builder()
+                            // Happy Eyeballs: race IPv4/IPv6 instead of trying routes in order.
+                            .fastFallback(true)
                             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                             .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                             .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -110,7 +112,13 @@ public final class AiHttp {
                             // runtime is enforcing, or a slow answer becomes DELIVERY_UNKNOWN here
                             // instead of being cancelled deliberately there.
                             .callTimeout(AiContract.MAX_CALL_DEADLINE_MS, TimeUnit.MILLISECONDS)
-                            .retryOnConnectionFailure(false)
+                            // Route fallback must stay on. OkHttp 4 tries DNS routes in order
+                            // (IPv6 first) with no Happy Eyeballs race, so a blackholed IPv6
+                            // route would otherwise fail the call at the connect timeout even
+                            // though IPv4 answers in under a second. Retrying a dead route is
+                            // billing-safe: OkHttp only retries before the request is sent,
+                            // never after dispatch, so a retried call was never served.
+                            .retryOnConnectionFailure(true)
                             .build();
                     client = local;
                 }

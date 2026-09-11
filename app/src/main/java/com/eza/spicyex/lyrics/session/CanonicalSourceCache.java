@@ -15,8 +15,8 @@ import com.eza.spicyex.lyrics.LyricsDocument;
  * Durable store for canonical lyric source, separate from every derived-artifact store.
  *
  * <p>Canonical lyrics are normal display authority, so this cache has <b>no normal-use TTL</b>:
- * entries are evicted only by explicit clear or by the entry/byte bound. Build stamps and deploy
- * epochs invalidate derived implementation artifacts; they must not delete canonical source.
+ * entries are deleted only by explicit clear. A full quota refuses writes instead of deleting
+ * saved lyrics. Build stamps and deploy epochs never delete canonical source.
  */
 public final class CanonicalSourceCache {
     private static final String PREFS = "SpotifyPlusCanonicalSourceCache";
@@ -41,6 +41,16 @@ public final class CanonicalSourceCache {
         }
     }
 
+    /** Loads only when the record was acquired under the requested selection identity. */
+    public static CanonicalSourceCodec.Record load(Context context, String trackUri,
+                                                   String selectionIdentity) {
+        CanonicalSourceCodec.Record record = load(context, trackUri);
+        if (record == null) return null;
+        if (selectionIdentity == null || selectionIdentity.isEmpty()) return record;
+        return LyricsSourcePreferences.cacheCompatible(record.selectionIdentity, selectionIdentity)
+                ? record : null;
+    }
+
     /**
      * Persists the canonical projection of {@code document}.
      *
@@ -49,13 +59,19 @@ public final class CanonicalSourceCache {
      */
     public static boolean save(Context context, String trackUri, LyricsDocument document,
                                int sourceRevision, String canonicalDigest) {
+        return save(context, trackUri, document, sourceRevision, canonicalDigest, "");
+    }
+
+    /** Saves canonical lyrics together with the source-selection identity that produced them. */
+    public static boolean save(Context context, String trackUri, LyricsDocument document,
+                               int sourceRevision, String canonicalDigest, String selectionIdentity) {
         if (context == null || trackUri == null || trackUri.isEmpty() || document == null
                 || document.lines.isEmpty()) {
             return false;
         }
         try {
             String value = CanonicalSourceCodec.encode(document, sourceRevision, canonicalDigest,
-                    System.currentTimeMillis());
+                    System.currentTimeMillis(), selectionIdentity);
             if (value.isEmpty()) return false;
             SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             String key = entryKey(trackUri);
@@ -67,12 +83,10 @@ public final class CanonicalSourceCache {
                         Integer.MAX_VALUE,
                         com.eza.spicyex.lyrics.CacheStoragePolicy.canonicalQuota(
                                 com.eza.spicyex.lyrics.CacheStoragePolicy.totalBudget(context)));
-                if (bound.rejectedWrite) return false;
                 SharedPreferences.Editor editor = prefs.edit();
                 for (String evicted : bound.evicted) editor.remove(evicted);
-                editor.putString(key, value).putString(ORDER_KEY, bound.nextOrder).apply();
+                return editor.putString(key, value).putString(ORDER_KEY, bound.nextOrder).commit();
             }
-            return true;
         } catch (Throwable t) {
             Diagnostics.warn("CanonicalSourceCache", "save", t);
             return false;
@@ -82,6 +96,35 @@ public final class CanonicalSourceCache {
     public static void clear(Context context) {
         if (context == null) return;
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+    }
+
+    /**
+     * Drops only one track's canonical record, keeping every other cached song.
+     *
+     * <p>The order index is rewritten without the entry so later quota math never accounts for
+     * a record that is no longer there.
+     */
+    public static void remove(Context context, String trackUri) {
+        if (context == null || trackUri == null || trackUri.isEmpty()) return;
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            String key = entryKey(trackUri);
+            String prefix = key + "|";
+            synchronized (LOCK) {
+                String order = prefs.getString(ORDER_KEY, "");
+                StringBuilder kept = new StringBuilder();
+                if (order != null && !order.isEmpty()) {
+                    for (String row : order.split("\n")) {
+                        if (row.startsWith(prefix)) continue;
+                        if (kept.length() > 0) kept.append('\n');
+                        kept.append(row);
+                    }
+                }
+                prefs.edit().remove(key).putString(ORDER_KEY, kept.toString()).apply();
+            }
+        } catch (Throwable t) {
+            Diagnostics.warn("CanonicalSourceCache", "remove", t);
+        }
     }
 
     /** Combined logical-payload usage of the canonical source store, for the settings panel. */
@@ -149,6 +192,10 @@ public final class CanonicalSourceCache {
     }
 
     static final class Bound {
+        boolean canRetainWrite() {
+            return !rejectedWrite && evicted.isEmpty();
+        }
+
         final String nextOrder;
         final LinkedHashSet<String> evicted;
         final boolean rejectedWrite;

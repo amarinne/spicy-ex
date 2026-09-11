@@ -137,6 +137,20 @@ public final class LyricsShellSettings {
         return SettingsValueNormalizer.textSizeMultiplierFor(lyricsTextSizeMode());
     }
 
+    public boolean adaptiveTextSizeEnabled() {
+        boolean fallback = config == null
+                ? Settings.LYRICS_ADAPTIVE_TEXT_SIZE.defaultValue
+                : config.get(Settings.LYRICS_ADAPTIVE_TEXT_SIZE);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.LYRICS_ADAPTIVE_TEXT_SIZE.key)) {
+                return prefs.getBoolean(Settings.LYRICS_ADAPTIVE_TEXT_SIZE.key, fallback);
+            }
+        } catch (Throwable ignored) {
+        }
+        return fallback;
+    }
+
     /** Independent size mode for the now-playing live card (Settings.LIVE_CARD_TEXT_SIZE). */
     public String liveCardTextSizeMode() {
         String fallback = SettingsValueNormalizer.normalizeTextSizeMode(config == null ? "" : config.get(Settings.LIVE_CARD_TEXT_SIZE));

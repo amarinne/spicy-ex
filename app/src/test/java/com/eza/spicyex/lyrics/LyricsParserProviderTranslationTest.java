@@ -27,6 +27,7 @@ public class LyricsParserProviderTranslationTest {
         result.addProperty("format", "json");
         result.add("data", lyrics);
         JsonObject query = new JsonObject();
+        query.addProperty("operationId", "0");
         query.add("result", result);
         JsonArray queries = new JsonArray();
         queries.add(query);

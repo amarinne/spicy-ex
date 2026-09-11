@@ -31,7 +31,12 @@ final class SpicyLyricBridgePublisher {
     );
 
     private final Context context;
-    private final ExecutorService providerExecutor = Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.ThreadPoolExecutor providerExecutor =
+            new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.ArrayBlockingQueue<>(2));
+    private String latestProviderMethod;
+    private Bundle latestProviderPayload;
+    private boolean providerDrainQueued;
     private ISpicyLyricBridge bridge;
     private Bundle retainedState;
     private String pendingClearProducerId;
@@ -214,14 +219,43 @@ final class SpicyLyricBridgePublisher {
         if (stateRevision != 0L && retainedState != null) {
             Bundle payload = new Bundle();
             payload.putBundle("state", new Bundle(retainedState));
-            providerExecutor.execute(() -> callProvider("publish", payload));
+            queueProvider("publish", payload);
             stateReplayState.markPublished(stateRevision);
         } else if (pendingClearProducerId != null) {
             Bundle payload = new Bundle();
             payload.putString("producerId", pendingClearProducerId);
             payload.putLong("generation", pendingClearGeneration);
-            providerExecutor.execute(() -> callProvider("clear", payload));
+            queueProvider("clear", payload);
             pendingClearProducerId = null;
+        }
+    }
+
+    /** Only the newest pending state survives a slow provider call. */
+    private synchronized void queueProvider(String method, Bundle payload) {
+        latestProviderMethod = method;
+        latestProviderPayload = payload;
+        if (providerDrainQueued) return;
+        providerDrainQueued = true;
+        try {
+            providerExecutor.execute(() -> {
+                while (true) {
+                    String nextMethod;
+                    Bundle nextPayload;
+                    synchronized (SpicyLyricBridgePublisher.this) {
+                        if (latestProviderPayload == null) {
+                            providerDrainQueued = false;
+                            return;
+                        }
+                        nextMethod = latestProviderMethod;
+                        nextPayload = latestProviderPayload;
+                        latestProviderPayload = null;
+                    }
+                    callProvider(nextMethod, nextPayload);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            providerDrainQueued = false;
+            // Preserve the latest state for the next publication; never queue an unbounded backlog.
         }
     }
 

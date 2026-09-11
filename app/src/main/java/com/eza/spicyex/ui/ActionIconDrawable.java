@@ -118,7 +118,14 @@ public final class ActionIconDrawable extends Drawable {
         canvas.restore();
     }
 
-    @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
-    @Override public void setColorFilter(ColorFilter colorFilter) { paint.setColorFilter(colorFilter); }
+    @Override public void setTint(int color) {
+        paint.setColor(color);
+        invalidateSelf();
+    }
+    @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
+    @Override public void setColorFilter(ColorFilter colorFilter) {
+        paint.setColorFilter(colorFilter);
+        invalidateSelf();
+    }
     @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
 }

@@ -37,7 +37,14 @@ public final class LyricsParser implements LyricsRepository.Parser {
         log(TAG + " parseSpicyLyrics track=" + (track == null ? "null" : safe(track.uri))
                 + " fromCache=" + fromCache + " bytes=" + (raw == null ? 0 : raw.length()));
         SpicyResponseMetadata metadata = new SpicyResponseMetadata();
-        JsonElement root = unpackSpicyPayloads(JsonParser.parseString(raw), metadata, false);
+        JsonElement envelope = JsonParser.parseString(raw);
+        boolean noticePresent = SpicyQueryEnvelope.noticePresent(envelope);
+        JsonElement selected = envelope;
+        if (envelope.isJsonObject() && envelope.getAsJsonObject().has("queries")) {
+            selected = SpicyQueryEnvelope.result(envelope);
+            if (selected == null) throw new IllegalStateException("Spicy operation 0 missing");
+        }
+        JsonElement root = unpackSpicyPayloads(selected, metadata, false);
         JsonObject data = findLyricsData(root);
         if (data == null) throw new IllegalStateException("lyrics data not found");
 
@@ -49,16 +56,17 @@ public final class LyricsParser implements LyricsRepository.Parser {
         doc.startTimeMs = secondsToMs(Json.optDouble(data, 0d, "StartTime", "startTime"));
         doc.type = type == null ? "Unknown" : type;
         doc.language = language == null ? "" : language;
-        doc.fetchSource = fromCache ? "spicy_api_cache" : "spicy_api";
+        doc.fetchSource = fromCache ? "apple_music_cache" : "apple_music";
         doc.spicyPackedPayload = metadata.packedPayload;
-        doc.spicyQueryStatus = metadata.queryStatus;
+        doc.spicyEnvelopeNoticePresent = noticePresent;
+        doc.spicyQueryStatus = metadata.queryStatus != null ? metadata.queryStatus : 200;
         doc.spicyFormat = metadata.format == null ? "" : metadata.format;
         doc.spicyPoisoned = false;
         doc.spicyQualityReason = null;
         doc.provider = providerLabelFromSource(firstNonBlank(
                 Json.optString(data, "source", "Source", "Provider", "provider"),
                 Json.findFirstString(root, "source", "Source", "Provider", "provider")
-        ));
+        ), type);
         doc.songWriters = joinSongWriters(Json.optArray(data, "SongWriters", "songWriters", "Writers"));
         JsonArray selectedLines = Json.optArray(data, "Lines", "lines", "Content", "content");
         log(TAG + " spicy parse selected type=" + type + " candidateLines=" + (selectedLines == null ? 0 : selectedLines.size()));
@@ -600,9 +608,9 @@ public final class LyricsParser implements LyricsRepository.Parser {
         if (finalizer != null) finalizer.finalizeParsedDocument(context, doc);
     }
 
-    private static String providerLabelFromSource(String source) {
+    private static String providerLabelFromSource(String source, String type) {
         String value = safe(source).trim();
-        if (value.isEmpty()) return "Unknown";
+        if (value.isEmpty()) return "Apple Music";
         if ("spt".equalsIgnoreCase(value)) return "Spotify";
         if ("aml".equalsIgnoreCase(value)) return "Apple Music";
         if ("spl".equalsIgnoreCase(value)) return "Spicy Lyrics";

@@ -120,9 +120,8 @@ public final class ProcessedLyricsCache {
             if (rows.size() == 0) return false;
             JsonObject record = newRecord("SOUND", base, soundConfigId, complete);
             record.add("rows", rows);
-            LyricCaches.putSoundArtifact(context,
+            return LyricCaches.putSoundArtifact(context,
                     LyricCaches.soundArtifactKey(base.digest, soundConfigId), record.toString());
-            return true;
         } catch (Throwable t) {
             XpLog.log(TAG + " sound save failed: " + t);
             return false;
@@ -167,9 +166,8 @@ public final class ProcessedLyricsCache {
             // AiPaidRecord is the sole paid authority. Writing this second schema under the same
             // identity would overwrite resumable accounting and could cause a duplicate charge.
             if (isPaid(artifact)) return true;
-            LyricCaches.putSoundArtifact(context,
+            return LyricCaches.putSoundArtifact(context,
                     LyricCaches.soundArtifactKey(base.digest, artifact.configId), record.toString());
-            return true;
         } catch (Throwable t) {
             XpLog.log(TAG + " sound save failed: " + t);
             return false;
@@ -194,9 +192,8 @@ public final class ProcessedLyricsCache {
             JsonObject record = newRecordHeader("MEANING", base.digest, artifact.configId, !artifact.partial);
             record.add("rows", rows);
             if (isPaid(artifact)) return true;
-            LyricCaches.putMeaningArtifact(context,
+            return LyricCaches.putMeaningArtifact(context,
                     LyricCaches.meaningArtifactKey(base.digest, artifact.configId), record.toString());
-            return true;
         } catch (Throwable t) {
             XpLog.log(TAG + " meaning save failed: " + t);
             return false;
@@ -243,9 +240,8 @@ public final class ProcessedLyricsCache {
             if (rows.size() == 0) return false;
             JsonObject record = newRecord("MEANING", base, meaningConfigId, complete);
             record.add("rows", rows);
-            LyricCaches.putMeaningArtifact(context,
+            return LyricCaches.putMeaningArtifact(context,
                     LyricCaches.meaningArtifactKey(base.digest, meaningConfigId), record.toString());
-            return true;
         } catch (Throwable t) {
             XpLog.log(TAG + " meaning save failed: " + t);
             return false;
@@ -257,9 +253,8 @@ public final class ProcessedLyricsCache {
     /**
      * True when this artifact is AI-authored, and so must not be written to a store that evicts.
      *
-     * <p>The Sound and Meaning stores are LRU- and age-bounded and are emptied by a deploy epoch.
-     * That is correct for work that can be redone for free; it would silently throw away work the
-     * owner paid for.
+     * <p>Paid records retain their own accounting and resumable state in the AI store.
+     * Both paid and non-paid stores preserve existing records when their quotas fill.
      */
     public static boolean isPaid(DerivedLayerArtifact artifact) {
         return artifact != null && artifact.provenance != null

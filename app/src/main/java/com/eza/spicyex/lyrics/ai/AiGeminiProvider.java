@@ -343,6 +343,12 @@ public final class AiGeminiProvider implements AiProvider {
         if (result.failure != null) return result.failure;
         int status = result.status;
         if (status == 401 || status == 403) return AiProviderFailure.auth();
+        // An invalid key arrives as a 400 with reason API_KEY_INVALID, not a 401. Without this
+        // a mistyped key reports as "request rejected" and sends the owner to debug the model
+        // instead of the key. Matched on the stable machine reason, never shown or logged.
+        if (status == 400 && result.body.contains("API_KEY_INVALID")) {
+            return AiProviderFailure.auth();
+        }
         if (status == 429) return AiProviderFailure.rateLimited(result.retryAfterMs);
         if (status == 404) return AiProviderFailure.modelUnavailable();
         // Quota exhaustion arrives as a 400 with a specific reason, and it is terminal: retrying it

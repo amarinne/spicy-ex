@@ -51,7 +51,11 @@ public final class SpicyVersionProbeState {
     static String parseLatestVersion(String raw) {
         if (isBlank(raw)) return "";
         try {
-            return findVersion(JsonParser.parseString(raw));
+            JsonElement root = JsonParser.parseString(raw);
+            JsonObject result = SpicyQueryEnvelope.result(root);
+            Integer status = SpicyQueryEnvelope.status(result);
+            if (status != null && status != 200) return "";
+            return result == null ? "" : findVersion(result.get("data"));
         } catch (Throwable ignored) {
             return "";
         }

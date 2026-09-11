@@ -46,6 +46,21 @@ public class LyricsFetchDiagnosticsStateTest {
         assertEquals("native", snapshot.displayedSourceChosen());
     }
 
+    @Test
+    public void lrclibWinnerKeepsSpicyNetworkStatus() {
+        SpicyNetworkDiagnostics.spicyQueryStatus = 401;
+        SpicyNetworkDiagnostics.reason = "Spicy auth rejected HTTP 401";
+        try {
+            LyricsFetchDiagnosticsState.record("lrclib", Collections.singletonList("lrclib"),
+                    document("lrclib", "LRCLIB"), true, false);
+
+            assertEquals("401", LyricsFetchDiagnosticsState.get().spicyQueryStatus);
+        } finally {
+            SpicyNetworkDiagnostics.spicyQueryStatus = null;
+            SpicyNetworkDiagnostics.reason = "";
+        }
+    }
+
     private static LyricsDocument document(String fetchSource, String provider) {
         LyricsDocument document = new LyricsDocument();
         document.fetchSource = fetchSource;

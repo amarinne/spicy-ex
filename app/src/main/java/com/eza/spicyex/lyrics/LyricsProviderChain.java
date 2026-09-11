@@ -11,6 +11,12 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 final class LyricsProviderChain {
     private final int generation;
     private final String cachedRaw;
+    /**
+     * Auto ranking compares sync level first (syllable > word > line > static) and only
+     * then the source score; source-order mode keeps pure score comparison because the
+     * fetch position already encodes the user's order.
+     */
+    private final boolean syncFirst;
     private final List<String> candidatesSeen = new ArrayList<>();
 
     private LyricsDocument pendingStatic;
@@ -19,10 +25,22 @@ final class LyricsProviderChain {
     private boolean staticAlreadyShown;
     private boolean deliveredCached;
     private boolean deliveredCachedSynced;
+    private LyricsDocument nativeBaseline;
 
     LyricsProviderChain(int generation, String cachedRaw) {
+        this(generation, cachedRaw, true);
+    }
+
+    LyricsProviderChain(int generation, String cachedRaw, boolean syncFirst) {
         this.generation = generation;
         this.cachedRaw = cachedRaw;
+        this.syncFirst = syncFirst;
+    }
+
+    private boolean prefer(LyricsDocument candidate, LyricsDocument currentBest) {
+        return syncFirst
+                ? LyricQualityRanker.preferAuto(candidate, currentBest)
+                : LyricQualityRanker.prefer(candidate, currentBest);
     }
 
     Decision acceptCached(LyricsDocument doc) {
@@ -55,6 +73,9 @@ final class LyricsProviderChain {
                 return Decision.suppress();
             }
             Synced synced = (Synced) result;
+            if (nativeBaseline != null && !prefer(synced.document, nativeBaseline)) {
+                return Decision.suppress();
+            }
             return Decision.deliver(synced.document, true, raw, false);
         }
         if (result instanceof Static) {
@@ -75,8 +96,9 @@ final class LyricsProviderChain {
         }
         addCandidate(Source.NATIVE);
         LyricsDocument nativeDoc = result.document();
+        if (nativeBaseline == null) nativeBaseline = nativeDoc;
         if (pendingStatic != null) {
-            LyricsDocument winner = LyricQualityRanker.prefer(nativeDoc, pendingStatic) ? nativeDoc : pendingStatic;
+            LyricsDocument winner = prefer(nativeDoc, pendingStatic) ? nativeDoc : pendingStatic;
             if (staticAlreadyShown) return Decision.suppress();
             if (winner == nativeDoc) {
                 return Decision.deliver(nativeDoc, false, null, false);
@@ -100,7 +122,7 @@ final class LyricsProviderChain {
         if (pendingStatic == null) {
             return Decision.deliver(lrclibDoc, false, null, false);
         }
-        LyricsDocument winner = LyricQualityRanker.prefer(lrclibDoc, pendingStatic) ? lrclibDoc : pendingStatic;
+        LyricsDocument winner = prefer(lrclibDoc, pendingStatic) ? lrclibDoc : pendingStatic;
         if (winner == lrclibDoc) {
             return Decision.deliver(lrclibDoc, false, null, false);
         }
@@ -192,12 +214,14 @@ final class LyricsProviderChain {
     }
 
     static boolean isSyncedType(String type) {
-        return "Line".equalsIgnoreCase(type) || "Syllable".equalsIgnoreCase(type);
+        return "Line".equalsIgnoreCase(type) || "Word".equalsIgnoreCase(type)
+                || "Syllable".equalsIgnoreCase(type);
     }
 
     enum Source {
         CACHE("cache"),
-        SPICY("spicy"),
+        APPLE_MUSIC("apple_music"),
+        SPICY("apple_music"),
         NATIVE("native"),
         LRCLIB("lrclib"),
         UNSUPPORTED("unsupported");

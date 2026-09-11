@@ -19,11 +19,19 @@ final class NativeRuntime {
     private static final int HTTP_WRITE_TIMEOUT_SECONDS = 10;
 
     static final OkHttpClient HTTP = new OkHttpClient.Builder()
+            // Happy Eyeballs: race IPv4/IPv6 instead of trying routes in order, so a
+            // blackholed route costs the fallback delay rather than a full timeout.
+            .fastFallback(true)
             .connectTimeout(HTTP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(HTTP_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(HTTP_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build();
-    static final ScheduledExecutorService LYRICS_IO = Executors.newScheduledThreadPool(2);
+    static final java.util.concurrent.ScheduledThreadPoolExecutor LYRICS_IO = new java.util.concurrent.ScheduledThreadPoolExecutor(2);
+    static {
+        LYRICS_IO.setRemoveOnCancelPolicy(true);
+        LYRICS_IO.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+        LYRICS_IO.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
+    }
     // Sound and Meaning get distinct bounded jobs. Neither lane may park the other's thread on
     // network I/O, and cancelling one never starves the other.
     /** Deterministic on-device reading work. Single-threaded: the romanizers are not reentrant. */

@@ -6,43 +6,20 @@ import okhttp3.RequestBody;
 
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
-/**
- * Single source of truth for the native Spicy lyrics request contract, byte-identical to the
- * clean upstream SpicyLyrics 6.3.12 snapshot. The server rejects even small JSON formatting
- * drift, so the body is built as exact compact UTF-8 bytes matching upstream
- * {@code JSON.stringify} output — never via Gson (its default HTML escaping and tree ordering
- * are not stringifier-compatible).
- *
- * <p><strong>Authority: upstream SpicyLyrics 6.3.12 snapshot.</strong> Provenance is the clean
- * upstream snapshot at commit {@code c402738} (project version bump from {@code 6.3.11}):
- * <ul>
- *   <li>request version ({@code ProjectVersion}, {@code 6.3.12}): {@code project/config.ts}</li>
- *   <li>compact request mechanism ({@code JSON.stringify({ queries, client: { version } })}):
- *       {@code src/utils/API/Query.ts}</li>
- *   <li>auth variable and {@code SpicyLyrics-WebAuth: Bearer} header source
- *       ({@code auth: "SpicyLyrics-WebAuth"}): {@code src/utils/Lyrics/fetchLyrics.ts}</li>
- * </ul>
- * The local desktop fork is downstream of this snapshot and is not the source of truth for this
- * contract.</p>
- *
- * <p>Version pin, not an upstream-release tracker. The value is the upstream snapshot's request
- * version, sent in both {@code client.version} and {@code SpicyLyrics-Version}. Bump only after
- * live server acceptance changes or an update payload proves the version is rejected; 5.x was
- * previously retired that way.</p>
- */
+/** Exact compact request contract pinned to the requested official 6.3.15 protocol. */
 final class SpicyLyricsRequestContract {
-    static final String UPSTREAM_VERSION = "6.3.12";
+    static final String UPSTREAM_VERSION = "6.3.15";
     static final String SPICY_QUERY_URL = "https://api.spicylyrics.org/query";
     static final String SPICY_ORIGIN = "https://xpui.app.spotify.com";
     static final String SPICY_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Spotify/1.2.63 Chrome/132.0.6834.210 Electron/34.3.1 Safari/537.36";
-    private static final MediaType JSON = MediaType.parse("application/json");
+    private static final MediaType JSON = MediaType.get("application/json");
 
     private SpicyLyricsRequestContract() {
     }
 
     /**
      * UTF-8 bytes of the exact compact lyrics query body:
-     * {@code {"queries":[{"operation":"lyrics","variables":{"id":"<trackId>","auth":"SpicyLyrics-WebAuth"}}],"client":{"version":"6.3.12"}}}
+     * {@code {"queries":[{"operation":"lyrics","variables":{"id":"<trackId>","auth":"SpicyLyrics-WebAuth"}}],"client":{"version":"6.3.15"}}}
      * Insertion order is fixed: queries → operation → variables → id → auth, then client → version.
      */
     static byte[] buildLyricsQueryBytes(String trackId) {
@@ -55,7 +32,7 @@ final class SpicyLyricsRequestContract {
         return out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    /** Full lyrics request: exact upstream 6.3.12 bytes plus the upstream header set. */
+    /** Full lyrics request: exact upstream 6.3.15 bytes plus the upstream header set. */
     static Request buildLyricsRequest(String trackId, String accessToken) {
         RequestBody body = RequestBody.create(buildLyricsQueryBytes(trackId), JSON);
         Request.Builder builder = new Request.Builder()
