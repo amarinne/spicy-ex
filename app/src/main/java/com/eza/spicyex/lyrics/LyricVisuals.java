@@ -97,20 +97,39 @@ public final class LyricVisuals {
         return 28;
     }
 
+    public static int appleLyricTextSizeSp(String text) {
+        String safeText = safe(text);
+        int length = safeText.codePointCount(0, safeText.length());
+        if (length >= 30) return 19;
+        if (length >= 22) return 20;
+        if (length >= 14) return 21;
+        return 23;
+    }
+
     public static int secondaryTextSizeSp(int baseTextSp) {
         return Math.max(14, Math.round(baseTextSp * 0.48f));
     }
 
     public static boolean shouldUseLetterAnimator(SyllableSegment seg) {
+        return shouldUseLetterAnimator(seg, true);
+    }
+
+    public static boolean shouldUseLetterAnimator(SyllableSegment seg, boolean appleStyle) {
         if (seg == null || isBlank(seg.text)) return false;
         String text = safe(seg.text);
         int codePoints = text.codePointCount(0, text.length());
-        boolean multiCjk = codePoints > 1
-                && (SpicyTextDetection.itemJapaneseTest(text)
-                || SpicyTextDetection.itemKoreanTest(text));
-        return (seg.totalMs >= 1000 || multiCjk)
+        if (!appleStyle) {
+            boolean multiCjk = codePoints > 1
+                    && (SpicyTextDetection.itemJapaneseTest(text)
+                    || SpicyTextDetection.itemKoreanTest(text));
+            return (seg.totalMs >= 1000 || multiCjk)
+                    && codePoints > 0
+                    && codePoints <= 12
+                    && !SpicyTextDetection.containsRtl(text);
+        }
+        return seg.totalMs >= 80
                 && codePoints > 0
-                && codePoints <= 12
+                && codePoints <= 28
                 && !SpicyTextDetection.containsRtl(text);
     }
 

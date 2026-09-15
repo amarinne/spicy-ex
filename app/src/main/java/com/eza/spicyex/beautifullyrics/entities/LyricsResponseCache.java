@@ -12,6 +12,26 @@ public final class LyricsResponseCache {
     private LyricsResponseCache() {
     }
 
+    // LRCLIB's raw search response was never cached at all before this - every replay of a track
+    // that falls back to LRCLIB (most tracks: "Spicy"/Apple Music is disabled by default and
+    // Spotify's own native lyrics often lack sync, see LyricsSourcePreferences) re-hit the network
+    // even for the exact same song moments later. Same store/quota/eviction as the Apple Music
+    // raw cache above, just prefixed so the two sources' entries for the same trackId don't
+    // clobber each other.
+    private static final String LRCLIB_PREFIX = "lrclib:";
+
+    public static String getLrclib(Context context, String trackId) {
+        return get(context, LRCLIB_PREFIX + safeId(trackId));
+    }
+
+    public static void putLrclib(Context context, String trackId, String response) {
+        put(context, LRCLIB_PREFIX + safeId(trackId), response);
+    }
+
+    private static String safeId(String trackId) {
+        return trackId == null ? "" : trackId;
+    }
+
     public static synchronized String get(Context context, String trackId) {
         if (context == null) return null;
         SharedPreferences prefs = context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE);

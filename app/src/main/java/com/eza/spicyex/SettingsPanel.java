@@ -66,6 +66,7 @@ public final class SettingsPanel {
         SECTION_ICONS.put("transliteration", Kind.BOOK_OPEN_TEXT);
         SECTION_ICONS.put("translation", Kind.LANGUAGES);
         SECTION_ICONS.put("now_playing", Kind.DISC_3);
+        SECTION_ICONS.put("lyrics_sources", Kind.ROWS_2);
         SECTION_ICONS.put("lyrics_screen", Kind.FULLSCREEN);
         SECTION_ICONS.put("ai", Kind.SPARKLES);
         SECTION_ICONS.put("debug", Kind.ACTIVITY);
@@ -91,6 +92,10 @@ public final class SettingsPanel {
         ROW_LEADS.put("lyrics_chinese_mode", "拼");
         ROW_LEADS.put("lyrics_korean_romanization", "한");
         ROW_LEADS.put("lyrics_cyrillic_mode", "Я");
+        ROW_LEADS.put("lyric_background_style", Kind.DROPLETS);
+        ROW_LEADS.put("lyric_force_dark_background", Kind.SUN_MEDIUM);
+        ROW_LEADS.put("lyric_beat_reactive_background", Kind.ACTIVITY);
+        ROW_LEADS.put("lyric_header_art_size_dp", Kind.IMAGE);
     }
 
     private final Context context;
@@ -128,13 +133,17 @@ public final class SettingsPanel {
 
     /** Builds the card view; the host sizes/centers it. */
     public View build() {
-        ScrollView scroll = new ScrollView(context);
-        scroll.setVerticalScrollBarEnabled(false);        GradientDrawable cardBg = new GradientDrawable();
+        LinearLayout outer = new LinearLayout(context);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(COL_CARD);
         cardBg.setCornerRadius(dp(26));
         cardBg.setStroke(dp(1), COL_CARD_BORDER);
-        scroll.setBackground(cardBg);
-        scroll.setClipToOutline(true);
+        outer.setBackground(cardBg);
+        outer.setClipToOutline(true);
+
+        ScrollView scroll = new ScrollView(context);
+        scroll.setVerticalScrollBarEnabled(false);
         scrollRoot = scroll;
 
         LinearLayout content = new LinearLayout(context);
@@ -149,7 +158,67 @@ public final class SettingsPanel {
         content.addView(sectionsContainer, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         renderSections(sectionsContainer);
-        return scroll;
+
+        // Landscape has the width to spare for a horizontal quick-jump strip instead of only the
+        // vertically-stacked accordion below - each chip expands (and collapses every other)
+        // section and scrolls straight to it, rather than hunting through a long scroll.
+        if (isLandscape()) {
+            outer.addView(buildTabStrip(), new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        outer.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        return outer;
+    }
+
+    private boolean isLandscape() {
+        return context.getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+    }
+
+    private View buildTabStrip() {
+        android.widget.HorizontalScrollView tabScroll = new android.widget.HorizontalScrollView(context);
+        tabScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(2));
+        java.util.List<Settings.Section> sections = new java.util.ArrayList<>(groupVisibleSettings().keySet());
+        sections.add(Settings.DEBUG);
+        for (Settings.Section section : sections) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = dp(8);
+            row.addView(buildTabChip(section), lp);
+        }
+        tabScroll.addView(row, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return tabScroll;
+    }
+
+    private View buildTabChip(Settings.Section section) {
+        TextView chip = text(uiStrings.section(section), 13, COL_TITLE, true);
+        chip.setPadding(dp(14), dp(8), dp(14), dp(8));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(18));
+        bg.setColor(0x22FFFFFF);
+        bg.setStroke(dp(1), COL_CARD_BORDER);
+        chip.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), bg, null));
+        chip.setOnClickListener(v -> jumpToSection(section));
+        return chip;
+    }
+
+    /** Expands only `section` (collapsing every other one) and scrolls straight to it - the tab
+     *  strip's click handler. */
+    private void jumpToSection(Settings.Section section) {
+        if (sectionsContainer == null) return;
+        expandedSections.clear();
+        expandedSections.add(section.id);
+        aiBadgeView = null;
+        sectionsContainer.removeAllViews();
+        renderSections(sectionsContainer);
+        anchorTag = TAG_HEADER_PREFIX + section.id;
+        anchorDelta = 0;
+        restoreAnchorAndFallback();
     }
 
     private void renderHeader(LinearLayout content) {
@@ -227,7 +296,7 @@ public final class SettingsPanel {
         java.util.LinkedHashMap<Settings.Section, java.util.List<Settings.Setting<?>>> grouped =
                 new java.util.LinkedHashMap<>();
         for (Settings.Setting<?> setting : Settings.ALL) {
-            if (setting.section == Settings.INTERNAL) continue;
+            if (setting.section == Settings.INTERNAL || setting.section == Settings.DEBUG) continue;
             if (!shouldRender(setting)) continue;
             java.util.List<Settings.Setting<?>> items = grouped.get(setting.section);
             if (items == null) {
@@ -449,6 +518,15 @@ public final class SettingsPanel {
     }
 
     private boolean shouldRender(Settings.Setting<?> setting) {
+        if (setting == Settings.APPLE_EDGE_MELT_TOP
+                || setting == Settings.APPLE_EDGE_MELT_BOTTOM
+                || setting == Settings.APPLE_STRONG_DISTANCE_BLUR
+                || setting == Settings.APPLE_FADE_PASSED_LINES
+                || setting == Settings.APPLE_RELEASE_BLUR_ON_TOUCH
+                || setting == Settings.APPLE_COMPACT_TEXT
+                || setting == Settings.APPLE_CJK_WRAP_FIX) {
+            return Boolean.TRUE.equals(store.get(Settings.APPLE_STYLE_PRESET));
+        }
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             return LyricsSourcePreferences.sourceEnabled(context, LyricsSourcePreferences.Source.SPICY);
         }
@@ -505,6 +583,11 @@ public final class SettingsPanel {
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     private void onSettingChanged(Settings.Setting<?> setting) {
+        if (setting == Settings.APPLE_STYLE_PRESET) {
+            AppleStylePreset.apply(store, Boolean.TRUE.equals(store.get(Settings.APPLE_STYLE_PRESET)));
+            rebuildSection(setting.section);
+            return;
+        }
         if (setting == Settings.LYRICS_SOURCE_MODE) {
             LyricsSourcePreferences.setRankingMode(context,
                     LyricsSourcePreferences.RankingMode.parse(String.valueOf(store.get(setting))));
@@ -529,7 +612,6 @@ public final class SettingsPanel {
                 || setting == Settings.LIVE_CARD_TEXT_SIZE
                 || setting == Settings.LYRICS_SOURCE_OVERRIDE
                 || setting == Settings.LYRICS_SOURCE_MODE;
-
     }
 
     /**
@@ -545,6 +627,34 @@ public final class SettingsPanel {
         return (setting == Settings.TRANSLITERATION_ENABLED && !FeatureAvailability.transliterationAvailable())
                 || (setting == Settings.TRANSLATION_ENABLED && !FeatureAvailability.translationAvailable())
                 || (setting == Settings.LYRICS_FONT && !FeatureAvailability.appleFontAvailable());
+    }
+
+    /**
+     * Unlike {@link #unavailable}, a dependency-warned row still works and stays interactive -
+     * it just currently has no visible effect because some other setting it needs isn't in the
+     * right state yet. Surfaced as a "!" note under the row instead of greying it out, so toggling
+     * it isn't mistaken for silently broken (see the Beat-reactive background / animated
+     * background mixup this was added for).
+     */
+    private String dependencyWarning(Settings.Setting<?> setting) {
+        // Everything else with a same-section prerequisite is hidden outright by shouldRender()
+        // instead (see e.g. LINE_SYNC_FILL) - Beat-reactive background is the one exception left
+        // always visible regardless of Background style, which is exactly what made it read as
+        // silently broken instead of just not-applicable-yet.
+        if (setting == Settings.BEAT_REACTIVE_BACKGROUND
+                && !LyricsBackgroundStyle.ANIMATED_TEXTURE.equals(store.get(Settings.BACKGROUND_STYLE))) {
+            return uiStrings.get("settings_dep_needs_animated_background",
+                    "No visible effect until \"Background style\" above is set to \"Animated background\"");
+        }
+        return null;
+    }
+
+    /** Prefixes a row's summary with a "!" note when {@link #dependencyWarning} applies. */
+    private String withDependencyWarning(Settings.Setting<?> setting, String summary) {
+        String warning = dependencyWarning(setting);
+        if (warning == null) return summary;
+        String prefixed = "❗ " + warning;
+        return summary == null || summary.isEmpty() ? prefixed : prefixed + "\n" + summary;
     }
 
     // --- Icon helpers ---
@@ -604,7 +714,7 @@ public final class SettingsPanel {
         onClearCache.accept(kind);
         // Cache clears update preference memory (and the AI database) before returning. Rebuild
         // the owning row now so its usage summary reflects the clear without closing the panel.
-        rebuildSection(Settings.LYRICS);
+        rebuildSection(Settings.LYRICS_SOURCES);
     }
 
     private void renderStatus(LinearLayout content) {
@@ -706,7 +816,8 @@ public final class SettingsPanel {
     private void switchRow(LinearLayout content, Settings.BooleanSetting setting) {
         LinearLayout row = newRow(content);
         boolean unavailable = unavailable(setting);
-        titleColumn(row, uiStrings.setting(setting), unavailable ? unavailableSummary(setting) : null);
+        titleColumn(row, uiStrings.setting(setting),
+                unavailable ? unavailableSummary(setting) : withDependencyWarning(setting, null));
         applyRowLead(row, setting.key);
         GlossyToggle toggle = new GlossyToggle(context);
         toggle.setAccent(COL_ACCENT);
@@ -739,7 +850,7 @@ public final class SettingsPanel {
         String summary = summaryOverride != null ? summaryOverride
                 : labelFor(setting, store.get(setting));
         TextView value = titleColumn(row, uiStrings.setting(setting),
-                unavailable ? unavailableSummary(setting) : summary);
+                unavailable ? unavailableSummary(setting) : withDependencyWarning(setting, summary));
         applyRowLead(row, setting.key);
         if (!unavailable) value.setTextColor(COL_ACCENT);
         row.addView(kindView(Kind.CHEVRON_RIGHT, COL_SECTION, 18),
@@ -1102,7 +1213,7 @@ public final class SettingsPanel {
             actions.add(new AiSettingsRows.IconAction(Kind.DELETE,
                     uiStrings.get("settings_spicy_token_delete", "Delete token"), v -> {
                 SpicyManualTokenStore.delete(context);
-                rebuildSection(Settings.LYRICS);
+                rebuildSection(Settings.LYRICS_SOURCES);
             }));
         }
         aiFieldRow(content, uiStrings.setting(Settings.SPICY_MANUAL_TOKEN),
@@ -1115,7 +1226,7 @@ public final class SettingsPanel {
         EditText field = dialog.field(true, "");
         dialog.primary(uiStrings.get("settings_ai_save", "Save"), () -> {
             if (SpicyManualTokenStore.save(context, field.getText().toString().trim())) {
-                rebuildSection(Settings.LYRICS);
+                rebuildSection(Settings.LYRICS_SOURCES);
             } else {
                 android.widget.Toast.makeText(context,
                         uiStrings.get("settings_spicy_token_rejected", "Token not saved"),
@@ -1247,7 +1358,7 @@ public final class SettingsPanel {
                         toggle != null && toggle.isChecked());
             }
             onSettingChanged(Settings.LYRICS_SOURCE_MODE);
-            rebuildSection(Settings.LYRICS);
+            rebuildSection(Settings.LYRICS_SOURCES);
         });
         dialog.secondary(uiStrings.get("settings_ai_cancel", "Cancel"), null);
         dialog.show();
@@ -1573,6 +1684,9 @@ public final class SettingsPanel {
         if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM || setting == Settings.LINE_SPACING_CUSTOM
                 || setting == Settings.LIVE_CARD_TEXT_SIZE_CUSTOM) {
             return String.format(java.util.Locale.US, "×%.2f", value / 100f);
+        }
+        if (setting == Settings.HEADER_ART_SIZE_DP) {
+            return value + "dp";
         }
         return formatOffset(value);
     }

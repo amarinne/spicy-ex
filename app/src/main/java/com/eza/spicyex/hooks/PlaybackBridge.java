@@ -32,7 +32,17 @@ import org.luckypray.dexkit.query.matchers.MethodMatcher;
 final class PlaybackBridge {
     private static final Pattern DIGITS = Pattern.compile("\\d+");
 
+    /** Fired synchronously, right after References.playerState/playerStateStrong are updated,
+     *  every time Spotify's own state machine builds a new PlayerState - e.g. AdMuteController
+     *  uses this for near-instant ad-track detection instead of a slower poll. */
+    private static volatile Runnable stateUpdateListener;
+
+    static void setStateUpdateListener(Runnable listener) {
+        stateUpdateListener = listener;
+    }
+
     private volatile boolean isPlaying;
+    private volatile long currentActions = -1;
     private volatile long mediaPositionMs = -1;
     private volatile long mediaPositionUpdatedAtElapsedMs = 0;
     private volatile long seekOverrideUntilElapsedMs = 0;
@@ -57,6 +67,14 @@ final class PlaybackBridge {
                         if (state == null) return;
                         References.playerStateStrong = state;
                         References.playerState = new WeakReference<>(state);
+                        Runnable listener = stateUpdateListener;
+                        if (listener != null) {
+                            try {
+                                listener.run();
+                            } catch (Throwable t) {
+                                XpLog.log(NativeSpicyLyricsHook.TAG + " state update listener failed: " + t);
+                            }
+                        }
                     });
             XpLog.log(NativeSpicyLyricsHook.TAG + " player state builder hook installed");
         } catch (Throwable t) {
@@ -101,6 +119,7 @@ final class PlaybackBridge {
                         PlaybackState playbackState = (PlaybackState) param.args[0];
                         if (playbackState == null) return;
                         isPlaying = playbackState.getState() == PlaybackState.STATE_PLAYING;
+                        currentActions = playbackState.getActions();
                         long position = playbackState.getPosition();
                         if (position >= 0) {
                             mediaPositionMs = position;
@@ -128,35 +147,131 @@ final class PlaybackBridge {
         }
     }
 
+    boolean togglePlayback() {
+        try {
+            MediaSession session = currentMediaSession == null ? null : currentMediaSession.get();
+            if (session == null) return false;
+            MediaController controller = session.getController();
+            if (controller == null || controller.getTransportControls() == null) return false;
+            if (isPlaying) controller.getTransportControls().pause();
+            else controller.getTransportControls().play();
+            return true;
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " toggle playback failed: " + t);
+            return false;
+        }
+    }
+
+    boolean skipToNextTrack() {
+        try {
+            MediaSession session = currentMediaSession == null ? null : currentMediaSession.get();
+            if (session == null) return false;
+            MediaController controller = session.getController();
+            if (controller == null || controller.getTransportControls() == null) return false;
+            controller.getTransportControls().skipToNext();
+            return true;
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " skip to next failed: " + t);
+            return false;
+        }
+    }
+
+    boolean toggleSpotifySaved() {
+        try {
+            MediaSession session = currentMediaSession == null ? null : currentMediaSession.get();
+            if (session == null) return false;
+            MediaController controller = session.getController();
+            if (controller == null || controller.getTransportControls() == null) return false;
+            PlaybackState state = controller.getPlaybackState();
+            if (state == null || state.getCustomActions() == null) return false;
+            for (PlaybackState.CustomAction action : state.getCustomActions()) {
+                CharSequence label = action.getName();
+                if (label == null || !label.toString().toLowerCase(java.util.Locale.ROOT).contains("collection")) continue;
+                controller.getTransportControls().sendCustomAction(action.getAction(), action.getExtras());
+                return true;
+            }
+            return false;
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " toggle saved failed: " + t);
+            return false;
+        }
+    }
+
     long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {
+        return getCurrentPositionMs(track, playing);
+    }
+
+    /** Live position of the track Spotify is actually playing right now, in ms.
+     *  Source priority: seek-forced value (1800ms after a seek) -> live MediaController query
+     *  (fresh every call, extrapolated with update time + speed) -> PlayerState reflection ->
+     *  track snapshot (extrapolated only while playing) -> cached MediaSession value. */
+    long getCurrentPositionMs(SpotifyTrack track, boolean playing) {
         long now = SystemClock.elapsedRealtime();
         long media = mediaPositionMs;
         if (media >= 0 && now < seekOverrideUntilElapsedMs) {
-            if (playing && mediaPositionUpdatedAtElapsedMs > 0) {
-                return Math.max(0, media + (now - mediaPositionUpdatedAtElapsedMs));
-            }
-            return Math.max(0, media);
+            return extrapolate(media, mediaPositionUpdatedAtElapsedMs, playing, 1f, now);
         }
+
+        long live = readLiveControllerPositionMs(playing);
+        if (live >= 0) return live;
 
         long playerStateProgress = readPlayerStateProgressMs(playing);
         if (playerStateProgress >= 0) return playerStateProgress;
 
-        if (track != null && track.position >= 0) {
-            long wallNow = System.currentTimeMillis();
-            if (!playing && track.lastUpdated > 0) {
-                long advancedBy = Math.max(0, wallNow - track.lastUpdated);
-                return Math.max(0, track.position - advancedBy);
-            }
-            return Math.max(0, track.position);
-        }
+        long fromTrack = readTrackPositionMs(track, playing);
+        if (fromTrack >= 0) return fromTrack;
 
         if (media >= 0) {
-            if (playing && mediaPositionUpdatedAtElapsedMs > 0) {
-                return Math.max(0, media + (now - mediaPositionUpdatedAtElapsedMs));
-            }
-            return Math.max(0, media);
+            return extrapolate(media, mediaPositionUpdatedAtElapsedMs, playing, 1f, now);
         }
         return -1;
+    }
+
+    private long readLiveControllerPositionMs(boolean playing) {
+        try {
+            MediaSession session = currentMediaSession == null ? null : currentMediaSession.get();
+            if (session == null) return -1;
+            MediaController controller = session.getController();
+            if (controller == null) return -1;
+            PlaybackState state = controller.getPlaybackState();
+            if (state == null) return -1;
+            long position = state.getPosition();
+            if (position < 0) return -1;
+            boolean effectivelyPlaying = state.getState() == PlaybackState.STATE_PLAYING && playing;
+            return extrapolate(position, state.getLastPositionUpdateTime(),
+                    effectivelyPlaying, state.getPlaybackSpeed(), SystemClock.elapsedRealtime());
+        } catch (Throwable ignored) {
+            return -1;
+        }
+    }
+
+    private static long extrapolate(long baseMs, long baseAtElapsedMs, boolean playing,
+            float speed, long nowElapsedMs) {
+        if (baseMs < 0) return -1;
+        if (!playing || baseAtElapsedMs <= 0) return Math.max(0, baseMs);
+        float rate = speed > 0 ? speed : 1f;
+        return Math.max(0, baseMs + (long) ((nowElapsedMs - baseAtElapsedMs) * rate));
+    }
+
+    private static long readTrackPositionMs(SpotifyTrack track, boolean playing) {
+        if (track == null || track.position < 0) return -1;
+        if (!playing || track.lastUpdated <= 0) return Math.max(0, track.position);
+        return Math.max(0, track.position + Math.max(0, System.currentTimeMillis() - track.lastUpdated));
+    }
+
+    /** True while readBestMeasuredProgressMs() is still returning the optimistic forced value from
+     *  a recent seek instead of genuine backend-reported state - a caller trying to verify a seek
+     *  actually took effect must wait this out first, or it will only ever read its own write. */
+    boolean isSeekOverrideActive() {
+        return SystemClock.elapsedRealtime() < seekOverrideUntilElapsedMs;
+    }
+
+    boolean canSeek() {
+        return currentActions < 0 || (currentActions & PlaybackState.ACTION_SEEK_TO) != 0;
+    }
+
+    boolean canSkipToNext() {
+        return currentActions < 0 || (currentActions & PlaybackState.ACTION_SKIP_TO_NEXT) != 0;
     }
 
     boolean isPlayerActuallyPlaying() {

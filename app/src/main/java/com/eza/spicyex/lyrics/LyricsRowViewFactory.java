@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics;
 
+import android.animation.LayoutTransition;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.graphics.Color;
@@ -33,10 +34,15 @@ import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 public final class LyricsRowViewFactory {
     private final Activity activity;
     private final LyricsTextFactory textFactory;
+    private int bgLineTextColor = Color.rgb(170, 170, 170);
 
     public LyricsRowViewFactory(Activity activity, LyricsTextFactory textFactory) {
         this.activity = activity;
         this.textFactory = textFactory;
+    }
+
+    public void setBgLineTextColor(int color) {
+        bgLineTextColor = color;
     }
 
     public LinearLayout build(AppliedLine line, Options options, RowHeightListener heightListener) {
@@ -54,17 +60,31 @@ public final class LyricsRowViewFactory {
         boolean wrapLongLines = options == null || options.wrapLongLines;
         boolean horizontalSafetyPadding = options == null || options.horizontalSafetyPadding;
         float multiplier = options == null ? 1f : options.lineSpacingMultiplier;
-        int leadingPadding = wrapLongLines && horizontalSafetyPadding ? dp(6) : 0;
-        int trailingPadding = wrapLongLines && horizontalSafetyPadding ? dp(6) : 0;
+        int leadingPadding = wrapLongLines && horizontalSafetyPadding ? dp(20) : 0;
+        int trailingPadding = wrapLongLines && horizontalSafetyPadding ? dp(20) : 0;
         if (!wrapLongLines && horizontalSafetyPadding) {
             if (line.oppositeAligned) leadingPadding = dp(18);
             else trailingPadding = dp(18);
         }
-        row.setPaddingRelative(leadingPadding, topClearancePx(dp(10), multiplier, 0f, false),
-                trailingPadding, Math.round(dp(13) * multiplier));
+        int screenWidthPx = activity.getResources().getDisplayMetrics().widthPixels;
+        int minSidePaddingPx = Math.max(0, Math.round(screenWidthPx * 0.015f));
+        leadingPadding = Math.max(leadingPadding, minSidePaddingPx);
+        trailingPadding = Math.max(trailingPadding, minSidePaddingPx);
+        row.setPaddingRelative(leadingPadding, topClearancePx(dp(16), multiplier, 0f, false),
+                trailingPadding, Math.round(dp(16) * multiplier));
         row.setClickable(false);
         row.setClipChildren(false);
         row.setClipToPadding(false);
+        // A translation view appended later (see appendTranslationView) grows the row and fades
+        // in via this, instead of the row's height jumping instantly. CHANGING/CHANGE_APPEARING/
+        // CHANGE_DISAPPEARING stay off: those fire on any child bounds change, which happens every
+        // frame already from this app's own syllable/scale animation, and fighting that caused a
+        // visible flicker on ordinary active-line transitions, not just translation reveals.
+        LayoutTransition rowTransition = new LayoutTransition();
+        rowTransition.disableTransitionType(LayoutTransition.CHANGING);
+        rowTransition.disableTransitionType(LayoutTransition.CHANGE_APPEARING);
+        rowTransition.disableTransitionType(LayoutTransition.CHANGE_DISAPPEARING);
+        row.setLayoutTransition(rowTransition);
 
         if (line.dotLine) {
             LinearLayout dots = new LinearLayout(activity);
@@ -106,10 +126,15 @@ public final class LyricsRowViewFactory {
 
         float sizeMultiplier = options == null ? 1f : options.textSizeMultiplier;
         boolean adaptiveTextSize = options == null || options.adaptiveTextSizeEnabled;
-        LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(LyricVisuals.lyricTextSizeSp(line.text, adaptiveTextSize) * sizeMultiplier)));
+        if (line.bgLine && options != null && options.appleCompactText) sizeMultiplier *= 0.82f;
+        int textCurve = options != null && options.appleCompactText
+                ? LyricVisuals.appleLyricTextSizeSp(line.text)
+                : LyricVisuals.lyricTextSizeSp(line.text, adaptiveTextSize);
+        LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(textCurve * sizeMultiplier)));
         float baseTextPx = sp(LyricsLineViewState.baseTextSp(line));
-        row.setPaddingRelative(leadingPadding, topClearancePx(dp(10), multiplier, baseTextPx, showJapaneseFurigana),
-                trailingPadding, Math.round(dp(13) * multiplier));
+        int topGapBasePx = line.bgLine ? dp(6) : dp(16);
+        row.setPaddingRelative(leadingPadding, topClearancePx(topGapBasePx, multiplier, baseTextPx, showJapaneseFurigana),
+                trailingPadding, Math.round(dp(16) * multiplier));
         String weight = options == null ? "Medium" : options.lyricWeight;
         String font = options == null ? "spotify" : options.lyricsFont;
         LyricsLineViewState.clearMainView(line);
@@ -135,9 +160,10 @@ public final class LyricsRowViewFactory {
         // merely because that row has timed syllables; mixed rows otherwise render with different
         // fill geometry in the same song.
         boolean lineLevelFillTopDown = options.lineLevelFillTopDown;
+        float contentWidthPx = Math.max(1, screenWidthPx - leadingPadding - trailingPadding - dp(32));
         if (useSyllableWords) {
             buildSyllableWords(row, line, options, romanizedWordProvider,
-                    showJapaneseFurigana, showAlignedRomaji);
+                    showJapaneseFurigana, showAlignedRomaji, contentWidthPx);
         } else {
             buildLineLevelMain(row, line, showJapaneseFurigana, lineLevelFillTopDown,
                     options.lineLevelFillSentence, weight, font, wrapLongLines,
@@ -190,6 +216,101 @@ public final class LyricsRowViewFactory {
         return row;
     }
 
+    /**
+     * Appends a translation view to an already-mounted row in place, instead of tearing the whole
+     * row down and rebuilding it from scratch the way the AI/async translation pipeline used to.
+     * The row's own LayoutTransition (set in {@link #build}) already handles this view's own
+     * fade-in and the row growing to fit it - a second, separate TransitionManager-based animation
+     * was tried on top of that and made things worse, live-confirmed: Android does not support a
+     * persistent LayoutTransition and a TransitionManager.beginDelayedTransition scene transition
+     * both targeting the same ViewGroup at once, and the two fighting over the same addView() call
+     * is what caused appearance to lose its animation entirely while disappearance kept a rough,
+     * partial one. Rows below this one still snap to their new position instantly rather than
+     * sliding down (mountedRowsHost's own LayoutTransition deliberately leaves CHANGE_APPEARING
+     * off, to avoid fighting this app's continuous per-frame syllable animation) - a real
+     * limitation, left alone rather than risking a third broken attempt at animating it.
+     */
+    public boolean appendTranslationView(AppliedLine line, Options options) {
+        if (line == null || line.bgLine || isBlank(line.translatedText)) return false;
+        if (LyricsLineViewState.translationView(line) != null) return false;
+        View rowView = LyricsLineViewState.rowView(line);
+        if (!(rowView instanceof LinearLayout)) return false;
+        LinearLayout row = (LinearLayout) rowView;
+        boolean wrapLongLines = options == null || options.wrapLongLines;
+        Typeface translatedTypeface = LyricsTextFactory.shouldUseSystemFallbackForText(line.translatedText)
+                ? Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+                : Typeface.create(textFactory.resolveTypeface(false), Typeface.ITALIC);
+        SpicyAnimatedTextView translated = textFactory.createSecondaryAnimatedText(activity, line.translatedText,
+                Math.max(13, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 1), translatedTypeface);
+        translated.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
+        translated.setMaxLines(wrapLongLines ? 3 : 1);
+        applyAdaptiveWrapping(translated, wrapLongLines && options != null && options.adaptiveSectioningEnabled, false);
+        translated.setAlpha(1f);
+        translated.setBrightnessMultiplier(options != null && options.translationBright ? 1f : 0.42f);
+        translated.setVerticalGradient(options != null && options.lineLevelFillTopDown);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(2);
+        if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+        row.addView(translated, lp);
+        LyricsLineViewState.setTranslationView(line, translated);
+        return true;
+    }
+
+    /**
+     * Same in-place growth as {@link #appendTranslationView}, for the whole-line romanization row -
+     * but only for lines with no per-word timing (line.words empty). A syllable-word line's
+     * romanization can be rendered per-word instead (aligned/timed roman row, furigana), which
+     * restructures the row's word views themselves; an in-place append can't safely do that
+     * restructuring, so those lines return false and the caller falls back to a full rebuild
+     * exactly as before this existed. Lines with no syllable words can never hit those paths
+     * (they all require words to align against), so this covers them unconditionally.
+     */
+    public boolean appendRomanView(AppliedLine line, Options options) {
+        if (line == null || line.bgLine || options == null || !options.showRomanization) return false;
+        if (line.words != null && !line.words.isEmpty()) return false;
+        if (LyricsLineViewState.romanView(line) != null) return false;
+        String readingText = displayReading(line);
+        if (isBlank(readingText)) return false;
+        boolean japaneseLine = isJapaneseLine(line);
+        boolean chineseLine = !japaneseLine && SpicyTextDetection.itemChineseTest(line.text);
+        if (japaneseLine && options.showJapaneseFurigana) return false; // restructures the main line
+        View rowView = LyricsLineViewState.rowView(line);
+        if (!(rowView instanceof LinearLayout)) return false;
+        LinearLayout row = (LinearLayout) rowView;
+        boolean wrapLongLines = options.wrapLongLines;
+        SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, readingText,
+                LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)),
+                textFactory.resolveTypefaceForText(readingText, false));
+        roman.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
+        roman.setMaxLines(wrapLongLines ? 3 : 1);
+        applyAdaptiveWrapping(roman, wrapLongLines && options.adaptiveSectioningEnabled, false);
+        roman.setSelfGlow(true);
+        roman.setVerticalGradient(options.lineLevelFillTopDown);
+        roman.setContentGradient(options.lineLevelFillSentence);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(2);
+        if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+        // Insert above any translation row (translation always renders below romanization).
+        int insertAt = LyricsLineViewState.translationView(line) != null
+                ? row.indexOfChild(LyricsLineViewState.translationView(line)) : row.getChildCount();
+        row.addView(roman, insertAt, lp);
+        LyricsLineViewState.setRomanView(line, roman);
+        return true;
+    }
+
+    /** Symmetric counterpart to {@link #appendTranslationView}: same in-place row shrink. */
+    public boolean removeTranslationView(AppliedLine line) {
+        if (line == null) return false;
+        SpicyAnimatedTextView translated = LyricsLineViewState.translationView(line);
+        if (translated == null) return false;
+        View rowView = LyricsLineViewState.rowView(line);
+        if (rowView instanceof LinearLayout) {
+            ((LinearLayout) rowView).removeView(translated);
+        }
+        LyricsLineViewState.setTranslationView(line, null);
+        return true;
+    }
+
     static boolean canBuildTimedRomanRow(AppliedLine line, boolean useSyllableWords,
                                          boolean hasRomanizedWordProvider) {
         if (!useSyllableWords || line == null || line.words == null || line.words.isEmpty()) {
@@ -217,7 +338,8 @@ public final class LyricsRowViewFactory {
             Options options,
             RomanizedWordProvider romanizedWordProvider,
             boolean showJapaneseFurigana,
-            boolean showAlignedRomaji
+            boolean showAlignedRomaji,
+            float contentWidthPx
     ) {
         boolean wrapLongLines = options == null || options.wrapLongLines;
         ViewGroup words = wrapLongLines ? new GlowFlexbox(activity) : new LinearLayout(activity);
@@ -284,7 +406,11 @@ public final class LyricsRowViewFactory {
                 rangeEnd = sourceRange[1];
                 View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
                         options == null ? "Medium" : options.lyricWeight,
-                        options == null ? "spotify" : options.lyricsFont);
+                        options == null ? "spotify" : options.lyricsFont,
+                        wrapLongLines,
+                        options != null && options.appleStyle,
+                        options != null && options.appleCjkWrap,
+                        contentWidthPx);
                 TimedTextRowProjection.Chunk romanChunk = showAlignedRomaji
                         && wordIndex < romanizedWords.size() ? romanizedWords.get(wordIndex) : null;
                 String romanizedWordText = romanChunk == null ? "" : romanChunk.text;
@@ -621,9 +747,17 @@ public final class LyricsRowViewFactory {
         return null;
     }
 
-    private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font) {
-        int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
-        if (!showJapaneseFurigana && LyricVisuals.shouldUseLetterAnimator(seg)) {
+    private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font,
+                               boolean wrapLongLines, boolean appleStyle, boolean appleCjkWrap, float contentWidthPx) {
+        int color = line.bgLine ? bgLineTextColor : Color.WHITE;
+        boolean longWrappingWord = false;
+        if (appleCjkWrap && wrapLongLines && seg != null && !isBlank(seg.text)) {
+            android.graphics.Paint measurePaint = new android.graphics.Paint();
+            measurePaint.setTextSize(sp(LyricsLineViewState.baseTextSp(line)));
+            measurePaint.setTypeface(textFactory.resolveTypeface(true));
+            longWrappingWord = measurePaint.measureText(seg.text) + dp(8) > contentWidthPx;
+        }
+        if (!showJapaneseFurigana && !longWrappingWord && LyricVisuals.shouldUseLetterAnimator(seg, appleStyle)) {
             LinearLayout letters = new LinearLayout(activity);
             letters.setOrientation(LinearLayout.HORIZONTAL);
             letters.setClipToPadding(false);
@@ -640,6 +774,7 @@ public final class LyricsRowViewFactory {
                 textFactory.applyLyricTypeface(letterView, text, weight, font);
                 letterView.setIncludeFontPadding(true);
                 letterView.setMaxLines(1);
+                letterView.setSelfGlow(true);
                 letterView.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
                 letters.addView(letterView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
                 AnimatedLetterState letter = new AnimatedLetterState();
@@ -664,7 +799,11 @@ public final class LyricsRowViewFactory {
         if (showJapaneseFurigana) {
             word.setPadding(0, FuriganaText.rubyGapReservationPx(sp(LyricsLineViewState.baseTextSp(line))), 0, 0);
         }
-        word.setMaxLines(1);
+        word.setMaxLines(appleCjkWrap && wrapLongLines ? 4 : 1);
+        if (appleCjkWrap && wrapLongLines) {
+            word.setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY);
+            word.setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE);
+        }
         LyricsSyllableViewState.clearLetters(seg);
         LyricsSyllableViewState.setTextView(seg, word);
         return word;
@@ -673,14 +812,19 @@ public final class LyricsRowViewFactory {
     private View stackRomanizedWord(AppliedLine line, SyllableSegment seg, View wordView, String romanizedWordText) {
         LinearLayout stack = new LinearLayout(activity);
         stack.setOrientation(LinearLayout.VERTICAL);
-        stack.setGravity(Gravity.CENTER);
+        // Left-align rather than center: when the reading is wider than the word, centering
+        // shifted the word itself rightward off its natural position. Left-aligning both keeps
+        // the word anchored and lets the reading overhang to the right instead - the stack's own
+        // measured width (max of the two) already pushes the next word over in the row's flexbox,
+        // so the extra space is reserved automatically without the word needing to move.
+        stack.setGravity(Gravity.START);
         stack.setBaselineAligned(true);
         stack.setClipChildren(false);
         stack.setClipToPadding(false);
         stack.addView(wordView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         stack.setBaselineAlignedChildIndex(0);
         SpicyAnimatedTextView romanWord = textFactory.createSecondaryAnimatedText(activity, romanizedWordText, Math.max(11, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 2), textFactory.resolveTypefaceForText(romanizedWordText, false));
-        romanWord.setGravity(Gravity.CENTER);
+        romanWord.setGravity(Gravity.START);
         romanWord.setMaxLines(1);
         LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         rlp.topMargin = dp(-2);
@@ -689,11 +833,24 @@ public final class LyricsRowViewFactory {
         return stack;
     }
 
+    /** Symmetric counterpart to {@link #appendRomanView}: same in-place row shrink. */
+    public boolean removeRomanView(AppliedLine line) {
+        if (line == null) return false;
+        SpicyAnimatedTextView roman = LyricsLineViewState.romanView(line);
+        if (roman == null) return false;
+        View rowView = LyricsLineViewState.rowView(line);
+        if (rowView instanceof LinearLayout) {
+            ((LinearLayout) rowView).removeView(roman);
+        }
+        LyricsLineViewState.setRomanView(line, null);
+        return true;
+    }
+
     private void buildLineLevelMain(LinearLayout row, AppliedLine line, boolean showJapaneseFurigana,
                                     boolean lineLevelFillTopDown, boolean lineLevelFillSentence,
                                     String weight, String font, boolean wrapLongLines,
                                     boolean adaptiveSectioningEnabled) {
-        int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
+        int color = line.bgLine ? bgLineTextColor : Color.WHITE;
         SpicyAnimatedTextView main = new SpicyAnimatedTextView(activity);
         CharSequence mainText = showJapaneseFurigana ? FuriganaText.build(line) : line.text;
         applyTextDirection(main, line.text);
@@ -839,6 +996,9 @@ public final class LyricsRowViewFactory {
         public boolean wrapLongLines = true;
         public boolean adaptiveSectioningEnabled = true;
         public boolean horizontalSafetyPadding = true;
+        public boolean appleStyle;
+        public boolean appleCompactText;
+        public boolean appleCjkWrap;
         public String documentText = "";
     }
 }

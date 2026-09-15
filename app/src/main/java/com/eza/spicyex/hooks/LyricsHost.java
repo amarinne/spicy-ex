@@ -19,9 +19,29 @@ interface LyricsHost {
 
     boolean isPlayerActuallyPlaying();
 
+    float currentAudioLevel();
+
+    /** Gates the AudioReactiveController Visualizer to when it can actually be seen (see its own
+     *  javadoc) - true while this shell is mounted, false once it tears down. */
+    void setAudioReactiveListening(boolean enabled);
+
+    boolean togglePlayback();
+
     long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing);
 
     boolean seekSpotifyTo(long positionMs);
+
+    boolean toggleSavedTrack();
+
+    boolean skipToNextTrack();
+
+    /** True while readBestMeasuredProgressMs() is still returning a recent seek's forced value
+     *  instead of genuine backend-reported state - see PlaybackBridge.isSeekOverrideActive(). */
+    boolean isSeekOverrideActive();
+
+    boolean canSeek();
+
+    boolean canSkipToNext();
 
     void markExplicitLyricsExit(Activity activity);
 
