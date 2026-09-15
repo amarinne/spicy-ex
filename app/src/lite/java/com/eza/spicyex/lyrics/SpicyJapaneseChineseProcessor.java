@@ -145,4 +145,7 @@ public final class SpicyJapaneseChineseProcessor {
     public static List<int[]> chineseLayoutRanges(String text) {
         return new ArrayList<>();
     }
+
+    public static void warmUp() {
+    }
 }

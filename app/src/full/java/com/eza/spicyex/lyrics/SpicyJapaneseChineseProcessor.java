@@ -2490,6 +2490,19 @@ public final class SpicyJapaneseChineseProcessor {
         }
     }
 
+    /**
+     * Loading kuromoji's dictionary the first time {@code tokenizer()} runs takes multiple seconds;
+     * left lazy, that cost lands synchronously on whichever thread first opens a Japanese-lyrics
+     * line (the fullscreen lyrics screen's own render pass). Call this from a background thread as
+     * early as possible so the dictionary is already loaded by the time it's actually needed.
+     */
+    public static void warmUp() {
+        try {
+            tokenizer();
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static String kataToHira(String text) {
         String input = safe(text);
         StringBuilder out = new StringBuilder();

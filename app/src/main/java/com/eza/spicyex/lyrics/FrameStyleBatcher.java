@@ -85,6 +85,9 @@ public final class FrameStyleBatcher {
             styleCache.put(view, applied);
         }
         if (applied.isUnchanged(field, value, epsilon)) return;
+        if (field == StyleField.ALPHA && (applied.initializedFields & ALPHA_BIT) != 0) {
+            AnimTracer.noteValueJump(view, "batcher", "alpha", applied.alpha, value, 0.35f);
+        }
         applied.set(field, value);
         if (!applied.queued) {
             applied.queued = true;
@@ -96,10 +99,13 @@ public final class FrameStyleBatcher {
         if (view == null || Build.VERSION.SDK_INT < 31) return;
         if (blurPx <= 0.05f) {
             view.setRenderEffect(null);
+            if (view.getLayerType() != View.LAYER_TYPE_NONE) view.setLayerType(View.LAYER_TYPE_NONE, null);
         } else {
+            if (view.getLayerType() != View.LAYER_TYPE_HARDWARE) view.setLayerType(View.LAYER_TYPE_HARDWARE, null);
             float radius = blurPx * density;
             view.setRenderEffect(RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP));
         }
+        AnimTracer.noteRenderEffectWrite(view, "batcher", "blurPx=" + blurPx);
     }
 
     private enum StyleField { ALPHA, SCALE_X, SCALE_Y, TRANSLATION_Y, BLUR }

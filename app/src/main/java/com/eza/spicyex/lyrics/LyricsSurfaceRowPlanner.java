@@ -47,6 +47,9 @@ public final class LyricsSurfaceRowPlanner {
         options.wrapLongLines = safePolicy.wrapLongLines;
         options.adaptiveSectioningEnabled = safePolicy.adaptiveSectioningEnabled;
         options.horizontalSafetyPadding = safePolicy.horizontalSafetyPadding;
+        options.appleStyle = safePolicy.appleStyle;
+        options.appleCompactText = safePolicy.appleCompactText;
+        options.appleCjkWrap = safePolicy.appleCjkWrap;
         if (options.showJapaneseFurigana) coalesceTimedWordsForRuby(displayLine);
 
         boolean hasWords = displayLine != null && displayLine.words != null && !displayLine.words.isEmpty();
@@ -285,6 +288,9 @@ public final class LyricsSurfaceRowPlanner {
         public final boolean adaptiveSectioningEnabled;
         public final boolean forceStartAligned;
         public final boolean horizontalSafetyPadding;
+        public final boolean appleStyle;
+        public final boolean appleCompactText;
+        public final boolean appleCjkWrap;
 
         public SurfacePolicy(
                 float lineSpacingMultiplier,
@@ -378,7 +384,7 @@ public final class LyricsSurfaceRowPlanner {
                     attachTransliterationToWords, lineLevelFillTopDown, lineLevelFillSentence,
                     wordLevelFill, interludeNoteIcon, lyricWeight, lyricsFont, textSizeMultiplier,
                     translationBright, wrapLongLines, forceStartAligned, horizontalSafetyPadding,
-                    adaptiveSectioningEnabled, true);
+                    adaptiveSectioningEnabled, true, false, false, false);
         }
 
         public SurfacePolicy(
@@ -399,7 +405,10 @@ public final class LyricsSurfaceRowPlanner {
                 boolean forceStartAligned,
                 boolean horizontalSafetyPadding,
                 boolean adaptiveSectioningEnabled,
-                boolean adaptiveTextSizeEnabled
+                boolean adaptiveTextSizeEnabled,
+                boolean appleStyle,
+                boolean appleCompactText,
+                boolean appleCjkWrap
         ) {
             this.lineSpacingMultiplier = lineSpacingMultiplier;
             this.showRomanization = showRomanization;
@@ -419,6 +428,9 @@ public final class LyricsSurfaceRowPlanner {
             this.adaptiveTextSizeEnabled = adaptiveTextSizeEnabled;
             this.forceStartAligned = forceStartAligned;
             this.horizontalSafetyPadding = horizontalSafetyPadding;
+            this.appleStyle = appleStyle;
+            this.appleCompactText = appleCompactText;
+            this.appleCjkWrap = appleCjkWrap;
         }
 
         public static SurfacePolicy fullscreen(
@@ -446,7 +458,10 @@ public final class LyricsSurfaceRowPlanner {
                     false,
                     false,
                     cfg == null || cfg.adaptiveSectioningEnabled,
-                    cfg == null || cfg.adaptiveTextSizeEnabled);
+                    cfg == null || cfg.adaptiveTextSizeEnabled,
+                    cfg != null && cfg.appleStyle,
+                    cfg != null && cfg.appleCompactText,
+                    cfg != null && cfg.appleCjkWrap);
         }
 
         public static SurfacePolicy liveCard(LyricsRenderConfig config) {
@@ -471,7 +486,8 @@ public final class LyricsSurfaceRowPlanner {
                     scrollOverflow,
                     wrapOverflow,
                     cfg == null || cfg.adaptiveSectioningEnabled,
-                    cfg == null || cfg.adaptiveTextSizeEnabled);
+                    cfg == null || cfg.adaptiveTextSizeEnabled,
+                    false, false, false);
         }
 
         /**
@@ -498,7 +514,8 @@ public final class LyricsSurfaceRowPlanner {
                     false,
                     true,
                     cfg == null || cfg.adaptiveSectioningEnabled,
-                    cfg == null || cfg.adaptiveTextSizeEnabled);
+                    cfg == null || cfg.adaptiveTextSizeEnabled,
+                    false, false, false);
         }
 
         public static SurfacePolicy defaultPolicy() {

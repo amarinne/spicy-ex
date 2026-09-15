@@ -24,6 +24,7 @@ import com.google.android.flexbox.FlexboxLayout;
  */
 public class GlowFlexbox extends FlexboxLayout {
     private boolean glowLayerEnabled = true;
+    private float lineShadowAlpha;
     // Blur filters cached by quantized sigma; sigma animates every frame and BlurMaskFilter is
     // immutable, so allocating one per word per frame would churn. Shared with the selfGlow path
     // in SpicyAnimatedTextView; only touched from the UI thread.
@@ -145,14 +146,60 @@ public class GlowFlexbox extends FlexboxLayout {
         invalidate();
     }
 
+    public void setLineShadowIntensity(float intensity) {
+        float clamped = Math.max(0f, Math.min(1f, intensity));
+        if (clamped == lineShadowAlpha) return;
+        lineShadowAlpha = clamped;
+        invalidate();
+    }
+
     static boolean shouldDrawGlow(boolean enabled, float glow) {
         return enabled && glow > 0.02f;
     }
 
     @Override
     protected void dispatchDraw(Canvas canvas) {
+        if (lineShadowAlpha > 0.02f) drawShadowLayer(canvas, this);
         drawGlowLayer(canvas, this);
         super.dispatchDraw(canvas);
+    }
+
+    private void drawShadowLayer(Canvas canvas, ViewGroup parent) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View child = parent.getChildAt(i);
+            int save = canvas.save();
+            canvas.translate(child.getLeft(), child.getTop());
+            canvas.concat(child.getMatrix());
+            if (child instanceof SpicyAnimatedTextView) {
+                drawWordShadow(canvas, (SpicyAnimatedTextView) child);
+            } else if (child instanceof ViewGroup) {
+                drawShadowLayer(canvas, (ViewGroup) child);
+            }
+            canvas.restoreToCount(save);
+        }
+    }
+
+    private void drawWordShadow(Canvas canvas, SpicyAnimatedTextView tv) {
+        Layout layout = tv.getLayout();
+        if (layout == null) return;
+        TextPaint paint = tv.getPaint();
+        int savedColor = paint.getColor();
+        Shader savedShader = paint.getShader();
+        MaskFilter savedMask = paint.getMaskFilter();
+        int alpha = Math.round(55f * lineShadowAlpha);
+        paint.setShader(null);
+        paint.setColor(Color.argb(alpha, 0, 0, 0));
+        paint.setMaskFilter(blurFilter(16f * paint.getTextSize() / 48f));
+        int save = canvas.save();
+        canvas.translate(tv.getTotalPaddingLeft(), tv.getTotalPaddingTop() + paint.getTextSize() * 0.06f);
+        try {
+            layout.draw(canvas);
+        } catch (Throwable ignored) {
+        }
+        canvas.restoreToCount(save);
+        paint.setMaskFilter(savedMask);
+        paint.setColor(savedColor);
+        paint.setShader(savedShader);
     }
 
     private void drawGlowLayer(Canvas canvas, ViewGroup parent) {
@@ -179,12 +226,12 @@ public class GlowFlexbox extends FlexboxLayout {
         int savedColor = paint.getColor();
         Shader savedShader = paint.getShader();
         MaskFilter savedMask = paint.getMaskFilter();
-        int alpha = Math.round(255f * 0.35f * g);
+        int alpha = Math.round(255f * 0.62f * g);
         int glowColor = Color.argb(alpha, 255, 255, 255);
         // CSS-equivalent of desktop's `text-shadow: 0 0 (4+2g)px rgba(255,255,255,.35g)`: a blurred
         // copy of the glyphs only — no sharp underlay. CSS blur radius r means Gaussian sigma r/2,
         // and desktop's r is 4-6px against a ~48px reference font, so sigma scales with text size.
-        float sigma = (2f + g) * paint.getTextSize() / 48f;
+        float sigma = (3.5f + 3.5f * g) * paint.getTextSize() / 48f;
         paint.setShader(null);
         paint.setColor(glowColor);
         paint.setMaskFilter(blurFilter(sigma));

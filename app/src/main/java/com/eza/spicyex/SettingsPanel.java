@@ -66,6 +66,7 @@ public final class SettingsPanel {
         SECTION_ICONS.put("transliteration", Kind.BOOK_OPEN_TEXT);
         SECTION_ICONS.put("translation", Kind.LANGUAGES);
         SECTION_ICONS.put("now_playing", Kind.DISC_3);
+        SECTION_ICONS.put("lyrics_sources", Kind.ROWS_2);
         SECTION_ICONS.put("lyrics_screen", Kind.FULLSCREEN);
         SECTION_ICONS.put("ai", Kind.SPARKLES);
         SECTION_ICONS.put("debug", Kind.ACTIVITY);
@@ -91,6 +92,10 @@ public final class SettingsPanel {
         ROW_LEADS.put("lyrics_chinese_mode", "拼");
         ROW_LEADS.put("lyrics_korean_romanization", "한");
         ROW_LEADS.put("lyrics_cyrillic_mode", "Я");
+        ROW_LEADS.put("lyric_background_style", Kind.DROPLETS);
+        ROW_LEADS.put("lyric_force_dark_background", Kind.SUN_MEDIUM);
+        ROW_LEADS.put("lyric_beat_reactive_background", Kind.ACTIVITY);
+        ROW_LEADS.put("lyric_header_art_size_dp", Kind.IMAGE);
     }
 
     private final Context context;
@@ -102,6 +107,9 @@ public final class SettingsPanel {
     // Static: survives panel re-opens within the process, so the panel never re-opens fully collapsed.
     private static final java.util.Set<String> expandedSections = new java.util.HashSet<>();
     private LinearLayout sectionsContainer;
+    // Non-null only in the landscape two-column layout (see build()) - sectionsContainer is the
+    // left column in that case, this is the right one.
+    private LinearLayout sectionsContainerRight;
     private TextView panelTitle;
     private SettingsUiStrings uiStrings;
     private AiSettingsRows aiSettingsRows;
@@ -128,13 +136,17 @@ public final class SettingsPanel {
 
     /** Builds the card view; the host sizes/centers it. */
     public View build() {
-        ScrollView scroll = new ScrollView(context);
-        scroll.setVerticalScrollBarEnabled(false);        GradientDrawable cardBg = new GradientDrawable();
+        LinearLayout outer = new LinearLayout(context);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(COL_CARD);
         cardBg.setCornerRadius(dp(26));
         cardBg.setStroke(dp(1), COL_CARD_BORDER);
-        scroll.setBackground(cardBg);
-        scroll.setClipToOutline(true);
+        outer.setBackground(cardBg);
+        outer.setClipToOutline(true);
+
+        ScrollView scroll = new ScrollView(context);
+        scroll.setVerticalScrollBarEnabled(false);
         scrollRoot = scroll;
 
         LinearLayout content = new LinearLayout(context);
@@ -144,12 +156,59 @@ public final class SettingsPanel {
                 ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
         renderHeader(content);
-        sectionsContainer = new LinearLayout(context);
-        sectionsContainer.setOrientation(LinearLayout.VERTICAL);
-        content.addView(sectionsContainer, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        renderSections(sectionsContainer);
-        return scroll;
+        // Landscape has the width to spare to lay sections out side by side instead of only ever
+        // folding open downward into one long vertical scroll - two columns sharing the same
+        // scroll, each an independent accordion.
+        if (isLandscape()) {
+            LinearLayout columns = new LinearLayout(context);
+            columns.setOrientation(LinearLayout.HORIZONTAL);
+            sectionsContainer = new LinearLayout(context);
+            sectionsContainer.setOrientation(LinearLayout.VERTICAL);
+            sectionsContainerRight = new LinearLayout(context);
+            sectionsContainerRight.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            leftLp.rightMargin = dp(8);
+            LinearLayout.LayoutParams rightLp = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            columns.addView(sectionsContainer, leftLp);
+            columns.addView(sectionsContainerRight, rightLp);
+            content.addView(columns, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            renderSectionsSplit(sectionsContainer, sectionsContainerRight);
+        } else {
+            sectionsContainerRight = null;
+            sectionsContainer = new LinearLayout(context);
+            sectionsContainer.setOrientation(LinearLayout.VERTICAL);
+            content.addView(sectionsContainer, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            renderSections(sectionsContainer);
+        }
+
+        outer.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        return outer;
+    }
+
+    private boolean isLandscape() {
+        return context.getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+    }
+
+    /** Same rows as {@link #renderSections}, alternated between two columns instead of one long
+     *  column - each section is pinned to whichever column it first landed in (rebuildSection
+     *  re-renders it back into that same column rather than re-balancing on every toggle). */
+    private void renderSectionsSplit(LinearLayout left, LinearLayout right) {
+        if (aiAvailable()) aiRows().ensureInitialModelCheck();
+        boolean useRight = false;
+        for (java.util.Map.Entry<Settings.Section, java.util.List<Settings.Setting<?>>> entry
+                : groupVisibleSettings().entrySet()) {
+            renderSectionGroup(useRight ? right : left, entry.getKey(), entry.getValue());
+            useRight = !useRight;
+        }
+        LinearLayout debugTarget = useRight ? right : left;
+        appendSectionHeader(debugTarget, Settings.DEBUG, expandedSections.contains(Settings.DEBUG.id), -1);
+        if (expandedSections.contains(Settings.DEBUG.id)) appendDebugCard(debugTarget, -1);
     }
 
     private void renderHeader(LinearLayout content) {
@@ -227,7 +286,7 @@ public final class SettingsPanel {
         java.util.LinkedHashMap<Settings.Section, java.util.List<Settings.Setting<?>>> grouped =
                 new java.util.LinkedHashMap<>();
         for (Settings.Setting<?> setting : Settings.ALL) {
-            if (setting.section == Settings.INTERNAL) continue;
+            if (setting.section == Settings.INTERNAL || setting.section == Settings.DEBUG) continue;
             if (!shouldRender(setting)) continue;
             java.util.List<Settings.Setting<?>> items = grouped.get(setting.section);
             if (items == null) {
@@ -294,8 +353,13 @@ public final class SettingsPanel {
     }
 
     private int indexOfChildByTag(String tag) {
-        for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
-            Object t = sectionsContainer.getChildAt(i).getTag();
+        return indexOfChildByTag(sectionsContainer, tag);
+    }
+
+    private int indexOfChildByTag(LinearLayout container, String tag) {
+        if (container == null) return -1;
+        for (int i = 0; i < container.getChildCount(); i++) {
+            Object t = container.getChildAt(i).getTag();
             if (tag.equals(t)) return i;
         }
         return -1;
@@ -303,7 +367,10 @@ public final class SettingsPanel {
 
     // --- Anchor-preserving rebuilds ---
     // scrollY alone orphans the reader's anchor when a section above folds; anchor on the
-    // first header/card boundary visible at viewport top instead.
+    // first header/card boundary visible at viewport top instead. Two-column landscape mode
+    // skips this entirely (see the sectionsContainerRight guard below) - a column's own height
+    // no longer maps to overall scroll position the same way once there are two of them side by
+    // side, so it isn't worth the added bookkeeping to keep the exact anchor behavior there too.
 
     private String anchorTag;
     private int anchorDelta;
@@ -311,7 +378,7 @@ public final class SettingsPanel {
     private void captureAnchor() {
         anchorTag = null;
         anchorDelta = 0;
-        if (scrollRoot == null || sectionsContainer == null) return;
+        if (scrollRoot == null || sectionsContainer == null || sectionsContainerRight != null) return;
         int scrollY = scrollRoot.getScrollY();
         int bottom = scrollY + Math.max(1, scrollRoot.getHeight());
         int base = sectionsContainer.getTop();
@@ -398,43 +465,55 @@ public final class SettingsPanel {
         captureAnchor();
         aiBadgeView = null;
         sectionsContainer.removeAllViews();
-        renderSections(sectionsContainer);
+        if (sectionsContainerRight != null) {
+            sectionsContainerRight.removeAllViews();
+            renderSectionsSplit(sectionsContainer, sectionsContainerRight);
+        } else {
+            renderSections(sectionsContainer);
+        }
         restoreAnchor();
     }
 
     /**
      * Re-renders one section (header + card) in place instead of tearing down the whole panel.
      * Gating toggles, selector picks and section folds land here; UI_LANGUAGE still takes the
-     * full path because every label changes. Anchor-preserving either way.
+     * full path because every label changes. Anchor-preserving either way. In the landscape
+     * two-column layout, re-renders back into whichever column the section was already in
+     * (found by searching the left column first, then the right) rather than re-balancing.
      */
     private void rebuildSection(Settings.Section target) {
         if (sectionsContainer == null) return;
-        int headerIdx = indexOfChildByTag(TAG_HEADER_PREFIX + target.id);
+        LinearLayout container = sectionsContainer;
+        int headerIdx = indexOfChildByTag(container, TAG_HEADER_PREFIX + target.id);
+        if (headerIdx < 0 && sectionsContainerRight != null) {
+            container = sectionsContainerRight;
+            headerIdx = indexOfChildByTag(container, TAG_HEADER_PREFIX + target.id);
+        }
         if (headerIdx < 0) {
             rebuildSections();
             return;
         }
         captureAnchor();
-        int cardIdx = indexOfChildByTag(TAG_CARD_PREFIX + target.id);
+        int cardIdx = indexOfChildByTag(container, TAG_CARD_PREFIX + target.id);
         boolean expanded = expandedSections.contains(target.id);
         if (!expanded && (TAG_CARD_PREFIX + target.id).equals(anchorTag)) {
             retargetAnchorToHeader(target);
         }
         // The card sits directly after its header, so one removal shifts the other onto headerIdx.
-        sectionsContainer.removeViewAt(headerIdx);
-        if (cardIdx >= 0) sectionsContainer.removeViewAt(headerIdx);
+        container.removeViewAt(headerIdx);
+        if (cardIdx >= 0) container.removeViewAt(headerIdx);
         if (target == Settings.AI) aiBadgeView = null;
-        appendSectionHeader(sectionsContainer, target, expanded, headerIdx);
+        appendSectionHeader(container, target, expanded, headerIdx);
         if (expanded) {
             if (target == Settings.DEBUG) {
-                appendDebugCard(sectionsContainer, headerIdx + 1);
+                appendDebugCard(container, headerIdx + 1);
             } else {
                 java.util.List<Settings.Setting<?>> items = groupVisibleSettings().get(target);
                 if (items == null || items.isEmpty()) {
                     rebuildSections(); // defensive: rendered section without visible settings
                     return;
                 }
-                appendSectionCard(sectionsContainer, target, items, headerIdx + 1);
+                appendSectionCard(container, target, items, headerIdx + 1);
             }
         }
         restoreAnchor();
@@ -449,6 +528,15 @@ public final class SettingsPanel {
     }
 
     private boolean shouldRender(Settings.Setting<?> setting) {
+        if (setting == Settings.APPLE_EDGE_MELT_TOP
+                || setting == Settings.APPLE_EDGE_MELT_BOTTOM
+                || setting == Settings.APPLE_STRONG_DISTANCE_BLUR
+                || setting == Settings.APPLE_FADE_PASSED_LINES
+                || setting == Settings.APPLE_RELEASE_BLUR_ON_TOUCH
+                || setting == Settings.APPLE_COMPACT_TEXT
+                || setting == Settings.APPLE_CJK_WRAP_FIX) {
+            return Boolean.TRUE.equals(store.get(Settings.APPLE_STYLE_PRESET));
+        }
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             return LyricsSourcePreferences.sourceEnabled(context, LyricsSourcePreferences.Source.SPICY);
         }
@@ -480,6 +568,9 @@ public final class SettingsPanel {
         if (setting == Settings.LINE_SYNC_FILL) {
             return "Gradient wash".equals(store.get(Settings.ANIMATION_STYLE));
         }
+        if (setting == Settings.SAVE_BUTTON_ICON) {
+            return Boolean.TRUE.equals(store.get(Settings.SHOW_SAVE_BUTTON));
+        }
         if (setting == Settings.LIVE_CARD_LINE_SYNC_FILL) {
             return "Karaoke fill".equals(store.get(Settings.LIVE_CARD_ANIMATION));
         }
@@ -505,6 +596,11 @@ public final class SettingsPanel {
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     private void onSettingChanged(Settings.Setting<?> setting) {
+        if (setting == Settings.APPLE_STYLE_PRESET) {
+            AppleStylePreset.apply(store, Boolean.TRUE.equals(store.get(Settings.APPLE_STYLE_PRESET)));
+            rebuildSection(setting.section);
+            return;
+        }
         if (setting == Settings.LYRICS_SOURCE_MODE) {
             LyricsSourcePreferences.setRankingMode(context,
                     LyricsSourcePreferences.RankingMode.parse(String.valueOf(store.get(setting))));
@@ -528,8 +624,8 @@ public final class SettingsPanel {
                 || setting == Settings.LINE_SPACING
                 || setting == Settings.LIVE_CARD_TEXT_SIZE
                 || setting == Settings.LYRICS_SOURCE_OVERRIDE
-                || setting == Settings.LYRICS_SOURCE_MODE;
-
+                || setting == Settings.LYRICS_SOURCE_MODE
+                || setting == Settings.SHOW_SAVE_BUTTON;
     }
 
     /**
@@ -545,6 +641,34 @@ public final class SettingsPanel {
         return (setting == Settings.TRANSLITERATION_ENABLED && !FeatureAvailability.transliterationAvailable())
                 || (setting == Settings.TRANSLATION_ENABLED && !FeatureAvailability.translationAvailable())
                 || (setting == Settings.LYRICS_FONT && !FeatureAvailability.appleFontAvailable());
+    }
+
+    /**
+     * Unlike {@link #unavailable}, a dependency-warned row still works and stays interactive -
+     * it just currently has no visible effect because some other setting it needs isn't in the
+     * right state yet. Surfaced as a "!" note under the row instead of greying it out, so toggling
+     * it isn't mistaken for silently broken (see the Beat-reactive background / animated
+     * background mixup this was added for).
+     */
+    private String dependencyWarning(Settings.Setting<?> setting) {
+        // Everything else with a same-section prerequisite is hidden outright by shouldRender()
+        // instead (see e.g. LINE_SYNC_FILL) - Beat-reactive background is the one exception left
+        // always visible regardless of Background style, which is exactly what made it read as
+        // silently broken instead of just not-applicable-yet.
+        if (setting == Settings.BEAT_REACTIVE_BACKGROUND
+                && !LyricsBackgroundStyle.ANIMATED_TEXTURE.equals(store.get(Settings.BACKGROUND_STYLE))) {
+            return uiStrings.get("settings_dep_needs_animated_background",
+                    "No visible effect until \"Background style\" above is set to \"Animated background\"");
+        }
+        return null;
+    }
+
+    /** Prefixes a row's summary with a "!" note when {@link #dependencyWarning} applies. */
+    private String withDependencyWarning(Settings.Setting<?> setting, String summary) {
+        String warning = dependencyWarning(setting);
+        if (warning == null) return summary;
+        String prefixed = "❗ " + warning;
+        return summary == null || summary.isEmpty() ? prefixed : prefixed + "\n" + summary;
     }
 
     // --- Icon helpers ---
@@ -604,7 +728,7 @@ public final class SettingsPanel {
         onClearCache.accept(kind);
         // Cache clears update preference memory (and the AI database) before returning. Rebuild
         // the owning row now so its usage summary reflects the clear without closing the panel.
-        rebuildSection(Settings.LYRICS);
+        rebuildSection(Settings.LYRICS_SOURCES);
     }
 
     private void renderStatus(LinearLayout content) {
@@ -706,7 +830,8 @@ public final class SettingsPanel {
     private void switchRow(LinearLayout content, Settings.BooleanSetting setting) {
         LinearLayout row = newRow(content);
         boolean unavailable = unavailable(setting);
-        titleColumn(row, uiStrings.setting(setting), unavailable ? unavailableSummary(setting) : null);
+        titleColumn(row, uiStrings.setting(setting),
+                unavailable ? unavailableSummary(setting) : withDependencyWarning(setting, null));
         applyRowLead(row, setting.key);
         GlossyToggle toggle = new GlossyToggle(context);
         toggle.setAccent(COL_ACCENT);
@@ -739,7 +864,7 @@ public final class SettingsPanel {
         String summary = summaryOverride != null ? summaryOverride
                 : labelFor(setting, store.get(setting));
         TextView value = titleColumn(row, uiStrings.setting(setting),
-                unavailable ? unavailableSummary(setting) : summary);
+                unavailable ? unavailableSummary(setting) : withDependencyWarning(setting, summary));
         applyRowLead(row, setting.key);
         if (!unavailable) value.setTextColor(COL_ACCENT);
         row.addView(kindView(Kind.CHEVRON_RIGHT, COL_SECTION, 18),
@@ -1102,7 +1227,7 @@ public final class SettingsPanel {
             actions.add(new AiSettingsRows.IconAction(Kind.DELETE,
                     uiStrings.get("settings_spicy_token_delete", "Delete token"), v -> {
                 SpicyManualTokenStore.delete(context);
-                rebuildSection(Settings.LYRICS);
+                rebuildSection(Settings.LYRICS_SOURCES);
             }));
         }
         aiFieldRow(content, uiStrings.setting(Settings.SPICY_MANUAL_TOKEN),
@@ -1115,7 +1240,7 @@ public final class SettingsPanel {
         EditText field = dialog.field(true, "");
         dialog.primary(uiStrings.get("settings_ai_save", "Save"), () -> {
             if (SpicyManualTokenStore.save(context, field.getText().toString().trim())) {
-                rebuildSection(Settings.LYRICS);
+                rebuildSection(Settings.LYRICS_SOURCES);
             } else {
                 android.widget.Toast.makeText(context,
                         uiStrings.get("settings_spicy_token_rejected", "Token not saved"),
@@ -1247,7 +1372,7 @@ public final class SettingsPanel {
                         toggle != null && toggle.isChecked());
             }
             onSettingChanged(Settings.LYRICS_SOURCE_MODE);
-            rebuildSection(Settings.LYRICS);
+            rebuildSection(Settings.LYRICS_SOURCES);
         });
         dialog.secondary(uiStrings.get("settings_ai_cancel", "Cancel"), null);
         dialog.show();
@@ -1573,6 +1698,9 @@ public final class SettingsPanel {
         if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM || setting == Settings.LINE_SPACING_CUSTOM
                 || setting == Settings.LIVE_CARD_TEXT_SIZE_CUSTOM) {
             return String.format(java.util.Locale.US, "×%.2f", value / 100f);
+        }
+        if (setting == Settings.HEADER_ART_SIZE_DP) {
+            return value + "dp";
         }
         return formatOffset(value);
     }

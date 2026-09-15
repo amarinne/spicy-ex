@@ -17,6 +17,15 @@ public final class LyricsRenderConfig {
     public final boolean wordBounceEnabled;
     public final String wordBounceScope;
     public final String wordBounceStyle;
+    public final boolean appleStyle;
+    public final boolean appleLift;
+    public final boolean appleTopMelt;
+    public final boolean appleBottomMelt;
+    public final boolean appleStrongBlur;
+    public final boolean appleDimPassed;
+    public final boolean appleTouchRelease;
+    public final boolean appleCompactText;
+    public final boolean appleCjkWrap;
     public final boolean glowBlurEnabled;
     public final boolean lineBlurEnabled;
     public final float blurQuality;
@@ -72,6 +81,15 @@ public final class LyricsRenderConfig {
             boolean wordBounceEnabled,
             String wordBounceScope,
             String wordBounceStyle,
+            boolean appleStyle,
+            boolean appleLift,
+            boolean appleTopMelt,
+            boolean appleBottomMelt,
+            boolean appleStrongBlur,
+            boolean appleDimPassed,
+            boolean appleTouchRelease,
+            boolean appleCompactText,
+            boolean appleCjkWrap,
             boolean glowBlurEnabled,
             boolean lineBlurEnabled,
             float blurQuality,
@@ -128,6 +146,15 @@ public final class LyricsRenderConfig {
         this.wordBounceEnabled = wordBounceEnabled;
         this.wordBounceScope = safe(wordBounceScope);
         this.wordBounceStyle = safe(wordBounceStyle);
+        this.appleStyle = appleStyle;
+        this.appleLift = appleLift;
+        this.appleTopMelt = appleTopMelt;
+        this.appleBottomMelt = appleBottomMelt;
+        this.appleStrongBlur = appleStrongBlur;
+        this.appleDimPassed = appleDimPassed;
+        this.appleTouchRelease = appleTouchRelease;
+        this.appleCompactText = appleCompactText;
+        this.appleCjkWrap = appleCjkWrap;
         this.glowBlurEnabled = glowBlurEnabled;
         this.lineBlurEnabled = lineBlurEnabled;
         this.blurQuality = blurQuality;
@@ -200,7 +227,8 @@ public final class LyricsRenderConfig {
             int syncOffsetMs
     ) {
         this(backgroundStyle, forceDarkBackground, lineGradientEnabled, spotlight,
-                wordBounceEnabled, "Word/syllable synced only", "Phrase zoom", glowBlurEnabled,
+                wordBounceEnabled, "Word/syllable synced only", "Phrase zoom", false, false, false,
+                false, false, false, false, false, false, glowBlurEnabled,
                 lineBlurEnabled, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
                 attachTransliterationToWords, transliterationEnabled, adaptiveSectioningEnabled,
                 lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont,
@@ -247,6 +275,8 @@ public final class LyricsRenderConfig {
                 ? "All synced rows" : "Word/syllable synced only";
         String wordBounceStyle = cfg == null ? Settings.WORD_BOUNCE_STYLE.defaultValue
                 : cfg.get(Settings.WORD_BOUNCE_STYLE);
+        boolean appleStyle = cfg != null && cfg.get(Settings.APPLE_STYLE_PRESET);
+        boolean appleLift = appleStyle && "Apple lift".equals(wordBounceStyle);
 
         return new LyricsRenderConfig(
                 FeatureAvailability.animatedBackgroundAvailable()
@@ -257,6 +287,15 @@ public final class LyricsRenderConfig {
                 wordBounceEnabled,
                 wordBounceScope,
                 wordBounceStyle,
+                appleStyle,
+                appleLift,
+                appleStyle && get(cfg, Settings.APPLE_EDGE_MELT_TOP),
+                appleStyle && get(cfg, Settings.APPLE_EDGE_MELT_BOTTOM),
+                appleStyle && get(cfg, Settings.APPLE_STRONG_DISTANCE_BLUR),
+                appleStyle && get(cfg, Settings.APPLE_FADE_PASSED_LINES),
+                appleStyle && get(cfg, Settings.APPLE_RELEASE_BLUR_ON_TOUCH),
+                appleStyle && get(cfg, Settings.APPLE_COMPACT_TEXT),
+                appleStyle && get(cfg, Settings.APPLE_CJK_WRAP_FIX),
                 get(cfg, Settings.ENABLE_GLOW_BLUR),
                 get(cfg, Settings.ENABLE_LINE_BLUR),
                 shell.lineBlurQualityMultiplier(),
@@ -344,6 +383,7 @@ public final class LyricsRenderConfig {
                  wordBounceEnabled,
                  wordBounceScope,
                  wordBounceStyle,
+                 false, false, false, false, false, false, false, false, false,
                  glow,
                 false,
                 blurQuality,
@@ -482,9 +522,16 @@ public final class LyricsRenderConfig {
                      || oldValue.wordBounceEnabled != next.wordBounceEnabled
                      || changed(oldValue.wordBounceScope, next.wordBounceScope)
                      || changed(oldValue.wordBounceStyle, next.wordBounceStyle)
-                    || oldValue.glowBlurEnabled != next.glowBlurEnabled
-                    || oldValue.lineBlurEnabled != next.lineBlurEnabled
-                    || changed(oldValue.blurQuality, next.blurQuality);
+                     || oldValue.appleStyle != next.appleStyle
+                     || oldValue.appleLift != next.appleLift
+                     || oldValue.appleTopMelt != next.appleTopMelt
+                     || oldValue.appleBottomMelt != next.appleBottomMelt
+                     || oldValue.appleStrongBlur != next.appleStrongBlur
+                     || oldValue.appleDimPassed != next.appleDimPassed
+                     || oldValue.appleTouchRelease != next.appleTouchRelease
+                     || oldValue.glowBlurEnabled != next.glowBlurEnabled
+                     || oldValue.lineBlurEnabled != next.lineBlurEnabled
+                     || changed(oldValue.blurQuality, next.blurQuality);
             liveCardTextSizeChanged = changed(oldValue.liveCardTextSizeMode, next.liveCardTextSizeMode)
                     || changed(oldValue.liveCardTextSizeMultiplier, next.liveCardTextSizeMultiplier);
             liveCardConfigChanged = liveCardTextSizeChanged
@@ -508,7 +555,9 @@ public final class LyricsRenderConfig {
 
             needsRowRemount = interludeChanged || weightChanged || textSizeChanged || attachChanged || transliterationChanged
                     || adaptiveSectioningChanged || spacingChanged || fillChanged || japaneseModeConfigChanged
-                    || oldValue.translationBright != next.translationBright;
+                    || oldValue.translationBright != next.translationBright
+                    || oldValue.appleCompactText != next.appleCompactText
+                    || oldValue.appleCjkWrap != next.appleCjkWrap;
             needsLocalReprocess = transliterationChanged || chineseModeConfigChanged || koreanChanged || chineseTonesChanged || cyrillicChanged;
             needsBackgroundToggle = changed(oldValue.backgroundStyle, next.backgroundStyle)
                     || oldValue.forceDarkBackground != next.forceDarkBackground;

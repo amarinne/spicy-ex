@@ -4,6 +4,7 @@
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
 
     <!-- Pure Xposed/LSPosed module: no launcher activity, no IPC. Settings live entirely inside the
          Spotify hook (the ⚙ panel writes Spotify-side prefs the hook reads directly), so this works

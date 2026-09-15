@@ -30,6 +30,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 public final class LyricsAmbientController {
     private static final String TAG = "[SpotifyPlusAmbientController]";
     private static final int ART_DECODE_TARGET_PX = 384;
+    private static final int HEADER_ART_TARGET_PX = 220;
 
     private final Activity activity;
     private final OkHttpClient http;
@@ -65,6 +66,72 @@ public final class LyricsAmbientController {
         return pageBackground;
     }
 
+    public int primaryBackgroundColor() {
+        return (currentPageColors != null && currentPageColors.length > 0)
+                ? currentPageColors[0] : Color.BLACK;
+    }
+
+    public int secondaryTextColor() {
+        int base = primaryBackgroundColor();
+        float whiteAmount = 0.72f;
+        int r = Math.round(255f * whiteAmount + Color.red(base) * (1f - whiteAmount));
+        int g = Math.round(255f * whiteAmount + Color.green(base) * (1f - whiteAmount));
+        int b = Math.round(255f * whiteAmount + Color.blue(base) * (1f - whiteAmount));
+        return Color.rgb(Math.min(255, r), Math.min(255, g), Math.min(255, b));
+    }
+
+    public void fetchHeaderArtwork(String imageId, HeaderArtCallback callback) {
+        if (isBlank(imageId) || callback == null) return;
+        if (lastArtBitmap != null && imageId.equals(appliedArtImageId)) {
+            callback.onArtwork(imageId, lastArtBitmap);
+            return;
+        }
+        Request request = new Request.Builder()
+                .url("https://i.scdn.co/image/" + Uri.encode(imageId))
+                .get()
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                XpLog.log(TAG + " header art fetch failed: " + e.getMessage());
+                activity.runOnUiThread(() -> callback.onFailure(imageId));
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        activity.runOnUiThread(() -> callback.onFailure(imageId));
+                        return;
+                    }
+                    byte[] data = response.body().bytes();
+                    android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+                    bounds.inJustDecodeBounds = true;
+                    android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+                    android.graphics.BitmapFactory.Options decode = new android.graphics.BitmapFactory.Options();
+                    decode.inSampleSize = calculateInSampleSize(
+                            bounds.outWidth, bounds.outHeight, HEADER_ART_TARGET_PX);
+                    android.graphics.Bitmap art = android.graphics.BitmapFactory.decodeByteArray(
+                            data, 0, data.length, decode);
+                    if (art == null) {
+                        activity.runOnUiThread(() -> callback.onFailure(imageId));
+                        return;
+                    }
+                    activity.runOnUiThread(() -> callback.onArtwork(imageId, art));
+                } catch (Throwable t) {
+                    XpLog.log(TAG + " header art decode failed: " + t);
+                    activity.runOnUiThread(() -> callback.onFailure(imageId));
+                }
+            }
+        });
+    }
+
+    public interface HeaderArtCallback {
+        void onArtwork(String imageId, android.graphics.Bitmap bitmap);
+
+        void onFailure(String imageId);
+    }
+
     /** Pause/resume the animated background (e.g. while a settings modal is open). */
     public void pauseAnimation() {
         if (animatedBackground != null) animatedBackground.pauseRendering();
@@ -78,6 +145,20 @@ public final class LyricsAmbientController {
         this.playing = playing;
         if (animatedBackground instanceof KawarpBackgroundView) {
             ((KawarpBackgroundView) animatedBackground).setPlaying(playing);
+        }
+    }
+
+    /** BPM of the current track (0/negative disables it) - drives the background's beat pulse. */
+    public void updateBeatTempo(float bpm) {
+        if (animatedBackground instanceof KawarpBackgroundView) {
+            ((KawarpBackgroundView) animatedBackground).setBeatTempoBpm(bpm);
+        }
+    }
+
+    /** Real audio level (0..1) from AudioReactiveController - see NativeSpicyLyricsHook. */
+    public void updateAudioLevel(float level0to1) {
+        if (animatedBackground instanceof KawarpBackgroundView) {
+            ((KawarpBackgroundView) animatedBackground).setAudioLevel(level0to1);
         }
     }
 
@@ -154,6 +235,7 @@ public final class LyricsAmbientController {
     }
 
     public void updateForTrack(SpotifyTrack track, RunningState runningState) {
+        updateBeatTempo(0f); // cleared until the new track's tempo fetch (see TrackTempoFetcher) resolves
         int seed = LyricVisuals.parseSpotifyExtractedColor(track == null ? "" : track.color);
         boolean forceDark = config == null || config.get(Settings.FORCE_DARK_BACKGROUND);
         int[] colors = LyricVisuals.spicyColorBackgroundColors(seed, forceDark);
