@@ -139,6 +139,18 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
     private boolean motionEnabled = true;
     private boolean playing = true;
     private boolean frameCallbackPosted;
+    // Beat reactivity: a percussive pulse timed to the track's own tempo (from Spotify's
+    // audio-features endpoint - there is no raw audio signal available to analyze directly),
+    // applied as a transient boost on top of the shader's steady-state warp intensity so the
+    // background visibly "kicks" on each beat instead of just flowing at a constant rate.
+    private static final float BEAT_BOOST = 0.65f;
+    private static final float BEAT_DECAY = 8f;
+    private float beatIntervalSeconds = 0f;
+    // Real audio level (AudioReactiveController, a Visualizer on Spotify's own session) when
+    // available; the BPM pulse below is the fallback for whenever it isn't (attach failure, no
+    // session yet). Whichever is stronger wins on any given frame rather than picking one source
+    // outright, so a real transient always shows through even with a tempo guess also ticking.
+    private volatile float audioLevel = 0f;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
@@ -187,6 +199,18 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
         shader.setFloatUniform("forceDarkAmount", forceDark ? 1.0f : 0.0f);
         applyAccentMix();
         invalidate();
+    }
+
+    /** Tempo of the current track in BPM; 0 (or any non-positive value) disables the beat pulse
+     *  and falls back to the plain steady-state warp. */
+    public void setBeatTempoBpm(float bpm) {
+        beatIntervalSeconds = bpm > 0f ? 60f / bpm : 0f;
+    }
+
+    /** 0..1 real audio level for this instant; see AudioReactiveController. Safe to call from any
+     *  thread (read on the next draw only). */
+    public void setAudioLevel(float level0to1) {
+        audioLevel = Math.max(0f, Math.min(1f, level0to1));
     }
 
     public void setPlaying(boolean playing) {
@@ -318,6 +342,8 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
             advanceShaderTime();
             shader.setFloatUniform("iResolution", (float) w, (float) h);
             shader.setFloatUniform("iTime", shaderTimeSeconds);
+            float reactivity = Math.max(beatPulse(), speedMultiplier >= 0.01f ? audioLevel : 0f);
+            shader.setFloatUniform("warpIntensity", WARP_INTENSITY * (1f + BEAT_BOOST * reactivity));
             paint.setShader(shader);
             canvas.drawRect(0, 0, w, h, paint);
         } catch (Throwable ignored) {
@@ -396,6 +422,15 @@ public final class KawarpBackgroundView extends View implements AmbientBackgroun
             fallbackH = h;
         }
         canvas.drawRect(0, 0, w, h, fallbackPaint);
+    }
+
+    /** 1 right at each beat onset, decaying exponentially until the next one - a percussive
+     *  "kick" shape rather than a smooth sine, so it reads as a beat rather than a slow wobble.
+     *  0 whenever there's no tempo yet or the shader clock isn't advancing (paused). */
+    private float beatPulse() {
+        if (beatIntervalSeconds <= 0f || speedMultiplier < 0.01f) return 0f;
+        float phase = (shaderTimeSeconds % beatIntervalSeconds) / beatIntervalSeconds;
+        return (float) Math.exp(-phase * BEAT_DECAY);
     }
 
     private void advanceShaderTime() {

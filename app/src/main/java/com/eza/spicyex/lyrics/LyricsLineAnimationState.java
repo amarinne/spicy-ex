@@ -37,6 +37,16 @@ public final class LyricsLineAnimationState {
             boolean spotlight,
             boolean washEnabled
     ) {
+        return forLine(line, positionMs, spotlight, washEnabled, false);
+    }
+
+    public static LyricsLineAnimationState forLine(
+            AppliedLine line,
+            long positionMs,
+            boolean spotlight,
+            boolean washEnabled,
+            boolean appleDimPassed
+    ) {
         boolean active = LyricTimeline.isRowActiveAt(line, positionMs);
         boolean sung = line != null && positionMs >= line.endMs;
         float progress = active ? progress01(positionMs, line.startMs, LyricTimeline.fillEndMs(line)) : 0f;
@@ -55,7 +65,7 @@ public final class LyricsLineAnimationState {
         if ((active || sung) && (spotlight || washEnabled)) {
             float glowPeak = spotlight ? 1.0f : 0.5f;
             if (sung) {
-                glowTarget = glowPeak;
+                glowTarget = appleDimPassed ? glowPeak * 0.3f : glowPeak;
             } else {
                 glowTarget = spotlight
                         ? glowPeak * LyricAnimations.easeSinOut(progress) * LyricAnimations.easeSinOut(progress)

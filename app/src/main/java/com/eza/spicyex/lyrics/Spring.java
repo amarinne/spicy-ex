@@ -73,6 +73,10 @@ public class Spring {
         return position;
     }
 
+    public float position() {
+        return position;
+    }
+
     public boolean isAtRest(float positionEpsilon, float velocityEpsilon) {
         return Math.abs(position - goal) <= Math.max(0f, positionEpsilon)
                 && Math.abs(velocity) <= Math.max(0f, velocityEpsilon);

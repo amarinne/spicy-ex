@@ -45,6 +45,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             );
     private final LyricsSessionManager lyricsSessionManager;
     private SpicyLyricBridgeCoordinator bridgeCoordinator;
+    private volatile float audioReactiveLevel;
+    private final AudioReactiveController audioReactiveController =
+            new AudioReactiveController(level -> audioReactiveLevel = level);
 
     public NativeSpicyLyricsHook(Context context) {
         Context app = context.getApplicationContext();
@@ -84,10 +87,17 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             // Transition B515 paid records before any AI lane can dispatch. This only opens local
             // storage; it performs no provider request and leaves the source XML untouched.
             AIPaidArtifactCache.prepare(applicationContext);
+            // kuromoji's dictionary load (first Tokenizer construction) takes multiple seconds;
+            // done here in the background it's ready well before the first Japanese lyrics line
+            // needs it, instead of stalling the fullscreen screen's own render pass on first use.
+            new Thread(com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor::warmUp,
+                    "spicy-kuromoji-warmup").start();
             lyricsSessionManager.start();
             bridgeCoordinator = new SpicyLyricBridgeCoordinator(
                     lyricsSessionManager, applicationContext);
             bridgeCoordinator.start();
+            new AdMuteController(this, applicationContext).start();
+            audioReactiveController.start();
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "main_process"));
         } else {
@@ -141,12 +151,51 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         return playbackBridge.seekSpotifyTo(positionMs);
     }
 
+    public boolean toggleSavedTrack() {
+        return playbackBridge.toggleSpotifySaved();
+    }
+
+    public boolean skipToNextTrack() {
+        return playbackBridge.skipToNextTrack();
+    }
+
+    public boolean togglePlayback() {
+        return playbackBridge.togglePlayback();
+    }
+
+    public boolean isSeekOverrideActive() {
+        return playbackBridge.isSeekOverrideActive();
+    }
+
+    public boolean canSeek() {
+        return playbackBridge.canSeek();
+    }
+
+    public boolean canSkipToNext() {
+        return playbackBridge.canSkipToNext();
+    }
+
     public long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {
         return playbackBridge.readBestMeasuredProgressMs(track, playing);
     }
 
+    public long getCurrentPositionMs(SpotifyTrack track, boolean playing) {
+        return playbackBridge.getCurrentPositionMs(track, playing);
+    }
+
     public boolean isPlayerActuallyPlaying() {
         return playbackBridge.isPlayerActuallyPlaying();
+    }
+
+    /** Smoothed 0..1 real audio level from AudioReactiveController; 0 whenever no session is
+     *  attached yet (nothing playing, or the Visualizer attach failed). */
+    public float currentAudioLevel() {
+        return audioReactiveLevel;
+    }
+
+    @Override
+    public void setAudioReactiveListening(boolean enabled) {
+        audioReactiveController.setListeningEnabled(enabled);
     }
 
     @Override

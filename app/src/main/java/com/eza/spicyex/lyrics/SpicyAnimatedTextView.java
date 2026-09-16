@@ -30,6 +30,8 @@ public class SpicyAnimatedTextView extends TextView {
     private boolean shaderVertical;
     private boolean shaderRtl;
     private int shaderWidth = -1;
+    private float gradientBandWidth = Float.NaN;
+    private float shaderBand = Float.NaN;
 
     // Words/letters use horizontal fill; line-level rows can switch to vertical fill by setting.
     private boolean verticalGradient;
@@ -42,6 +44,7 @@ public class SpicyAnimatedTextView extends TextView {
     // Standalone rows (line-level main, secondary romaji/translation, live card) have no such parent,
     // so they draw their own soft halo here instead — gated by setSelfGlow(true).
     private boolean selfGlow;
+    private float lineShadowAlpha;
     private float brightnessMultiplier = 1f;
 
     public SpicyAnimatedTextView(Context context) {
@@ -53,6 +56,13 @@ public class SpicyAnimatedTextView extends TextView {
         this.selfGlow = enabled;
     }
 
+    public void setLineShadow(float intensity) {
+        float clamped = Math.max(0f, Math.min(1f, intensity));
+        if (clamped == lineShadowAlpha) return;
+        lineShadowAlpha = clamped;
+        invalidate();
+    }
+
     public void setVerticalGradient(boolean vertical) {
         if (this.verticalGradient == vertical) return;
         this.verticalGradient = vertical;
@@ -61,6 +71,19 @@ public class SpicyAnimatedTextView extends TextView {
 
     public boolean usesVerticalGradient() {
         return verticalGradient;
+    }
+
+    public void setGradientBandWidth(float bandWidth) {
+        float bounded = Float.isNaN(bandWidth) ? Float.NaN : Math.max(8f, Math.min(140f, bandWidth));
+        if (Float.compare(this.gradientBandWidth, bounded) == 0) return;
+        this.gradientBandWidth = bounded;
+        cachedShader = null;
+        if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
+        else invalidate();
+    }
+
+    private float gradientBand() {
+        return Float.isNaN(gradientBandWidth) ? LyricAnimations.GRADIENT_BAND : gradientBandWidth;
     }
 
     public void setContentGradient(boolean enabled) {
@@ -167,6 +190,7 @@ public class SpicyAnimatedTextView extends TextView {
                 && Math.abs(glow - shaderGlow) < 0.03f
                 && Math.abs(brightnessMultiplier - shaderBrightness) < 0.01f
                 && Math.abs(offset - shaderOffset) < 0.5f
+                && Float.compare(gradientBand(), shaderBand) == 0
                 && verticalGradient == shaderVertical
                 && horizontalRtl == shaderRtl) {
             return cachedShader;
@@ -201,15 +225,23 @@ public class SpicyAnimatedTextView extends TextView {
         } else {
             float p0 = Math.max(0f, Math.min(1f, gradientPosition / 100f));
             float p1 = Math.max(p0 + 0.001f, Math.min(1f,
-                    (gradientPosition + LyricAnimations.GRADIENT_BAND) / 100f));
+                    (gradientPosition + gradientBand()) / 100f));
+            int edgeAlpha = Math.round(Math.min(255f,
+                    (240f + 15f * Math.max(0f, Math.min(1f, glow))) * brightnessMultiplier));
+            int edgeColor = Color.argb(edgeAlpha, 255, 255, 255);
+            float bandWidth = p1 - p0;
+            float glowPeakStart = Math.min(p1, p0 + bandWidth * 0.18f);
+            float glowPeakEnd = Math.min(p1, p0 + bandWidth * 0.5f);
             cachedShader = new LinearGradient(x0, y0, x1, y1,
-                    new int[]{sungColor, unsungColor}, new float[]{p0, p1}, Shader.TileMode.CLAMP);
+                    new int[]{sungColor, edgeColor, edgeColor, unsungColor},
+                    new float[]{p0, glowPeakStart, glowPeakEnd, p1}, Shader.TileMode.CLAMP);
         }
         shaderPos = gradientPosition;
         shaderGlow = glow;
         shaderBrightness = brightnessMultiplier;
         shaderWidth = shaderExtent;
         shaderOffset = offset;
+        shaderBand = gradientBand();
         shaderVertical = verticalGradient;
         shaderRtl = horizontalRtl;
         return cachedShader;
@@ -243,6 +275,7 @@ public class SpicyAnimatedTextView extends TextView {
         // Drive ALL states through a shader, never paint.setColor(): TextView.onDraw resets the
         // paint color to mCurTextColor before drawing the layout, which would silently discard the
         // sung/unsung alpha and render every word uniformly. A shader survives that reset.
+        if (lineShadowAlpha > 0.02f) drawLineShadow(canvas);
         if (selfGlow) drawSelfGlow(canvas);
         paint.setShader(resolveShader(extent));
         // Word rows usually get their continuous halo from GlowFlexbox. Standalone line/secondary
@@ -251,6 +284,29 @@ public class SpicyAnimatedTextView extends TextView {
         super.onDraw(canvas);
         paint.setShader(oldShader);
         paint.setColor(oldColor);
+    }
+
+    private void drawLineShadow(Canvas canvas) {
+        Layout layout = getLayout();
+        if (layout == null) return;
+        TextPaint paint = getPaint();
+        Shader savedShader = paint.getShader();
+        int savedColor = paint.getColor();
+        MaskFilter savedMask = paint.getMaskFilter();
+        int alpha = Math.round(55f * lineShadowAlpha);
+        paint.setShader(null);
+        paint.setColor(Color.argb(alpha, 0, 0, 0));
+        paint.setMaskFilter(GlowFlexbox.blurFilter(16f * paint.getTextSize() / 48f));
+        int save = canvas.save();
+        canvas.translate(getTotalPaddingLeft(), getTotalPaddingTop() + paint.getTextSize() * 0.06f);
+        try {
+            layout.draw(canvas);
+        } catch (Throwable ignored) {
+        }
+        canvas.restoreToCount(save);
+        paint.setMaskFilter(savedMask);
+        paint.setColor(savedColor);
+        paint.setShader(savedShader);
     }
 
     private void drawSelfGlow(Canvas canvas) {
@@ -262,7 +318,7 @@ public class SpicyAnimatedTextView extends TextView {
         Shader savedShader = paint.getShader();
         int savedColor = paint.getColor();
         MaskFilter savedMask = paint.getMaskFilter();
-        int alpha = Math.round(255f * 0.35f * g);
+        int alpha = Math.round(255f * 0.6f * g);
         int glowColor = Color.argb(alpha, 255, 255, 255);
         // Same render as GlowFlexbox: desktop's `text-shadow: 0 0 (4+2g)px rgba(255,255,255,.35g)`
         // — a blurred copy of the glyphs only, sigma scaled to the ~48px desktop reference font.
