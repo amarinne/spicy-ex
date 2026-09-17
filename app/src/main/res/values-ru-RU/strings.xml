@@ -5,17 +5,17 @@
     <string name="module_description">Spicy текста для Spotify.</string>
     <string name="artwork_lyrics_close">Закрыть полноэкранный режим</string>
     <string name="artwork_lyrics_expand">Открыть полноэкранный режим</string>
-    <!-- A locale file self-registers by overriding these two values, then overrides any panel strings below. -->
+    
     <string name="settings_locale_code">ru</string>
     <string name="settings_locale_name">Russian</string>
-    <!-- Settings sections. Add the same names in values-<locale>/strings.xml to translate the panel. -->
+    
     <string name="settings_section_lyrics">Поведение</string>
     <string name="settings_section_now_playing">Карточка Now Playing</string>
     <string name="settings_section_lyrics_screen">Экран Текста</string>
     <string name="settings_section_transliteration">Чтение &amp; Транслитерация</string>
     <string name="settings_section_translation">Перевод</string>
     <string name="settings_section_debug">О Spicy EX &amp; Диагностика</string>
-    <!-- Settings labels. Names are settings_label_<stored_setting_key>. -->
+    
     <string name="settings_label_settings_ui_language">Язык интерфейса</string>
     <string name="settings_label_lyric_tap_seek_mode">Нажатие на строку чтобы перемотать</string>
     <string name="settings_label_lyric_stay_on_track_change">Оставаться на экране текста при смене песни</string>
@@ -210,7 +210,7 @@
     <string name="settings_option_ar">Арабский (ar)</string>
     <string name="settings_option_he">Иврит (he)</string>
     <string name="settings_option_fa">Персидский (fa)</string>
-    <!-- Other settings-panel display strings. -->
+    
     <string name="settings_unavailable_full_build">Необходима полная версия</string>
     <string name="settings_unavailable_android_13">Необходим Android 13+</string>
     <string name="settings_enable_transliteration">Включить транслитерацию</string>
@@ -237,33 +237,3 @@
     <string name="settings_diagnostic_cache_write">Запись кэша</string>
     <string name="settings_yes">да</string>
     <string name="settings_no">нет</string>
-    <string name="diagnostic_report_problem">Сообщить об ошибке</string>
-    <string name="diagnostic_category">Категория</string>
-    <string name="diagnostic_category_missing_wrong">Текст неверен или остутсвует</string>
-    <string name="diagnostic_category_timing">Тайминг</string>
-    <string name="diagnostic_category_translation">Перевод</string>
-    <string name="diagnostic_category_ai">ИИ функции</string>
-    <string name="diagnostic_category_transliteration">Транслитерация или романизация</string>
-    <string name="diagnostic_category_fullscreen">Полноэкранный рендерер</string>
-    <string name="diagnostic_category_now_playing">Карточка Now Playing</string>
-    <string name="diagnostic_category_hyperglow">Мост HyperGlow</string>
-    <string name="diagnostic_category_crash">Вылет или перезапуск</string>
-    <string name="diagnostic_category_other">Другое</string>
-    <string name="diagnostic_description_hint">Опишите что произошло</string>
-    <string name="diagnostic_description_count">%1$d/%2$d</string>
-    <string name="diagnostic_description_required">Описание обязательно</string>
-    <string name="diagnostic_start_capture">Начать захват</string>
-    <string name="diagnostic_preview_now">Предпросмотр</string>
-    <string name="diagnostic_capture_title">Диагностический захват</string>
-    <string name="diagnostic_capture_active">Повторите ошибку на записи.</string>
-    <string name="diagnostic_capture_interrupted">Файл записи отсутствует после перезапуска; репорт помечен как незавершённый.</string>
-    <string name="diagnostic_finish_capture">Завершить запись</string>
-    <string name="diagnostic_cancel_capture">Отменить запись</string>
-    <string name="diagnostic_close">Закрыть</string>
-    <string name="diagnostic_capture_started">Запись началась. Повторите ошибку и откройте Диагностику.</string>
-    <string name="diagnostic_capture_failed">Не удалось начать запись.</string>
-    <string name="diagnostic_capture_cancelled">Запись отменена.</string>
-    <string name="diagnostic_prepare_failed">Не удалось подготовить репорт.</string>
-    <string name="diagnostic_retention_notice">Вся информация, включая трек, улики текстов, и недавние запросы ИИ, хранятся пока не удалены вручную или изменены.</string>
-    <string name="diagnostic_accept_retention">Я прочитал политику хранения и согласен отправить отчёт об ошибке.</string>
-    <string name="diagnostic_data_policy">Политика информации Диагностики</string>
