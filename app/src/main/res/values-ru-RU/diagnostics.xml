@@ -1,0 +1,32 @@
+<recources>
+    <string name="diagnostic_report_problem">Сообщить об ошибке</string>
+    <string name="diagnostic_category">Категория</string>
+    <string name="diagnostic_category_missing_wrong">Текст неверен или остутсвует</string>
+    <string name="diagnostic_category_timing">Тайминг</string>
+    <string name="diagnostic_category_translation">Перевод</string>
+    <string name="diagnostic_category_ai">ИИ функции</string>
+    <string name="diagnostic_category_transliteration">Транслитерация или романизация</string>
+    <string name="diagnostic_category_fullscreen">Полноэкранный рендерер</string>
+    <string name="diagnostic_category_now_playing">Карточка Now Playing</string>
+    <string name="diagnostic_category_hyperglow">Мост HyperGlow</string>
+    <string name="diagnostic_category_crash">Вылет или перезапуск</string>
+    <string name="diagnostic_category_other">Другое</string>
+    <string name="diagnostic_description_hint">Опишите что произошло</string>
+    <string name="diagnostic_description_count">%1$d/%2$d</string>
+    <string name="diagnostic_description_required">Описание обязательно</string>
+    <string name="diagnostic_start_capture">Начать захват</string>
+    <string name="diagnostic_preview_now">Предпросмотр</string>
+    <string name="diagnostic_capture_title">Диагностический захват</string>
+    <string name="diagnostic_capture_active">Повторите ошибку на записи.</string>
+    <string name="diagnostic_capture_interrupted">Файл записи отсутствует после перезапуска; репорт помечен как незавершённый.</string>
+    <string name="diagnostic_finish_capture">Завершить запись</string>
+    <string name="diagnostic_cancel_capture">Отменить запись</string>
+    <string name="diagnostic_close">Закрыть</string>
+    <string name="diagnostic_capture_started">Запись началась. Повторите ошибку и откройте Диагностику.</string>
+    <string name="diagnostic_capture_failed">Не удалось начать запись.</string>
+    <string name="diagnostic_capture_cancelled">Запись отменена.</string>
+    <string name="diagnostic_prepare_failed">Не удалось подготовить репорт.</string>
+    <string name="diagnostic_retention_notice">Вся информация, включая трек, улики текстов, и недавние запросы ИИ, хранятся пока не удалены вручную или изменены.</string>
+    <string name="diagnostic_accept_retention">Я прочитал политику хранения и согласен отправить отчёт об ошибке.</string>
+    <string name="diagnostic_data_policy">Политика информации Диагностики</string>
+</recources>
