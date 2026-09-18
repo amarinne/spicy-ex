@@ -10,7 +10,8 @@
     <string name="settings_locale_name">Русский</string>
     
     <string name="settings_section_lyrics">Поведение</string>
-    <string name="settings_section_now_playing">Карточка Now Playing</string>
+    <string name="settings_section_lyrics_sources">Поведение</string>
+    <string name="settings_section_now_playing">&quot;Now Playing&quot;</string>
     <string name="settings_section_lyrics_screen">Экран Текста</string>
     <string name="settings_section_transliteration">Чтение &amp; Транслитерация</string>
     <string name="settings_section_translation">Перевод</string>
@@ -25,7 +26,7 @@
     <string name="settings_label_lyrics_source_selection_mode">Оценка источника</string>
     <string name="settings_label_lyrics_source_override">Источник текстов</string>
     <string name="settings_label_lyrics_spicy_manual_token">Токен Spicy вручную</string>
-    <string name="settings_label_lyrics_source_order">Порядок источников текстов</string>
+    <string name="settings_label_lyrics_source_order">Порядок источников текста</string>
     <string name="settings_label_lyrics_source_overrides">Разные источники для каждого трека</string>
     <string name="settings_option_lyrics_source_selection_mode_auto">Авто</string>
     <string name="settings_option_lyrics_source_selection_mode_source_order">Порядок источников</string>
@@ -42,7 +43,7 @@
     <string name="settings_source_pinned_hint">Закрепить один источник, или использовать Оценку в каждом включенном источнике</string>
     <string name="settings_source_ranking_title">Оценка источников</string>
     <string name="settings_source_ranking_auto_desc"></string>
-    <string name="settings_source_ranking_order_desc">следуйте за порядком ниже</string>
+    <string name="settings_source_ranking_order_desc">Следовать за порядком ниже</string>
     <string name="settings_source_order_title">Порядок</string>
     <string name="settings_source_order_hint"></string>
     <string name="settings_source_drag">Зажмите и переместите чтобы изменить порядок</string>
@@ -62,9 +63,9 @@
     <string name="settings_cache_details_lyrics">Данные текстов песен</string>
     <string name="settings_cache_details_ai">Данные ИИ</string>
     <string name="settings_cache_details_close">Закрыть</string>
-    <string name="settings_label_lyrics_live_card_tap_mode">Нажмите на карточку чтобы открыть текст</string>
-    <string name="settings_label_lyrics_live_card_tap_target">Цель тапа карточки</string>
-    <string name="settings_label_lyrics_live_card_weight">Жирность строки</string>
+    <string name="settings_label_lyrics_live_card_tap_mode">Открыть текст</string>
+    <string name="settings_label_lyrics_live_card_tap_target">При тапе на строку</string>
+    <string name="settings_label_lyrics_live_card_weight">Жирность шрифта</string>
     <string name="settings_label_lyrics_live_card_text_size">Размер текста</string>
     <string name="settings_label_lyrics_live_card_text_size_custom">Свой размер</string>
     <string name="settings_label_lyrics_live_card_secondary_mode">Доп. строка</string>
@@ -79,10 +80,11 @@
     <string name="settings_label_line_spacing_custom">Свой отступ</string>
     <string name="settings_label_lyrics_weight">Жирность строки</string>
     <string name="settings_label_lyrics_font">Шрифт строки</string>
-    <string name="settings_label_lyrics_text_size">Размер текста строки</string>
+    <string name="settings_label_lyrics_text_size">Размер строки</string>
     <string name="settings_label_lyrics_text_size_custom">Свой размер</string>
     <string name="settings_label_lyrics_adaptive_text_size">Адаптивный размер</string>
     <string name="settings_label_lyric_interlude_icon">Индикатор перебоя</string>
+    
     <string name="settings_label_lyrics_fullscreen_controls">Полноэкранное управление</string>
     <string name="settings_option_5_seconds">5 секунд</string>
     <string name="settings_option_10_seconds">10 секунд</string>
@@ -119,9 +121,9 @@
     <!-- Selector values. Stored values remain locale-independent. -->
     <string name="settings_option_off">Выключено</string>
     <string name="settings_option_single_tap">Один тап</string>
-    <string name="settings_option_double_tap">Двойное тап</string>
+    <string name="settings_option_double_tap">Двойной тап</string>
     <string name="settings_option_fullscreen">Полный экран</string>
-    <string name="settings_option_artwork">Искусство</string>
+    <string name="settings_option_artwork">Artwork</string>
     <string name="settings_option_regular">Обычный</string>
     <string name="settings_option_medium">Средний</string>
     <string name="settings_option_bold">Жирный</string>
