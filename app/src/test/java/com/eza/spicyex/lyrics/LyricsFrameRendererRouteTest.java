@@ -79,11 +79,29 @@ public class LyricsFrameRendererRouteTest {
                 new java.io.File("src/main/java/com/eza/spicyex/lyrics/LyricsFrameRenderer.java").toPath()),
                 java.nio.charset.StandardCharsets.UTF_8);
         String compact = source.replaceAll("\\s+", " ");
-        String directCall = "wordBounceEnabled(config, line), true, liftBounce(config), individualWordBounce(config));";
+        // Direct motion stays on for every shared style (Apple disables it via !appleStyle only);
+        // lift motion comes from the Apple-aware helper so Apple lift never depends on Bounce style.
+        String directCall = "wordBounceEnabled(config, line), !config.appleStyle, "
+                + "liftMotion(config), individualWordBounce(config), "
+                + "config.appleLift, config.appleDimPassed);";
         int first = compact.indexOf(directCall);
         int second = compact.indexOf(directCall, first + directCall.length());
         assertTrue(first >= 0);
         assertTrue(second > first);
+    }
+
+    @Test
+    public void blurRefreshSkipsActiveChangesWhileScrolling() {
+        // Active-line advance while held: no refresh, rows stay sharp.
+        assertFalse(LyricsFrameRenderer.blurNeedsRefresh(true, true, false, true));
+        // Steady hold with no change: no refresh.
+        assertFalse(LyricsFrameRenderer.blurNeedsRefresh(true, false, false, true));
+        // Snap-back (hold release) always refreshes so blur restores on resume.
+        assertTrue(LyricsFrameRenderer.blurNeedsRefresh(true, false, true, false));
+        assertTrue(LyricsFrameRenderer.blurNeedsRefresh(true, true, true, true));
+        // Normal playback advance refreshes; blur off never refreshes.
+        assertTrue(LyricsFrameRenderer.blurNeedsRefresh(true, true, false, false));
+        assertFalse(LyricsFrameRenderer.blurNeedsRefresh(false, true, true, false));
     }
 
     private static SyllableSegment segment(String text, long startMs, long endMs) {

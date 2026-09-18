@@ -378,14 +378,165 @@ public final class PanelDialog {
         return view;
     }
 
-    /** A choice row that leaves the composer open after applying its value. */
-    public TextView optionKeepOpen(String label, final Runnable onPick) {
-        TextView view = text(label, 14f, COL_SUMMARY);
-        view.setPadding(dp(14), dp(9), dp(14), dp(9));
-        view.setBackground(ripple(rounded(0x00000000, 0x00000000, 14)));
-        view.setOnClickListener(v -> { if (onPick != null) onPick.run(); });
-        add(view);
-        return view;
+    /** One option in a list or confirming selector. */
+    public static final class Option {
+        public final String value;
+        public final String label;
+        /** Appended to the label: usage figures, unavailability reasons. */
+        public String suffix = "";
+        /** Trailing glyph preview for symbol-valued options. */
+        public String preview = "";
+        /** Leading icon replacing the radio dot and text label (liked-songs style). */
+        public ActionIconDrawable.Kind icon;
+        /** Dimmed and not tappable, with the reason carried in {@link #suffix}. */
+        public boolean unavailable;
+
+        private Option(String value, String label) {
+            this.value = value == null ? "" : value;
+            this.label = label == null ? "" : label;
+        }
+
+        public static Option of(String value, String label) {
+            return new Option(value, label);
+        }
+    }
+
+    private static final class OptionRow {
+        final LinearLayout row;
+        final ImageView dot;
+        final TextView label;
+        final ImageView icon;
+        final Option option;
+
+        OptionRow(LinearLayout row, ImageView dot, TextView label, ImageView icon, Option option) {
+            this.row = row;
+            this.dot = dot;
+            this.label = label;
+            this.icon = icon;
+            this.option = option;
+        }
+    }
+
+    /** Small header affordance, e.g. the cache-size help action. */
+    public PanelDialog headerAction(ActionIconDrawable.Kind icon, String contentDescription,
+                                    final Runnable action) {
+        ImageButton button = iconButton(icon, contentDescription, action);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(38), dp(38));
+        params.leftMargin = dp(4);
+        header.addView(button, params);
+        return this;
+    }
+
+    /**
+     * Immediate list selector: tapping a row runs {@code onPick} at once, then animates out
+     * and dismisses. The returned runnable runs after dismissal (rebuilds, refreshes); null
+     * means tapping the already-applied value, which dismisses as a no-op.
+     */
+    public PanelDialog listOptions(java.util.List<Option> options, String selectedValue,
+                                   final java.util.function.Function<String, Runnable> onPick) {
+        if (options == null) return this;
+        for (final Option option : options) {
+            final boolean selected = option.value.equals(selectedValue);
+            add(optionRowView(option, selected, option.unavailable ? null : () -> {
+                Runnable after = onPick == null ? null : onPick.apply(option.value);
+                dismissThen(after);
+            }));
+        }
+        return this;
+    }
+
+    /**
+     * Confirming selector: tapping a row only moves the pending highlight. Save commits the
+     * pending value; Cancel, back, and outside-tap discard it. Nothing ever writes on dismiss.
+     *
+     * <p>Save stays disabled until the pending highlight actually differs from the stored
+     * value. Without this, an exploratory tap (pending armed, invisible) followed by
+     * Save-as-close silently commits a change the user never meant to make — the
+     * "I opened the language picker and the UI switched language on its own" defect.
+     */
+    public PanelDialog confirmingOptions(java.util.List<Option> options, String initialValue,
+                                         final java.util.function.Consumer<String> onSave,
+                                         String saveLabel, String cancelLabel) {
+        if (options == null) return this;
+        final ConfirmingSelection selection = new ConfirmingSelection(initialValue);
+        final java.util.List<OptionRow> rows = new java.util.ArrayList<>();
+        final TextView save = button(saveLabel, true, () -> {
+            if (onSave != null) onSave.accept(selection.pending());
+        });
+        for (final Option option : options) {
+            final OptionRow built = optionRow(option);
+            rows.add(built);
+            paintOptionHighlight(built, selection.isHighlighted(option.value));
+            if (!option.unavailable) {
+                built.row.setOnClickListener(v -> {
+                    selection.select(option.value);
+                    for (OptionRow other : rows) {
+                        paintOptionHighlight(other, selection.isHighlighted(other.option.value));
+                    }
+                    applySaveArmed(save, selection);
+                });
+            }
+            add(built.row);
+        }
+        applySaveArmed(save, selection);
+        root.addView(save, matchWrap(8));
+        secondary(cancelLabel, null);
+        return this;
+    }
+
+    /** Save is an armed action: enabled only while pending differs from stored. */
+    private static void applySaveArmed(TextView save, ConfirmingSelection selection) {
+        boolean dirty = selection.isDirty();
+        save.setEnabled(dirty);
+        save.setAlpha(dirty ? 1f : 0.45f);
+    }
+
+    /**
+     * Pending-selection state for one confirming dialog. A tiny named object instead of
+     * parallel holder arrays: it is mutated, never reassigned, so every listener closes
+     * over plain finals. The dirty rule is pure and unit-covered.
+     */
+    static final class ConfirmingSelection {
+        private final String initial;
+        private String pending;
+
+        ConfirmingSelection(String initial) {
+            this.initial = initial;
+            this.pending = initial;
+        }
+
+        void select(String value) {
+            pending = value;
+        }
+
+        String pending() {
+            return pending;
+        }
+
+        boolean isHighlighted(String optionValue) {
+            return optionValue != null && optionValue.equals(pending);
+        }
+
+        boolean isDirty() {
+            return pending != null && !pending.equals(initial);
+        }
+    }
+
+    /** Static label/value pair for info dialogs (cache details, diagnostics). */
+    public PanelDialog infoRow(String label, String value) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(9), dp(14), dp(9));
+        TextView title = text(label == null ? "" : label, 14f, COL_SUMMARY);
+        row.addView(title, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView detail = text(value == null ? "" : value, 14f, COL_TITLE);
+        detail.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        row.addView(detail, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        add(row);
+        return this;
     }
 
     /** The confirming action. Accent-filled, like the panel's primary buttons. */
@@ -441,6 +592,71 @@ public final class PanelDialog {
             if (callback != null) callback.run();
         });
         return this;
+    }
+
+    /** The single option-row vocabulary: radio dot, label + suffix, optional icon/preview. */
+    private LinearLayout optionRowView(Option option, boolean highlighted, Runnable onTap) {
+        OptionRow built = optionRow(option);
+        paintOptionHighlight(built, highlighted);
+        if (onTap != null) built.row.setOnClickListener(v -> onTap.run());
+        return built.row;
+    }
+
+    private OptionRow optionRow(Option option) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(52));
+        row.setPadding(dp(22), dp(8), dp(22), dp(8));
+        row.setBackground(ripple(rounded(0x00000000, 0x00000000, 14)));
+        row.setFocusable(true);
+
+        ImageView dot = new ImageView(context);
+        dot.setPadding(dp(4), dp(4), dp(4), dp(4));
+        dot.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        dotParams.rightMargin = dp(12);
+        row.addView(dot, dotParams);
+
+        ImageView icon = null;
+        TextView label;
+        if (option.icon != null) {
+            icon = new ImageView(context);
+            icon.setImageDrawable(new ActionIconDrawable(option.icon, COL_TITLE, density()));
+            icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            row.addView(icon, new LinearLayout.LayoutParams(dp(32), dp(32)));
+            row.setContentDescription(option.label + option.suffix);
+            label = null;
+        } else {
+            label = text(option.label + option.suffix, 16f, COL_TITLE);
+            row.addView(label, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        if (!option.preview.isEmpty()) {
+            TextView preview = text(option.preview, 18f, COL_TITLE);
+            preview.setPadding(dp(12), 0, 0, 0);
+            row.addView(preview);
+        }
+        row.setEnabled(!option.unavailable);
+        row.setAlpha(option.unavailable ? 0.48f : 1f);
+        return new OptionRow(row, dot, label, icon, option);
+    }
+
+    private void paintOptionHighlight(OptionRow built, boolean highlighted) {
+        built.dot.setImageDrawable(new ActionIconDrawable(ActionIconDrawable.Kind.CIRCLE,
+                highlighted ? COL_ACCENT : COL_SUMMARY, density(), highlighted));
+        if (built.label != null) {
+            built.label.setTextColor(highlighted ? COL_ACCENT : COL_TITLE);
+        }
+        if (built.icon != null) {
+            built.icon.setImageDrawable(new ActionIconDrawable(built.option.icon,
+                    highlighted ? COL_ACCENT : COL_TITLE, density()));
+        }
+        built.row.setSelected(highlighted);
+    }
+
+    private float density() {
+        return context.getResources().getDisplayMetrics().density;
     }
 
     /** Animated dismissal; ordering-sensitive callers pass work via {@link #onDismiss}. */

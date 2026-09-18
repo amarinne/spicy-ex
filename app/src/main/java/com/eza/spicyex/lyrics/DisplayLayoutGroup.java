@@ -165,11 +165,11 @@ public final class DisplayLayoutGroup {
 
     private static boolean isJapanese(String language, String text) {
         String value = language == null ? "" : language.toLowerCase();
-        return value.startsWith("ja") || SpicyTextDetection.hasKana(text);
+        return value.equals("ja") || value.isEmpty() && SpicyTextDetection.hasKana(text);
     }
 
     private static boolean isChinese(String language, String text) {
         String value = language == null ? "" : language.toLowerCase();
-        return value.startsWith("zh") || SpicyTextDetection.itemChineseTest(text);
+        return value.startsWith("zh") || value.isEmpty() && SpicyTextDetection.itemChineseTest(text);
     }
 }

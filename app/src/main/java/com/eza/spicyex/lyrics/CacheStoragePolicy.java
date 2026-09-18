@@ -21,7 +21,8 @@ import java.util.Map;
  * <p>The user picks one total logical-payload budget ("Cache size"); it is allocated across the
  * stores by fixed shares, not handed to each store independently:
  * paid AI 50% (receives the integer rounding remainder), Sound 15%, Meaning 10%, Google
- * processing values 10%, canonical lyric source 10%, raw provider lyric responses 5%.
+ * processing values 10%, canonical lyric source 10%, raw provider lyric responses 5%, language
+ * detection 5%.
  *
  * <p>{@link #UNLIMITED} is a deliberate sentinel, not a very large budget: quota consumers must
  * treat it as "no byte or entry-count eviction", and every size comparison in this class is
@@ -124,6 +125,14 @@ public final class CacheStoragePolicy {
     }
 
     /**
+     * Language detection rows: 5% of the total budget. Detection records are compact — per row a
+     * script, a language, and a confidence — so the cap is generous relative to what it stores.
+     */
+    public static long detectionQuota(long totalBytes) {
+        return share(totalBytes, 5);
+    }
+
+    /**
      * Paid AI artifacts: 50% of the total budget plus the integer rounding remainder left by the
      * floor-rounded shares above.
      */
@@ -136,6 +145,7 @@ public final class CacheStoragePolicy {
         others = saturatingAdd(others, googleQuota(total));
         others = saturatingAdd(others, canonicalQuota(total));
         others = saturatingAdd(others, rawResponseQuota(total));
+        others = saturatingAdd(others, detectionQuota(total));
         return Math.max(0L, total - others);
     }
 
@@ -155,7 +165,7 @@ public final class CacheStoragePolicy {
     }
 
     /**
-     * Combined logical-payload bytes across the six owned stores, for the settings panel usage
+     * Combined logical-payload bytes across the seven owned stores, for the settings panel usage
      * display. Counts stored payloads only (UTF-8 string bytes, SQLite {@code raw_bytes}); order
      * keys, timestamps, reservations, and the legacy paid-AI migration XML are never counted.
      * A corrupt or unreadable store contributes zero, never a failure.
@@ -165,6 +175,7 @@ public final class CacheStoragePolicy {
         long total = 0L;
         total = saturatingAdd(total, LyricCaches.soundStoreUsageBytes(context));
         total = saturatingAdd(total, LyricCaches.meaningStoreUsageBytes(context));
+        total = saturatingAdd(total, LyricCaches.detectionStoreUsageBytes(context));
         total = saturatingAdd(total, LyricCaches.googleStoreUsageBytes(context));
         total = saturatingAdd(total, CanonicalSourceCache.usageBytes(context));
         total = saturatingAdd(total, LyricsResponseCache.usageBytes(context));

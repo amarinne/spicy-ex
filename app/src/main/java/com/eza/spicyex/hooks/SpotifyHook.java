@@ -1,15 +1,15 @@
 package com.eza.spicyex.hooks;
 
 import com.eza.spicyex.xposed.XpPackage;
-import org.luckypray.dexkit.DexKitBridge;
+import com.eza.spicyex.xposed.SpotifySymbolResolver;
 
 public abstract class SpotifyHook {
     protected XpPackage lpparm;
-    protected DexKitBridge bridge;
+    protected SpotifySymbolResolver symbols;
 
-    public void init(XpPackage lpparm, DexKitBridge bridge) {
+    public void init(XpPackage lpparm, SpotifySymbolResolver symbols) {
         this.lpparm = lpparm;
-        this.bridge = bridge;
+        this.symbols = symbols;
         hook();
     }
 

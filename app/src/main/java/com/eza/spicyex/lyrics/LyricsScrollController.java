@@ -8,6 +8,9 @@ import android.widget.ScrollView;
 /** View-coordinate helpers for the fullscreen lyric scroll surface. */
 public final class LyricsScrollController {
     public static final long ALL_LINES = packRange(0, Integer.MAX_VALUE);
+    /** Apple slide rest anchor (0.5 = legacy center; kept exact while unset). */
+    private static final float RAISED_ANCHOR_FRACTION = 0.28f;
+    private float anchorFraction = 0.5f;
     private final ScrollView scrollView;
     private final LinearLayout contentColumn;
     private final View topStaticSpacer;
@@ -23,13 +26,32 @@ public final class LyricsScrollController {
         if (scrollView == null) return;
         int viewport = scrollView.getHeight();
         if (viewport <= 0) viewport = fallbackViewportHeightPx;
-        int center = Math.max(0, viewport / 2 - rowHalfPx);
-        scrollView.setPadding(0, Math.max(safeTopPx, center), 0, Math.max(bottomPaddingPx, center));
+        int topAnchor;
+        int bottomAnchor;
+        if (anchorFraction == 0.5f) {
+            int center = Math.max(0, viewport / 2 - rowHalfPx);
+            topAnchor = center;
+            bottomAnchor = center;
+        } else {
+            topAnchor = Math.max(0, Math.round(viewport * anchorFraction) - rowHalfPx);
+            bottomAnchor = Math.max(0, Math.round(viewport * (1f - anchorFraction)) - rowHalfPx);
+        }
+        scrollView.setPadding(0, Math.max(safeTopPx, topAnchor), 0, Math.max(bottomPaddingPx, bottomAnchor));
+    }
+
+    /** Apple slide rest anchor (0.28 = active line sits high); 0.5 restores legacy center. */
+    public void setRaisedAnchor(boolean raised) {
+        anchorFraction = raised ? RAISED_ANCHOR_FRACTION : 0.5f;
+    }
+
+    private int anchorCenterY(int scrollY, int viewportHeight, int paddingTop) {
+        if (anchorFraction == 0.5f) return contentCenterY(scrollY, viewportHeight, paddingTop);
+        return scrollY + Math.round(Math.max(1, viewportHeight) * anchorFraction) - Math.max(0, paddingTop);
     }
 
     public int viewportAnchor(int[] rowHeightPrefix, int lineCount) {
         if (scrollView == null || topStaticSpacer == null || lineCount <= 0) return 0;
-        int center = contentCenterY(scrollView.getScrollY(), scrollView.getHeight(), scrollView.getPaddingTop());
+        int center = anchorCenterY(scrollView.getScrollY(), scrollView.getHeight(), scrollView.getPaddingTop());
         int offset = Math.max(0, center - topStaticSpacer.getHeight());
         return LyricsRowVirtualizer.findLineIndexForOffset(rowHeightPrefix, offset, lineCount);
     }
@@ -73,7 +95,11 @@ public final class LyricsScrollController {
         if (scrollView == null || contentColumn == null || row == null) return 0;
         workRect.set(0, 0, row.getWidth(), row.getHeight());
         contentColumn.offsetDescendantRectToMyCoords(row, workRect);
-        return scrollView.getPaddingTop() + workRect.top - (scrollView.getHeight() / 2) + (row.getHeight() / 2);
+        if (anchorFraction == 0.5f) {
+            return scrollView.getPaddingTop() + workRect.top - (scrollView.getHeight() / 2) + (row.getHeight() / 2);
+        }
+        return scrollView.getPaddingTop() + workRect.top
+                - Math.round(scrollView.getHeight() * anchorFraction) + (row.getHeight() / 2);
     }
 
     public boolean isRowVisible(View row, int minVisiblePx) {

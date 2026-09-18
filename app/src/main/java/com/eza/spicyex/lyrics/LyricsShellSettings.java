@@ -352,6 +352,19 @@ public final class LyricsShellSettings {
         return "Spotlight".equals(fallback);
     }
 
+    /** "Apple Music" animation style = the Apple-owned motion/blur/fade stack (R3). */
+    public boolean appleAnimation() {
+        String fallback = config == null ? "" : config.get(Settings.ANIMATION_STYLE);
+        try {
+            SharedPreferences prefs = prefs();
+            if (prefs != null && prefs.contains(Settings.ANIMATION_STYLE.key)) {
+                return "Apple Music".equals(prefs.getString(Settings.ANIMATION_STYLE.key, fallback));
+            }
+        } catch (Throwable ignored) {
+        }
+        return "Apple Music".equals(fallback);
+    }
+
     public boolean lineSyncFillTopDown() {
         return "Top to bottom".equals(lineSyncFillMode());
     }

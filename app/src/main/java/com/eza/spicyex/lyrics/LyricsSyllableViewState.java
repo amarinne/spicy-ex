@@ -10,7 +10,40 @@ import java.util.WeakHashMap;
 public final class LyricsSyllableViewState {
     private static final Map<SyllableSegment, SyllableRenderState> STATES = new WeakHashMap<>();
 
+    /** Apple lift motion active: bouncier spring constants for words and letters. */
+    private static boolean appleMotion;
+
     private LyricsSyllableViewState() {
+    }
+
+    /**
+     * Switches the motion constants. Resets live springs so in-flight words adopt the new
+     * physics immediately instead of finishing on stale constants. Cheap no-op when unchanged;
+     * safe to call per frame (covers first mount, unlike config-change-only sync).
+     */
+    public static void setAppleMotion(boolean enabled) {
+        if (appleMotion == enabled) return;
+        appleMotion = enabled;
+        for (SyllableRenderState state : STATES.values()) {
+            if (state == null) continue;
+            state.ySpring = null;
+            state.glowSpring = null;
+            state.localScaleSpring = null;
+            state.localYSpring = null;
+            for (AnimatedLetterState letter : state.letters) {
+                if (letter == null) continue;
+                letter.ySpring = null;
+                letter.glowSpring = null;
+            }
+        }
+    }
+
+    public static SpicyAnimatedTextView wordTextView(SyllableSegment segment) {
+        return segment == null ? null : state(segment).textView;
+    }
+
+    public static SpicyAnimatedTextView romanizedTextView(SyllableSegment segment) {
+        return segment == null ? null : state(segment).romanizedTextView;
     }
 
     public static void setWordView(SyllableSegment segment, View view) {
@@ -489,22 +522,30 @@ public final class LyricsSyllableViewState {
 
     private static void ensureWordYSpring(SyllableSegment segment, float initialY) {
         if (state(segment).ySpring != null) return;
-        state(segment).ySpring = new Spring(initialY, 1.45f, 0.4f);
+        state(segment).ySpring = appleMotion
+                ? new Spring(initialY, 1.3f, 0.7f)
+                : new Spring(initialY, 1.45f, 0.4f);
     }
 
     private static void ensureWordGlowSpring(SyllableSegment segment) {
         if (state(segment).glowSpring != null) return;
-        state(segment).glowSpring = new Spring(0f, 1.18f, 0.56f);
+        state(segment).glowSpring = appleMotion
+                ? new Spring(0f, 2.4f, 0.65f)
+                : new Spring(0f, 1.18f, 0.56f);
     }
 
     private static void ensureLocalWordScaleSpring(SyllableSegment segment, float initialScale) {
         if (state(segment).localScaleSpring != null) return;
-        state(segment).localScaleSpring = new Spring(initialScale, 0.88f, 0.64f);
+        state(segment).localScaleSpring = appleMotion
+                ? new Spring(initialScale, 1.15f, 0.8f)
+                : new Spring(initialScale, 0.88f, 0.64f);
     }
 
     private static void ensureLocalWordYSpring(SyllableSegment segment, float initialY) {
         if (state(segment).localYSpring != null) return;
-        state(segment).localYSpring = new Spring(initialY, 1.45f, 0.4f);
+        state(segment).localYSpring = appleMotion
+                ? new Spring(initialY, 1.3f, 0.7f)
+                : new Spring(initialY, 1.45f, 0.4f);
     }
 
     private static void snapWordSprings(SyllableSegment segment, float scale, float y, float glow) {
@@ -560,12 +601,16 @@ public final class LyricsSyllableViewState {
 
     private static void ensureLetterYSpring(AnimatedLetterState letter, float initialY) {
         if (letter.ySpring != null) return;
-        letter.ySpring = new Spring(initialY, 1.25f, 0.4f);
+        letter.ySpring = appleMotion
+                ? new Spring(initialY, 1.3f, 0.7f)
+                : new Spring(initialY, 1.25f, 0.4f);
     }
 
     private static void ensureLetterGlowSpring(AnimatedLetterState letter) {
         if (letter.glowSpring != null) return;
-        letter.glowSpring = new Spring(0f, 1f, 0.5f);
+        letter.glowSpring = appleMotion
+                ? new Spring(0f, 2.4f, 0.65f)
+                : new Spring(0f, 1f, 0.5f);
     }
 
     private static void snapLetterSprings(AnimatedLetterState letter,

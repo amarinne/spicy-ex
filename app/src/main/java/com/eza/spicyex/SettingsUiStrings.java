@@ -149,13 +149,12 @@ public final class SettingsUiStrings {
         Resources moduleResources = References.modResources;
         if (moduleResources == null) return hostContext.getResources();
         if (language == null || language.isEmpty() || "system".equalsIgnoreCase(language)) return moduleResources;
-        try {
-            Configuration configuration = new Configuration(moduleResources.getConfiguration());
-            configuration.setLocales(new LocaleList(Locale.forLanguageTag(language)));
-            return new Resources(moduleResources.getAssets(), moduleResources.getDisplayMetrics(), configuration);
-        } catch (Throwable ignored) {
-            return moduleResources;
-        }
+        // Isolated loader, never a wrapper around shared assets: wrapping the shared
+        // AssetManager pushes this locale's config into it, so the last locale resolved
+        // (zh, enumerated last while building the language picker's native labels) won
+        // for every previously built Resources and flipped dialogs to Chinese on read
+        // alone. A null return fails closed into the literal fallbacks in get().
+        return com.eza.spicyex.xposed.XpRes.resourcesForLanguage(language);
     }
 
     private String localeName(String language) {
@@ -183,7 +182,8 @@ public final class SettingsUiStrings {
         return "en";
     }
 
-    private static boolean matchesSupportedLocale(String requested, String supported) {
+    /** Package-visible for unit coverage; pure locale matching, no framework reads. */
+    static boolean matchesSupportedLocale(String requested, String supported) {
         Locale left = Locale.forLanguageTag(normalizeLocaleTag(requested));
         Locale right = Locale.forLanguageTag(normalizeLocaleTag(supported));
         if (!left.getLanguage().equalsIgnoreCase(right.getLanguage())) return false;
@@ -213,7 +213,8 @@ public final class SettingsUiStrings {
         return rightCountry.isEmpty() || rightCountry.equalsIgnoreCase(left.getCountry());
     }
 
-    private static String normalizeLocaleTag(String value) {
+    /** Package-visible for unit coverage; pure tag cleanup, no framework reads. */
+    static String normalizeLocaleTag(String value) {
         return value == null ? "" : value.replace('_', '-').replace("-r", "-");
     }
 

@@ -12,7 +12,7 @@ public final class FeatureAvailability {
 
     public static boolean translationAvailable() {
         return BuildConfig.TRANSLATION_AVAILABLE
-                && hasClass("com.github.pemistahl.lingua.api.LanguageDetectorBuilder");
+                && hasClass("org.apache.tika.langdetect.charsoup.core.CharSoupModel");
     }
 
     public static boolean appleFontAvailable() {

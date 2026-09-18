@@ -26,13 +26,19 @@ public final class ActionIconDrawable extends Drawable {
     public enum Kind {
         CLOSE, EDIT, SAVE, VISIBILITY, VISIBILITY_OFF, DELETE, TEST, CHECK,
         CHEVRON_DOWN, CHEVRON_RIGHT,
-        CHEVRONS_UP_DOWN, CHEVRONS_DOWN_UP, SPARKLES, MINUS, PLUS, CIRCLE, CIRCLE_HELP,
+        CHEVRONS_UP_DOWN, CHEVRONS_DOWN_UP, CHEVRONS_RIGHT, SPARKLES, MINUS, PLUS, CIRCLE, CIRCLE_HELP,
         AUDIO_LINES, BOOK_OPEN_TEXT, LANGUAGES, DISC_3, FULLSCREEN, ACTIVITY,
         BUG, ERASER, EXTERNAL_LINK,
-        GLOBE, POINTER, TIMER, TARGET, BOLD, A_LARGE_SMALL, ROWS_2, CIRCLE_PLAY,
+        GLOBE, POINTER, TIMER, TARGET, BOLD, A_LARGE_SMALL, ROWS_2, CIRCLE_PLAY, PLAY,
         SUN_MEDIUM, ALIGN_VERTICAL_DISTRIBUTE_CENTER, TYPE, ELLIPSIS, WAND_SPARKLES,
         SPARKLE, DROPLETS, IMAGE, WHOLE_WORD, ALIGN_CENTER_VERTICAL, ARROW_RIGHT_LEFT,
-        SETTINGS
+        SETTINGS, HEART, STAR
+    }
+
+    public static Kind likedSongsKind(String value) {
+        if ("Heart".equals(value)) return Kind.HEART;
+        if ("Star".equals(value)) return Kind.STAR;
+        return null;
     }
 
     private static final Map<String, Path> PARSED = new HashMap<>();

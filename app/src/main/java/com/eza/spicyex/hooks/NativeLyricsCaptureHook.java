@@ -13,7 +13,9 @@ import java.util.Locale;
 import com.eza.spicyex.xposed.XpHooks;
 import com.eza.spicyex.xposed.XpLog;
 import com.eza.spicyex.xposed.XpReflect;
-import org.luckypray.dexkit.DexKitBridge;
+import com.eza.spicyex.xposed.SpotifySymbolResolver;
+import java.util.ArrayList;
+import java.util.List;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.matchers.ClassMatcher;
 
@@ -46,18 +48,18 @@ final class NativeLyricsCaptureHook {
 
     private final LinkedHashSet<String> hookedClassNames = new LinkedHashSet<>();
     private final ClassLoader classLoader;
-    private final DexKitBridge bridge;
+    private final SpotifySymbolResolver symbols;
     private final NativeLyricsSource nativeLyricsSource;
     private final TrackProvider trackProvider;
 
     NativeLyricsCaptureHook(
             ClassLoader classLoader,
-            DexKitBridge bridge,
+            SpotifySymbolResolver symbols,
             NativeLyricsSource nativeLyricsSource,
             TrackProvider trackProvider
     ) {
         this.classLoader = classLoader;
-        this.bridge = bridge;
+        this.symbols = symbols;
         this.nativeLyricsSource = nativeLyricsSource;
         this.trackProvider = trackProvider;
     }
@@ -96,26 +98,20 @@ final class NativeLyricsCaptureHook {
     }
 
     private void discoverNativeLyricsClasses() {
-        if (bridge == null) return;
         for (String[] probe : DEXKIT_PROBES) {
             try {
-                var found = bridge.findClass(FindClass.create().matcher(ClassMatcher.create().usingStrings(probe)));
-                XpLog.log(NativeSpicyLyricsHook.TAG
-                        + " native lyrics DexKit probe strings=" + String.join(",", probe)
-                        + " matches=" + found.size());
-                int count = 0;
-                for (org.luckypray.dexkit.result.ClassData data : found) {
-                    if (count++ >= 8) break;
-                    String name = data.getName();
-                    XpLog.log(NativeSpicyLyricsHook.TAG + " native lyrics DexKit candidate " + name);
-                    try {
-                        hookResolvedNativeLyricsClass(data.getInstance(classLoader),
-                                "dexkit:" + String.join(",", probe));
-                    } catch (Throwable t) {
-                        XpLog.log(NativeSpicyLyricsHook.TAG
-                                + " native lyrics DexKit candidate load failed " + name
-                                + ": " + t.getClass().getSimpleName());
+                List<Class<?>> found = symbols.cache.classes("lyrics." + String.join("|", probe), () -> {
+                    var matches = symbols.dexKit().findClass(
+                            FindClass.create().matcher(ClassMatcher.create().usingStrings(probe)));
+                    List<String> classes = new ArrayList<>();
+                    for (var data : matches) {
+                        if (classes.size() >= 8) break;
+                        classes.add(data.getName());
                     }
+                    return classes;
+                });
+                for (Class<?> cls : found) {
+                    hookResolvedNativeLyricsClass(cls, "resolved:" + String.join(",", probe));
                 }
             } catch (Throwable t) {
                 XpLog.log(NativeSpicyLyricsHook.TAG

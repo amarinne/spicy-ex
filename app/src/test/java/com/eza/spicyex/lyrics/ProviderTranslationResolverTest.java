@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.session.DetectionResult;
+
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -20,11 +22,80 @@ public class ProviderTranslationResolverTest {
     }
 
     @Test
-    public void unknownLatinProviderTranslationDefaultsOnlyToEnglish() {
-        assertEquals("Hello", ProviderTranslationResolver.resolve("你好", "Hello", "", "en"));
-        assertEquals("", ProviderTranslationResolver.resolve("你好", "Hello", "", "fr"));
-        assertEquals("Esta canción ya está en español",
-                ProviderTranslationResolver.resolve("this song", "Esta canción ya está en español", "", "es"));
+    public void unlabelledLatinProviderTextRequiresItsOwnDetection() {
+        TextDetectionLookup english = text -> DetectionResult.detected("", text,
+                ScriptClassifier.ScriptClass.LATIN, "en", 0.9);
+
+        assertEquals("Hello", ProviderTranslationResolver.resolve("你好", "Hello", "", "en", english));
+        // No evidence, no acceptance — not even for an English target.
+        assertEquals("", ProviderTranslationResolver.resolve("你好", "Hello", "", "en",
+                TextDetectionLookup.NONE));
+        assertEquals("", ProviderTranslationResolver.resolve("你好", "Hello", "", "fr", english));
+        // Accented text does not establish a language either.
+        assertEquals("", ProviderTranslationResolver.resolve(
+                "this song", "Esta canción ya está en español", "", "es"));
+    }
+
+    @Test
+    public void foreignLatinTextIsNotAcceptedAsEnglishWithoutEnglishDetection() {
+        TextDetectionLookup spanish = spanishLookup();
+
+        assertEquals("", ProviderTranslationResolver.resolve(
+                "this song", "Esta canción ya está en español", "", "en", spanish));
+        assertEquals("", ProviderTranslationResolver.resolve(
+                "this song", "Esta canción ya está en español", "", "en", TextDetectionLookup.NONE));
+        assertEquals("Esta canción ya está en español", ProviderTranslationResolver.resolve(
+                "this song", "Esta canción ya está en español", "", "en",
+                text -> DetectionResult.detected("", text, ScriptClassifier.ScriptClass.LATIN, "en", 0.9)));
+    }
+
+    @Test
+    public void accentedProviderTextIsNotAcceptedForAnUnrelatedTarget() {
+        TextDetectionLookup spanish = spanishLookup();
+
+        // Regression probes: Spanish text with Vietnamese selected, and English text supplied
+        // for a Spanish target, must not be accepted on accents or on the source lyric's language.
+        assertEquals("", ProviderTranslationResolver.resolve(
+                "this song", "Esta canción ya está en español", "", "vi", spanish));
+        assertEquals("", ProviderTranslationResolver.resolve(
+                "esta canción", "Hello my friend", "", "es", spanish));
+    }
+
+    @Test
+    public void providerDetectionOfTheTranslationTextDecides() {
+        TextDetectionLookup spanish = spanishLookup();
+        TextDetectionLookup englishForHola = text -> "Hola amigo".equals(text)
+                ? DetectionResult.detected("", text, ScriptClassifier.ScriptClass.LATIN, "en", 0.9)
+                : null;
+
+        assertEquals("Esta canción ya está en español", ProviderTranslationResolver.resolve(
+                "this song", "Esta canción ya está en español", "", "es", spanish));
+        assertEquals("Hola amigo", ProviderTranslationResolver.resolve(
+                "hello friend", "Hola amigo", "", "es", spanish));
+        assertEquals("", ProviderTranslationResolver.resolve(
+                "hello friend", "Hola amigo", "", "es", englishForHola));
+        assertEquals("", ProviderTranslationResolver.resolve(
+                "hello friend", "Hola amigo", "", "es", TextDetectionLookup.NONE));
+    }
+
+    @Test
+    public void providerResolutionNeverInvokesTheDetector() {
+        long before = LatinLanguageGate.detectionCountForTest();
+        TextDetectionLookup spanish = spanishLookup();
+
+        assertEquals("Esta canción ya está en español", ProviderTranslationResolver.resolve(
+                "this song", "Esta canción ya está en español", "", "es", spanish));
+        assertEquals("", ProviderTranslationResolver.resolve(
+                "this song", "Esta canción ya está en español", "", "vi", spanish));
+
+        assertEquals(before, LatinLanguageGate.detectionCountForTest());
+    }
+
+    /** Detection that only vouches for the two Spanish strings used by these tests. */
+    private static TextDetectionLookup spanishLookup() {
+        return text -> text != null && (text.startsWith("Esta") || text.startsWith("Hola"))
+                ? DetectionResult.detected("", text, ScriptClassifier.ScriptClass.LATIN, "es", 0.9)
+                : null;
     }
 
     @Test

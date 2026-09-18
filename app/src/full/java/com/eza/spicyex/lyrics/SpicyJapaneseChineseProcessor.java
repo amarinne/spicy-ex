@@ -10,9 +10,6 @@ import net.sourceforge.pinyin4j.format.HanyuPinyinOutputFormat;
 import net.sourceforge.pinyin4j.format.HanyuPinyinToneType;
 import net.sourceforge.pinyin4j.format.HanyuPinyinVCharType;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -20,7 +17,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.HashMap;
-import java.nio.charset.StandardCharsets;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
@@ -332,10 +328,7 @@ public final class SpicyJapaneseChineseProcessor {
         }
     }
 
-    private static volatile Tokenizer tokenizer;
     private static volatile PinyinTrieNode pinyinPhraseTrie;
-    private static volatile Map<String, List<TokenFuriganaReading>> jmdictFurigana;
-    private static volatile Map<String, String> jmdictPreferredReadings;
     private static final Map<String, String> KANA = new HashMap<>();
     private static final HanyuPinyinOutputFormat PINYIN_FORMAT = new HanyuPinyinOutputFormat();
     private static final HanyuPinyinOutputFormat PINYIN_FORMAT_TONED = new HanyuPinyinOutputFormat();
@@ -398,21 +391,32 @@ public final class SpicyJapaneseChineseProcessor {
         return analyzeJapaneseLine(text, fullSpacedRomaji, null);
     }
 
+    /**
+     * Common analysis entry point. Every caller — including the boundary-aware overload used by
+     * {@link LyricsLocalRomanizer} — runs under a resource lease, so memory trimming defers instead
+     * of releasing the tokenizer or dictionaries mid-analysis.
+     */
     static JapaneseReading analyzeJapaneseLine(
             String text, String fullSpacedRomaji,
             List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
-        if (isBlank(text)) return null;
-        NormalizedText normalized = normalizeWithOffsets(text);
-        String sourceText = normalized.text;
-        if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return null;
+        JapaneseReadingEngine engine = JapaneseReadingEngine.shared();
+        engine.beginUse();
+        try {
+            if (isBlank(text)) return null;
+            NormalizedText normalized = normalizeWithOffsets(text);
+            String sourceText = normalized.text;
+            if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return null;
 
-        FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
-                normalized.rawText, sourceText, null, explicitBoundaries);
-        String romaji = buildRomaji(finalized.entries);
-        if (isBlank(romaji) && !isBlank(fullSpacedRomaji)) romaji = fullSpacedRomaji;
-        List<FuriganaSegment> furigana = buildFurigana(sourceText, finalized.entries);
-        return new JapaneseReading(sourceText, romaji, furigana, readingGroups(finalized.entries),
-                finalized.readingContext, finalized.readingDecisions, finalized.diagnostics);
+            FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
+                    normalized.rawText, sourceText, null, explicitBoundaries);
+            String romaji = buildRomaji(finalized.entries);
+            if (isBlank(romaji) && !isBlank(fullSpacedRomaji)) romaji = fullSpacedRomaji;
+            List<FuriganaSegment> furigana = buildFurigana(sourceText, finalized.entries);
+            return new JapaneseReading(sourceText, romaji, furigana, readingGroups(finalized.entries),
+                    finalized.readingContext, finalized.readingDecisions, finalized.diagnostics);
+        } finally {
+            engine.endUse();
+        }
     }
 
     public static String romanizeJapaneseLine(String text) {
@@ -445,7 +449,11 @@ public final class SpicyJapaneseChineseProcessor {
         if (parsed != null && !parsed.groups.isEmpty()) return parsed;
         String sourceText = parsed == null || isBlank(parsed.sourceText)
                 ? safe(fallbackSourceText) : parsed.sourceText;
-        if (isBlank(sourceText) || !SpicyTextDetection.itemJapaneseTest(sourceText)) return parsed;
+        // Kana is the only script proof of Japanese at parse time: Han-only text must not be
+        // analyzed here, or every Chinese line enters the pipeline carrying Japanese furigana
+        // that an abstaining detector can never clear. Kanji-only Japanese lines are analyzed
+        // post-detection in the Sound lane, where the document vote owns the ja decision.
+        if (isBlank(sourceText) || !SpicyTextDetection.hasKana(sourceText)) return parsed;
         JapaneseReading finalized = parsed == null || parsed.furigana.isEmpty()
                 ? analyzeJapaneseLine(sourceText, null)
                 : analyzeJapaneseLineWithProviderFurigana(sourceText, parsed.furigana);
@@ -455,17 +463,23 @@ public final class SpicyJapaneseChineseProcessor {
     static JapaneseReading analyzeJapaneseLineWithProviderFurigana(
             String text, List<FuriganaSegment> furigana,
             List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
-        if (isBlank(text) || furigana == null || furigana.isEmpty()) return null;
-        NormalizedText normalized = normalizeWithOffsets(text);
-        String sourceText = normalized.text;
-        if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return null;
+        JapaneseReadingEngine engine = JapaneseReadingEngine.shared();
+        engine.beginUse();
+        try {
+            if (isBlank(text) || furigana == null || furigana.isEmpty()) return null;
+            NormalizedText normalized = normalizeWithOffsets(text);
+            String sourceText = normalized.text;
+            if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return null;
 
-        List<FuriganaSegment> mappedFurigana = mapProviderFurigana(furigana, normalized);
-        FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
-                normalized.rawText, sourceText, mappedFurigana, explicitBoundaries);
-        return new JapaneseReading(sourceText, buildRomaji(finalized.entries),
-                buildFurigana(sourceText, finalized.entries, mappedFurigana), readingGroups(finalized.entries),
-                finalized.readingContext, finalized.readingDecisions, finalized.diagnostics);
+            List<FuriganaSegment> mappedFurigana = mapProviderFurigana(furigana, normalized);
+            FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
+                    normalized.rawText, sourceText, mappedFurigana, explicitBoundaries);
+            return new JapaneseReading(sourceText, buildRomaji(finalized.entries),
+                    buildFurigana(sourceText, finalized.entries, mappedFurigana), readingGroups(finalized.entries),
+                    finalized.readingContext, finalized.readingDecisions, finalized.diagnostics);
+        } finally {
+            engine.endUse();
+        }
     }
 
     static JapaneseDebugSnapshot debugJapaneseSnapshot(String text, List<FuriganaSegment> providerFurigana) {
@@ -475,14 +489,20 @@ public final class SpicyJapaneseChineseProcessor {
     static JapaneseDebugSnapshot debugJapaneseSnapshot(
             String text, List<FuriganaSegment> providerFurigana,
             List<JapaneseReadingPolicyModels.BoundaryEvidence> explicitBoundaries) {
-        NormalizedText normalized = normalizeWithOffsets(safe(text));
-        List<FuriganaSegment> mappedFurigana = mapProviderFurigana(providerFurigana, normalized);
-        FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
-                normalized.rawText, normalized.text, mappedFurigana, explicitBoundaries);
-        String romaji = buildRomaji(finalized.entries);
-        return new JapaneseDebugSnapshot(normalized.text, finalized.analysisText, finalized.entries, romaji,
-                buildFurigana(normalized.text, finalized.entries, mappedFurigana), finalized.readingContext,
-                finalized.readingDecisions, finalized.diagnostics);
+        JapaneseReadingEngine engine = JapaneseReadingEngine.shared();
+        engine.beginUse();
+        try {
+            NormalizedText normalized = normalizeWithOffsets(safe(text));
+            List<FuriganaSegment> mappedFurigana = mapProviderFurigana(providerFurigana, normalized);
+            FinalizedAnalysis finalized = finalizeJapaneseAnalysis(
+                    normalized.rawText, normalized.text, mappedFurigana, explicitBoundaries);
+            String romaji = buildRomaji(finalized.entries);
+            return new JapaneseDebugSnapshot(normalized.text, finalized.analysisText, finalized.entries, romaji,
+                    buildFurigana(normalized.text, finalized.entries, mappedFurigana), finalized.readingContext,
+                    finalized.readingDecisions, finalized.diagnostics);
+        } finally {
+            engine.endUse();
+        }
     }
 
     static JapaneseReading debugJapaneseProjectionForTest(
@@ -632,9 +652,15 @@ public final class SpicyJapaneseChineseProcessor {
         String sourceText = Normalizer.normalize(lineText, Normalizer.Form.NFKC);
         if (!SpicyTextDetection.itemJapaneseTest(sourceText)) return out;
 
-        List<Entry> entries = buildEntries(sourceText, analysisTextForJapanese(sourceText));
-        if (entries.isEmpty()) return out;
-        return mapGroupsToSyllables(sourceText, readingGroups(entries), syllableTexts);
+        JapaneseReadingEngine engine = JapaneseReadingEngine.shared();
+        engine.beginUse();
+        try {
+            List<Entry> entries = buildEntries(sourceText, analysisTextForJapanese(sourceText));
+            if (entries.isEmpty()) return out;
+            return mapGroupsToSyllables(sourceText, readingGroups(entries), syllableTexts);
+        } finally {
+            engine.endUse();
+        }
     }
 
     /**
@@ -1421,6 +1447,17 @@ public final class SpicyJapaneseChineseProcessor {
             Entry next = i + 1 < entries.size() ? entries.get(i + 1) : null;
             Token token = entry.token;
 
+            // UniDic can select the literary なんどき reading for a standalone 何時 token.
+            // In lyric-register clock questions, the ordinary reading is なんじ. Keep lexical
+            // 何時も/いつ and other already-resolved readings analyzer-owned.
+            if ("何時".equals(entry.surface) && "なんどき".equals(entry.readingKana)
+                    && isBlank(entry.ruleId) && !entry.providerValidated
+                    && (next == null || next.token == null || !"も".equals(next.surface))) {
+                decide(entry, "なんじ", "ja.reading.policy.nanji-default",
+                        "rule:ja.reading.policy.nanji-default");
+                continue;
+            }
+
             // Lyrics use independent 何 as なに far more often than the bare analyzer
             // default なん. This is a reviewed default, so validated provider evidence
             // must win. Strong nan evidence (particles, copula, suffix/counter, and
@@ -1443,7 +1480,10 @@ public final class SpicyJapaneseChineseProcessor {
                         || "接頭辞".equals(safe(previous.token.getPartOfSpeechLevel1())));
             String preferred = isBlank(entry.ruleId) && !entry.providerValidated
                     && entry.token != null && isAllKanjiCommonNoun(entry)
-                    && !compoundLeft ? jmdictPreferredReadings().get(kataToHira(entry.surface)) : null;
+                    && !compoundLeft
+                    ? JapaneseReadingEngine.shared().jmdictPreferredReadings()
+                            .get(kataToHira(entry.surface))
+                    : null;
             if (!isBlank(preferred) && !preferred.equals(entry.readingKana)
                     && jmdictFuriganaSegments(entry.surface, preferred) != null) {
                 decide(entry, preferred, "ja.reading.policy.preferred-lexical-reading",
@@ -2130,118 +2170,37 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static List<TokenFuriganaReading> jmdictFuriganaSegments(String surface, String kana) {
-        Map<String, List<TokenFuriganaReading>> data = jmdictFurigana();
+        Map<String, List<FuriganaSegment>> data = JapaneseReadingEngine.shared().jmdictFurigana();
         if (data.isEmpty()) return null;
-        List<TokenFuriganaReading> segments = data.get(kataToHira(surface) + "|" + kataToHira(kana));
-        return segments == null ? null : new ArrayList<>(segments);
-    }
-
-    private static Map<String, List<TokenFuriganaReading>> jmdictFurigana() {
-        Map<String, List<TokenFuriganaReading>> local = jmdictFurigana;
-        if (local != null) return local;
-        synchronized (SpicyJapaneseChineseProcessor.class) {
-            if (jmdictFurigana == null) jmdictFurigana = loadJmdictFurigana();
-            return jmdictFurigana;
-        }
-    }
-
-    private static Map<String, List<TokenFuriganaReading>> loadJmdictFurigana() {
-        HashMap<String, List<TokenFuriganaReading>> out = new HashMap<>();
-        try (InputStream in = SpicyJapaneseChineseProcessor.class.getResourceAsStream("JmdictFurigana.txt.gz")) {
-            if (in == null) return out;
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(new java.util.zip.GZIPInputStream(in), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (!line.isEmpty() && line.charAt(0) == '\uFEFF') line = line.substring(1);
-                    int first = line.indexOf('|');
-                    int second = first < 0 ? -1 : line.indexOf('|', first + 1);
-                    if (first <= 0 || second <= first + 1 || second >= line.length() - 1) continue;
-                    String surface = line.substring(0, first);
-                    String reading = line.substring(first + 1, second);
-                    List<TokenFuriganaReading> segments = parseJmdictSpanSpec(line.substring(second + 1));
-                    if (segments.isEmpty()) continue;
-                    String key = kataToHira(surface) + "|" + kataToHira(reading);
-                    if (!out.containsKey(key)) out.put(key, segments);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        return out;
-    }
-
-    private static Map<String, String> jmdictPreferredReadings() {
-        Map<String, String> local = jmdictPreferredReadings;
-        if (local != null) return local;
-        synchronized (SpicyJapaneseChineseProcessor.class) {
-            if (jmdictPreferredReadings == null) jmdictPreferredReadings = loadJmdictPreferredReadings();
-            return jmdictPreferredReadings;
-        }
-    }
-
-    private static Map<String, String> loadJmdictPreferredReadings() {
-        HashMap<String, String> out = new HashMap<>();
-        try (InputStream in = SpicyJapaneseChineseProcessor.class.getResourceAsStream("JmdictPreferredReadings.txt.gz")) {
-            if (in == null) return out;
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(new java.util.zip.GZIPInputStream(in), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (!line.isEmpty() && line.charAt(0) == '\uFEFF') line = line.substring(1);
-                    int separator = line.indexOf('|');
-                    if (separator <= 0 || separator >= line.length() - 1) continue;
-                    out.put(kataToHira(line.substring(0, separator)), kataToHira(line.substring(separator + 1)));
-                }
-            }
-        } catch (Throwable ignored) {
+        List<FuriganaSegment> segments = data.get(kataToHira(surface) + "|" + kataToHira(kana));
+        if (segments == null) return null;
+        ArrayList<TokenFuriganaReading> out = new ArrayList<>(segments.size());
+        for (FuriganaSegment segment : segments) {
+            out.add(new TokenFuriganaReading(segment.reading, segment.start, segment.end));
         }
         return out;
     }
 
     static List<FuriganaSegment> kanaReadingSegmentsForTest(String surface, String kana) {
-        return testSegments(kanaReadingSegments(surface, kana));
+        JapaneseReadingEngine engine = JapaneseReadingEngine.shared();
+        engine.beginUse();
+        try {
+            return toFuriganaSegments(kanaReadingSegments(surface, kana));
+        } finally {
+            engine.endUse();
+        }
     }
 
     static List<FuriganaSegment> parseJmdictSpanSpecForTest(String spec) {
-        return testSegments(parseJmdictSpanSpec(spec));
+        return JapaneseReadingEngine.parseJmdictSpanSpec(spec);
     }
 
-    private static List<FuriganaSegment> testSegments(List<TokenFuriganaReading> segments) {
+    private static List<FuriganaSegment> toFuriganaSegments(List<TokenFuriganaReading> segments) {
         ArrayList<FuriganaSegment> out = new ArrayList<>();
         for (TokenFuriganaReading segment : segments) {
             out.add(new FuriganaSegment(segment.targetStart, segment.targetEnd, segment.text));
         }
         return out;
-    }
-
-    private static List<TokenFuriganaReading> parseJmdictSpanSpec(String spec) {
-        ArrayList<TokenFuriganaReading> segments = new ArrayList<>();
-        if (isBlank(spec)) return segments;
-        String[] parts = spec.split(";");
-        for (String part : parts) {
-            if (isBlank(part)) continue;
-            int colon = part.indexOf(':');
-            if (colon <= 0 || colon >= part.length() - 1) continue;
-            String range = part.substring(0, colon);
-            String reading = kataToHira(part.substring(colon + 1));
-            int dash = range.indexOf('-');
-            try {
-                int start;
-                int end;
-                if (dash > 0) {
-                    start = Integer.parseInt(range.substring(0, dash));
-                    end = Integer.parseInt(range.substring(dash + 1)) + 1;
-                } else {
-                    start = Integer.parseInt(range);
-                    end = start + 1;
-                }
-                if (start >= 0 && end > start && !isBlank(reading)) {
-                    segments.add(new TokenFuriganaReading(reading, start, end));
-                }
-            } catch (NumberFormatException ignored) {
-            }
-        }
-        return segments;
     }
 
     private static int okuriganaAnchorIndex(String kana, int kanaCursor, String okurigana) {
@@ -2482,12 +2441,15 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static Tokenizer tokenizer() {
-        Tokenizer local = tokenizer;
-        if (local != null) return local;
-        synchronized (SpicyJapaneseChineseProcessor.class) {
-            if (tokenizer == null) tokenizer = new Tokenizer();
-            return tokenizer;
-        }
+        return JapaneseReadingEngine.shared().tokenizer();
+    }
+
+    /**
+     * Releases the tokenizer and JMdict tables. Persistent reading artifacts on disk stay; the next
+     * Japanese analysis reloads lazily.
+     */
+    public static void trimMemory() {
+        JapaneseReadingEngine.shared().trimMemory();
     }
 
     private static String kataToHira(String text) {

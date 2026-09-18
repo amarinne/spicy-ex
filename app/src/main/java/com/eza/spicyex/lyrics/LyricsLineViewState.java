@@ -138,6 +138,15 @@ public final class LyricsLineViewState {
         styleBatcher.queueBlurIfChanged(state(line).rowView, blurPx, 0.25f);
     }
 
+    public static void applyLineShadow(AppliedLine line, float intensity) {
+        if (line == null) return;
+        AppliedLineRenderState st = state(line);
+        if (st.mainView != null) st.mainView.setLineShadow(intensity);
+        View container = line.words != null && !line.words.isEmpty()
+                ? LyricsSyllableViewState.parentView(line.words.get(0)) : null;
+        if (container instanceof GlowFlexbox) ((GlowFlexbox) container).setLineShadowIntensity(intensity);
+    }
+
     public static boolean hasMainView(AppliedLine line) {
         return line != null && state(line).mainView != null;
     }
@@ -159,25 +168,31 @@ public final class LyricsLineViewState {
     }
 
     public static void applyLineLevelGradient(AppliedLine line, float gradient, float glow) {
-        applyLineLevelGradient(line, gradient, glow, 1f);
+        applyLineLevelGradient(line, gradient, glow, 1f, Float.NaN);
     }
 
     public static void applyLineLevelGradient(AppliedLine line, float gradient, float glow, float brightness) {
+        applyLineLevelGradient(line, gradient, glow, brightness, Float.NaN);
+    }
+
+    /** Apple lift widens the karaoke band (NaN = shared default, a no-op for other styles). */
+    public static void applyLineLevelGradient(AppliedLine line, float gradient, float glow, float brightness,
+                                              float bandWidth) {
         if (line == null) return;
         View row = state(line).rowView;
         boolean blockGradient = row != null && row.getHeight() > 0
                 && state(line).mainView != null && state(line).mainView.usesVerticalGradient();
         if (state(line).mainView != null) {
             state(line).mainView.setBrightnessMultiplier(brightness);
-            applyLineGradientView(state(line).mainView, row, blockGradient, gradient, glow);
+            applyLineGradientView(state(line).mainView, row, blockGradient, gradient, glow, bandWidth);
         }
         if (state(line).romanView != null) {
             state(line).romanView.setBrightnessMultiplier(brightness);
-            applyLineGradientView(state(line).romanView, row, blockGradient, gradient, glow);
+            applyLineGradientView(state(line).romanView, row, blockGradient, gradient, glow, bandWidth);
         }
         if (state(line).translationView != null) {
             if (blockGradient) {
-                applyLineGradientView(state(line).translationView, row, true, gradient, glow);
+                applyLineGradientView(state(line).translationView, row, true, gradient, glow, bandWidth);
             } else {
                 state(line).translationView.setGradientPosition(LyricAnimations.GRADIENT_SUNG, 0f);
             }
@@ -186,7 +201,14 @@ public final class LyricsLineViewState {
 
     private static void applyLineGradientView(SpicyAnimatedTextView view, View row,
                                               boolean blockGradient, float gradient, float glow) {
+        applyLineGradientView(view, row, blockGradient, gradient, glow, Float.NaN);
+    }
+
+    private static void applyLineGradientView(SpicyAnimatedTextView view, View row,
+                                              boolean blockGradient, float gradient, float glow,
+                                              float bandWidth) {
         if (view == null) return;
+        view.setGradientBandWidth(bandWidth);
         if (blockGradient && row != null) {
             view.setContainerVerticalGradientPosition(gradient, glow, row.getHeight(), view.getTop());
         } else {
@@ -231,6 +253,15 @@ public final class LyricsLineViewState {
         return clamp(state(line).lineGlowSpring.step(frameDelta(deltaSeconds)), 0f, 1f);
     }
 
+    public static float stepLineShadow(AppliedLine line, float targetIntensity, float deltaSeconds) {
+        if (line == null) return targetIntensity;
+        if (state(line).lineShadowSpring == null) {
+            state(line).lineShadowSpring = new Spring(0f, 0.5f, 1.0f);
+        }
+        state(line).lineShadowSpring.setGoal(targetIntensity);
+        return clamp(state(line).lineShadowSpring.step(frameDelta(deltaSeconds)), 0f, 1f);
+    }
+
     public static boolean hasDotViews(AppliedLine line) {
         return line != null && state(line).dotViews != null && !state(line).dotViews.isEmpty();
     }
@@ -271,7 +302,8 @@ public final class LyricsLineViewState {
         AppliedLineRenderState state = state(line);
         if (!springAtRest(state.opacitySpring) || !springAtRest(state.lineScaleSpring)
                 || !springAtRest(state.lineGlowSpring) || !springAtRest(state.dotMainScaleSpring)
-                || !springAtRest(state.dotMainOpacitySpring)) return false;
+                || !springAtRest(state.dotMainOpacitySpring)
+                || !springAtRest(state.lineShadowSpring)) return false;
         if (line.words != null) {
             for (SyllableSegment segment : line.words) {
                 if (!LyricsSyllableViewState.isSettled(segment)) return false;

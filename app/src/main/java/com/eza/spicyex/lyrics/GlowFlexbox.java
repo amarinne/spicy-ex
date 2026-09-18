@@ -24,6 +24,8 @@ import com.google.android.flexbox.FlexboxLayout;
  */
 public class GlowFlexbox extends FlexboxLayout {
     private boolean glowLayerEnabled = true;
+    // Apple active-line drop shadow intensity (0 = off, the shared-path default).
+    private float lineShadowAlpha;
     // Blur filters cached by quantized sigma; sigma animates every frame and BlurMaskFilter is
     // immutable, so allocating one per word per frame would churn. Shared with the selfGlow path
     // in SpicyAnimatedTextView; only touched from the UI thread.
@@ -145,6 +147,14 @@ public class GlowFlexbox extends FlexboxLayout {
         invalidate();
     }
 
+    /** Apple line-shadow intensity for the word container (0 = off). */
+    public void setLineShadowIntensity(float intensity) {
+        float clamped = Math.max(0f, Math.min(1f, intensity));
+        if (clamped == lineShadowAlpha) return;
+        lineShadowAlpha = clamped;
+        invalidate();
+    }
+
     static boolean shouldDrawGlow(boolean enabled, float glow) {
         return enabled && glow > 0.02f;
     }
@@ -152,6 +162,7 @@ public class GlowFlexbox extends FlexboxLayout {
     @Override
     protected void dispatchDraw(Canvas canvas) {
         drawGlowLayer(canvas, this);
+        if (lineShadowAlpha > 0.02f) drawShadowLayer(canvas, this);
         super.dispatchDraw(canvas);
     }
 
@@ -170,8 +181,46 @@ public class GlowFlexbox extends FlexboxLayout {
         }
     }
 
-    private void drawWordGlow(Canvas canvas, SpicyAnimatedTextView tv, float x, float y) {
-        float g = Math.max(0f, Math.min(1f, tv.getGlow()));
+    /** Apple shadow pass: blurred dark glyph copies beneath the word container's children. */
+    private void drawShadowLayer(Canvas canvas, ViewGroup parent) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View child = parent.getChildAt(i);
+            int save = canvas.save();
+            canvas.translate(child.getLeft(), child.getTop());
+            canvas.concat(child.getMatrix());
+            if (child instanceof SpicyAnimatedTextView) {
+                drawWordShadow(canvas, (SpicyAnimatedTextView) child);
+            } else if (child instanceof ViewGroup) {
+                drawShadowLayer(canvas, (ViewGroup) child);
+            }
+            canvas.restoreToCount(save);
+        }
+    }
+
+    private void drawWordShadow(Canvas canvas, SpicyAnimatedTextView tv) {
+        Layout layout = tv.getLayout();
+        if (layout == null) return;
+        TextPaint paint = tv.getPaint();
+        int savedColor = paint.getColor();
+        Shader savedShader = paint.getShader();
+        MaskFilter savedMask = paint.getMaskFilter();
+        int alpha = Math.round(55f * lineShadowAlpha);
+        paint.setShader(null);
+        paint.setColor(Color.argb(alpha, 0, 0, 0));
+        paint.setMaskFilter(blurFilter(16f * paint.getTextSize() / 48f));
+        int save = canvas.save();
+        canvas.translate(tv.getTotalPaddingLeft(), tv.getTotalPaddingTop() + paint.getTextSize() * 0.06f);
+        try {
+            layout.draw(canvas);
+        } catch (Throwable ignored) {
+        }
+        canvas.restoreToCount(save);
+        paint.setMaskFilter(savedMask);
+        paint.setColor(savedColor);
+        paint.setShader(savedShader);
+    }
+
+    private void drawWordGlow(Canvas canvas, SpicyAnimatedTextView tv, float x, float y) {        float g = Math.max(0f, Math.min(1f, tv.getGlow()));
         if (!shouldDrawGlow(glowLayerEnabled, g)) return;
         Layout layout = tv.getLayout();
         if (layout == null) return;
@@ -191,6 +240,7 @@ public class GlowFlexbox extends FlexboxLayout {
         int save = canvas.save();
         canvas.translate(x + tv.getTotalPaddingLeft(), y + tv.getTotalPaddingTop());
         try {
+            FuriganaText.FuriganaSpan.onBeginDraw();
             layout.draw(canvas);
         } catch (Throwable ignored) {
         }

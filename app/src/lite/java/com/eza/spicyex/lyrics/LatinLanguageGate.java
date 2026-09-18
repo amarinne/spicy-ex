@@ -1,15 +1,25 @@
 package com.eza.spicyex.lyrics;
 
-final class LatinLanguageGate {
+import com.eza.spicyex.lyrics.session.DetectionResult;
+
+/**
+ * Lite flavor seam: no language models ship in this build, so detection is a no-op.
+ *
+ * <p>The session and gates still run; rows simply carry no detected language and fall back to the
+ * script/hint logic that Lite has always used.
+ */
+public final class LatinLanguageGate {
     private LatinLanguageGate() {
     }
 
-    static boolean lineLooksNonTargetLatin(String compactText, String targetLang) {
-        return false;
+    public static DetectionResult detect(String text, DetectionResult known) {
+        return null;
     }
 
-    static boolean lineLooksTargetLatin(String compactText, String targetLang) {
-        return false;
+    public static DetectionResult detect(String text) {
+        return null;
     }
 
+    public static void trimMemory() {
+    }
 }

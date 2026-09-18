@@ -3,6 +3,7 @@ package com.eza.spicyex.lyrics;
 import java.util.ArrayList;
 import java.util.List;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
+import com.eza.spicyex.lyrics.session.DetectionResult;
 
 /** One parsed lyric line (vocal or interlude marker), before row planning. */
 public class LyricsLine {
@@ -20,6 +21,14 @@ public class LyricsLine {
     public long endMs;
     public boolean interlude;
     public boolean oppositeAligned;
+    /**
+     * Session-owned detection for this canonical row, shared by both render surfaces.
+     *
+     * <p>Display/pipeline input only: it is not canonical text and never persisted on the
+     * document. {@link LyricsDocument#copyOf} carries it so worker snapshots gate on the same
+     * result without re-running a detector.
+     */
+    public DetectionResult detection;
 
     public static LyricsLine copyOf(LyricsLine source) {
         if (source == null) return null;
@@ -32,6 +41,7 @@ public class LyricsLine {
         copy.japaneseReading = source.japaneseReading;
         copy.readingRenderPlan = source.readingRenderPlan;
         copy.chineseMode = LyricsDocument.safe(source.chineseMode);
+        copy.detection = source.detection;
         copy.startMs = source.startMs;
         copy.endMs = source.endMs;
         copy.interlude = source.interlude;

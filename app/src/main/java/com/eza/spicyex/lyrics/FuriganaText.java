@@ -193,7 +193,7 @@ public final class FuriganaText {
             this.reading = reading == null ? "" : reading;
         }
 
-        /** Global draw-cycle counter; each SpicyAnimatedTextView.onDraw increments it once. */
+        /** Each glow or sharp layout pass starts a separate draw cycle. */
         private static final ThreadLocal<Long> DRAW_CYCLE = new ThreadLocal<Long>() {
             @Override
             protected Long initialValue() {
@@ -201,7 +201,7 @@ public final class FuriganaText {
             }
         };
 
-        /** Call at the start of a view's onDraw so every span's reading is eligible again. */
+        /** Call before drawing a layout so each reading is drawn once in that pass. */
         static void onBeginDraw() {
             DRAW_CYCLE.set(DRAW_CYCLE.get() + 1L);
         }

@@ -39,8 +39,11 @@ final class LyricsActivityTakeoverHook {
             "com.spotify.lyrics.fullscreenview.page.LyricsFullscreenPageActivity";
     private static final int TAG_NATIVE_SPICY_ROOT = 0x53504C53; // SPLS
     private static final int TAG_EXTRA_LYRICS_BUTTON = 0x53504C58; // SPLX
+    private static final int TAG_MINI_PLAYER_LYRICS_BUTTON = 0x53504C4D; // SPLM
     private static final long KEEP_LYRICS_ACTIVITY_AFTER_MOUNT_MS = 3500L;
     private static final long[] EXTRA_INJECTION_DELAYS_MS = {450L, 950L, 1400L, 2400L};
+    private static final long MINI_PLAYER_STEADY_RETRY_MS = 3000L;
+    private static final long MINI_PLAYER_STEADY_RETRY_MAX_MS = 10 * 60 * 1000L;
 
     private static final WeakHashMap<Activity, Long> EXPLICIT_LYRICS_EXIT_UNTIL_MS = new WeakHashMap<>();
     private static final WeakHashMap<Activity, Long> KEEP_LYRICS_ACTIVITY_UNTIL_MS = new WeakHashMap<>();
@@ -67,8 +70,10 @@ final class LyricsActivityTakeoverHook {
         XpHooks.findAfter(Activity.class, "onCreate", "takeover:Activity#onCreate", param -> {
             Activity activity = (Activity) param.thisObject;
             if (isLyricsFullscreenActivity(activity)) {
-                registerSystemBackCallback(activity);
+                // No system-back registration here: native Spotify screens stay untouched.
+                // Registration happens only after takeover ownership is established.
                 if (activateNativeTakeover(activity)) {
+                    ensureSystemBackCallback(activity);
                     XpLog.log(NativeSpicyLyricsHook.TAG
                             + " lyrics activity onCreate (takeover) " + activity.getClass().getName());
                 }
@@ -82,7 +87,7 @@ final class LyricsActivityTakeoverHook {
             Activity activity = (Activity) param.thisObject;
             References.setCurrentActivity(activity);
             if (isLyricsFullscreenActivity(activity)) {
-                activateNativeTakeover(activity);
+                if (activateNativeTakeover(activity)) ensureSystemBackCallback(activity);
                 // else: native lyric card opened Spotify's own screen - do not take over.
             } else {
                 scheduleExtraLyricsButtonInjection(activity);
@@ -93,7 +98,15 @@ final class LyricsActivityTakeoverHook {
                 param -> {
                     if (!((boolean) param.args[0])) return;
                     Activity activity = (Activity) param.thisObject;
-                    if (isLyricsFullscreenActivity(activity) && activateNativeTakeover(activity)) {
+                    if (!isLyricsFullscreenActivity(activity)) return;
+                    // Explicit exit must not rearm while the old root still exists: focus
+                    // transitions during the exit animation would otherwise remount/re-register.
+                    if (isExplicitLyricsExit(activity)) {
+                        unregisterSystemBackCallback(activity);
+                        return;
+                    }
+                    if (activateNativeTakeover(activity)) {
+                        ensureSystemBackCallback(activity);
                         mountNativeSpicyRoot(activity);
                     }
                 }, boolean.class);
@@ -122,7 +135,13 @@ final class LyricsActivityTakeoverHook {
                 if (nowPlayingInjector.consumeArtworkBack(activity)) param.setResult(null);
                 return;
             }
+            // Legacy path (API <33, or predictive back off): the dispatcher callback never
+            // runs, so finish explicitly instead of relying on Spotify's onBackPressed to
+            // finish. Inactive native screens fall through untouched.
+            if (!shouldInterceptLyricsBack(nativeLyricsSessionActive, hasNativeSpicyRoot(activity))) return;
             markExplicitLyricsExit(activity);
+            activity.finish();
+            param.setResult(null);
         });
 
         XpHooks.findBefore(Activity.class, "finish", "takeover:Activity#finish", param -> {
@@ -148,18 +167,41 @@ final class LyricsActivityTakeoverHook {
         synchronized (EXPLICIT_LYRICS_EXIT_UNTIL_MS) {
             EXPLICIT_LYRICS_EXIT_UNTIL_MS.put(activity, SystemClock.elapsedRealtime() + 1200);
         }
+        // End owned-back handling immediately so the exit animation/focus transition
+        // cannot rearm it while the old root still exists. Destroy also unregisters.
+        unregisterSystemBackCallback(activity);
     }
 
-    private void registerSystemBackCallback(Activity activity) {
+    private boolean isExplicitLyricsExit(Activity activity) {
+        if (activity == null) return false;
+        synchronized (EXPLICIT_LYRICS_EXIT_UNTIL_MS) {
+            Long until = EXPLICIT_LYRICS_EXIT_UNTIL_MS.get(activity);
+            return until != null && SystemClock.elapsedRealtime() <= until;
+        }
+    }
+
+    // Owned-overlay back only: registered after takeover ownership is established
+    // (active session), never on native Spotify screens. No host-dispatch fallback:
+    // unregistered screens keep normal host handling untouched.
+    private void ensureSystemBackCallback(Activity activity) {
         if (activity == null || Build.VERSION.SDK_INT < 33) return;
+        if (!isLyricsFullscreenActivity(activity)) return;
+        if (isExplicitLyricsExit(activity)) return;
+        if (!nativeLyricsSessionActive) return;
         synchronized (backCallbacks) {
             if (backCallbacks.containsKey(activity)) return;
             OnBackInvokedCallback callback = () -> {
+                // Registration implies ownership; re-check for races without ever
+                // delegating to deprecated host handling from inside the callback.
+                if (!shouldInterceptLyricsBack(nativeLyricsSessionActive, hasNativeSpicyRoot(activity))) {
+                    unregisterSystemBackCallback(activity);
+                    return;
+                }
                 markExplicitLyricsExit(activity);
                 activity.finish();
             };
             activity.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
-                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback);
+                    OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback);
             backCallbacks.put(activity, callback);
         }
     }
@@ -248,7 +290,9 @@ final class LyricsActivityTakeoverHook {
         private final Activity activity;
         private final View decor;
         private int attempt;
+        private long steadyElapsedMs;
         private boolean cancelled;
+        private boolean extraDoneOnce;
 
         ExtraInjectionRetry(Activity activity, View decor) {
             this.activity = activity;
@@ -256,8 +300,20 @@ final class LyricsActivityTakeoverHook {
         }
 
         void postNext() {
-            if (cancelled || attempt >= EXTRA_INJECTION_DELAYS_MS.length) return;
-            decor.postDelayed(this, EXTRA_INJECTION_DELAYS_MS[attempt++]);
+            if (cancelled) return;
+            if (attempt < EXTRA_INJECTION_DELAYS_MS.length) {
+                decor.postDelayed(this, EXTRA_INJECTION_DELAYS_MS[attempt++]);
+                return;
+            }
+            // injectExtraLyricsButton's target (accessory_row) is only reached post-playback
+            // (NowPlayingActivity), so it's always ready within this burst. The mini-player bar
+            // lives on every screen but stays uninflated/GONE until the very first track starts
+            // playing in this activity's lifetime, which can happen long after this burst - so
+            // once the burst is spent, keep polling steadily (bounded, not forever) instead of
+            // giving up permanently.
+            if (activity.isFinishing() || steadyElapsedMs >= MINI_PLAYER_STEADY_RETRY_MAX_MS) return;
+            steadyElapsedMs += MINI_PLAYER_STEADY_RETRY_MS;
+            decor.postDelayed(this, MINI_PLAYER_STEADY_RETRY_MS);
         }
 
         void cancel() {
@@ -268,7 +324,12 @@ final class LyricsActivityTakeoverHook {
         @Override
         public void run() {
             if (cancelled) return;
-            if (injectExtraLyricsButton(activity)) {
+            // Once the footer button lands it's done for good; no need to keep re-scanning for
+            // it every steady-retry tick alongside the mini-player poll.
+            boolean extraDone = extraDoneOnce || injectExtraLyricsButton(activity);
+            extraDoneOnce = extraDone;
+            boolean miniPlayerDone = injectMiniPlayerLyricsButton(activity);
+            if (extraDone && miniPlayerDone) {
                 synchronized (extraInjectionRetries) {
                     if (extraInjectionRetries.get(activity) == this) extraInjectionRetries.remove(activity);
                 }
@@ -276,6 +337,182 @@ final class LyricsActivityTakeoverHook {
             }
             postNext();
         }
+    }
+
+    /**
+     * Adds a button to the persistent mini player that jumps straight to Spicy's fullscreen
+     * lyrics. Runs on every non-lyrics activity since the mini player bar is a global overlay,
+     * not tied to one screen. Returns true once handled (or once determined not applicable) so
+     * the retry loop can stop; false to keep retrying while the bar is not laid out yet.
+     */
+    // now_playing_bar.xml constants (decompiled from the host APK): play_pause_button is a
+    // direct child of now_playing_bar_layout, 40dp square, end-aligned to the bar's right edge
+    // with an 8dp margin. It renders through Spotify's own lazy Encore view-stub component,
+    // which can report getWidth()==0 indefinitely even once visibly on screen — so position
+    // relative to the BAR's own (always-reliable) measured width instead of the button's.
+    private static final int PLAY_PAUSE_BUTTON_DP = 40;
+    private static final int PLAY_PAUSE_MARGIN_END_DP = 8;
+
+    private boolean injectMiniPlayerLyricsButton(Activity activity) {
+        try {
+            if (activity == null || activity.isFinishing() || isLyricsFullscreenActivity(activity)
+                    || !isNativeSpicyEnabled(activity)) return true;
+            FrameLayout content = activity.findViewById(android.R.id.content);
+            if (content == null) return false;
+            View existingButton = content.findViewWithTag(TAG_MINI_PLAYER_LYRICS_BUTTON);
+            if (!SpotifyPlusConfig.from(activity).get(Settings.MINI_PLAYER_LYRICS_ICON)) {
+                if (existingButton != null) content.removeView(existingButton); // toggled off live
+                return true;
+            }
+            View bar = findViewByResourceEntryName(content, "now_playing_bar_layout");
+            if (existingButton != null) {
+                // Safety-net re-sync at the steady poll's cadence (seconds, not frames): the bar's
+                // own OnLayoutChangeListener below does not fire for every reason the button can
+                // end up stale relative to the bar (e.g. screen off/on with unchanged bar bounds).
+                if (bar != null && bar.isShown() && bar.getWidth() > 0) {
+                    repositionMiniPlayerButton(existingButton, bar, content, dp(PLAY_PAUSE_BUTTON_DP),
+                            findViewByResourceEntryName(bar, "connect_destination_button"),
+                            findViewByResourceEntryName(bar, "tracks_carousel_view"));
+                }
+                return true;
+            }
+            if (bar == null || !bar.isShown() || bar.getWidth() == 0) {
+                XpLog.log(NativeSpicyLyricsHook.TAG
+                        + " mini player: now_playing_bar_layout not laid out yet in "
+                        + activity.getClass().getName());
+                return false;
+            }
+            // Presence (not shown/width) confirms the bar's content actually finished inflating,
+            // without depending on this view-stub's own unreliable measured size.
+            if (findViewByResourceEntryName(bar, "play_pause_button") == null) {
+                XpLog.log(NativeSpicyLyricsHook.TAG
+                        + " mini player: play_pause_button not present yet in "
+                        + activity.getClass().getName());
+                return false;
+            }
+
+            // now_playing_bar_layout is a MotionLayout: a child added directly to it that isn't
+            // referenced in its MotionScene's ConstraintSets gets silently zero-sized/dropped by
+            // MotionLayout's own layout pass on the next transition. Adding it to the activity's
+            // plain content FrameLayout instead, positioned in screen coordinates derived from
+            // the bar's live location, sidesteps MotionLayout's constraint system entirely.
+            int side = dp(PLAY_PAUSE_BUTTON_DP);
+            View button = createMiniPlayerLyricsButton(activity);
+            content.addView(button, new FrameLayout.LayoutParams(side, side));
+            button.bringToFront();
+            // Resolved once (an O(view count) tree walk) and cached, not re-resolved on every
+            // reposition. Re-resolved only when a real bar layout change is observed, since the
+            // device icon can legitimately appear/disappear later.
+            View[] connectButtonRef = {findViewByResourceEntryName(bar, "connect_destination_button")};
+            View[] carouselRef = {findViewByResourceEntryName(bar, "tracks_carousel_view")};
+            Runnable reposition = () -> repositionMiniPlayerButton(
+                    button, bar, content, side, connectButtonRef[0], carouselRef[0]);
+            reposition.run();
+            // now_playing_bar_scene.xml's default_size <-> large_size transition is a continuous,
+            // drag-driven MotionLayout animation, not a series of discrete layout passes - a plain
+            // OnLayoutChangeListener only fires once a transition actually settles, so during the
+            // transition itself this floating button would visibly lag behind the real bar content.
+            // The frame-driven follow loop below only runs for a bounded burst right after such a
+            // change instead of indefinitely (a permanent per-frame tree walk on Spotify's main
+            // thread is exactly the kind of never-ending stutter this codebase already fixed once).
+            bar.addOnLayoutChangeListener((v, l, t, r, b2, ol, ot, or_, ob) -> {
+                connectButtonRef[0] = findViewByResourceEntryName(bar, "connect_destination_button");
+                carouselRef[0] = findViewByResourceEntryName(bar, "tracks_carousel_view");
+                startMiniPlayerFollowBurst(activity, button, reposition);
+            });
+
+            XpLog.log(NativeSpicyLyricsHook.TAG
+                    + " inserted mini player lyrics button in " + activity.getClass().getName()
+                    + " anchoredToConnect=" + (connectButtonRef[0] != null && connectButtonRef[0].isShown()));
+            return true;
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " inject mini player lyrics button failed: " + t);
+            return true; // don't retry forever on a real failure
+        }
+    }
+
+    private static final long MINI_PLAYER_FOLLOW_BURST_MS = 500L;
+
+    /** Re-runs reposition on every display frame for a bounded burst instead of indefinitely, so
+     *  a MotionLayout transition (drag-driven, not a single discrete layout pass) is tracked
+     *  smoothly without turning into a permanent per-frame cost for the rest of the app session. */
+    private void startMiniPlayerFollowBurst(Activity activity, View button, Runnable reposition) {
+        long deadlineNanos = System.nanoTime() + MINI_PLAYER_FOLLOW_BURST_MS * 1_000_000L;
+        android.view.Choreographer.getInstance().postFrameCallback(new android.view.Choreographer.FrameCallback() {
+            @Override
+            public void doFrame(long frameTimeNanos) {
+                if (activity.isFinishing() || !button.isAttachedToWindow()) return;
+                reposition.run();
+                if (System.nanoTime() < deadlineNanos) {
+                    android.view.Choreographer.getInstance().postFrameCallback(this);
+                }
+            }
+        });
+    }
+
+    /**
+     * now_playing_bar.xml + its MotionScene (decompiled): left-to-right the bar reads carousel,
+     * connect_destination_button (device icon), skippable_ad_view_stub (usually gone but its slot
+     * in the chain still isn't free), add_to_button, play_pause_button - every one of those four
+     * slots is a real, always-occupied control per the scene's ConstraintSet, so there is no empty
+     * gap anywhere inside that cluster to drop a button into. The only actually free space is the
+     * carousel's own flexible zone immediately left of the device icon - encroaching there just
+     * trims the track-title marquee a bit, it doesn't sit on top of a real control.
+     */
+    private void repositionMiniPlayerButton(View button, View bar, View content, int side,
+                                             View connectButton, View carousel) {
+        try {
+            int[] barLoc = new int[2];
+            int[] contentLoc = new int[2];
+            bar.getLocationOnScreen(barLoc);
+            content.getLocationOnScreen(contentLoc);
+            float barLeftInContent = barLoc[0] - contentLoc[0];
+            float barTopInContent = barLoc[1] - contentLoc[1];
+            float x;
+            if (connectButton != null && connectButton.isShown() && connectButton.getWidth() > 0) {
+                int[] connLoc = new int[2];
+                connectButton.getLocationOnScreen(connLoc);
+                x = (connLoc[0] - contentLoc[0]) - dp(4) - side;
+            } else {
+                // Device icon not laid out: still stay left of the whole 3-button cluster
+                // (connect + add + play), not just play_pause_button alone.
+                x = barLeftInContent + bar.getWidth() - dp(PLAY_PAUSE_MARGIN_END_DP) - side * 3 - dp(8);
+            }
+            button.setX(x);
+            button.setY(barTopInContent + (bar.getHeight() - side) / 2f);
+            // This button is a floating overlay, not a real MotionLayout participant, so the
+            // marquee track title still scrolls straight into our button's space rather than
+            // making room for it on its own. Push the carousel's own end margin out to actually
+            // free that space, reapplied every time (MotionLayout's own transitions reassert the
+            // ConstraintSet's original margin otherwise).
+            if (carousel != null && carousel.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams carouselLp =
+                        (ViewGroup.MarginLayoutParams) carousel.getLayoutParams();
+                int wantedEndMargin = side + dp(8);
+                if (carouselLp.getMarginEnd() < wantedEndMargin) {
+                    carouselLp.setMarginEnd(wantedEndMargin);
+                    carousel.setLayoutParams(carouselLp);
+                }
+            }
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " reposition mini player button failed: " + t);
+        }
+    }
+
+    private View createMiniPlayerLyricsButton(Activity activity) {
+        ImageButton button = new ImageButton(activity);
+        button.setTag(TAG_MINI_PLAYER_LYRICS_BUTTON);
+        button.setContentDescription("Open Spicy lyrics");
+        // House mark (mic + sparkles), same as the footer entry button — not a Lucide glyph.
+        NativeIconButtons.setModuleIcon(button, activity, R.drawable.ic_spicy_lyrics_page);
+        button.setColorFilter(Color.rgb(232, 232, 238));
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        button.setClickable(true);
+        button.setFocusable(true);
+        button.setOnClickListener(v -> launchNativeLyricsFullscreen(activity));
+        return button;
     }
 
     private View createExtraLyricsRowButton(Activity activity) {
@@ -391,6 +628,8 @@ final class LyricsActivityTakeoverHook {
 
     private boolean activateNativeTakeover(Activity activity) {
         if (!isLyricsFullscreenActivity(activity)) return false;
+        // Stale-root reclaim must not resurrect a session the user just exited.
+        if (isExplicitLyricsExit(activity)) return false;
         if (nativeLyricsSessionActive || hasNativeSpicyRoot(activity)) return true;
         if (!consumeTakeoverArmed()) return false;
         // Promote the one-shot entry signal before waiting for a mount-ready window. This is the
@@ -407,19 +646,35 @@ final class LyricsActivityTakeoverHook {
         }
     }
 
+    // Pure back/finish decision matrix (unit-tested): user back must exit even while
+    // track-change/rotation finishes stay suppressed; inactive native screens stay untouched.
+    static boolean shouldInterceptLyricsBack(boolean sessionActive, boolean hasRoot) {
+        return sessionActive || hasRoot;
+    }
+
+    static boolean shouldSuppressLyricsFinish(boolean stayInLyricsEnabled,
+                                              boolean nativeSpicyEnabled,
+                                              boolean sessionActive,
+                                              boolean explicitExit) {
+        if (!nativeSpicyEnabled) return false;
+        if (!stayInLyricsEnabled) return false;
+        if (!sessionActive) return false;
+        return !explicitExit;
+    }
+
     private boolean shouldKeepLyricsActivityOpen(Activity activity) {
-        if (!isLyricsFullscreenActivity(activity) || !isNativeSpicyEnabled(activity)) return false;
-        if (!isStayInLyricsEnabled(activity)) return false;
+        if (!isLyricsFullscreenActivity(activity)) return false;
         // Spotify invalidates and finishes its fullscreen lyrics activity after some track
         // changes. During rotation that finish can happen before our recreated root mounts, so
         // root presence and short keep windows are not stable ownership signals. The takeover
         // session is stable; explicit back clears it before calling finish.
-        if (!nativeLyricsSessionActive) return false;
+        boolean explicitExit;
         synchronized (EXPLICIT_LYRICS_EXIT_UNTIL_MS) {
             Long until = EXPLICIT_LYRICS_EXIT_UNTIL_MS.get(activity);
-            if (until != null && SystemClock.elapsedRealtime() <= until) return false;
+            explicitExit = until != null && SystemClock.elapsedRealtime() <= until;
         }
-        return true;
+        return shouldSuppressLyricsFinish(isStayInLyricsEnabled(activity),
+                isNativeSpicyEnabled(activity), nativeLyricsSessionActive, explicitExit);
     }
 
     private boolean isLyricsFullscreenActivity(Activity activity) {
@@ -434,11 +689,16 @@ final class LyricsActivityTakeoverHook {
                     || (Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) return;
             DeployCacheCleaner.ensureCleared(activity);
             if (!isLyricsFullscreenActivity(activity)) return;
+            if (isExplicitLyricsExit(activity)) {
+                unregisterSystemBackCallback(activity);
+                return;
+            }
             if (!isNativeSpicyEnabled(activity)) {
                 removeNativeSpicyRoot(activity);
                 return;
             }
             nativeLyricsSessionActive = true; // our screen owns this lyrics session (survives rotation)
+            ensureSystemBackCallback(activity);
 
             FrameLayout content = activity.findViewById(android.R.id.content);
             if (content == null) {
@@ -449,6 +709,7 @@ final class LyricsActivityTakeoverHook {
             View existing = content.findViewWithTag(TAG_NATIVE_SPICY_ROOT);
             if (existing instanceof NativeSpicyShellView) {
                 ((NativeSpicyShellView) existing).start();
+                ensureSystemBackCallback(activity);
                 return;
             }
 
@@ -503,6 +764,9 @@ final class LyricsActivityTakeoverHook {
         } catch (Throwable t) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " remove failed: " + t);
         }
+        // Rotation keeps the session (and its owned back) alive across remount; only release
+        // owned back when ownership itself ended. Explicit exit and destroy unregister directly.
+        if (!nativeLyricsSessionActive) unregisterSystemBackCallback(activity);
     }
 
     private boolean hasNativeSpicyRoot(Activity activity) {

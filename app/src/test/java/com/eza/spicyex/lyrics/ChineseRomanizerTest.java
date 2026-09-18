@@ -69,6 +69,9 @@ public class ChineseRomanizerTest {
         doc.detectedScripts.add(SpicyTextDetection.Script.JAPANESE);
         LyricsLine line = new LyricsLine();
         line.text = "中国";
+        doc.language = "ja";
+        line.detection = com.eza.spicyex.lyrics.session.DetectionResult.detected("", line.text,
+                ScriptClassifier.ScriptClass.CHINESE, "zh", .99);
         line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading(
                 "中国", "naka kuni", Collections.singletonList(
                 new SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "なか")));

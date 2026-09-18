@@ -196,6 +196,57 @@ public class LyricsLocalRomanizerDocumentContextTest {
                 ruby -> ruby.start == 10 && ruby.end == 11 && "いん".equals(ruby.reading)));
     }
 
+    @Test
+    public void packedJapaneseClauseFlagsPreserveWindAndPersonReadings() {
+        String[] parts = {"時", "は", "まくら", "ぎ", "風", "は", "にきは", "だ",
+                "星", "は", "うぶす", "な", "人", "は", "かげろ", "う"};
+        LyricsDocument doc = doc("jpn", String.join("", parts));
+        LyricsLine line = doc.lines.get(0);
+        for (int i = 0; i < parts.length; i++) {
+            SyllableSegment segment = new SyllableSegment();
+            segment.text = segment.sourceText = parts[i];
+            segment.providerPartOfWord = i % 4 != 3;
+            segment.startMs = i * 100;
+            segment.endMs = (i + 1) * 100;
+            line.syllables.add(segment);
+        }
+        line.text = com.eza.spicyex.lyrics.reading.SyllableCanonicalizer.canonicalize(
+                "suzume", line.text, line.syllables).text;
+        assertEquals("時はまくらぎ 風はにきはだ 星はうぶすな 人はかげろう", line.text);
+        String reading = LyricsLocalRomanizer.romanizeLine(JYUTPING, doc, line, line.text);
+        assertTrue(reading, reading.contains("kaze wa"));
+        assertTrue(reading, reading.contains("hito wa"));
+        assertTrue(line.japaneseReading.furigana.stream().anyMatch(
+                ruby -> ruby.start == 7 && "かぜ".equals(ruby.reading)));
+        assertTrue(line.japaneseReading.furigana.stream().anyMatch(
+                ruby -> ruby.start == 21 && "ひと".equals(ruby.reading)));
+        assertEquals(400, line.syllables.get(4).startMs);
+        assertEquals(7, line.syllables.get(4).canonicalStartCp);
+        assertNotNull(line.readingRenderPlan);
+    }
+
+    @Test
+    public void packedPersonCounterBoundaryPreventsJinketsuCompound() {
+        String[] parts = {"ほら", "この", "まま", "2", "人", "血", "が"};
+        LyricsDocument doc = doc("jpn", String.join("", parts));
+        LyricsLine line = doc.lines.get(0);
+        for (int i = 0; i < parts.length; i++) {
+            SyllableSegment segment = new SyllableSegment();
+            segment.text = segment.sourceText = parts[i];
+            segment.providerPartOfWord = i != 4 && i != 6;
+            segment.startMs = i * 100;
+            segment.endMs = (i + 1) * 100;
+            line.syllables.add(segment);
+        }
+        line.text = com.eza.spicyex.lyrics.reading.SyllableCanonicalizer.canonicalize(
+                "person-counter", line.text, line.syllables).text;
+        assertEquals("ほらこのまま 2人 血が", line.text);
+        String reading = LyricsLocalRomanizer.romanizeLine(JYUTPING, doc, line, line.text);
+        assertTrue(reading, reading.contains("futari chi ga"));
+        assertTrue(line.japaneseReading.furigana.stream().anyMatch(
+                ruby -> ruby.start == 7 && ruby.end == 9 && "ふたり".equals(ruby.reading)));
+    }
+
     private static LyricsDocument doc(String language, String... texts) {
         LyricsDocument doc = new LyricsDocument();
         doc.language = language;

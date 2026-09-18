@@ -27,6 +27,8 @@ public final class ProviderBoundaryResolver {
 
         List<SpanState> spans = new ArrayList<>();
         for (SourceSpan span : line.spans) spans.add(new SpanState(span));
+        boolean hasWordContinuation = line.spans.stream()
+                .anyMatch(span -> Boolean.TRUE.equals(span.providerPartOfWord));
         CompleteLineAlignment complete = alignCompleteLine(normalize(line.displayText), spans);
         List<String> diagnostics = new ArrayList<>();
         if (!normalize(line.displayText).isEmpty() && complete == null) {
@@ -47,7 +49,7 @@ public final class ProviderBoundaryResolver {
 
             ResolvedJoin join = resolveJoin(current, spans.get(index + 1),
                     complete == null ? null : complete.separators.get(index),
-                    complete != null && complete.hasWhitespace);
+                    complete != null && complete.hasWhitespace, hasWordContinuation);
             joins.add(new SpanJoinEvidence(current.source.id, join.relation,
                     join.confidence, join.provenance));
             if (join.relation == JoinRelation.BOUNDARY) {
@@ -63,7 +65,7 @@ public final class ProviderBoundaryResolver {
     }
 
     private static ResolvedJoin resolveJoin(SpanState current, SpanState next, String providerSeparator,
-                                            boolean completeLineHasWhitespace) {
+                                            boolean completeLineHasWhitespace, boolean hasWordContinuation) {
         // Numeric-person compounds keep one ruby/timing owner even when provider text contains
         // an accidental boundary (for example "1 " + "人" or a complete line "1 人").
         boolean numericPerson = ("1".equals(current.core) || "2".equals(current.core))
@@ -89,6 +91,12 @@ public final class ProviderBoundaryResolver {
             return boundary(BoundaryKind.PARAGRAPH, 1.0, "providerParagraph");
         }
 
+        // Mixed flags encode word-edge whitespace lost by packed transport. All-false legacy
+        // payloads are ambiguous and must still keep Japanese syllable fragments attached.
+        if (hasWordContinuation && Boolean.FALSE.equals(current.source.providerPartOfWord)
+                && isJapanese(lastCodePoint(current.core)) && isJapanese(firstCodePoint(next.core))) {
+            return boundary(BoundaryKind.INFERRED, 1.0, "providerWordBoundary");
+        }
         JoinRelation script = scriptRelation(current.core, next.core);
         if (script == JoinRelation.ATTACHED) {
             return attached(0.9, "scriptFallback");

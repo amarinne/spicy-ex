@@ -582,6 +582,25 @@ public class LyricSessionContractTest {
     }
 
     @Test
+    public void projectionClearsStaleJapaneseReadingOnProvenNonJapaneseHan() {
+        LyricsDocument canonical = document("今天我们一起唱歌");
+        LyricsLine line = canonical.lines.get(0);
+        line.detection = DetectionResult.detected("", line.text,
+                com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass.CHINESE, "zh", .99);
+        line.japaneseReading = new com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.JapaneseReading(
+                line.text, "jin tian", Collections.singletonList(
+                new com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "きん")));
+        LyricSession session = LyricSession.of(CanonicalBase.fromDocument("spotify:track:a", canonical), 1);
+        String row0 = session.base.rows.get(0).rowId;
+        session = session.withSound(readySound(session, SoundEntry.line(row0, "jin tian", "pinyin")));
+
+        LyricsDocument projected = LegacyDocumentComposer.compose(canonical, session);
+
+        assertNull(projected.lines.get(0).japaneseReading);
+        assertEquals("jin tian", projected.lines.get(0).romanizedText);
+    }
+
+    @Test
     public void projectionReportsPerLayerPendingIndependently() {
         LyricSession session = session("ichi");
         String row0 = session.base.rows.get(0).rowId;

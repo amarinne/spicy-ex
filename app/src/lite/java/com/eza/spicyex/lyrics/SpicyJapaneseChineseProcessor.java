@@ -145,4 +145,8 @@ public final class SpicyJapaneseChineseProcessor {
     public static List<int[]> chineseLayoutRanges(String text) {
         return new ArrayList<>();
     }
+
+    /** Lite ships no dictionaries; nothing to release. */
+    public static void trimMemory() {
+    }
 }

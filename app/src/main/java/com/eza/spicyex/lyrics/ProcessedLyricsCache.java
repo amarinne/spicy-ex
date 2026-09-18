@@ -16,12 +16,18 @@ import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.DerivedLayerArtifact;
+import com.eza.spicyex.lyrics.session.DetectionArtifact;
+import com.eza.spicyex.lyrics.session.DetectionResult;
+import com.eza.spicyex.lyrics.session.DetectionStatus;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
 import com.eza.spicyex.lyrics.session.MeaningEntry;
 import com.eza.spicyex.lyrics.session.SoundArtifact;
 import com.eza.spicyex.lyrics.session.SoundEntry;
 import com.eza.spicyex.SpotifyPlusConfig;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import com.eza.spicyex.xposed.XpLog;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
@@ -41,6 +47,10 @@ public final class ProcessedLyricsCache {
     /**
      * Reading-plan/cache identity.
      *
+     * <p>v7 drops parse-time Japanese analysis of Han-only lines and inherits unresolved Han
+     * from the document majority, so v6 artifacts carrying stale furigana or blank Chinese
+     * rows must be recomputed.
+     *
      * <p>v5 makes authoritative whole-line reading text a hard plan invariant. Older timed plans
      * may concatenate isolated provider-span readings after phrase-aware alignment fails.
      *
@@ -48,7 +58,7 @@ public final class ProcessedLyricsCache {
      * v3 stored both as {@code line-fallback}, so keeping it would let cached Russian/Greek local
      * readings be billed and overwritten by Sound AI after upgrade.
      */
-    public static final int READING_SCHEMA_VERSION = 5;
+    public static final int READING_SCHEMA_VERSION = 7;
     private static final int RECORD_SCHEMA_VERSION = 1;
     private static final Gson GSON = new Gson();
 
@@ -245,6 +255,195 @@ public final class ProcessedLyricsCache {
         } catch (Throwable t) {
             XpLog.log(TAG + " meaning save failed: " + t);
             return false;
+        }
+    }
+
+    // --- Detection ----------------------------------------------------------
+
+    /**
+     * Restores the detection rows that still apply to {@code base}.
+     *
+     * <p>A row is reused only when its canonical row ID is present and its stored source text
+     * matches the base's text, so a re-parse that changes one line recomputes only that line. The
+     * record's detector policy must match the current policy; a policy change makes every row stale
+     * by construction.
+     *
+     * @return the restored artifact, or null when no compatible record exists
+     */
+    public static DetectionArtifact restoreDetection(Context context, CanonicalBase base) {
+        if (context == null || base == null || base.isEmpty()) return null;
+        try {
+            JsonObject record = readDetection(context, base);
+            if (record == null) return null;
+            JsonObject rows = Json.optObject(record, "rows");
+            if (rows == null) return null;
+            List<DetectionResult> restored = new ArrayList<>();
+            for (CanonicalRow row : base.rows) {
+                JsonObject item = Json.optObject(rows, row.rowId);
+                if (item == null || !safe(row.text).equals(Json.optString(item, "text"))) continue;
+                restored.add(detectionRowFromJson(row, item));
+            }
+            if (restored.isEmpty()) return null;
+            return new DetectionArtifact(base.digest, DetectionArtifact.DETECTOR_POLICY_ID,
+                    restored, !Json.optBoolean(record, false, "complete"));
+        } catch (Throwable t) {
+            XpLog.log(TAG + " detection restore failed: " + t);
+            return null;
+        }
+    }
+
+    /** Persists a detection artifact under its canonical digest and detection schema. */
+    public static boolean saveDetection(Context context, CanonicalBase base, DetectionArtifact artifact) {
+        if (context == null || base == null || artifact == null || artifact.isEmpty()) return false;
+        if (!artifact.canonicalDigest.equals(base.digest)) return false;
+        try {
+            JsonObject rows = new JsonObject();
+            for (CanonicalRow row : base.rows) {
+                DetectionResult result = artifact.result(row.rowId);
+                if (result == null) continue;
+                rows.add(row.rowId, detectionRowToJson(row, result));
+            }
+            if (rows.size() == 0) return false;
+            JsonObject record = newDetectionRecordHeader(base.digest, artifact.detectorPolicyId,
+                    !artifact.partial);
+            record.add("rows", rows);
+            return LyricCaches.putDetectionArtifact(context,
+                    LyricCaches.detectionArtifactKey(base.digest, DetectionArtifact.SCHEMA_VERSION),
+                    record.toString());
+        } catch (Throwable t) {
+            XpLog.log(TAG + " detection save failed: " + t);
+            return false;
+        }
+    }
+
+    private static JsonObject readDetection(Context context, CanonicalBase base) {
+        String raw = LyricCaches.getDetectionArtifact(context,
+                LyricCaches.detectionArtifactKey(base.digest, DetectionArtifact.SCHEMA_VERSION));
+        if (isBlank(raw)) return null;
+        JsonElement parsed = JsonParser.parseString(raw);
+        if (!parsed.isJsonObject()) return null;
+        JsonObject record = parsed.getAsJsonObject();
+        return detectionRecordMatches(record, base.digest) ? record : null;
+    }
+
+    /**
+     * Restores the detection for one provider-translation string.
+     *
+     * <p>Keyed by the text hash, not a canonical digest: the translation is not a canonical row, and
+     * the original lyric's row detection cannot vouch for the translation's language.
+     */
+    public static DetectionResult restoreProviderDetection(Context context, String text) {
+        if (context == null || isBlank(text)) return null;
+        try {
+            String raw = LyricCaches.getDetectionArtifact(context,
+                    LyricCaches.providerDetectionKey(text));
+            if (isBlank(raw)) return null;
+            JsonElement parsed = JsonParser.parseString(raw);
+            if (!parsed.isJsonObject()) return null;
+            JsonObject record = parsed.getAsJsonObject();
+            if (!providerDetectionRecordMatches(record)) return null;
+            return detectionResultFromJson("", safe(text), record);
+        } catch (Throwable t) {
+            XpLog.log(TAG + " provider detection restore failed: " + t);
+            return null;
+        }
+    }
+
+    /** Persists detection for one provider-translation string under its text-hash key. */
+    public static boolean saveProviderDetection(Context context, String text, DetectionResult result) {
+        if (context == null || result == null || isBlank(text)) return false;
+        try {
+            JsonObject record = new JsonObject();
+            record.addProperty("schema", RECORD_SCHEMA_VERSION);
+            record.addProperty("kind", "PROVIDER_DETECTION");
+            record.addProperty("detectionSchemaVersion", DetectionArtifact.SCHEMA_VERSION);
+            record.addProperty("detectorPolicyId", DetectionArtifact.DETECTOR_POLICY_ID);
+            record.addProperty("scriptClass", result.scriptClass.name());
+            record.addProperty("language", safe(result.language));
+            record.addProperty("confidence", result.confidence);
+            record.addProperty("status", result.status.name());
+            record.addProperty("evidence", result.evidence.name());
+            return LyricCaches.putDetectionArtifact(context,
+                    LyricCaches.providerDetectionKey(text), record.toString());
+        } catch (Throwable t) {
+            XpLog.log(TAG + " provider detection save failed: " + t);
+            return false;
+        }
+    }
+
+    static boolean providerDetectionRecordMatches(JsonObject record) {
+        if (record == null) return false;
+        if ((int) Json.optDouble(record, -1, "schema") != RECORD_SCHEMA_VERSION) return false;
+        if (!"PROVIDER_DETECTION".equals(Json.optString(record, "kind"))) return false;
+        if ((int) Json.optDouble(record, -1, "detectionSchemaVersion") != DetectionArtifact.SCHEMA_VERSION) {
+            return false;
+        }
+        return DetectionArtifact.DETECTOR_POLICY_ID.equals(
+                Json.optString(record, "detectorPolicyId"));
+    }
+
+    /**
+     * True when a stored record was produced for exactly this canonical base and the current
+     * detection schema and detector policy. A policy mismatch is a miss, not a partial reuse:
+     * every row has to be recomputed under the new detector.
+     */
+    static boolean detectionRecordMatches(JsonObject record, String canonicalDigest) {
+        if (record == null) return false;
+        if ((int) Json.optDouble(record, -1, "schema") != RECORD_SCHEMA_VERSION) return false;
+        if (!"DETECTION".equals(Json.optString(record, "kind"))) return false;
+        if (!safe(canonicalDigest).equals(Json.optString(record, "canonicalDigest"))) return false;
+        if ((int) Json.optDouble(record, -1, "detectionSchemaVersion") != DetectionArtifact.SCHEMA_VERSION) {
+            return false;
+        }
+        return DetectionArtifact.DETECTOR_POLICY_ID.equals(
+                Json.optString(record, "detectorPolicyId"));
+    }
+
+    /** Exposed for tests: builds the header a stored detection record is validated against. */
+    static JsonObject newDetectionRecordHeader(String canonicalDigest, String detectorPolicyId,
+                                               boolean complete) {
+        JsonObject record = new JsonObject();
+        record.addProperty("schema", RECORD_SCHEMA_VERSION);
+        record.addProperty("kind", "DETECTION");
+        record.addProperty("canonicalDigest", safe(canonicalDigest));
+        record.addProperty("detectionSchemaVersion", DetectionArtifact.SCHEMA_VERSION);
+        record.addProperty("detectorPolicyId", safe(detectorPolicyId));
+        record.addProperty("complete", complete);
+        return record;
+    }
+
+    private static JsonObject detectionRowToJson(CanonicalRow row, DetectionResult result) {
+        JsonObject item = new JsonObject();
+        item.addProperty("text", safe(row.text));
+        item.addProperty("scriptClass", result.scriptClass.name());
+        item.addProperty("language", safe(result.language));
+        item.addProperty("confidence", result.confidence);
+        item.addProperty("status", result.status.name());
+        item.addProperty("evidence", result.evidence.name());
+        return item;
+    }
+
+    private static DetectionResult detectionRowFromJson(CanonicalRow row, JsonObject item) {
+        return detectionResultFromJson(row.rowId, safe(row.text), item);
+    }
+
+    private static DetectionResult detectionResultFromJson(String rowId, String sourceText,
+                                                           JsonObject item) {
+        return new DetectionResult(rowId, sourceText,
+                scriptClassFromName(Json.optString(item, "scriptClass")),
+                Json.optString(item, "language"),
+                Json.optDouble(item, 0.0, "confidence"),
+                DetectionStatus.fromName(Json.optString(item, "status")),
+                com.eza.spicyex.lyrics.session.DetectionEvidence.fromName(Json.optString(item, "evidence")));
+    }
+
+    private static com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass scriptClassFromName(String name) {
+        if (name == null || name.isEmpty()) return com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass.OTHER;
+        try {
+            return com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass.valueOf(
+                    name.toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ignored) {
+            return com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass.OTHER;
         }
     }
 

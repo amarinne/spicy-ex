@@ -6,6 +6,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.RejectedExecutionHandler;
 
 import okhttp3.OkHttpClient;
 
@@ -37,9 +41,9 @@ final class NativeRuntime {
     /** Deterministic on-device reading work. Single-threaded: the romanizers are not reentrant. */
     static final ExecutorService SOUND_PROCESSOR = Executors.newSingleThreadExecutor();
     /** Reading fallback requests. Bounded fan-out; the lane executor never awaits these. */
-    static final ExecutorService SOUND_WORKERS = Executors.newFixedThreadPool(2);
+    static final ExecutorService SOUND_WORKERS = boundedWorkers("spicy-sound");
     /** Machine translation batches. Separate from every Sound thread. */
-    static final ExecutorService MEANING_WORKERS = Executors.newFixedThreadPool(2);
+    static final ExecutorService MEANING_WORKERS = boundedWorkers("spicy-meaning");
     /**
      * AI generation, on its own thread and nobody else's.
      *
@@ -48,7 +52,24 @@ final class NativeRuntime {
      * generation would stall readings that owe nothing to the network. Single-threaded because one
      * paid run at a time per layer is already the contract, and two would just be two bills.
      */
-    static final ExecutorService AI_WORKERS = Executors.newFixedThreadPool(2);
+    static final ExecutorService AI_WORKERS = boundedWorkers("spicy-ai");
+
+    /**
+     * A track change can invalidate hundreds of per-line jobs while their network calls are still
+     * draining. An unbounded executor queue retains each job's document snapshot until it runs.
+     * Keep a small handoff buffer; when it fills, run the task on the submitting lane so callers
+     * apply backpressure instead of retaining an arbitrary number of lyric lines.
+     */
+    private static ExecutorService boundedWorkers(String name) {
+        ThreadFactory factory = runnable -> {
+            Thread thread = new Thread(runnable, name);
+            thread.setDaemon(true);
+            return thread;
+        };
+        RejectedExecutionHandler backpressure = new ThreadPoolExecutor.CallerRunsPolicy();
+        return new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(32), factory, backpressure);
+    }
     static final int GOOGLE_PROCESSING_VERSION = SpicyProcessing.PROCESSING_VERSION + 2;
     static final int LYRIC_FULL_RENDER_THRESHOLD = 72;
     static final int LYRIC_WINDOW_BEFORE_ACTIVE = 18;

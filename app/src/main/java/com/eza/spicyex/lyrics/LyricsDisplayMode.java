@@ -6,9 +6,13 @@ public final class LyricsDisplayMode {
     }
 
     public static boolean isJapaneseLine(AppliedLine line) {
+        com.eza.spicyex.lyrics.session.DetectionResult detection = ReadingLanguagePolicy.detectionFor(line);
+        if (detection != null) {
+            return detection.hasLanguage() && "ja".equals(detection.language);
+        }
         return line != null
                 && !isChineseModeLine(line)
-                && ((line.japaneseReading != null && line.japaneseReading.furigana != null
+                && ((!line.bgLine && line.japaneseReading != null && line.japaneseReading.furigana != null
                 && !line.japaneseReading.furigana.isEmpty())
                 || SpicyTextDetection.hasKana(line.text));
     }

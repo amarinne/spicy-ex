@@ -34,6 +34,16 @@ final class DerivedLayerRun {
     private final String canonicalDigest;
     private final long sequence;
     private final AtomicLong laneSequence;
+    /**
+     * Last document whose canonical digest was computed, with the value.
+     *
+     * <p>{@code accepts} runs once per row per lane and would otherwise rebuild a whole canonical
+     * base each time. The document object stays the same across a run, so the digest is computed
+     * once per document identity instead — the per-row allocation was a real OOM contributor on
+     * long tracks.
+     */
+    private LyricsDocument digestSnapshot;
+    private String digestValue;
 
     private DerivedLayerRun(Context context, LayerKind kind, String configId, CanonicalBase base,
                             long sequence, AtomicLong laneSequence) {
@@ -94,9 +104,14 @@ final class DerivedLayerRun {
 
     /**
      * Canonical digest only — the derived text the lanes write is not part of it, so a document
-     * mutated by the sibling lane still compares equal.
+     * mutated by the sibling lane still compares equal. Cached per document identity: a run checks
+     * the same document once per row and never mutates canonical fields.
      */
-    private static String digestOf(LyricsDocument doc) {
-        return CanonicalBase.fromDocument("", doc).digest;
+    private synchronized String digestOf(LyricsDocument doc) {
+        if (doc == digestSnapshot && digestValue != null) return digestValue;
+        String value = CanonicalBase.fromDocument("", doc).digest;
+        digestSnapshot = doc;
+        digestValue = value;
+        return value;
     }
 }

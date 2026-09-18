@@ -13,13 +13,21 @@ import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.beautifullyrics.entities.AmbientBackgroundLayer;
-import com.eza.spicyex.beautifullyrics.entities.KawarpBackgroundView;
+import com.eza.spicyex.beautifullyrics.entities.AmbientArtworkBackgroundView;
 
 import java.io.IOException;
+import android.graphics.Bitmap;
+import android.os.Handler;
+import android.os.Looper;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.Future;
+import com.eza.spicyex.beautifullyrics.entities.AmbientArtworkTexture;
+import com.eza.spicyex.beautifullyrics.entities.AmbientArtworkProfile;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 import com.eza.spicyex.xposed.XpLog;
 import okhttp3.Call;
-import okhttp3.Callback;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -30,6 +38,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 public final class LyricsAmbientController {
     private static final String TAG = "[SpotifyPlusAmbientController]";
     private static final int ART_DECODE_TARGET_PX = 384;
+    private static final int MAX_ART_BYTES = 4 * 1024 * 1024;
 
     private final Activity activity;
     private final OkHttpClient http;
@@ -41,12 +50,21 @@ public final class LyricsAmbientController {
     private AmbientBackgroundLayer animatedBackground;
     private FrameLayout animatedParent;
     private boolean animatedForceDark;
+    private android.graphics.ColorFilter extraDarkFilter;
+    private float backgroundBrightness = 1f;
     private volatile String desiredArtImageId = "";
     private volatile String appliedArtImageId = "";
     private volatile String inFlightArtImageId = "";
-    private volatile AmbientBackgroundLayer inFlightArtTarget;
     private volatile Call inFlightArtCall;
-    private volatile android.graphics.Bitmap lastArtBitmap;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private static final ScheduledThreadPoolExecutor ART_WORKER = new ScheduledThreadPoolExecutor(1);
+    static { ART_WORKER.setRemoveOnCancelPolicy(true); }
+    private Future<?> artWork;
+    private long artGeneration;
+    private boolean active;
+    private boolean animationPaused;
+    private boolean textureEnabled;
+    private String currentTrackUri = "";
     private boolean playing = true;
     private int[] currentPageColors;
     private ValueAnimator pageColorAnimator;
@@ -67,57 +85,116 @@ public final class LyricsAmbientController {
 
     /** Pause/resume the animated background (e.g. while a settings modal is open). */
     public void pauseAnimation() {
+        animationPaused = true;
         if (animatedBackground != null) animatedBackground.pauseRendering();
     }
 
     public void resumeAnimation() {
-        if (animatedBackground != null) animatedBackground.resumeRendering();
+        animationPaused = false;
+        resumeRenderer();
+    }
+
+    private void resumeRenderer() {
+        if (animatedBackground != null && active && textureEnabled && !animationPaused) {
+            animatedBackground.resumeRendering();
+        }
     }
 
     public void setPlaying(boolean playing) {
         this.playing = playing;
-        if (animatedBackground instanceof KawarpBackgroundView) {
-            ((KawarpBackgroundView) animatedBackground).setPlaying(playing);
+        if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+            ((AmbientArtworkBackgroundView) animatedBackground).setPlaying(playing);
         }
+    }
+
+    public void start() {
+        active = true;
+        applySettings(LyricsBackgroundStyle.read(config), config == null || config.get(Settings.FORCE_DARK_BACKGROUND),
+                config != null ? config.get(Settings.EXTRA_DARK_BACKGROUND) : 0);
+    }
+
+    public void stop() {
+        active = false;
+        animationPaused = false;
+        cancelArtwork();
+        if (pageColorAnimator != null) pageColorAnimator.cancel();
+        if (animatedBackground != null) animatedBackground.release();
+        appliedArtImageId = "";
+    }
+
+    private void cancelArtwork() {
+        artGeneration++;
+        if (inFlightArtCall != null) inFlightArtCall.cancel();
+        if (artWork != null) artWork.cancel(true);
+        artWork = null;
+        inFlightArtCall = null;
+        inFlightArtImageId = "";
     }
 
     /** Apply the "Animated background" setting live: show+resume or hide+pause the layer. */
     public void applyEnabled(boolean enabled) {
         applySettings(enabled ? LyricsBackgroundStyle.ANIMATED_TEXTURE
                         : LyricsBackgroundStyle.GRADIENT,
-                config == null || config.get(Settings.FORCE_DARK_BACKGROUND));
+                config == null || config.get(Settings.FORCE_DARK_BACKGROUND),
+                config != null ? config.get(Settings.EXTRA_DARK_BACKGROUND) : 0);
     }
 
-    public void applySettings(String style, boolean forceDark) {
+    public void applySettings(String style, boolean forceDark, int extraDark) {
         String normalized = LyricsBackgroundStyle.normalize(style);
         boolean enabled = LyricsBackgroundStyle.usesTexture(normalized);
         boolean animated = LyricsBackgroundStyle.isAnimated(normalized);
+        textureEnabled = enabled;
+        applyExtraDark(enabled && forceDark, extraDark);
         if (animatedParent != null && enabled && animatedBackground == null) {
             createAnimatedLayer(animatedParent, forceDark, animated);
         } else if (forceDark != animatedForceDark) {
-            if (animatedBackground instanceof KawarpBackgroundView) {
-                ((KawarpBackgroundView) animatedBackground).setForceDark(forceDark);
+            if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+                ((AmbientArtworkBackgroundView) animatedBackground).setForceDark(forceDark);
             }
             animatedForceDark = forceDark;
         }
-        if (animatedBackground == null) return; // not attached this session — applies on next open
-        if (animatedBackground instanceof KawarpBackgroundView) {
-            ((KawarpBackgroundView) animatedBackground).setMotionEnabled(animated);
+        if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+            ((AmbientArtworkBackgroundView) animatedBackground).setDarkening(backgroundBrightness, extraDarkFilter);
         }
-        if (enabled) {
+        if (animatedBackground == null) return; // not attached this session — applies on next open
+        if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+            ((AmbientArtworkBackgroundView) animatedBackground).setMotionEnabled(animated);
+        }
+        if (enabled && active) {
             animatedBackground.asView().setVisibility(android.view.View.VISIBLE);
-            animatedBackground.resumeRendering();
+            resumeRenderer();
+            updateAnimatedBackgroundArt(desiredArtImageId, null);
         } else {
-            animatedBackground.pauseRendering();
+            cancelArtwork();
+            animatedBackground.release();
+            appliedArtImageId = "";
             animatedBackground.asView().setVisibility(android.view.View.GONE);
         }
     }
 
-    public void attachAnimatedLayer(FrameLayout parent, String style, boolean forceDark) {
+    public void attachAnimatedLayer(FrameLayout parent, String style, boolean forceDark, int extraDark) {
         animatedParent = parent;
+        textureEnabled = LyricsBackgroundStyle.usesTexture(style);
+        applyExtraDark(textureEnabled && forceDark, extraDark);
         if (!FeatureAvailability.animatedBackgroundAvailable()) return;
         if (parent == null || !LyricsBackgroundStyle.usesTexture(style)) return;
         createAnimatedLayer(parent, forceDark, LyricsBackgroundStyle.isAnimated(style));
+    }
+
+    /** Scale only the completed background, including the artwork-loading fallback. */
+    private void applyExtraDark(boolean enabled, int level) {
+        enabled &= FeatureAvailability.animatedBackgroundAvailable();
+        float factor = enabled ? Math.max(0f, Math.min(1f, 1f - level / 100f)) : 1f;
+        if (factor == backgroundBrightness) return;
+        backgroundBrightness = factor;
+        if (factor != 1f) {
+            android.graphics.ColorMatrix matrix = new android.graphics.ColorMatrix();
+            matrix.setScale(factor, factor, factor, 1f);
+            extraDarkFilter = new android.graphics.ColorMatrixColorFilter(matrix);
+        } else {
+            extraDarkFilter = null;
+        }
+        pageBackground.setColorFilter(extraDarkFilter);
     }
 
     private void createAnimatedLayer(FrameLayout parent, boolean forceDark, boolean animated) {
@@ -125,7 +202,8 @@ public final class LyricsAmbientController {
         // restore, shared prefs copy) must not resurrect the layer on hardware that cannot run it.
         if (parent == null || !FeatureAvailability.animatedBackgroundAvailable()) return;
         try {
-            KawarpBackgroundView background = new KawarpBackgroundView(activity, forceDark);
+            AmbientArtworkBackgroundView background = new AmbientArtworkBackgroundView(activity, forceDark);
+            background.setDarkening(backgroundBrightness, extraDarkFilter);
             background.setPlaying(playing);
             background.setMotionEnabled(animated);
             animatedBackground = background;
@@ -136,21 +214,10 @@ public final class LyricsAmbientController {
         }
         animatedForceDark = forceDark;
         appliedArtImageId = "";
-        Call previousCall = inFlightArtCall;
-        if (previousCall != null) previousCall.cancel();
-        inFlightArtCall = null;
-        inFlightArtImageId = "";
-        inFlightArtTarget = null;
+        cancelArtwork();
         parent.addView(animatedBackground.asView(), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         applyAnimatedPalette(currentPageColors);
-        if (lastArtBitmap != null) {
-            animatedBackground.updateImage(lastArtBitmap);
-            appliedArtImageId = desiredArtImageId;
-        }
-        if (!isBlank(desiredArtImageId)) {
-            updateAnimatedBackgroundArt(desiredArtImageId, null);
-        }
     }
 
     public void updateForTrack(SpotifyTrack track, RunningState runningState) {
@@ -195,80 +262,106 @@ public final class LyricsAmbientController {
     }
 
     private void updateAnimatedBackgroundArt(SpotifyTrack track, RunningState runningState) {
-        AmbientBackgroundLayer background = animatedBackground;
-        if (background == null) return;
-        String imageId = track == null ? "" : safe(track.imageId);
-        desiredArtImageId = imageId;
-        updateAnimatedBackgroundArt(imageId, runningState);
+        currentTrackUri = track == null ? "" : safe(track.uri);
+        desiredArtImageId = track == null ? "" : safe(track.imageId);
+        updateAnimatedBackgroundArt(desiredArtImageId, runningState);
     }
 
     private void updateAnimatedBackgroundArt(String imageId, RunningState runningState) {
         AmbientBackgroundLayer background = animatedBackground;
-        if (background == null) return;
-        if (isBlank(imageId) || imageId.equals(appliedArtImageId)) return;
-        if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) return;
-        Call previousCall = inFlightArtCall;
-        if (previousCall != null) previousCall.cancel();
+        if (background == null || !active || !textureEnabled) return;
+        if (isBlank(imageId)) {
+            cancelArtwork();
+            background.release();
+            appliedArtImageId = "";
+            return;
+        }
+        if (imageId.equals(appliedArtImageId) || imageId.equals(inFlightArtImageId)) return;
+        cancelArtwork();
+        final long generation = artGeneration;
         inFlightArtImageId = imageId;
-        inFlightArtTarget = background;
-        Request request = new Request.Builder()
-                .url("https://i.scdn.co/image/" + Uri.encode(imageId))
-                .get()
-                .build();
-        Call artCall = http.newCall(request);
-        inFlightArtCall = artCall;
-        artCall.enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                XpLog.log(TAG + " album art fetch failed: " + e.getMessage());
-                if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) {
-                    inFlightArtImageId = "";
-                    inFlightArtTarget = null;
-                    if (inFlightArtCall == call) inFlightArtCall = null;
+        // Borrow only artwork with matching metadata identity; own the small copy before dispatch.
+        Bitmap borrowed = SpotifyArtworkCache.snapshot(imageId, currentTrackUri);
+        final Bitmap local = borrowed;
+        Call call = http.newCall(new Request.Builder()
+                .url("https://i.scdn.co/image/" + Uri.encode(imageId)).build());
+        inFlightArtCall = call;
+        artWork = ART_WORKER.submit(() -> {
+            Bitmap prepared = null;
+            AmbientArtworkProfile profile = null;
+            try {
+                if (local != null) {
+                    AmbientArtworkTexture.Prepared done = AmbientArtworkTexture.prepareWithProfile(local);
+                    prepared = done.bitmap;
+                    profile = done.profile;
+                } else {
+                    try (Response response = call.execute()) {
+                        if (!response.isSuccessful() || response.body() == null
+                                || response.body().contentLength() > MAX_ART_BYTES) return;
+                        byte[] data = readBounded(response.body().byteStream(), MAX_ART_BYTES);
+                        if (data == null || Thread.currentThread().isInterrupted()) return;
+                        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+                        bounds.inJustDecodeBounds = true;
+                        android.graphics.BitmapFactory.decodeByteArray(data,0,data.length,bounds);
+                        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return;
+                        android.graphics.BitmapFactory.Options decode = new android.graphics.BitmapFactory.Options();
+                        decode.inSampleSize = calculateInSampleSize(bounds.outWidth,bounds.outHeight,ART_DECODE_TARGET_PX);
+                        Bitmap decoded = android.graphics.BitmapFactory.decodeByteArray(data,0,data.length,decode);
+                        if (decoded != null) {
+                            try {
+                                AmbientArtworkTexture.Prepared done =
+                                        AmbientArtworkTexture.prepareWithProfile(decoded);
+                                prepared = done.bitmap;
+                                profile = done.profile;
+                            }
+                            finally { decoded.recycle(); }
+                        }
+                    }
                 }
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                try (Response ignored = response) {
-                    if (!response.isSuccessful() || response.body() == null) return;
-                    if (isStaleArtRequest(imageId, background, runningState)) return;
-                    byte[] data = response.body().bytes();
-                    if (isStaleArtRequest(imageId, background, runningState)) return;
-                    android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
-                    bounds.inJustDecodeBounds = true;
-                    android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
-                    android.graphics.BitmapFactory.Options decode = new android.graphics.BitmapFactory.Options();
-                    decode.inSampleSize = calculateInSampleSize(
-                            bounds.outWidth, bounds.outHeight, ART_DECODE_TARGET_PX);
-                    android.graphics.Bitmap art = android.graphics.BitmapFactory.decodeByteArray(
-                            data, 0, data.length, decode);
-                    if (art == null) return;
-                    if (isStaleArtRequest(imageId, background, runningState)) {
-                        art.recycle();
+                final Bitmap result = prepared;
+                final AmbientArtworkProfile resultProfile = profile;
+                prepared = null;
+                main.post(() -> {
+                    if (generation != artGeneration || !active || !textureEnabled
+                            || background != animatedBackground || !imageId.equals(desiredArtImageId)) {
+                        if (result != null) result.recycle();
                         return;
                     }
-                    lastArtBitmap = art;
-                    background.updateImage(art);
-                    appliedArtImageId = imageId;
-                } catch (Throwable t) {
-                    XpLog.log(TAG + " album art decode failed: " + t);
-                } finally {
-                    if (imageId.equals(inFlightArtImageId) && background == inFlightArtTarget) {
-                        inFlightArtImageId = "";
-                        inFlightArtTarget = null;
-                        if (inFlightArtCall == call) inFlightArtCall = null;
+                    if (result != null) {
+                        background.updateImage(result, resultProfile);
+                        resumeRenderer();
+                        appliedArtImageId = imageId;
+                        XpLog.log(TAG + " artwork source=" + (local == null ? "cdn" : "spotify_metadata"));
                     }
-                }
+                });
+            } catch (Exception e) {
+                if (!call.isCanceled()) XpLog.log(TAG + " artwork unavailable: " + e.getClass().getSimpleName());
+            } finally {
+                if (local != null) local.recycle();
+                if (prepared != null) prepared.recycle();
+                main.post(() -> {
+                    if (generation == artGeneration) {
+                        inFlightArtImageId = "";
+                        inFlightArtCall = null;
+                        artWork = null;
+                    }
+                });
             }
         });
     }
 
-    private boolean isStaleArtRequest(String imageId, AmbientBackgroundLayer background,
-                                      RunningState runningState) {
-        return (runningState != null && !runningState.isRunning())
-                || background != animatedBackground
-                || !imageId.equals(desiredArtImageId);
+    private static byte[] readBounded(InputStream input, int maxBytes) throws IOException {
+        try (InputStream in = input; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int count;
+            while ((count = in.read(buffer)) != -1) {
+                if (count > maxBytes - total) return null;
+                out.write(buffer, 0, count);
+                total += count;
+            }
+            return out.toByteArray();
+        }
     }
 
     static int calculateInSampleSize(int width, int height, int targetLongestEdge) {
@@ -281,8 +374,8 @@ public final class LyricsAmbientController {
     }
 
     private void applyAnimatedPalette(int[] colors) {
-        if (animatedBackground instanceof KawarpBackgroundView) {
-            ((KawarpBackgroundView) animatedBackground).setPaletteColors(colors);
+        if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+            ((AmbientArtworkBackgroundView) animatedBackground).setPaletteColors(colors);
         }
     }
 

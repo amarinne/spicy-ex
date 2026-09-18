@@ -5,7 +5,10 @@ import android.content.pm.ApplicationInfo;
 import android.content.res.AssetManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.os.LocaleList;
 import android.util.DisplayMetrics;
+
+import java.util.Locale;
 
 /**
  * Module {@link Resources} provider replacing the legacy module-resources
@@ -54,8 +57,29 @@ public final class XpRes {
         return cached;
     }
 
+    /**
+     * Locale-pinned module resources on a private {@link AssetManager}.
+     *
+     * <p>Every instance owns its assets, so resolving one locale can never reconfigure
+     * another locale's {@code Resources}. The hand-rolled {@code new Resources(sharedAssets,
+     * config)} fallback this replaces pushed its config into the shared assets, and the last
+     * locale resolved won for every wrapper: opening the language picker (which resolves
+     * native labels en, ru, zh in turn) flipped already-built dialogs to Chinese on read
+     * alone, with the preference untouched. Null language (or legacy {@code "system"})
+     * keeps the default configuration; null is returned when the APK path is unknown or
+     * loading fails, and callers fall back to literal strings.
+     */
+    public static synchronized Resources resourcesForLanguage(String language) {
+        return buildFromApk(moduleSourceDir, language);
+    }
+
     @SuppressWarnings("deprecation")
     private static Resources buildFromApk(String sourceDir) {
+        return buildFromApk(sourceDir, null);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static Resources buildFromApk(String sourceDir, String language) {
         if (sourceDir == null) return null;
         try {
             AssetManager assets = AssetManager.class.newInstance();
@@ -63,6 +87,9 @@ public final class XpRes {
             Resources system = Resources.getSystem();
             DisplayMetrics metrics = system.getDisplayMetrics();
             Configuration config = new Configuration(system.getConfiguration());
+            if (language != null && !language.isEmpty() && !"system".equalsIgnoreCase(language)) {
+                config.setLocales(new LocaleList(Locale.forLanguageTag(language)));
+            }
             return new Resources(assets, metrics, config);
         } catch (Throwable ignored) {
             return null;

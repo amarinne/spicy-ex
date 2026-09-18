@@ -122,6 +122,14 @@ public final class LegacyDocumentComposer {
             line.romanizedText = sound.displayText;
         }
         if (sound.japaneseReading != null) line.japaneseReading = sound.japaneseReading;
+        else if (line.detection != null && line.detection.hasLanguage()
+                && !"ja".equals(line.detection.language)
+                && com.eza.spicyex.lyrics.SpicyTextDetection.hasCjkIdeograph(line.text)) {
+            // A lane entry that carries no Japanese reading is proof the line is not Japanese:
+            // drop any parse-time or provider Han reading instead of letting stale furigana
+            // reach the renderer.
+            line.japaneseReading = null;
+        }
         if (!sound.mode.isEmpty()) line.chineseMode = sound.mode;
         applySpanReadings(line, sound);
         return true;

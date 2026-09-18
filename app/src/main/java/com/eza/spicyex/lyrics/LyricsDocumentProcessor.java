@@ -470,7 +470,8 @@ public final class LyricsDocumentProcessor {
         if (!documentNeedsTranslation) return;
         for (LyricsLine line : doc.lines) {
             if (line == null || line.interlude || isBlank(line.text)) continue;
-            if (!SpicyProcessing.flagsFor(line.text, sourceLang, targetLang).translationPending) continue;
+            if (!SpicyProcessing.flagsFor(line.text, sourceLang, targetLang,
+                    line.detection).translationPending) continue;
             String cachedTranslated = LyricCaches.getProcessingValue(context, processingVersion,
                     LyricCaches.translationKey(doc.trackId, sourceLang, targetLang, line.text));
             if (isBlank(line.translatedText) && !isBlank(cachedTranslated)
@@ -506,6 +507,31 @@ public final class LyricsDocumentProcessor {
         doc.detectedChinese = doc.detectedScripts.contains(SpicyTextDetection.Script.CHINESE);
     }
 
+    /**
+     * Recomputes document-level pending flags after session detection lands on the lines.
+     *
+     * <p>Detection can change which rows the translation gate accepts, so the flags computed at
+     * parse time are refreshed before the lanes read them. Romanization stays a script check.
+     */
+    public static void recomputePendingFlags(Context context, LyricsDocument doc) {
+        if (doc == null || doc.lines == null || doc.lines.isEmpty()) return;
+        SpotifyPlusConfig config = context != null ? SpotifyPlusConfig.from(context) : null;
+        String targetLang = config != null ? config.get(Settings.TRANSLATION_TARGET) : "en";
+        String backend = config == null ? Settings.TRANSLATION_BACKEND.defaultValue
+                : config.get(Settings.TRANSLATION_BACKEND);
+        boolean translationEnabled = FeatureAvailability.translationAvailable()
+                && config != null
+                && config.get(Settings.TRANSLATION_ENABLED)
+                && !"disabled".equalsIgnoreCase(backend);
+        String sourceLang = effectiveSourceLanguage(config, doc.language);
+        doc.romanizationPending = FeatureAvailability.transliterationAvailable()
+                && SpicyProcessing.flagsFor(collectText(doc), sourceLang, targetLang).romanizationPending;
+        doc.translationPending = translationEnabled
+                && "google_unofficial".equalsIgnoreCase(backend)
+                && hasGeneratedTranslationWork(doc, sourceLang, targetLang);
+        doc.processingPending = doc.romanizationPending || doc.translationPending;
+    }
+
     private static String effectiveSourceLanguage(SpotifyPlusConfig config, String documentLanguage) {
         if (config != null && "manual".equalsIgnoreCase(config.get(Settings.SOURCE_LANGUAGE_MODE))) {
             return config.get(Settings.SOURCE_LANGUAGE);
@@ -520,15 +546,39 @@ public final class LyricsDocumentProcessor {
         if (!FeatureAvailability.translationAvailable()
                 || !config.get(Settings.TRANSLATION_ENABLED)
                 || "disabled".equalsIgnoreCase(backend)) return;
-        ProviderTranslationResolver.applyTranslations(doc, config.get(Settings.TRANSLATION_TARGET));
+        ProviderTranslationResolver.applyTranslations(doc, config.get(Settings.TRANSLATION_TARGET),
+                ProviderTextDetectionStore.lookup(context));
+    }
+
+    /**
+     * Re-runs provider translation selection once session detection has produced the auxiliary
+     * detections a provider text needs to prove its language.
+     */
+    public static void reapplyProviderTranslations(Context context, LyricsDocument doc) {
+        applyProviderTranslations(context, doc);
     }
 
     public static boolean hasGeneratedTranslationWork(LyricsDocument doc, String sourceLanguage, String targetLanguage) {
         if (doc == null || doc.lines == null) return false;
-        if (!SpicyProcessing.flagsFor(collectText(doc), sourceLanguage, targetLanguage).translationPending) return false;
+        // With session detection already attached, the whole-document gate is redundant and would
+        // call the detector once more over the joined text. Rows own the decision now.
+        if (!hasAnyDetection(doc)
+                && !SpicyProcessing.flagsFor(collectText(doc), sourceLanguage,
+                        targetLanguage).translationPending) {
+            return false;
+        }
         for (LyricsLine line : doc.lines) {
             if (line == null || line.interlude || isBlank(line.text) || !isBlank(line.translatedText)) continue;
-            if (SpicyProcessing.flagsFor(line.text, sourceLanguage, targetLanguage).translationPending) return true;
+            if (SpicyProcessing.flagsFor(line.text, sourceLanguage, targetLanguage,
+                    line.detection).translationPending) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasAnyDetection(LyricsDocument doc) {
+        if (doc == null || doc.lines == null) return false;
+        for (LyricsLine line : doc.lines) {
+            if (line != null && line.detection != null) return true;
         }
         return false;
     }

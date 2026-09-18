@@ -26,13 +26,15 @@ public class CacheStoragePolicyTest {
                 + CacheStoragePolicy.meaningQuota(total)
                 + CacheStoragePolicy.googleQuota(total)
                 + CacheStoragePolicy.canonicalQuota(total)
-                + CacheStoragePolicy.rawResponseQuota(total);
+                + CacheStoragePolicy.rawResponseQuota(total)
+                + CacheStoragePolicy.detectionQuota(total);
 
         assertEquals(total, allocated);
-        assertEquals(67_108_867L, CacheStoragePolicy.paidAiQuota(total));
+        assertEquals(60_397_981L, CacheStoragePolicy.paidAiQuota(total));
         assertEquals(20_132_659L, CacheStoragePolicy.soundQuota(total));
         assertEquals(13_421_772L, CacheStoragePolicy.meaningQuota(total));
         assertEquals(6_710_886L, CacheStoragePolicy.rawResponseQuota(total));
+        assertEquals(6_710_886L, CacheStoragePolicy.detectionQuota(total));
     }
 
     @Test
@@ -45,6 +47,7 @@ public class CacheStoragePolicyTest {
         assertEquals(CacheStoragePolicy.UNLIMITED, CacheStoragePolicy.googleQuota(total));
         assertEquals(CacheStoragePolicy.UNLIMITED, CacheStoragePolicy.canonicalQuota(total));
         assertEquals(CacheStoragePolicy.UNLIMITED, CacheStoragePolicy.rawResponseQuota(total));
+        assertEquals(CacheStoragePolicy.UNLIMITED, CacheStoragePolicy.detectionQuota(total));
     }
 
     @Test

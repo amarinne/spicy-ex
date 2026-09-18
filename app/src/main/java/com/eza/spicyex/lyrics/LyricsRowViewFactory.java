@@ -95,7 +95,7 @@ public final class LyricsRowViewFactory {
         }
 
         boolean japaneseLine = isJapaneseLine(line);
-        boolean chineseLine = !japaneseLine && SpicyTextDetection.itemChineseTest(line.text);
+        boolean chineseLine = "zh".equals(ReadingLanguagePolicy.layoutLanguage(line));
         String readingText = displayReading(line);
         boolean showJapaneseFurigana = japaneseLine && options.showRomanization && options.showJapaneseFurigana;
         boolean showJapaneseRomaji = japaneseLine && options.showRomanization && options.showJapaneseRomaji
@@ -106,7 +106,12 @@ public final class LyricsRowViewFactory {
 
         float sizeMultiplier = options == null ? 1f : options.textSizeMultiplier;
         boolean adaptiveTextSize = options == null || options.adaptiveTextSizeEnabled;
-        LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(LyricVisuals.lyricTextSizeSp(line.text, adaptiveTextSize) * sizeMultiplier)));
+        boolean appleCompactText = options != null && options.appleCompactText;
+        if (appleCompactText && line.bgLine) sizeMultiplier *= 0.82f;
+        int textCurve = appleCompactText
+                ? LyricVisuals.appleLyricTextSizeSp(line.text)
+                : LyricVisuals.lyricTextSizeSp(line.text, adaptiveTextSize);
+        LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(textCurve * sizeMultiplier)));
         float baseTextPx = sp(LyricsLineViewState.baseTextSp(line));
         row.setPaddingRelative(leadingPadding, topClearancePx(dp(10), multiplier, baseTextPx, showJapaneseFurigana),
                 trailingPadding, Math.round(dp(13) * multiplier));
@@ -284,7 +289,8 @@ public final class LyricsRowViewFactory {
                 rangeEnd = sourceRange[1];
                 View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
                         options == null ? "Medium" : options.lyricWeight,
-                        options == null ? "spotify" : options.lyricsFont);
+                        options == null ? "spotify" : options.lyricsFont,
+                        options, wrapLongLines, syllableContentWidthPx());
                 TimedTextRowProjection.Chunk romanChunk = showAlignedRomaji
                         && wordIndex < romanizedWords.size() ? romanizedWords.get(wordIndex) : null;
                 String romanizedWordText = romanChunk == null ? "" : romanChunk.text;
@@ -367,7 +373,7 @@ public final class LyricsRowViewFactory {
 
     /** Reading metadata disambiguates all-kanji Japanese lines from Chinese text detection. */
     static String adaptiveLayoutLanguage(AppliedLine line) {
-        return line != null && line.japaneseReading != null ? "ja" : null;
+        return ReadingLanguagePolicy.layoutLanguage(line);
     }
 
     /** Break between adaptive children i and i+1 is forbidden when both word ranges sit wholly
@@ -621,9 +627,19 @@ public final class LyricsRowViewFactory {
         return null;
     }
 
-    private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font) {
+    private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font,
+                               Options options, boolean wrapLongLines, float contentWidthPx) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
-        if (!showJapaneseFurigana && LyricVisuals.shouldUseLetterAnimator(seg)) {
+        boolean appleStyle = options != null && options.appleStyle;
+        boolean appleCjkWrap = options != null && options.appleCjkWrap;
+        boolean longWrappingWord = false;
+        if (appleCjkWrap && wrapLongLines && seg != null && !isBlank(seg.text)) {
+            android.graphics.Paint measurePaint = new android.graphics.Paint();
+            measurePaint.setTextSize(sp(LyricsLineViewState.baseTextSp(line)));
+            measurePaint.setTypeface(textFactory.resolveTypeface(true));
+            longWrappingWord = measurePaint.measureText(seg.text) + dp(8) > contentWidthPx;
+        }
+        if (!showJapaneseFurigana && !longWrappingWord && LyricVisuals.shouldUseLetterAnimator(seg, appleStyle)) {
             LinearLayout letters = new LinearLayout(activity);
             letters.setOrientation(LinearLayout.HORIZONTAL);
             letters.setClipToPadding(false);
@@ -664,7 +680,11 @@ public final class LyricsRowViewFactory {
         if (showJapaneseFurigana) {
             word.setPadding(0, FuriganaText.rubyGapReservationPx(sp(LyricsLineViewState.baseTextSp(line))), 0, 0);
         }
-        word.setMaxLines(1);
+        word.setMaxLines(appleCjkWrap && wrapLongLines ? 4 : 1);
+        if (appleCjkWrap && wrapLongLines) {
+            word.setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY);
+            word.setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE);
+        }
         LyricsSyllableViewState.clearLetters(seg);
         LyricsSyllableViewState.setTextView(seg, word);
         return word;
@@ -769,11 +789,12 @@ public final class LyricsRowViewFactory {
     }
 
     private boolean isJapaneseLine(AppliedLine line) {
-        return hasJapaneseReading(line) || (line != null && SpicyTextDetection.hasKana(line.text));
+        return LyricsDisplayMode.isJapaneseLine(line);
     }
 
     private boolean isCjkPhraseLine(AppliedLine line) {
-        return isJapaneseLine(line) || (line != null && SpicyTextDetection.itemChineseTest(line.text));
+        String language = ReadingLanguagePolicy.layoutLanguage(line);
+        return "ja".equals(language) || "zh".equals(language);
     }
 
     private boolean hasJapaneseReading(AppliedLine line) {
@@ -783,6 +804,16 @@ public final class LyricsRowViewFactory {
     private int dp(int value) {
         float density = activity == null ? 1f : activity.getResources().getDisplayMetrics().density;
         return Math.round(value * density);
+    }
+
+    /**
+     * Width basis for the Apple long-CJK-word check: screen width minus chrome margin. Slightly
+     * conservative on purpose — wrapping a word a touch early is the safe direction.
+     */
+    private float syllableContentWidthPx() {
+        int screenWidthPx = activity == null ? 0
+                : activity.getResources().getDisplayMetrics().widthPixels;
+        return Math.max(1, screenWidthPx - dp(32));
     }
 
     private float sp(float value) {
@@ -840,5 +871,8 @@ public final class LyricsRowViewFactory {
         public boolean adaptiveSectioningEnabled = true;
         public boolean horizontalSafetyPadding = true;
         public String documentText = "";
+        public boolean appleStyle;
+        public boolean appleCompactText;
+        public boolean appleCjkWrap;
     }
 }

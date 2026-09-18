@@ -21,6 +21,10 @@ public class Spring {
         this.goal = goal;
     }
 
+    public float position() {
+        return position;
+    }
+
     public float step(float dt) {
         double d = dampingRatio;
         double f = frequency * (2d * Math.PI);

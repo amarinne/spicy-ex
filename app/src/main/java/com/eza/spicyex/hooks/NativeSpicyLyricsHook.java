@@ -68,11 +68,11 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         dbg("hook", "native Spicy renderer hook enabled version=" + BuildStamp.FULL);
         new NativeLyricsCaptureHook(
                 lpparm.classLoader(),
-                bridge,
+                symbols,
                 lyricsFetchCoordinator.nativeLyricsSource(),
                 this::getCurrentTrackSafely
         ).hook();
-        playbackBridge.install(lpparm, bridge);
+        playbackBridge.install(lpparm, symbols);
         activityTakeoverHook.hook();
         String processName = Application.getProcessName();
         XpLog.log(TAG + " bridge init package=" + lpparm.packageName()
@@ -130,7 +130,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         dbgEnter("getCurrentTrackSafely");
         try {
             if (References.playerState == null || References.playerState.get() == null) return null;
-            return References.getTrackTitle(lpparm.classLoader(), bridge);
+            return References.getTrackTitle(lpparm.classLoader(), symbols);
         } catch (Throwable t) {
             XpLog.log(TAG + " track read failed: " + t);
             return null;
@@ -139,6 +139,26 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
 
     public boolean seekSpotifyTo(long positionMs) {
         return playbackBridge.seekSpotifyTo(positionMs);
+    }
+
+    @Override
+    public boolean togglePlayPause() {
+        return playbackBridge.togglePlayPause();
+    }
+
+    @Override
+    public boolean skipToNextTrack() {
+        return playbackBridge.skipToNextTrack();
+    }
+
+    @Override
+    public boolean skipToPreviousTrack() {
+        return playbackBridge.skipToPreviousTrack();
+    }
+
+    @Override
+    public boolean toggleSpotifySaved(String mode, com.eza.spicyex.SpotifyTrack expected) {
+        return playbackBridge.toggleSpotifySaved(mode, expected, this::getCurrentTrackSafely);
     }
 
     public long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {

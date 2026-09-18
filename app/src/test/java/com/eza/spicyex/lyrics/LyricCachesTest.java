@@ -13,7 +13,7 @@ import java.util.Map;
 public class LyricCachesTest {
     @Test
     public void localWholeLineAuthorityBumpsTheReadingCacheIdentity() {
-        assertEquals(5, ProcessedLyricsCache.READING_SCHEMA_VERSION);
+        assertEquals(7, ProcessedLyricsCache.READING_SCHEMA_VERSION);
         String options = RomanizationOptions.DEFAULTS.cacheKey();
         String old = LayerConfigIds.sound(true, options, "ru", 3);
         String current = LayerConfigIds.sound(true, options, "ru",

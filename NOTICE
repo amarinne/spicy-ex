@@ -80,3 +80,14 @@ The SpotifyPlus-origin files retain their original MIT notices where present.
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
+
+Apache Tika CharSoup core (Full flavor)
+--------------------------------------
+This product includes Apache Tika langdetect (charsoup core — no Tika dependencies),
+version 4.0.0, and its bundled language model.
+Copyright 2007-2026 The Apache Software Foundation.
+This product includes software developed at The Apache Software Foundation
+(http://www.apache.org/), licensed under the Apache License, Version 2.0.
+Upstream: https://tika.apache.org/
+The dependency's META-INF/NOTICE is retained in the Full APK. The Apache License,
+Version 2.0 is available at https://www.apache.org/licenses/LICENSE-2.0.

@@ -54,4 +54,16 @@ final class LyricsJumpToCurrentController {
         }
         button.setAlpha(show ? 0.92f : 0f);
     }
+
+    /** Raises the chip above the bottom track-info readout (bottom mode) or restores it. */
+    void setBottomMarginDp(int marginDp) {
+        ViewGroup.LayoutParams lp = button.getLayoutParams();
+        if (!(lp instanceof FrameLayout.LayoutParams)) return;
+        FrameLayout.LayoutParams flp = (FrameLayout.LayoutParams) lp;
+        int target = dp(marginDp);
+        if (flp.bottomMargin != target) {
+            flp.bottomMargin = target;
+            button.setLayoutParams(flp);
+        }
+    }
 }

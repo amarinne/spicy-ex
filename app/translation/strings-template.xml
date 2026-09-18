@@ -3,8 +3,10 @@
   Spicy EX translation contribution template.
   Copy this file to app/src/main/res/values-<locale>/strings.xml.
   Translate text values only. Preserve string names, format placeholders, escapes, and markup.
-  Keep settings_label_settings_ui_language translated here if useful; the app deliberately
-  displays that one row title from the default English XML so users can always find it.
+  Never translate settings_label_settings_ui_language: keep the English
+  "Interface language" (or omit the entry so the default fallback applies),
+  so the language selector stays readable in every locale.
+  Use the native language name for settings_locale_name (e.g. Русский).
   Remove entries intentionally left to the default English fallback.
 -->
 <resources>
@@ -17,8 +19,10 @@
     <string name="settings_locale_name">English</string>
     <!-- Settings sections. Add the same names in values-<locale>/strings.xml to translate the panel. -->
     <string name="settings_section_lyrics">Behavior</string>
+    <string name="settings_section_lyrics_sources">Lyrics Sources</string>
     <string name="settings_section_now_playing">Now Playing Card</string>
     <string name="settings_section_lyrics_screen">Lyrics Screen</string>
+    <string name="settings_section_apple_music">Apple animation style</string>
     <string name="settings_section_transliteration">Reading &amp; Transliteration</string>
     <string name="settings_section_translation">Translation</string>
     <string name="settings_section_debug">About &amp; Diagnostics</string>
@@ -27,6 +31,14 @@
     <string name="settings_label_lyric_tap_seek_mode">Tap lyric to seek</string>
     <string name="settings_label_lyric_stay_on_track_change">Stay in lyric screen on song change</string>
     <string name="settings_label_lyric_auto_resume_follow">Auto-resume lyric follow</string>
+    <string name="settings_label_lyric_auto_skip_intro_outro">Auto-skip intro/outro</string>
+    <string name="settings_label_mini_player_lyrics_icon">Show lyrics icon on mini player</string>
+    <string name="settings_label_lyric_liked_songs_button">Add to Liked Songs button</string>
+    <string name="settings_option_heart">Heart</string>
+    <string name="settings_option_star">Star</string>
+    <string name="lyrics_like_add">Add to Liked Songs</string>
+    <string name="lyrics_like_remove">Remove from Liked Songs</string>
+    <string name="lyrics_like_unavailable">Liked Songs action unavailable</string>
     <string name="settings_label_lyric_sync_offset_ms">Sync offset</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">Publish lyrics to HyperGlow</string>
     <string name="settings_label_lyrics_source_selection_mode">Lyrics source ranking</string>
@@ -63,6 +75,12 @@
     <string name="settings_option_cache_size_1024_mb">1024 MB</string>
     <string name="settings_option_cache_size_no_limit">No limit</string>
     <string name="settings_cache_size_usage_suffix">%1$s · %2$s used</string>
+    <string name="settings_cache_details_action">Show cache details</string>
+    <string name="settings_cache_details_title">Cache details</string>
+    <string name="settings_cache_details_songs">Cached songs</string>
+    <string name="settings_cache_details_lyrics">Lyric data cached</string>
+    <string name="settings_cache_details_ai">AI data cached</string>
+    <string name="settings_cache_details_close">Close</string>
     <string name="settings_label_lyrics_live_card_tap_mode">Tap card to open lyrics</string>
     <string name="settings_label_lyrics_live_card_tap_target">Card tap target</string>
     <string name="settings_label_lyrics_live_card_weight">Lyric weight</string>
@@ -89,7 +107,22 @@
     <string name="settings_option_10_seconds">10 seconds</string>
     <string name="settings_option_30_seconds">30 seconds</string>
     <string name="settings_option_always_on">Always on</string>
+    <string name="settings_label_lyrics_track_info_position">Track info position</string>
+    <string name="settings_option_top">Top</string>
+    <string name="settings_option_bottom">Bottom</string>
+    <string name="settings_label_lyrics_track_info_text_size">Track info text size</string>
+    <string name="settings_label_lyrics_track_info_text_size_custom">Custom size</string>
+    <string name="settings_label_lyrics_track_info_text_overflow">Track info overflow</string>
+    <string name="settings_option_scroll">Scroll</string>
+    <string name="settings_label_lyrics_track_info_art_size">Track info art size</string>
+    <string name="settings_label_lyrics_adaptive_landscape_layout">Adaptive landscape layout</string>
+    <string name="settings_label_lyrics_panel_media_controls">Panel media controls</string>
     <string name="settings_label_lyric_animation_style">Animation style</string>
+    <string name="settings_label_lyric_apple_fade_passed_lines">Fade passed lines</string>
+    <string name="settings_label_lyric_apple_compact_text">Compact text size</string>
+    <string name="settings_label_lyric_apple_cjk_wrap_fix">Wrap long CJK words</string>
+    <string name="settings_label_lyric_line_slide_animation">Apple Music-style slide</string>
+    <string name="settings_label_lyric_apple_lift">Apple lift</string>
     <string name="settings_label_lyric_word_bounce">Word bounce</string>
     <string name="settings_label_lyric_word_bounce_mode">Word bounce</string>
     <string name="settings_option_lyric_word_bounce_mode_off">Off</string>
@@ -100,12 +133,14 @@
     <string name="settings_option_lyric_word_bounce_style_word_zoom">Word zoom</string>
     <string name="settings_option_lyric_word_bounce_style_phrase_lift">Phrase lift</string>
     <string name="settings_option_lyric_word_bounce_style_word_lift">Word lift</string>
+    <string name="settings_option_lyric_word_bounce_style_apple_lift">Apple lift</string>
     <string name="settings_label_lyric_enable_glow_blur">Text glow</string>
     <string name="settings_label_lyric_enable_line_blur">Blur distant lines</string>
     <string name="settings_label_lyric_line_sync_fill">Lyric fill direction</string>
     <string name="settings_label_lyric_enable_background">Animated background</string>
     <string name="settings_label_lyric_background_style">Background style</string>
     <string name="settings_label_lyric_force_dark_background">Force dark background</string>
+    <string name="settings_label_lyric_extra_dark_background">Darken background</string>
     <string name="settings_label_lyrics_transliteration_enabled">Transliterate lyrics</string>
     <string name="settings_label_lyric_aligned_per_word_romaji">Attach transliteration under each word</string>
     <string name="settings_label_lyrics_japanese_reading_mode">Japanese reading</string>
@@ -119,6 +154,8 @@
     <string name="settings_label_lyrics_translation_brightness">Translation brightness</string>
     <!-- Selector values. Stored values remain locale-independent. -->
     <string name="settings_option_off">Off</string>
+    <string name="settings_option_slight">Slight</string>
+    <string name="settings_option_heavy">Heavy</string>
     <string name="settings_option_single_tap">Single tap</string>
     <string name="settings_option_double_tap">Double tap</string>
     <string name="settings_option_fullscreen">Fullscreen</string>
@@ -232,6 +269,7 @@
     <string name="settings_status_summary">Last state: %1$s\nTrack: %2$s\nLine: %3$s</string>
     <string name="settings_diagnostic_source_chosen">Source chosen</string>
     <string name="settings_diagnostic_candidates_seen">Candidates seen</string>
+    <string name="settings_diagnostic_provider">Provider</string>
     <string name="settings_diagnostic_type_chosen">Type chosen</string>
     <string name="settings_diagnostic_spicy_version_sent">Spicy version sent</string>
     <string name="settings_diagnostic_spicy_latest_version">Spicy latest version</string>

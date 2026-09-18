@@ -36,6 +36,7 @@ import com.eza.spicyex.R;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.SettingsUiStrings;
+import com.eza.spicyex.UiLanguage;
 
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
@@ -536,7 +537,7 @@ public final class DiagnosticReportingDialog {
 
     private static SettingsUiStrings strings(Context context, SettingsStore settings) {
         String language = settings == null ? "en" : settings.get(Settings.UI_LANGUAGE);
-        return new SettingsUiStrings(context, language);
+        return UiLanguage.strings(context, language);
     }
 
     private static String text(SettingsUiStrings strings, int id, String fallback) {

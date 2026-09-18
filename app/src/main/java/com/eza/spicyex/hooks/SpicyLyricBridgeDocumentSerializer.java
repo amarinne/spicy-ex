@@ -66,7 +66,8 @@ final class SpicyLyricBridgeDocumentSerializer {
             encoded.addProperty("romanized", bounded(readingText(row)));
             encoded.addProperty("translated", bounded(row.translatedText));
             JsonArray furigana = new JsonArray();
-            if (row.japaneseReading != null && row.japaneseReading.furigana != null) {
+            if (com.eza.spicyex.lyrics.LyricsDisplayMode.isJapaneseLine(row)
+                    && row.japaneseReading != null && row.japaneseReading.furigana != null) {
                 for (SpicyJapaneseChineseProcessor.FuriganaSegment segment : row.japaneseReading.furigana) {
                     if (segment == null || segment.reading == null || segment.reading.trim().isEmpty()) continue;
                     JsonObject ruby = new JsonObject();
@@ -80,7 +81,7 @@ final class SpicyLyricBridgeDocumentSerializer {
 
             JsonArray layoutGroups = new JsonArray();
             for (DisplayLayoutGroup group : DisplayLayoutGroup.forLine(
-                    document.language, row.text, row.japaneseReading)) {
+                    com.eza.spicyex.lyrics.ReadingLanguagePolicy.layoutLanguage(row), row.text, row.japaneseReading)) {
                 if (group == null || group.end <= group.start) continue;
                 JsonObject layout = new JsonObject();
                 layout.addProperty("start", group.start);

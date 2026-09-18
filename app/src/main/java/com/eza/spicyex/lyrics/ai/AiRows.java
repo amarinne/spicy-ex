@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics.ai;
 
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
+import com.eza.spicyex.lyrics.ReadingLanguagePolicy;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
@@ -80,7 +81,8 @@ public final class AiRows {
             if (row == null) continue;
             SoundEntry entry = existing == null ? null : existing.sound(row.rowId);
             AiLineClass lineClass = AiLineClassifier.classify(row.text);
-            boolean gap = lineClass != AiLineClass.STRUCTURAL
+            boolean unresolvedHan = unresolvedHan(document, row);
+            boolean gap = !unresolvedHan && lineClass != AiLineClass.STRUCTURAL
                     && AiSoundCoverage.isGap(row.text, entry, orthography);
             String baseline = useBaseline && gap
                     ? AiSoundCoverage.baselineFor(entry, orthography) : null;
@@ -90,6 +92,12 @@ public final class AiRows {
                     AiSoundCoverage.baselineProvenance(baseline)));
         }
         return rows;
+    }
+
+    private static boolean unresolvedHan(LyricsDocument document, CanonicalRow row) {
+        LyricsLine line = lineAt(document, row);
+        return line != null && line.detection != null
+                && ReadingLanguagePolicy.unresolvedHan(line.text, line.detection);
     }
 
     /** True when at least one row would be sent. Nothing to send means nothing to bill. */

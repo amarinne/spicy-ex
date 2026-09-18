@@ -25,6 +25,26 @@ import java.util.zip.GZIPInputStream;
 
 public class SpicyLyricBridgeDocumentSerializerTest {
     @Test
+    public void chineseRowInJapaneseDocumentHasNoJapaneseRubyOrLayout() throws Exception {
+        LyricsDocument document = new LyricsDocument(); document.language = "ja";
+        AppliedLine row = new AppliedLine(); row.text = "中国"; row.endMs = 1000;
+        row.sourceLine = new LyricsLine(); row.sourceLine.text = row.text;
+        row.sourceLine.detection = com.eza.spicyex.lyrics.session.DetectionResult.detected("", row.text,
+                com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass.CHINESE, "zh", .99);
+        row.japaneseReading = new com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.JapaneseReading(
+                "中国", "chuugoku", Collections.singletonList(
+                new com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "ちゅうごく")));
+        document.appliedLines.add(row);
+        JsonObject encoded = JsonParser.parseString(unzip(SpicyLyricBridgeDocumentSerializer.serialize(
+                document, "test", 1, "track"))).getAsJsonObject()
+                .getAsJsonArray("rows").get(0).getAsJsonObject();
+        assertEquals(0, encoded.getAsJsonArray("furigana").size());
+        for (com.google.gson.JsonElement group : encoded.getAsJsonArray("layoutGroups")) {
+            org.junit.Assert.assertFalse(group.getAsJsonObject().get("kind").getAsString().startsWith("ja"));
+        }
+    }
+
+    @Test
     public void serializesNormalizedRowsAndWords() throws Exception {
         LyricsDocument document = new LyricsDocument();
         document.provider = "test";

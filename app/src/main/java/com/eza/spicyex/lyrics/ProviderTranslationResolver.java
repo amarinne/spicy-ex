@@ -2,9 +2,10 @@ package com.eza.spicyex.lyrics;
 
 import java.util.Locale;
 
+import com.eza.spicyex.lyrics.session.DetectionResult;
+
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
-
 /** Selects source-provided translations only when their language is compatible with the target. */
 public final class ProviderTranslationResolver {
     private static final String SIMPLIFIED_ONLY = "这来时个们为国发后里东说车门体边头书见长万与云无广电乐龙汉马风开关听话爱让从对学实进会样还现点动过当应产种经认条达处气华场亲线该飞给众许变记仅办务权张声岁买卖带阶际导叶阳单难选连艺区极运历标识钟岛湾够顾礼旧习";
@@ -14,13 +15,18 @@ public final class ProviderTranslationResolver {
     }
 
     public static int applyTranslations(LyricsDocument document, String targetLanguage) {
+        return applyTranslations(document, targetLanguage, TextDetectionLookup.NONE);
+    }
+
+    public static int applyTranslations(LyricsDocument document, String targetLanguage,
+                                        TextDetectionLookup lookup) {
         if (document == null || document.lines == null) return 0;
         int applied = 0;
         for (LyricsLine line : document.lines) {
             if (line == null) continue;
             if (isBlank(line.translatedText)) {
                 String value = resolve(line.text, line.providerTranslatedText,
-                        line.providerTranslationLanguage, targetLanguage);
+                        line.providerTranslationLanguage, targetLanguage, lookup);
                 if (!isBlank(value)) {
                     line.translatedText = value;
                     applied++;
@@ -30,7 +36,7 @@ public final class ProviderTranslationResolver {
             for (BackgroundLine background : line.backgroundLines) {
                 if (background == null || !isBlank(background.translatedText)) continue;
                 String value = resolve(background.text, background.providerTranslatedText,
-                        background.providerTranslationLanguage, targetLanguage);
+                        background.providerTranslationLanguage, targetLanguage, lookup);
                 if (!isBlank(value)) {
                     background.translatedText = value;
                     applied++;
@@ -42,6 +48,24 @@ public final class ProviderTranslationResolver {
 
     public static String resolve(String sourceText, String providerText,
                                  String declaredLanguage, String targetLanguage) {
+        return resolve(sourceText, providerText, declaredLanguage, targetLanguage,
+                TextDetectionLookup.NONE);
+    }
+
+    /**
+     * Resolves a provider-supplied translation without ever invoking a detector.
+     *
+     * <p>Language evidence is declared metadata, script inference, or the session's own detection
+     * of the provider text. Row detection for the original lyric never vouches for the translation,
+     * accented characters are not a language, and Latin text is not assumed to be English: without
+     * evidence the resolver withholds the provider text and lets generated translation handle it.
+     *
+     * @param lookup synchronous provider-text detection, usually
+     *               {@link ProviderTextDetectionStore#lookup(android.content.Context)}
+     */
+    public static String resolve(String sourceText, String providerText,
+                                 String declaredLanguage, String targetLanguage,
+                                 TextDetectionLookup lookup) {
         if (!GoogleEnhancer.shouldDisplayTranslation(sourceText, providerText)) return "";
         String target = normalizeTarget(targetLanguage);
         if (target.isEmpty()) return "";
@@ -50,11 +74,13 @@ public final class ProviderTranslationResolver {
 
         String inferred = inferLanguage(providerText);
         if (!inferred.isEmpty()) return inferred.equals(target) ? providerText.trim() : "";
-        if (!containsLatinLetter(providerText)) return "";
-        if ("en".equals(target)) return providerText.trim();
-        String compact = providerText.replaceAll("[^\\p{L}\\s']", " ").replaceAll("\\s+", " ").trim();
-        return compact.length() >= 12 && LatinLanguageGate.lineLooksTargetLatin(compact, target)
-                ? providerText.trim() : "";
+        // Unlabelled provider text. Only detection of this exact text can
+        // establish its language, for English just as much as for any other target.
+        DetectionResult detection = lookup == null ? null : lookup.detectionFor(providerText);
+        if (detection != null && detection.hasLanguage() && declaredMatches(providerText, normalizeLanguageTag(detection.language), target)) {
+            return providerText.trim();
+        }
+        return "";
     }
 
     static String normalizeLanguageTag(String language) {
@@ -106,8 +132,6 @@ public final class ProviderTranslationResolver {
     private static String inferLanguage(String text) {
         if (containsRange(text, 0x3040, 0x30ff) || containsRange(text, 0x31f0, 0x31ff)) return "ja";
         if (containsRange(text, 0xac00, 0xd7af)) return "ko";
-        String han = inferHanLanguage(text);
-        if (!han.isEmpty()) return han;
         if (containsRange(text, 0x0370, 0x03ff)) return "el";
         if (containsRange(text, 0x0e00, 0x0e7f)) return "th";
         if (containsRange(text, 0x0590, 0x05ff)) return "he";

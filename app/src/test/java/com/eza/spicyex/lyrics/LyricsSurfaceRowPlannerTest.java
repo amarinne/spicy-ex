@@ -331,6 +331,8 @@ public class LyricsSurfaceRowPlannerTest {
     @Test
     public void chineseSentenceSyncCreatesTimedLayoutGroupsWithoutSpaces() {
         AppliedLine line = line("看看鏡子裡的你帶著");
+        line.sourceLine.detection = com.eza.spicyex.lyrics.session.DetectionResult.detected("",
+                line.text, ScriptClassifier.ScriptClass.CHINESE, "zh", .99);
         line.startMs = 1000;
         line.endMs = 5000;
         LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(

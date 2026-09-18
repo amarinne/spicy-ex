@@ -160,6 +160,8 @@ public class JapaneseReadingTest {
         assertEquals("ikite", romaji("生きて"));
         assertEquals("hitori de ikiteikenai", romaji("一人で生きていけない"));
         assertEquals("nan ji desu ka", romaji("何時ですか")); // short-unit split, consistent with "san nin"
+        assertEquals("ashita nanji chikaku no machi de kimi to ranchi",
+                romaji("明日何時 近くの町で君とランチ"));
     }
 
     @Test

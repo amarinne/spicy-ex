@@ -35,30 +35,16 @@ Still broken? Submit a compatibility report.
 
 ### Does LSPatch work?
 
-Supported, but less reliable than rooted LSPosed. Patched Spotify may fail Play Integrity or login.
+Possible, but less reliable. Patched Spotify may fail Play Integrity or login.
 Follow the [downgrade-login-upgrade method](README.md#install) in the Install section.
-
-### Translation or romanization is missing
-
-Requires Full version.
 
 ### Lyrics are missing, wrong, or delayed
 
-Lyric data is sourced and aggregated through Spicy Lyrics server. Availability, text, language, and
-timing quality can vary by track and upstream source.
+Lyric availability, text, language, and timing quality can vary by track and upstream source.
 
-### Is HyperGlow required?
+### HyperGlow
 
-No. HyperGlow is an optional lockscreen/AOD companion.
-
-### Does HyperGlow receive my Spotify token?
-
-No. Only bounded lyrics, timing, metadata, playback state, and presentation data cross the local
-bridge.
-
-### Are diagnostics uploaded automatically?
-
-No. Diagnostic report upload requires your manual confirmation.
+Optional.
 
 ### How do I update?
 

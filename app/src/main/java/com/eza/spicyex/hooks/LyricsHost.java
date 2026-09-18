@@ -23,6 +23,16 @@ interface LyricsHost {
 
     boolean seekSpotifyTo(long positionMs);
 
+    /** Play/pause toggle and track skips via the captured MediaSession transport.
+     * False when no session is captured (callers degrade to no-op visuals). */
+    boolean togglePlayPause();
+
+    boolean skipToNextTrack();
+
+    boolean skipToPreviousTrack();
+
+    boolean toggleSpotifySaved(String mode, SpotifyTrack expected);
+
     void markExplicitLyricsExit(Activity activity);
 
     // Re-arm the "keep lyrics activity open across track changes" window. The shell calls this

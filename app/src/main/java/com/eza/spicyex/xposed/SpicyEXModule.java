@@ -12,11 +12,11 @@ import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.References;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.hooks.NativeSpicyLyricsHook;
+import com.eza.spicyex.lyrics.session.LyricsMemoryPressure;
 
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface;
 
-import org.luckypray.dexkit.DexKitBridge;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
@@ -32,16 +32,9 @@ public final class SpicyEXModule extends XposedModule {
     private static final String TARGET_PACKAGE = "com.spotify.music";
     private static final String TAG = "[SpotifyPlus]";
 
-    static {
-        try {
-            System.loadLibrary("dexkit");
-        } catch (UnsatisfiedLinkError e) {
-            XpLog.log(TAG + " dexkit native load failed: " + e);
-        }
-    }
-
     private static volatile boolean injectionToastShown = false;
     private volatile String processName = "";
+    private boolean hookInitialized;
 
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
@@ -65,13 +58,6 @@ public final class SpicyEXModule extends XposedModule {
         XpLog.log(TAG + " Loading SpotifyPlus");
 
         ClassLoader classLoader = param.getClassLoader();
-        DexKitBridge bridge = null;
-        try {
-            bridge = DexKitBridge.create(param.getApplicationInfo().sourceDir);
-        } catch (Throwable throwable) {
-            XpLog.log(TAG + " dexkit bridge failed: " + throwable);
-        }
-        final DexKitBridge dexKit = bridge;
         final XpPackage xpPackage = new XpPackage(param.getPackageName(), classLoader);
 
         XpHooks.findAfter(Activity.class, "onResume", "entry:Activity#onResume", p -> {
@@ -116,13 +102,27 @@ public final class SpicyEXModule extends XposedModule {
                 p -> {
                     Context context = (Context) p.args[0];
                     Diagnostics.initialize(context);
+                    LyricsMemoryPressure.install(context);
                     Diagnostics.event("bootstrap", "application_attach",
                             Diagnostics.context("process", Application.getProcessName()));
                     cleanUpCache(context);
-                    new NativeSpicyLyricsHook(context).init(xpPackage, dexKit);
-                    Diagnostics.markHookBootstrapComplete();
-                    Diagnostics.event("bootstrap", "hook_init_complete");
+                    initSpotifyHook(xpPackage, context);
                 }, Context.class);
+    }
+
+    /** A cache hit requires no native library. Discovery owns and closes its temporary bridge. */
+    private synchronized void initSpotifyHook(XpPackage xpPackage, Context context) {
+        if (hookInitialized) return;
+        try (SpotifySymbolResolver symbols = new SpotifySymbolResolver(context, xpPackage.classLoader())) {
+            new NativeSpicyLyricsHook(context).init(xpPackage, symbols);
+            hookInitialized = true;
+            Diagnostics.markHookBootstrapComplete();
+            Diagnostics.event("bootstrap", "hook_init_complete");
+        } catch (Throwable throwable) {
+            XpLog.log(TAG + " hook initialization failed: " + throwable);
+            Diagnostics.event("bootstrap", "hook_init_failed",
+                    Diagnostics.context("reason", "symbol_initialization_failed"));
+        }
     }
 
     private void cleanUpCache(Context context) {

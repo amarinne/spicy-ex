@@ -30,6 +30,14 @@ public final class LyricPipelineMetrics {
         CACHED_MEANING_APPLIED,
         /** A Meaning run completed. */
         MEANING_PROCESSED,
+        /** Detection rows reused from the durable detection artifact. */
+        DETECTION_ROW_REUSED,
+        /** Detection rows computed by the detector. */
+        DETECTION_ROW_DETECTED,
+        /** Detection completions discarded because the track generation moved on. */
+        DETECTION_STALE_REJECTED,
+        /** Detection artifact records written to the durable store. */
+        DETECTION_ARTIFACT_PERSISTED,
         /** Network calls made by the Sound lane. */
         SOUND_PROVIDER_CALL,
         /**

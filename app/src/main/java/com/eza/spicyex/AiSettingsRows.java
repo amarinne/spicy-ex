@@ -18,6 +18,7 @@ import com.eza.spicyex.lyrics.ai.AiProviderFailure;
 import com.eza.spicyex.lyrics.ai.AiModelProbe;
 import com.eza.spicyex.lyrics.ai.AiRuntimeFailureLog;
 import com.eza.spicyex.lyrics.ai.AiSettings;
+import com.eza.spicyex.settings.SettingsWriter;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.PanelDialog;
 import com.eza.spicyex.ui.PanelPickerPopup;
@@ -37,15 +38,15 @@ import com.eza.spicyex.xposed.XpLog;
  * <p>Labels carry their own meaning and no row explains itself, so a value row shows state rather
  * than prose: "Not set" is the answer to "API key", not a sentence about what an API key is for.
  */
-final class AiSettingsRows {
+public final class AiSettingsRows {
 
-    static final class IconAction {
-        final ActionIconDrawable.Kind icon;
-        final String contentDescription;
-        final View.OnClickListener listener;
+    public static final class IconAction {
+        public final ActionIconDrawable.Kind icon;
+        public final String contentDescription;
+        public final View.OnClickListener listener;
 
-        IconAction(ActionIconDrawable.Kind icon, String contentDescription,
-                   View.OnClickListener listener) {
+        public IconAction(ActionIconDrawable.Kind icon, String contentDescription,
+                          View.OnClickListener listener) {
             this.icon = icon;
             this.contentDescription = contentDescription;
             this.listener = listener;
@@ -72,12 +73,14 @@ final class AiSettingsRows {
     private final Context context;
     private final Host host;
     private final SettingsStore store;
+    private final SettingsWriter writer;
     private final AiSettings settings;
 
     AiSettingsRows(Context context, Host host, SettingsStore store) {
         this.context = context;
         this.host = host;
         this.store = store;
+        this.writer = new SettingsWriter(store);
         this.settings = new AiSettings(store, AiCredentialStore.create(context));
     }
 
@@ -214,7 +217,7 @@ final class AiSettingsRows {
                 toast(endpointProblem(validated.problem));
                 return;
             }
-            store.put(Settings.AI_ENDPOINT, validated.normalized);
+            writer.put(Settings.AI_ENDPOINT, validated.normalized);
             host.rebuild();
         });
         dialog.secondary(host.string("settings_ai_cancel", "Cancel"), null);

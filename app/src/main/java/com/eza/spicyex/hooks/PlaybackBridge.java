@@ -20,7 +20,7 @@ import com.eza.spicyex.xposed.XpHooks;
 import com.eza.spicyex.xposed.XpLog;
 import com.eza.spicyex.xposed.XpPackage;
 import com.eza.spicyex.xposed.XpReflect;
-import org.luckypray.dexkit.DexKitBridge;
+import com.eza.spicyex.xposed.SpotifySymbolResolver;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.ClassMatcher;
@@ -39,12 +39,12 @@ final class PlaybackBridge {
     private volatile WeakReference<MediaSession> currentMediaSession = new WeakReference<>(null);
     private Method playerWrapperGetStateMethod;
 
-    void install(XpPackage lpparm, DexKitBridge bridge) {
-        hookPlayerStateBridge(lpparm, bridge);
+    void install(XpPackage lpparm, SpotifySymbolResolver symbols) {
+        hookPlayerStateBridge(lpparm, symbols);
         installMediaSessionHook();
     }
 
-    private void hookPlayerStateBridge(XpPackage lpparm, DexKitBridge bridge) {
+    private void hookPlayerStateBridge(XpPackage lpparm, SpotifySymbolResolver symbols) {
         NativeSpicyLyricsHook.dbgEnter("hookPlayerStateBridge");
         try {
             XpHooks.findAfter(
@@ -64,25 +64,28 @@ final class PlaybackBridge {
         }
 
         try {
-            var stateWrapperClasses = bridge.findClass(FindClass.create().matcher(
-                    ClassMatcher.create()
-                            .modifiers(Modifier.PUBLIC | Modifier.FINAL)
-                            .interfaceCount(1)
-                            .fields(FieldsMatcher.create()
-                                    .add(FieldMatcher.create().modifiers(Modifier.PUBLIC | Modifier.FINAL))
-                                    .add(FieldMatcher.create()
-                                            .modifiers(Modifier.PUBLIC | Modifier.FINAL).type(String.class))
-                                    .add(FieldMatcher.create()
-                                            .modifiers(Modifier.PUBLIC | Modifier.FINAL).type(ArrayList.class))
-                                    .add(FieldMatcher.create().modifiers(Modifier.PUBLIC).type(Object.class))
-                                    .add(FieldMatcher.create().modifiers(Modifier.PUBLIC).type(Bundle.class))
-                            )));
+            playerWrapperGetStateMethod = symbols.cache.method("playback.wrapper.getState", () -> {
+                var bridge = symbols.dexKit();
+                var stateWrapperClasses = bridge.findClass(FindClass.create().matcher(
+                        ClassMatcher.create()
+                                .modifiers(Modifier.PUBLIC | Modifier.FINAL)
+                                .interfaceCount(1)
+                                .fields(FieldsMatcher.create()
+                                        .add(FieldMatcher.create().modifiers(Modifier.PUBLIC | Modifier.FINAL))
+                                        .add(FieldMatcher.create()
+                                                .modifiers(Modifier.PUBLIC | Modifier.FINAL).type(String.class))
+                                        .add(FieldMatcher.create()
+                                                .modifiers(Modifier.PUBLIC | Modifier.FINAL).type(ArrayList.class))
+                                        .add(FieldMatcher.create().modifiers(Modifier.PUBLIC).type(Object.class))
+                                        .add(FieldMatcher.create().modifiers(Modifier.PUBLIC).type(Bundle.class))
+                                )));
 
-            playerWrapperGetStateMethod = bridge.findMethod(FindMethod.create()
-                            .searchInClass(stateWrapperClasses)
-                            .matcher(MethodMatcher.create().name("getState")))
-                    .get(0)
-                    .getMethodInstance(lpparm.classLoader());
+                return bridge.findMethod(FindMethod.create()
+                                .searchInClass(stateWrapperClasses)
+                                .matcher(MethodMatcher.create().name("getState")))
+                        .get(0)
+                        .getMethodInstance(lpparm.classLoader());
+            });
             XpHooks.hookAfter(playerWrapperGetStateMethod, "playback:PlayerWrapper#getState", param -> {
                 References.playerStateWrapperStrong = param.thisObject;
                 References.playerStateWrapper = new WeakReference<>(param.thisObject);
@@ -94,6 +97,13 @@ final class PlaybackBridge {
     }
 
     private void installMediaSessionHook() {
+        try {
+            XpHooks.findAfter(MediaSession.class, "setMetadata", "artwork:MediaSession#setMetadata",
+                    param -> com.eza.spicyex.lyrics.SpotifyArtworkCache.capture(
+                            (android.media.MediaMetadata) param.args[0]), android.media.MediaMetadata.class);
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " artwork metadata hook unavailable: " + t.getClass().getSimpleName());
+        }
         try {
             XpHooks.findAfter(MediaSession.class, "setPlaybackState",
                     "playback:MediaSession#setPlaybackState", param -> {
@@ -115,10 +125,8 @@ final class PlaybackBridge {
 
     boolean seekSpotifyTo(long positionMs) {
         try {
-            MediaSession session = currentMediaSession == null ? null : currentMediaSession.get();
-            if (session == null) return false;
-            MediaController controller = session.getController();
-            if (controller == null || controller.getTransportControls() == null) return false;
+            MediaController controller = transportController();
+            if (controller == null) return false;
             controller.getTransportControls().seekTo(positionMs);
             forcePosition(positionMs);
             return true;
@@ -126,6 +134,106 @@ final class PlaybackBridge {
             XpLog.log(NativeSpicyLyricsHook.TAG + " media seek failed: " + t);
             return false;
         }
+    }
+
+    /** Toggles play/pause through Spotify's own MediaSession transport. Null-safe: false when
+     * no session is captured yet (same failure posture as seek). */
+    boolean togglePlayPause() {
+        try {
+            MediaController controller = transportController();
+            if (controller == null) return false;
+            if (isPlayerActuallyPlaying()) controller.getTransportControls().pause();
+            else controller.getTransportControls().play();
+            return true;
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " media toggle failed: " + t);
+            return false;
+        }
+    }
+
+    /** Skips to the next/previous track through the same transport. False when unavailable. */
+    boolean skipToNextTrack() {
+        return sendTransportControl("next", PlaybackState.ACTION_SKIP_TO_NEXT, tc -> tc.skipToNext());
+    }
+
+    boolean skipToPreviousTrack() {
+        return sendTransportControl("previous", PlaybackState.ACTION_SKIP_TO_PREVIOUS,
+                tc -> tc.skipToPrevious());
+    }
+
+    boolean toggleSpotifySaved(String mode, SpotifyTrack expected,
+                               java.util.function.Supplier<SpotifyTrack> currentTrack) {
+        return SpotifyCollectionAction.dispatch(mode, expected, currentTrack, this::collectionSession);
+    }
+
+    private SpotifyCollectionAction.Session collectionSession() {
+        MediaController controller = transportController();
+        if (controller == null) return null;
+        return new SpotifyCollectionAction.Session() {
+            @Override public String packageName() {
+                return controller.getPackageName();
+            }
+
+            @Override public String trackUri() {
+                android.media.MediaMetadata metadata = controller.getMetadata();
+                return metadata == null ? null
+                        : metadata.getString(android.media.MediaMetadata.METADATA_KEY_MEDIA_ID);
+            }
+
+            @Override public java.util.List<SpotifyCollectionAction.AdvertisedAction> advertisedActions() {
+                PlaybackState state = controller.getPlaybackState();
+                java.util.List<SpotifyCollectionAction.AdvertisedAction> actions = new ArrayList<>();
+                if (state != null && state.getCustomActions() != null) {
+                    for (PlaybackState.CustomAction action : state.getCustomActions()) {
+                        if (action == null || action.getAction() == null) continue;
+                        CharSequence label = action.getName();
+                        actions.add(new SpotifyCollectionAction.AdvertisedAction(
+                                action.getAction(), label == null ? null : label.toString()));
+                    }
+                }
+                return actions;
+            }
+
+            @Override public boolean dispatch(String id) {
+                MediaSession session = currentMediaSession.get();
+                if (session == null || !session.getSessionToken().equals(controller.getSessionToken())) return false;
+                PlaybackState state = controller.getPlaybackState();
+                if (state == null || state.getCustomActions() == null) return false;
+                for (PlaybackState.CustomAction action : state.getCustomActions()) {
+                    if (action != null && id.equals(action.getAction())) {
+                        controller.getTransportControls().sendCustomAction(id, action.getExtras());
+                        return true;
+                    }
+                }
+                return false;
+            }
+        };
+    }
+
+    private interface TransportControlCall {
+        void send(MediaController.TransportControls controls);
+    }
+
+    private boolean sendTransportControl(String name, long requiredAction, TransportControlCall call) {
+        try {
+            MediaController controller = transportController();
+            if (controller == null) return false;
+            PlaybackState state = controller.getPlaybackState();
+            if (state == null || (state.getActions() & requiredAction) == 0) return false;
+            call.send(controller.getTransportControls());
+            return true;
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " media " + name + " failed: " + t);
+            return false;
+        }
+    }
+
+    private MediaController transportController() {
+        MediaSession session = currentMediaSession == null ? null : currentMediaSession.get();
+        if (session == null) return null;
+        MediaController controller = session.getController();
+        if (controller == null || controller.getTransportControls() == null) return null;
+        return controller;
     }
 
     long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {

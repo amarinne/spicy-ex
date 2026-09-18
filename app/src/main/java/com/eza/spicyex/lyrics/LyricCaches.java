@@ -23,6 +23,9 @@ public final class LyricCaches {
     private static final String PREFS_SOUND_CACHE = "SpotifyPlusSoundArtifactCache";
     /** Meaning artifacts. Separate store so a Sound contract bump never discards paid-for work. */
     private static final String PREFS_MEANING_CACHE = "SpotifyPlusMeaningArtifactCache";
+    /** Language detection rows. Its own store and its own schema: a detector or gate change here
+     * never discards readings or translations. */
+    private static final String PREFS_DETECTION_CACHE = "SpotifyPlusDetectionArtifactCache";
     private static final String PREFS_PROCESSED_CACHE_ORDER_KEY = "__cache_order";
     private static final Object GOOGLE_CACHE_LOCK = new Object();
     private static final Object PROCESSED_CACHE_LOCK = new Object();
@@ -45,6 +48,10 @@ public final class LyricCaches {
         return CacheStoragePolicy.googleQuota(CacheStoragePolicy.totalBudget(context));
     }
 
+    public static long detectionQuotaBytes(Context context) {
+        return CacheStoragePolicy.detectionQuota(CacheStoragePolicy.totalBudget(context));
+    }
+
     public static int googleStoreEntryCount(Context context) {
         return preferenceStoreEntryCount(context, PREFS_GOOGLE_CACHE, PREFS_GOOGLE_CACHE_ORDER_KEY);
     }
@@ -55,6 +62,10 @@ public final class LyricCaches {
 
     public static int meaningStoreEntryCount(Context context) {
         return preferenceStoreEntryCount(context, PREFS_MEANING_CACHE, PREFS_PROCESSED_CACHE_ORDER_KEY);
+    }
+
+    public static int detectionStoreEntryCount(Context context) {
+        return preferenceStoreEntryCount(context, PREFS_DETECTION_CACHE, PREFS_PROCESSED_CACHE_ORDER_KEY);
     }
 
     private static int preferenceStoreEntryCount(Context context, String prefsName, String orderKey) {
@@ -81,6 +92,13 @@ public final class LyricCaches {
         context.getSharedPreferences(PREFS_PROCESSED_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
         context.getSharedPreferences(PREFS_SOUND_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
         context.getSharedPreferences(PREFS_MEANING_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+        context.getSharedPreferences(PREFS_DETECTION_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+    }
+
+    /** Drops detection rows only. A detector or gate change must not touch readings/translations. */
+    public static void clearDetectionArtifacts(Context context) {
+        if (context == null) return;
+        context.getSharedPreferences(PREFS_DETECTION_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
     }
 
     /** Drops Sound artifacts only. A Sound contract change must not touch Meaning. */
@@ -109,6 +127,18 @@ public final class LyricCaches {
 
     public static boolean putMeaningArtifact(Context context, String key, String value) {
         return putBoundedRecord(context, PREFS_MEANING_CACHE, key, value, meaningQuotaBytes(context));
+    }
+
+    public static String getDetectionArtifact(Context context, String key) {
+        return getBoundedRecord(context, PREFS_DETECTION_CACHE, key);
+    }
+
+    /** Detection records are compact but never unbounded; cap entries as well as bytes. */
+    static final int DETECTION_MAX_ENTRIES = 2000;
+
+    public static boolean putDetectionArtifact(Context context, String key, String value) {
+        return putBoundedRecord(context, PREFS_DETECTION_CACHE, key, value,
+                detectionQuotaBytes(context), DETECTION_MAX_ENTRIES);
     }
 
     public static String sourceLanguageForCache(String sourceLang) {
@@ -145,6 +175,11 @@ public final class LyricCaches {
     /** Refuses writes that would evict saved artifacts; successful writes are durable. */
     private static boolean putBoundedRecord(Context context, String prefsName, String key, String value,
                                          long quotaBytes) {
+        return putBoundedRecord(context, prefsName, key, value, quotaBytes, Integer.MAX_VALUE);
+    }
+
+    private static boolean putBoundedRecord(Context context, String prefsName, String key, String value,
+                                         long quotaBytes, int maxEntries) {
         if (context == null || isBlank(value)) return false;
         try {
             SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
@@ -153,7 +188,7 @@ public final class LyricCaches {
                 ProcessedCacheOrderUpdate update = boundedProcessedCacheOrder(
                         prefs.getString(PREFS_PROCESSED_CACHE_ORDER_KEY, ""), hashedKey,
                         value.getBytes(StandardCharsets.UTF_8).length, System.currentTimeMillis(),
-                        Integer.MAX_VALUE, quotaBytes, 0L);
+                        maxEntries, quotaBytes, 0L);
                 SharedPreferences.Editor editor = prefs.edit();
                 if (update.evictedKeys.contains(hashedKey)) editor.remove(hashedKey);
                 else editor.putString(hashedKey, value);
@@ -185,6 +220,23 @@ public final class LyricCaches {
      */
     public static String meaningArtifactKey(String canonicalDigest, String meaningConfigId) {
         return "meaning|" + safe(canonicalDigest) + "|" + safe(meaningConfigId);
+    }
+
+    /**
+     * Detection artifact key: canonical digest plus detection schema version only. Detector policy
+     * identity lives inside the record, so a policy change invalidates rows without stranding the
+     * store under a key no reader can compute.
+     */
+    public static String detectionArtifactKey(String canonicalDigest, int detectionSchemaVersion) {
+        return "detection/" + safe(canonicalDigest) + "/" + detectionSchemaVersion;
+    }
+
+    /**
+     * Provider-translation detection key: the text itself. Provider translations are not canonical
+     * rows, so their detection cannot hang off a canonical digest.
+     */
+    public static String providerDetectionKey(String text) {
+        return "detection/text/" + sha256(safe(text));
     }
 
     public static String getProcessingValue(Context context, int processingVersion, String key) {
@@ -382,6 +434,12 @@ public final class LyricCaches {
     /** Combined logical-payload usage of the Meaning artifact store, for the settings panel. */
     public static long meaningStoreUsageBytes(Context context) {
         return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_MEANING_CACHE,
+                PREFS_PROCESSED_CACHE_ORDER_KEY);
+    }
+
+    /** Combined logical-payload usage of the detection artifact store, for the settings panel. */
+    public static long detectionStoreUsageBytes(Context context) {
+        return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_DETECTION_CACHE,
                 PREFS_PROCESSED_CACHE_ORDER_KEY);
     }
 

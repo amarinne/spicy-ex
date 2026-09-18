@@ -8,12 +8,22 @@
     <string name="settings_section_translation">翻译</string>
     <string name="settings_section_debug">关于与诊断</string>
 
-    <string name="settings_label_settings_ui_language">界面语言</string>
+    <string name="settings_label_settings_ui_language">Interface language</string>
     <string name="settings_label_lyric_tap_seek_mode">点击歌词跳转</string>
     <string name="settings_label_lyric_stay_on_track_change">切歌时保持歌词界面</string>
     <string name="settings_label_lyric_auto_resume_follow">自动恢复歌词跟随</string>
     <string name="settings_label_lyric_sync_offset_ms">同步偏移</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">将歌词发布到 HyperGlow</string>
+    <string name="settings_source_none_enabled">未启用任何来源</string>
+    <string name="settings_source_order_title">顺序</string>
+    <string name="settings_label_cache_size">缓存大小上限</string>
+    <string name="settings_cache_size_usage_suffix">%1$s · 已使用 %2$s</string>
+    <string name="settings_cache_details_action">显示缓存详情</string>
+    <string name="settings_cache_details_title">缓存详情</string>
+    <string name="settings_cache_details_songs">已缓存歌曲</string>
+    <string name="settings_cache_details_lyrics">歌词缓存数据</string>
+    <string name="settings_cache_details_ai">AI 缓存数据</string>
+    <string name="settings_cache_details_close">关闭</string>
     <string name="settings_label_lyrics_live_card_tap_mode">点击卡片打开歌词</string>
     <string name="settings_label_lyrics_live_card_weight">歌词字重</string>
     <string name="settings_label_lyrics_live_card_text_size">文字大小</string>
@@ -45,6 +55,7 @@
     <string name="settings_label_lyric_enable_background">动态背景</string>
     <string name="settings_label_lyric_background_style">背景样式</string>
     <string name="settings_label_lyric_force_dark_background">强制深色背景</string>
+    <string name="settings_label_lyric_extra_dark_background">背景变暗</string>
     <string name="settings_label_lyrics_transliteration_enabled">转写歌词</string>
     <string name="settings_label_lyric_aligned_per_word_romaji">在每个词下附加转写</string>
     <string name="settings_label_lyrics_japanese_reading_mode">日语读音</string>
@@ -179,6 +190,7 @@
     <string name="settings_status_summary">最近状态：%1$s\n曲目：%2$s\n歌词：%3$s</string>
     <string name="settings_diagnostic_source_chosen">已选来源</string>
     <string name="settings_diagnostic_candidates_seen">候选来源</string>
+    <string name="settings_diagnostic_provider">提供方</string>
     <string name="settings_diagnostic_type_chosen">已选类型</string>
     <string name="settings_diagnostic_spicy_version_sent">发送的 Spicy 版本</string>
     <string name="settings_diagnostic_spicy_latest_version">最新 Spicy 版本</string>

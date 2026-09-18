@@ -265,9 +265,7 @@ public final class SpicyTextDetection {
     }
 
     private static boolean isCjkIdeograph(int cp) {
-        return (cp >= 0x3400 && cp <= 0x4DBF)
-                || (cp >= 0x4E00 && cp <= 0x9FFF)
-                || cp == 0x3005;
+        return Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN;
     }
 
     private static boolean isKorean(int cp) {

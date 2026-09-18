@@ -30,6 +30,11 @@ public class SpicyAnimatedTextView extends TextView {
     private boolean shaderVertical;
     private boolean shaderRtl;
     private int shaderWidth = -1;
+    // Apple lift widens the karaoke band while active (NaN = shared GRADIENT_BAND default).
+    private float gradientBandWidth = Float.NaN;
+    private float shaderBand = Float.NaN;
+    // Apple line shadow under the active line (0 = off, the shared-path default).
+    private float lineShadowAlpha;
 
     // Words/letters use horizontal fill; line-level rows can switch to vertical fill by setting.
     private boolean verticalGradient;
@@ -51,6 +56,28 @@ public class SpicyAnimatedTextView extends TextView {
     /** Enable a self-drawn blur halo (for rows NOT inside a GlowFlexbox). */
     public void setSelfGlow(boolean enabled) {
         this.selfGlow = enabled;
+    }
+
+    /** Apple lift band width for the karaoke gradient (NaN restores the shared default). */
+    public void setGradientBandWidth(float bandWidth) {
+        float bounded = Float.isNaN(bandWidth) ? Float.NaN : Math.max(8f, Math.min(140f, bandWidth));
+        if (Float.compare(this.gradientBandWidth, bounded) == 0) return;
+        this.gradientBandWidth = bounded;
+        cachedShader = null;
+        if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
+        else invalidate();
+    }
+
+    private float gradientBand() {
+        return Float.isNaN(gradientBandWidth) ? LyricAnimations.GRADIENT_BAND : gradientBandWidth;
+    }
+
+    /** Apple line shadow intensity (0 = off). */
+    public void setLineShadow(float intensity) {
+        float clamped = Math.max(0f, Math.min(1f, intensity));
+        if (clamped == lineShadowAlpha) return;
+        lineShadowAlpha = clamped;
+        invalidate();
     }
 
     public void setVerticalGradient(boolean vertical) {
@@ -167,6 +194,7 @@ public class SpicyAnimatedTextView extends TextView {
                 && Math.abs(glow - shaderGlow) < 0.03f
                 && Math.abs(brightnessMultiplier - shaderBrightness) < 0.01f
                 && Math.abs(offset - shaderOffset) < 0.5f
+                && Float.compare(gradientBand(), shaderBand) == 0
                 && verticalGradient == shaderVertical
                 && horizontalRtl == shaderRtl) {
             return cachedShader;
@@ -201,12 +229,13 @@ public class SpicyAnimatedTextView extends TextView {
         } else {
             float p0 = Math.max(0f, Math.min(1f, gradientPosition / 100f));
             float p1 = Math.max(p0 + 0.001f, Math.min(1f,
-                    (gradientPosition + LyricAnimations.GRADIENT_BAND) / 100f));
+                    (gradientPosition + gradientBand()) / 100f));
             cachedShader = new LinearGradient(x0, y0, x1, y1,
                     new int[]{sungColor, unsungColor}, new float[]{p0, p1}, Shader.TileMode.CLAMP);
         }
         shaderPos = gradientPosition;
         shaderGlow = glow;
+        shaderBand = gradientBand();
         shaderBrightness = brightnessMultiplier;
         shaderWidth = shaderExtent;
         shaderOffset = offset;
@@ -233,7 +262,6 @@ public class SpicyAnimatedTextView extends TextView {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        FuriganaText.FuriganaSpan.onBeginDraw();
         Paint paint = getPaint();
         Shader oldShader = paint.getShader();
         int oldColor = paint.getColor();
@@ -244,10 +272,12 @@ public class SpicyAnimatedTextView extends TextView {
         // paint color to mCurTextColor before drawing the layout, which would silently discard the
         // sung/unsung alpha and render every word uniformly. A shader survives that reset.
         if (selfGlow) drawSelfGlow(canvas);
+        if (lineShadowAlpha > 0.02f) drawLineShadow(canvas);
         paint.setShader(resolveShader(extent));
         // Word rows usually get their continuous halo from GlowFlexbox. Standalone line/secondary
         // text draws a glyph-only halo above; avoid TextView.setShadowLayer with shaders because
         // some Android render paths blur the view rectangle.
+        FuriganaText.FuriganaSpan.onBeginDraw();
         super.onDraw(canvas);
         paint.setShader(oldShader);
         paint.setColor(oldColor);
@@ -272,6 +302,31 @@ public class SpicyAnimatedTextView extends TextView {
         paint.setMaskFilter(GlowFlexbox.blurFilter(sigma));
         int save = canvas.save();
         canvas.translate(getTotalPaddingLeft(), getTotalPaddingTop());
+        try {
+            FuriganaText.FuriganaSpan.onBeginDraw();
+            layout.draw(canvas);
+        } catch (Throwable ignored) {
+        }
+        canvas.restoreToCount(save);
+        paint.setMaskFilter(savedMask);
+        paint.setColor(savedColor);
+        paint.setShader(savedShader);
+    }
+
+    /** Apple active-line drop shadow: a blurred dark copy of the glyphs beneath the text. */
+    private void drawLineShadow(Canvas canvas) {
+        Layout layout = getLayout();
+        if (layout == null) return;
+        TextPaint paint = getPaint();
+        Shader savedShader = paint.getShader();
+        int savedColor = paint.getColor();
+        MaskFilter savedMask = paint.getMaskFilter();
+        int alpha = Math.round(55f * lineShadowAlpha);
+        paint.setShader(null);
+        paint.setColor(Color.argb(alpha, 0, 0, 0));
+        paint.setMaskFilter(GlowFlexbox.blurFilter(16f * paint.getTextSize() / 48f));
+        int save = canvas.save();
+        canvas.translate(getTotalPaddingLeft(), getTotalPaddingTop() + paint.getTextSize() * 0.06f);
         try {
             layout.draw(canvas);
         } catch (Throwable ignored) {

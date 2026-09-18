@@ -173,7 +173,8 @@ public final class LyricsMeaningLane {
                 LyricsLine line = workerSnapshot.lines.get(i);
                 if (line == null || isBlank(line.text) || line.interlude) continue;
                 if (isBlank(line.translatedText)
-                        && SpicyProcessing.flagsFor(line.text, sourceLang, targetLang).translationPending) {
+                        && SpicyProcessing.flagsFor(line.text, sourceLang, targetLang,
+                                line.detection).translationPending) {
                     work.add(i);
                 }
             }
@@ -418,7 +419,8 @@ public final class LyricsMeaningLane {
                             callback, googleResult.failure);
                 }
                 Set<String> requiredRows = requiredRowIds(
-                        run.base, workerSnapshot, sourceLang, targetLang);
+                        run.base, workerSnapshot, sourceLang, targetLang,
+                        ProviderTextDetectionStore.lookup(context));
                 MeaningArtifact artifact = refineGoogle
                         ? MeaningDisplaySelector.selectWithFallback(
                                 run.base, requiredRows, aiArtifact, googleBaseline)
@@ -486,7 +488,8 @@ public final class LyricsMeaningLane {
         }
 
         final MeaningPreviewRace race = new MeaningPreviewRace(
-                run.base, requiredRowIds(run.base, workerSnapshot, sourceLang, targetLang));
+                run.base, requiredRowIds(run.base, workerSnapshot, sourceLang, targetLang,
+                        ProviderTextDetectionStore.lookup(context)));
         final AiSignal signal = new AiSignal();
         aiSignal = signal;
         if (allowProviderRequest) {
@@ -965,6 +968,12 @@ public final class LyricsMeaningLane {
 
     static Set<String> requiredRowIds(CanonicalBase base, LyricsDocument document,
                                       String sourceLang, String targetLang) {
+        return requiredRowIds(base, document, sourceLang, targetLang, TextDetectionLookup.NONE);
+    }
+
+    static Set<String> requiredRowIds(CanonicalBase base, LyricsDocument document,
+                                      String sourceLang, String targetLang,
+                                      TextDetectionLookup providerDetection) {
         Set<String> rows = new LinkedHashSet<>();
         if (base == null || document == null) return rows;
         for (CanonicalRow row : base.rows) {
@@ -972,9 +981,11 @@ public final class LyricsMeaningLane {
             LyricsLine line = document.lines.get(row.index);
             if (line == null || line.interlude || isBlank(line.text)) continue;
             String provider = ProviderTranslationResolver.resolve(line.text,
-                    line.providerTranslatedText, line.providerTranslationLanguage, targetLang);
+                    line.providerTranslatedText, line.providerTranslationLanguage, targetLang,
+                    providerDetection);
             if (!isBlank(provider)) continue;
-            if (SpicyProcessing.flagsFor(line.text, sourceLang, targetLang).translationPending) {
+            if (SpicyProcessing.flagsFor(line.text, sourceLang, targetLang,
+                    line.detection).translationPending) {
                 rows.add(row.rowId);
             }
         }

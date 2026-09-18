@@ -18,6 +18,7 @@ public final class LyricsFrameRenderer {
     private final LyricsAnimationApplier.StyleSink styleSink;
     private final float scaledDensity;
     private int lastActiveIndex = Integer.MIN_VALUE;
+    private boolean lastUserScrollHeld;
 
     public LyricsFrameRenderer(Context context, FrameStyleBatcher styleBatcher) {
         this.styleBatcher = styleBatcher;
@@ -86,11 +87,16 @@ public final class LyricsFrameRenderer {
             applyStatic(document, mountedIndices, mountedRowsHost);
             return;
         }
+        // Sync the lift-motion constants here (not only on config change): springs are created
+        // lazily at mount, so a config-path-only sync misses first mount with Apple already on.
+        // No-op when unchanged; the only caller of the animated path is this fullscreen renderer.
+        LyricsSyllableViewState.setAppleMotion(config != null && config.appleLift);
         int boundedVisibleStart = Math.max(0, visibleStart - SCROLL_RENDER_MARGIN_ROWS);
         int boundedVisibleEnd = visibleEnd >= Integer.MAX_VALUE - SCROLL_RENDER_MARGIN_ROWS
                 ? Integer.MAX_VALUE
                 : visibleEnd + SCROLL_RENDER_MARGIN_ROWS;
         boolean activeChanged = activeIndex != lastActiveIndex;
+        boolean scrollHoldChanged = userScrollHeld != lastUserScrollHeld;
         for (int i : mountedIndices) {
             if (i < 0 || i >= document.appliedLines.size()) continue;
             if (userScrollHeld && i != activeIndex
@@ -99,16 +105,30 @@ public final class LyricsFrameRenderer {
             if (!LyricsLineViewState.isMounted(line, mountedRowsHost)) continue;
 
             LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
-                    line, positionMs, config.spotlight, config.lineGradientEnabled);
+                    line, positionMs, config.spotlight, config.lineGradientEnabled,
+                    config.appleDimPassed);
             int targetClass = lineState.active ? 1 : lineState.sung ? 2 : 0;
-            boolean blurNeedsRefresh = activeChanged && config.lineBlurEnabled && !userScrollHeld;
-            if (!lineState.active && !blurNeedsRefresh && !LyricsLineViewState.needsFrame(line, targetClass)) {
+            // Refresh blur on hold transitions so rows go sharp while held and restore on
+            // release; steady hold needs no refresh (values already settled). While held,
+            // active-line advances must not restore blur either: resume happens only on
+            // snap-back (hold release), which arrives as scrollHoldChanged.
+            boolean blurNeedsRefresh = blurNeedsRefresh(
+                    config.lineBlurEnabled, activeChanged, scrollHoldChanged, userScrollHeld);
+            if (!lineState.active && !blurNeedsRefresh
+                    && !LyricsLineViewState.needsFrame(line, targetClass)) {
                 continue;
             }
-            float opacity = LyricsAnimationApplier.stepLineOpacity(line, lineState.active, lineState.sung, deltaSeconds);
-            LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity,
-                    mobileLineBlurPx(line, i, activeIndex, userScrollHeld, config));
+            float opacity = LyricsAnimationApplier.stepLineOpacity(line, lineState.active, lineState.sung,
+                    deltaSeconds, config.appleDimPassed);
+            float blurTarget = mobileLineBlurPx(line, i, activeIndex, lineState.active, userScrollHeld, config);
+            LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity, blurTarget);
+            if (config.appleStyle) {
+                float lineShadowTarget = lineState.active && !line.bgLine ? 1f : 0f;
+                float lineShadow = LyricsLineViewState.stepLineShadow(line, lineShadowTarget, deltaSeconds);
+                LyricsLineViewState.applyLineShadow(line, lineShadow);
+            }
             float lineGlowTarget = config.glowBlurEnabled ? lineState.glowTarget : 0f;
+            if (config.appleDimPassed && lineState.active) lineGlowTarget = Math.max(lineGlowTarget, 0.28f);
             float lineGlow = LyricsAnimationApplier.stepLineGlow(line, lineGlowTarget, deltaSeconds);
 
             if (LyricsLineViewState.hasMainView(line)) {
@@ -118,13 +138,15 @@ public final class LyricsFrameRenderer {
                 LyricsLineViewState.updateMainScalePivot(line);
                 LyricsLineViewState.applyMainScale(line, styleBatcher, scale);
                 LyricsLineViewState.applyLineLevelGradient(
-                        line, lineState.gradient, lineGlow, lineState.brightnessTarget);
+                        line, lineState.gradient, lineGlow, lineState.brightnessTarget,
+                        config.appleDimPassed && lineState.active ? 64f : Float.NaN);
             }
             if (line.dotLine) {
                 if (lineState.active) {
                     LyricsAnimationApplier.animateInterludeDots(line, positionMs, deltaSeconds, spToPx(44), styleSink);
                 } else {
-                    LyricsAnimationApplier.resetInterludeDots(line, styleSink);
+                    LyricsAnimationApplier.resetInterludeDots(line, styleSink, lineState.sung,
+                            config != null && config.appleStyle);
                 }
             } else {
                 applySecondaryGradient(line, positionMs, lineGlow, config);
@@ -149,9 +171,11 @@ public final class LyricsFrameRenderer {
                                     config.spotlight,
                                     config.glowBlurEnabled,
                                     wordBounceEnabled(config, line),
-                                    true,
-                                    liftBounce(config),
-                                    individualWordBounce(config));
+                                    !config.appleStyle,
+                                    liftMotion(config),
+                                    individualWordBounce(config),
+                                    config.appleLift,
+                                    config.appleDimPassed);
                             if (wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
                                 applyContinuousWordGradient(line, lineState, lineGlow);
                             }
@@ -174,9 +198,11 @@ public final class LyricsFrameRenderer {
                             config.spotlight,
                             config.glowBlurEnabled,
                             wordBounceEnabled(config, line),
-                            true,
-                            liftBounce(config),
-                            individualWordBounce(config));
+                            !config.appleStyle,
+                            liftMotion(config),
+                            individualWordBounce(config),
+                            config.appleLift,
+                            config.appleDimPassed);
                 } else {
                     if (config.lineSyncFillWord() || config.lineSyncFillSentence()) {
                         resetNearbySyllables(
@@ -192,6 +218,7 @@ public final class LyricsFrameRenderer {
             LyricsLineViewState.markFrameApplied(line, targetClass);
         }
         lastActiveIndex = activeIndex;
+        lastUserScrollHeld = userScrollHeld;
         styleBatcher.flush();
     }
 
@@ -200,21 +227,42 @@ public final class LyricsFrameRenderer {
     }
 
     private boolean wordBounceEnabled(LyricsRenderConfig config, AppliedLine line) {
+        // Apple lift carries its own motion: it must not depend on the shared Word bounce gate.
+        if (config != null && config.appleStyle && config.appleLift) return true;
         return config != null && config.wordBounceEnabled
                 && (config.wordBounceScope.equals("All synced rows") || hasRealTimedWords(line));
     }
 
+    /** Lift curve source: shared Lift bounce style, or Apple lift owning motion in Apple style. */
+    private boolean liftMotion(LyricsRenderConfig config) {
+        return liftBounce(config) || (config != null && config.appleLift);
+    }
+
     private boolean liftBounce(LyricsRenderConfig config) {
-        return config != null && config.wordBounceStyle.endsWith(" lift");
+        return config != null && !"Apple lift".equals(config.wordBounceStyle)
+                && config.wordBounceStyle.endsWith(" lift");
     }
 
     private boolean individualWordBounce(LyricsRenderConfig config) {
-        return config != null && config.wordBounceStyle.startsWith("Word ");
+        return config != null && (config.wordBounceStyle.startsWith("Word ")
+                || config.appleLift);
     }
 
     private boolean lineLevelBounceEnabled(LyricsRenderConfig config, AppliedLine line) {
         return config != null && config.wordBounceEnabled
                 && "All synced rows".equals(config.wordBounceScope);
+    }
+
+    /**
+     * Blur refresh gate (pure, unit-tested): active-line advances refresh blur only when
+     * the user is not holding the scroll; a hold release (snap-back) always refreshes so
+     * blur restores exactly when follow resumes.
+     */
+    static boolean blurNeedsRefresh(boolean lineBlurEnabled, boolean activeChanged,
+            boolean scrollHoldChanged, boolean userScrollHeld) {
+        if (!lineBlurEnabled) return false;
+        if (scrollHoldChanged) return true;
+        return activeChanged && !userScrollHeld;
     }
 
     static WordGradientRoute wordGradientRoute(String fillMode) {
@@ -323,19 +371,29 @@ public final class LyricsFrameRenderer {
         return LyricAnimations.gradientPosition(progress01(positionMs, line.startMs, fillEnd));
     }
 
-    private float mobileLineBlurPx(AppliedLine line, int index, int active, boolean userScrollHeld,
-                                   LyricsRenderConfig config) {
+    private float mobileLineBlurPx(AppliedLine line, int index, int active, boolean lineActive,
+                                   boolean userScrollHeld, LyricsRenderConfig config) {
         if (line == null || Build.VERSION.SDK_INT < 31) return 0f;
         if (!config.lineBlurEnabled) return 0f;
         if (userScrollHeld) return 0f;
         float quality = config.blurQuality;
         if (quality <= 0f) return 0f;
         if (active < 0) return 0f;
+        // Apple only: an extended-window active row (index past the active one) never blurs.
+        if (config.appleStyle && lineActive) return 0f;
         int distance = Math.abs(index - active);
+        if (distance == 0) return 0f;
+        String lineText = safe(line.text);
+        if (config.lineBlurHeavy) {
+            boolean emphasized = lineText.codePointCount(0, lineText.length()) <= 12 || line.dotLine;
+            float max = emphasized ? 5.0f : 8.0f;
+            float curved = (float) Math.pow(Math.min(1f, distance / 4f), 0.75);
+            return max * curved * quality;
+        }
         if (distance <= 1) return 0f;
-        boolean emphasized = safe(line.text).codePointCount(0, safe(line.text).length()) <= 12 || line.dotLine;
-        float max = emphasized ? 1.0f : 1.8f;
-        float weighted = max * Math.min(1f, distance / 4f);
+        boolean legacyEmphasized = lineText.codePointCount(0, lineText.length()) <= 12 || line.dotLine;
+        float legacyMax = legacyEmphasized ? 1.0f : 1.8f;
+        float weighted = legacyMax * Math.min(1f, distance / 4f);
         if (distance == 2) weighted *= 0.55f;
         return weighted * quality;
     }

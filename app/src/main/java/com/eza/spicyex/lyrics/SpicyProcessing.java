@@ -1,6 +1,9 @@
 package com.eza.spicyex.lyrics;
 
 import java.util.Locale;
+
+import com.eza.spicyex.lyrics.session.DetectionResult;
+
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
@@ -10,7 +13,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  */
 public final class SpicyProcessing {
     // v19: target-compatible provider translations are separated from generated translations.
-    public static final int PROCESSING_VERSION = 19;
+    public static final int PROCESSING_VERSION = 20;
 
     private SpicyProcessing() {
     }
@@ -31,15 +34,30 @@ public final class SpicyProcessing {
     }
 
     public static boolean shouldTranslateLine(String text, String sourceLang, String targetLang) {
+        return shouldTranslateLine(text, sourceLang, targetLang, null);
+    }
+
+    /** Translation gate that prefers a session detection result over detector or script guessing. */
+    public static boolean shouldTranslateLine(String text, String sourceLang, String targetLang,
+                                              DetectionResult detection) {
         String trimmed = text == null ? "" : text.trim();
-        if (trimmed.isEmpty() || "♪".equals(trimmed)) return false;
+        if (trimmed.isEmpty() || trimmed.codePoints().noneMatch(Character::isLetter)
+                || isBlank(targetLang)) return false;
+        targetLang = toIso2(targetLang);
+        if (hasObviousNonTargetScript(trimmed, targetLang)) return true;
+        if (detection != null && detection.hasLanguage()) {
+            // Detector truth wins over the source hint: a hint can be wrong or stale, and the
+            // detector was already paid for this row.
+            return !targetLang.equalsIgnoreCase(detection.language);
+        }
+
+        if (detection != null) return true; // Uncertainty or backend failure is never proof of sameness.
 
         String sourceIso2 = toIso2(sourceLang);
         boolean sourceMatchesTarget = targetLang != null
                 && (targetLang.equalsIgnoreCase(sourceIso2) || targetLang.equalsIgnoreCase(safe(sourceLang)));
 
         if (!sourceMatchesTarget) return true;
-        if (hasObviousNonTargetScript(trimmed, targetLang)) return true;
         return lineLooksNonTargetLatin(trimmed, targetLang);
     }
 
@@ -56,13 +74,27 @@ public final class SpicyProcessing {
     }
 
     public static ProcessingFlags flagsFor(String text, String sourceLang, String targetLang) {
+        return flagsFor(text, sourceLang, targetLang, null);
+    }
+
+    /**
+     * Gate decisions with a session-owned detection result.
+     *
+     * <p>When {@code detection} carries a language, the translation gate trusts it and never calls
+     * the detector: the session already paid for detection once per canonical row, and the result
+     * is durable. A missing result uses scripts/hints; an uncertain result keeps translation eligible.
+     */
+    public static ProcessingFlags flagsFor(String text, String sourceLang, String targetLang,
+                                           DetectionResult detection) {
         ProcessingFlags flags = new ProcessingFlags();
         flags.processingVersion = PROCESSING_VERSION;
         flags.romanizationPending = hasRomanizationWorkQuick(text);
-        flags.translationPending = hasUsableSourceHint(sourceLang)
-                ? shouldTranslateLine(text, sourceLang, targetLang)
+        flags.translationPending = detection != null || hasUsableSourceHint(sourceLang)
+                ? shouldTranslateLine(text, sourceLang, targetLang, detection)
                 : hasTranslationWorkQuick(text, targetLang);
         flags.processingPending = flags.romanizationPending || flags.translationPending;
+        flags.detectedChinese = detection != null
+                && detection.hasLanguage() && "zh".equals(detection.language);
         if (!flags.processingPending) markProcessedWithoutBackground(flags);
         return flags;
     }
@@ -89,11 +121,20 @@ public final class SpicyProcessing {
         return SpicyTextDetection.itemBengaliTest(text) && !(target.equals("bn") || target.equals("as"));
     }
 
+    /**
+     * Script-based fallback, used only when no session detection result exists.
+     *
+     * <p>Non-ASCII Latin characters are direct evidence that the line is not English; longer ASCII
+     * lines fall back to the small English function-word heuristic. No detector is consulted here:
+     * detection belongs to {@code LyricsDetectionSession}, and a row without a durable result must
+     * not re-enter the model from a gate.
+     */
     private static boolean lineLooksNonTargetLatin(String text, String targetLang) {
         if (!isLatinTarget(targetLang)) return false;
-        String compact = text.replaceAll("[^\\p{L}\\s']", " ").replaceAll("\\s+", " ").trim();
+        if (hasNonAsciiLatin(text)) return true;
+        String compact = text == null ? "" : text.replaceAll("[^\\p{L}\\s']", " ").replaceAll("\\s+", " ").trim();
         if (compact.length() < 24) return false;
-        return LatinLanguageGate.lineLooksNonTargetLatin(compact, targetLang);
+        return !looksClearlyEnglish(compact);
     }
 
     private static boolean looksLikeLatinLyricLine(String text) {
@@ -154,7 +195,7 @@ public final class SpicyProcessing {
         return false;
     }
 
-    static String toIso2(String sourceLang) {
+    public static String toIso2(String sourceLang) {
         String source = safe(sourceLang).trim().replace('_', '-').toLowerCase(Locale.ROOT);
         if (source.length() == 2) return source;
         if (source.length() > 2 && source.charAt(2) == '-') return source.substring(0, 2);

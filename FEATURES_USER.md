@@ -99,7 +99,7 @@ is enabled.
 ## Backgrounds
 
 - Optional animated lyric background.
-- Kawarp-style album-art ambient background.
+- Smooth album-art ambient background.
 - Force-dark background mode.
 - Fallback gradient background when album-art colors are too low contrast.
 

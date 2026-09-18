@@ -18,6 +18,9 @@ import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalBaseAdoption;
 import com.eza.spicyex.lyrics.session.CanonicalSourceCache;
 import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
+import com.eza.spicyex.lyrics.session.DetectionArtifact;
+import com.eza.spicyex.lyrics.session.LyricsDetectionSession;
+import com.eza.spicyex.lyrics.session.LyricsMemoryPressure;
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.LyricCaches;
@@ -91,6 +94,8 @@ final class LyricsSessionManager {
     private final List<RequestRecord> requests = new ArrayList<>();
     private final LyricsSessionPolicy policy = new LyricsSessionPolicy();
     private final LyricsSecondaryProcessingSession secondaryProcessing;
+    /** Session-owned detection: one run per canonical digest, shared by both render surfaces. */
+    private final LyricsDetectionSession detectionSession;
 
     private SpotifyTrack track;
     private String loadingUri = "";
@@ -118,6 +123,15 @@ final class LyricsSessionManager {
     private boolean refreshRequested;
     private boolean sourceProbed;
     private String canonicalLoadingUri = "";
+    /** Last completed detection for the current base, for diagnostics and status. */
+    private DetectionArtifact detectionArtifact;
+    /**
+     * True while the initial lane start is waiting on detection.
+     *
+     * <p>A settings refresh that arrives before detection lands starts the lanes itself; the
+     * detection completion must then only attach its rows, not start a second run.
+     */
+    private boolean awaitingDetection;
 
     LyricsSessionManager(NativeSpicyLyricsHook hook, LyricsFetchCoordinator fetchCoordinator, Context context) {
         this.hook = hook;
@@ -132,6 +146,8 @@ final class LyricsSessionManager {
         secondaryProcessing = new LyricsSecondaryProcessingSession(
                 this.context, config, processor, NativeRuntime.GOOGLE_PROCESSING_VERSION,
                 "[SpotifyPlusSession]");
+        detectionSession = new LyricsDetectionSession(this.context, NativeRuntime.LYRICS_IO);
+        LyricsMemoryPressure.addReclaimer(level -> detectionSession.trimMemory());
     }
 
     void start() {
@@ -151,8 +167,7 @@ final class LyricsSessionManager {
             // Sending it raw drops AI/Google Meaning while deterministic/local Sound can survive,
             // which presents as translation disappearing after fullscreen exit.
             if (document != null) {
-                listener.onDocumentChanged(
-                        snapshot, LyricsDocument.copyOf(publishedProjection(document)));
+                listener.onDocumentChanged(snapshot, publishedProjection(document));
             }
         }
         return record;
@@ -172,7 +187,7 @@ final class LyricsSessionManager {
         }
         adoptTrack(requestedTrack);
         if (document != null) {
-            callback.onSuccess(LyricsDocument.copyOf(publishedProjection(document)));
+            callback.onSuccess(publishedProjection(document));
             return () -> {};
         }
         RequestRecord request = new RequestRecord(policy.generation(), callback);
@@ -226,9 +241,12 @@ final class LyricsSessionManager {
         refreshRequested = false;
         sourceProbed = false;
         canonicalLoadingUri = "";
+        detectionArtifact = null;
+        awaitingDetection = false;
         cancelRequests();
         // Abort the previous track's derived work rather than just ignoring its callbacks.
         secondaryProcessing.cancelActive();
+        detectionSession.cancelActive();
         notifyState(snapshot());
         loadCanonicalBase(uri, policy.generation());
     }
@@ -328,7 +346,7 @@ final class LyricsSessionManager {
             request.callback.onSuccess(LyricsDocument.copyOf(record.document));
         }
         notifyDocument(snapshot, record.document);
-        startSharedProcessing(requestedTrack, record.document, requestedGeneration);
+        startDetection(requestedTrack, record.document, requestedGeneration);
 
         LyricsSourcePolicy.Decision decision = LyricsSourcePolicy.decide(true,
                 LyricsSourcePolicy.isSynced(record.document.type), sourceProbed, false);
@@ -430,21 +448,24 @@ final class LyricsSessionManager {
         if (outcome == CanonicalBaseAdoption.Outcome.REPLACE) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOURCE_REPLACED);
         }
-        persistCanonicalBase(requestedUri, result, session.identity.sourceRevision, incoming.digest);
+        persistCanonicalBase(requestedUri, canonicalSource, session.identity.sourceRevision,
+                incoming.digest);
         Snapshot snapshot = snapshot();
         List<RequestRecord> pending = takeRequests(requestedGeneration);
         for (RequestRecord request : pending) {
             request.callback.onSuccess(LyricsDocument.copyOf(result));
         }
         notifyDocument(snapshot, result);
-        startSharedProcessing(requestedTrack, result, requestedGeneration);
+        startDetection(requestedTrack, result, requestedGeneration);
     }
 
-    private void persistCanonicalBase(String requestedUri, LyricsDocument result, int revision,
+    private void persistCanonicalBase(String requestedUri, LyricsDocument snapshot, int revision,
                                       String digest) {
-        final LyricsDocument snapshot = LyricsDocument.copyOf(result);
+        // The caller owns this snapshot and must not mutate it after handoff: the IO thread reads
+        // it without a further whole-document copy.
+        final LyricsDocument toPersist = snapshot;
         NativeRuntime.LYRICS_IO.execute(
-                () -> CanonicalSourceCache.save(context, requestedUri, snapshot, revision, digest,
+                () -> CanonicalSourceCache.save(context, requestedUri, toPersist, revision, digest,
                         LyricsSourcePreferences.selectionIdentity(context, requestedUri)));
     }
 
@@ -470,6 +491,8 @@ final class LyricsSessionManager {
      */
     void refreshLayer(com.eza.spicyex.lyrics.session.LayerKind layer) {
         if (track == null || document == null || policy.trackUri().isEmpty()) return;
+        // A user-initiated refresh must not wait on detection; the completion only attaches rows.
+        awaitingDetection = false;
         if (layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING) {
             LyricsDocumentProcessor.resetMeaningLayer(context, document);
         } else {
@@ -503,6 +526,7 @@ final class LyricsSessionManager {
                 return AiRequestStartResult.ALREADY_IN_FLIGHT;
             }
         }
+        awaitingDetection = false;
         if (layer == LayerKind.MEANING) {
             LyricsDocumentProcessor.resetMeaningLayer(context, document);
         } else {
@@ -593,6 +617,9 @@ final class LyricsSessionManager {
         session = null;
         sourceProbed = false;
         refreshRequested = true;
+        detectionArtifact = null;
+        awaitingDetection = false;
+        detectionSession.cancelActive();
         status = "loading";
         notifyState(snapshot());
         maybeFetch();
@@ -606,6 +633,77 @@ final class LyricsSessionManager {
     private static RomanizationOptions romanizationOptions(LyricsRenderConfig config) {
         return new RomanizationOptions(config.defaultChineseMode, config.koreanMode,
                 config.chineseTones, config.defaultCyrillicMode, config.cyrillicKeepSigns);
+    }
+
+    /**
+     * Runs shared detection, then starts both derived lanes.
+     *
+     * <p>The canonical base is published immediately; detection fills per-row results from the
+     * durable artifact (or the detector for missing rows), persists the merged record, and only
+     * then do Sound and Meaning start. A cached artifact makes this one prefs read, so a cached
+     * track never enters the detector and never repeats Japanese analysis.
+     */
+    private void startDetection(SpotifyTrack requestedTrack, LyricsDocument snapshot,
+                                int requestedGeneration) {
+        if (session == null || session.base.isEmpty()) {
+            startSharedProcessing(requestedTrack, snapshot, requestedGeneration);
+            return;
+        }
+        final CanonicalBase base = session.base;
+        final LyricsDocument requestedDocument = snapshot;
+        final String requestedUri = requestedTrack == null ? "" : requestedTrack.uri;
+        awaitingDetection = true;
+        detectionSession.start(base, providerTextsOf(snapshot), requestedGeneration,
+                (candidateBase, candidateGeneration) -> candidateGeneration == policy.generation()
+                        && requestedUri.equals(policy.trackUri())
+                        && session != null && session.base.digest.equals(candidateBase.digest),
+                (finishedBase, artifact) -> {
+                    detectionArtifact = artifact;
+                    applyDetection(finishedBase, artifact, requestedDocument);
+                    applyDetection(finishedBase, artifact, canonicalSource);
+                    // Provider translations resolve only against detection of their own text, so
+                    // they are applied once that auxiliary detection exists, not before.
+                    LyricsDocumentProcessor.reapplyProviderTranslations(context, requestedDocument);
+                    LyricsDocumentProcessor.reapplyProviderTranslations(context, canonicalSource);
+                    if (awaitingDetection && requestedDocument == document
+                            && requestedGeneration == policy.generation()
+                            && requestedUri.equals(policy.trackUri())) {
+                        awaitingDetection = false;
+                        LyricsDocumentProcessor.recomputePendingFlags(context, requestedDocument);
+                        startSharedProcessing(requestedTrack, requestedDocument, requestedGeneration);
+                    }
+                });
+    }
+
+    /** Provider-translation strings on a document, for auxiliary detection. */
+    private static java.util.List<String> providerTextsOf(LyricsDocument doc) {
+        java.util.List<String> out = new ArrayList<>();
+        if (doc == null || doc.lines == null) return out;
+        for (com.eza.spicyex.lyrics.LyricsLine line : doc.lines) {
+            if (line == null) continue;
+            if (!com.eza.spicyex.lyrics.LyricUtils.isBlank(line.providerTranslatedText)) {
+                out.add(line.providerTranslatedText);
+            }
+            if (line.backgroundLines == null) continue;
+            for (com.eza.spicyex.lyrics.BackgroundLine background : line.backgroundLines) {
+                if (background != null
+                        && !com.eza.spicyex.lyrics.LyricUtils.isBlank(background.providerTranslatedText)) {
+                    out.add(background.providerTranslatedText);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Attaches artifact rows to document lines by canonical row ID; a missing row stays undetected. */
+    private static void applyDetection(CanonicalBase base, DetectionArtifact artifact,
+                                       LyricsDocument target) {
+        if (base == null || artifact == null || target == null) return;
+        for (com.eza.spicyex.lyrics.session.CanonicalRow row : base.rows) {
+            if (row == null || row.index < 0 || row.index >= target.lines.size()) continue;
+            com.eza.spicyex.lyrics.LyricsLine line = target.lines.get(row.index);
+            if (line != null) line.detection = artifact.result(row.rowId);
+        }
     }
 
     private void startSharedProcessing(SpotifyTrack requestedTrack, LyricsDocument snapshot,
@@ -756,20 +854,24 @@ final class LyricsSessionManager {
      * What subscribers receive: derived text composed from the session's artifacts over the
      * canonical document, rather than read off the document the lanes wrote on.
      *
-     * <p>The lanes no longer write derived text anywhere else, so this is the only place it comes
-     * from. The fallback below returns the raw document if composition ever throws — that would
-     * publish original lyrics without readings or translations, which is degraded but honest, and
-     * {@code COMPOSED_PROJECTION_MISMATCH} records it.
+     * <p>Always returns a document the caller owns. The composer already builds a fresh projection,
+     * so the common path costs one document instead of a compose plus a defensive copy; only the
+     * fallback path copies. The fallback below returns the raw document if composition ever throws
+     * — that would publish original lyrics without readings or translations, which is degraded but
+     * honest, and {@code COMPOSED_PROJECTION_MISMATCH} records it.
      */
     private LyricsDocument publishedProjection(LyricsDocument value) {
-        if (session == null || canonicalSource == null || value == null) return value;
+        if (value == null) return null;
+        if (session == null || canonicalSource == null) return LyricsDocument.copyOf(value);
         try {
             LyricsDocument composed = LegacyDocumentComposer.compose(canonicalSource, session);
-            if (composed == null || composed.lines.size() != value.lines.size()) return value;
+            if (composed == null || composed.lines.size() != value.lines.size()) {
+                return LyricsDocument.copyOf(value);
+            }
             return composed;
         } catch (Throwable t) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.COMPOSED_PROJECTION_MISMATCH);
-            return value;
+            return LyricsDocument.copyOf(value);
         }
     }
 

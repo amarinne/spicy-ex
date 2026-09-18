@@ -18,6 +18,7 @@ public final class AppliedLineRenderState {
     public List<SpicyAnimatedTextView> dotViews;
     public Spring dotMainScaleSpring;
     public Spring dotMainOpacitySpring;
+    public Spring lineShadowSpring;
     public int lastTargetClass = Integer.MIN_VALUE;
     public boolean needsRender = true;
 
@@ -32,6 +33,7 @@ public final class AppliedLineRenderState {
         lineGlowSpring = null;
         dotMainScaleSpring = null;
         dotMainOpacitySpring = null;
+        lineShadowSpring = null;
         measuredHeightPx = 0;
         lastTargetClass = Integer.MIN_VALUE;
         needsRender = true;

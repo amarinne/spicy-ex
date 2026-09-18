@@ -216,7 +216,8 @@ public final class LyricsSoundLane {
                     if (!needRomanize) return;
                     LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOUND_PROVIDER_CALL);
                     GoogleEnhancer.Enhancement enhancement = GoogleEnhancer.enhanceLine(context, http,
-                            processingVersion, id, effectiveSourceLang, "", line.text, true, false,
+                            processingVersion, id, line.detection != null && line.detection.hasLanguage()
+                                    ? line.detection.language : effectiveSourceLang, "", line.text, true, false,
                             run.tag);
                     if (isBlank(enhancement.romanized) || enhancement.romanized.equals(line.text)
                             || SpicyTextDetection.hasRomanizableScript(enhancement.romanized)) {

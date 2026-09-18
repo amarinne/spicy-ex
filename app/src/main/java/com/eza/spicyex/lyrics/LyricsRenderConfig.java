@@ -12,13 +12,20 @@ public final class LyricsRenderConfig {
     public final boolean backgroundEnabled;
     public final boolean backgroundAnimated;
     public final boolean forceDarkBackground;
+    public final int extraDarkBackground;
     public final boolean lineGradientEnabled;
     public final boolean spotlight;
     public final boolean wordBounceEnabled;
     public final String wordBounceScope;
     public final String wordBounceStyle;
+    public final boolean appleStyle;
+    public final boolean appleLift;
+    public final boolean appleDimPassed;
+    public final boolean appleCompactText;
+    public final boolean appleCjkWrap;
     public final boolean glowBlurEnabled;
     public final boolean lineBlurEnabled;
+    public final boolean lineBlurHeavy;
     public final float blurQuality;
     public final boolean interludeNoteIcon;
     public final boolean toggleSpinnerEnabled;
@@ -67,13 +74,20 @@ public final class LyricsRenderConfig {
     private LyricsRenderConfig(
             String backgroundStyle,
             boolean forceDarkBackground,
+            int extraDarkBackground,
             boolean lineGradientEnabled,
             boolean spotlight,
             boolean wordBounceEnabled,
             String wordBounceScope,
             String wordBounceStyle,
+            boolean appleStyle,
+            boolean appleLift,
+            boolean appleDimPassed,
+            boolean appleCompactText,
+            boolean appleCjkWrap,
             boolean glowBlurEnabled,
             boolean lineBlurEnabled,
+            boolean lineBlurHeavy,
             float blurQuality,
             boolean interludeNoteIcon,
             boolean toggleSpinnerEnabled,
@@ -123,13 +137,20 @@ public final class LyricsRenderConfig {
         this.backgroundEnabled = LyricsBackgroundStyle.usesTexture(this.backgroundStyle);
         this.backgroundAnimated = LyricsBackgroundStyle.isAnimated(this.backgroundStyle);
         this.forceDarkBackground = forceDarkBackground;
+        this.extraDarkBackground = extraDarkBackground;
         this.lineGradientEnabled = lineGradientEnabled;
         this.spotlight = spotlight;
         this.wordBounceEnabled = wordBounceEnabled;
         this.wordBounceScope = safe(wordBounceScope);
         this.wordBounceStyle = safe(wordBounceStyle);
+        this.appleStyle = appleStyle;
+        this.appleLift = appleLift;
+        this.appleDimPassed = appleDimPassed;
+        this.appleCompactText = appleCompactText;
+        this.appleCjkWrap = appleCjkWrap;
         this.glowBlurEnabled = glowBlurEnabled;
         this.lineBlurEnabled = lineBlurEnabled;
+        this.lineBlurHeavy = lineBlurHeavy;
         this.blurQuality = blurQuality;
         this.interludeNoteIcon = interludeNoteIcon;
         this.toggleSpinnerEnabled = toggleSpinnerEnabled;
@@ -199,9 +220,10 @@ public final class LyricsRenderConfig {
             String translationBackend, String translationTarget, boolean translationBright,
             int syncOffsetMs
     ) {
-        this(backgroundStyle, forceDarkBackground, lineGradientEnabled, spotlight,
-                wordBounceEnabled, "Word/syllable synced only", "Phrase zoom", glowBlurEnabled,
-                lineBlurEnabled, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
+        this(backgroundStyle, forceDarkBackground, 0, lineGradientEnabled, spotlight,
+                wordBounceEnabled, "Word/syllable synced only", "Phrase zoom", false, false, false,
+                false, false, glowBlurEnabled,
+                lineBlurEnabled, false, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
                 attachTransliterationToWords, transliterationEnabled, adaptiveSectioningEnabled,
                 lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont,
                 lyricsTextSizeMode, lyricsTextSizeMultiplier, true, liveCardTextSizeMode,
@@ -247,18 +269,33 @@ public final class LyricsRenderConfig {
                 ? "All synced rows" : "Word/syllable synced only";
         String wordBounceStyle = cfg == null ? Settings.WORD_BOUNCE_STYLE.defaultValue
                 : cfg.get(Settings.WORD_BOUNCE_STYLE);
+        // Dedicated Apple mode (R3): the style flag plus Apple-owned keys only. Shared keys
+        // (bounce style, line blur, font, ...) are never rewritten, so no snapshot cycle exists.
+        // "Apple lift" is also a shared Bounce style value: it selects the Apple lift motion
+        // curve in any animation style without enabling the rest of the Apple stack.
+        boolean appleStyle = shell.appleAnimation();
+        boolean appleLift = appleLiftMotion(wordBounceStyle, appleStyle, get(cfg, Settings.APPLE_LIFT));
+        String lineBlurLevel = cfg == null ? Settings.ENABLE_LINE_BLUR.defaultValue
+                : cfg.get(Settings.ENABLE_LINE_BLUR);
 
         return new LyricsRenderConfig(
                 FeatureAvailability.animatedBackgroundAvailable()
                         ? LyricsBackgroundStyle.read(cfg) : LyricsBackgroundStyle.GRADIENT,
                 get(cfg, Settings.FORCE_DARK_BACKGROUND),
+                get(cfg, Settings.EXTRA_DARK_BACKGROUND),
                 get(cfg, Settings.ENABLE_LINE_GRADIENT),
                 shell.spotlightAnimation(),
                 wordBounceEnabled,
                 wordBounceScope,
                 wordBounceStyle,
+                appleStyle,
+                appleLift,
+                appleStyle && get(cfg, Settings.APPLE_FADE_PASSED_LINES),
+                appleStyle && get(cfg, Settings.APPLE_COMPACT_TEXT),
+                appleStyle && get(cfg, Settings.APPLE_CJK_WRAP_FIX),
                 get(cfg, Settings.ENABLE_GLOW_BLUR),
-                get(cfg, Settings.ENABLE_LINE_BLUR),
+                !"Off".equals(lineBlurLevel),
+                "Heavy".equals(lineBlurLevel),
                 shell.lineBlurQualityMultiplier(),
                 "note".equals(get(cfg, Settings.INTERLUDE_ICON)),
                 get(cfg, Settings.TOGGLE_PROGRESS_RING),
@@ -339,14 +376,17 @@ public final class LyricsRenderConfig {
         return new LyricsRenderConfig(
                 backgroundStyle,
                 forceDarkBackground,
+                extraDarkBackground,
                 !minimal,
                 spotlightCard,
                  wordBounceEnabled,
                  wordBounceScope,
                  wordBounceStyle,
+                 false, false, false, false, false,
                  glow,
-                false,
-                blurQuality,
+                 false,
+                 false,
+                 blurQuality,
                 interludeNoteIcon,
                 toggleSpinnerEnabled,
                 attachTransliterationToWords,
@@ -395,6 +435,16 @@ public final class LyricsRenderConfig {
 
     public Diff diff(LyricsRenderConfig next) {
         return new Diff(this, next);
+    }
+
+    /**
+     * Apple lift motion selector (pure, unit-tested): the shared "Apple lift" Bounce style
+     * value selects the lift curve in any animation style; the Apple-owned toggle applies
+     * only under the Apple Music style. No shared key is rewritten either way.
+     */
+    static boolean appleLiftMotion(String wordBounceStyle, boolean appleStyle, boolean appleLiftSetting) {
+        if ("Apple lift".equals(wordBounceStyle)) return true;
+        return appleStyle && appleLiftSetting;
     }
 
     private static <T> T get(SpotifyPlusConfig config, Settings.Setting<T> setting) {
@@ -482,9 +532,13 @@ public final class LyricsRenderConfig {
                      || oldValue.wordBounceEnabled != next.wordBounceEnabled
                      || changed(oldValue.wordBounceScope, next.wordBounceScope)
                      || changed(oldValue.wordBounceStyle, next.wordBounceStyle)
-                    || oldValue.glowBlurEnabled != next.glowBlurEnabled
-                    || oldValue.lineBlurEnabled != next.lineBlurEnabled
-                    || changed(oldValue.blurQuality, next.blurQuality);
+                     || oldValue.appleStyle != next.appleStyle
+                     || oldValue.appleLift != next.appleLift
+                     || oldValue.appleDimPassed != next.appleDimPassed
+                     || oldValue.glowBlurEnabled != next.glowBlurEnabled
+                     || oldValue.lineBlurEnabled != next.lineBlurEnabled
+                     || oldValue.lineBlurHeavy != next.lineBlurHeavy
+                     || changed(oldValue.blurQuality, next.blurQuality);
             liveCardTextSizeChanged = changed(oldValue.liveCardTextSizeMode, next.liveCardTextSizeMode)
                     || changed(oldValue.liveCardTextSizeMultiplier, next.liveCardTextSizeMultiplier);
             liveCardConfigChanged = liveCardTextSizeChanged
@@ -508,10 +562,13 @@ public final class LyricsRenderConfig {
 
             needsRowRemount = interludeChanged || weightChanged || textSizeChanged || attachChanged || transliterationChanged
                     || adaptiveSectioningChanged || spacingChanged || fillChanged || japaneseModeConfigChanged
-                    || oldValue.translationBright != next.translationBright;
+                    || oldValue.translationBright != next.translationBright
+                    || oldValue.appleCompactText != next.appleCompactText
+                    || oldValue.appleCjkWrap != next.appleCjkWrap;
             needsLocalReprocess = transliterationChanged || chineseModeConfigChanged || koreanChanged || chineseTonesChanged || cyrillicChanged;
             needsBackgroundToggle = changed(oldValue.backgroundStyle, next.backgroundStyle)
-                    || oldValue.forceDarkBackground != next.forceDarkBackground;
+                    || oldValue.forceDarkBackground != next.forceDarkBackground
+                    || oldValue.extraDarkBackground != next.extraDarkBackground;
             needsToggleOnly = visualOnlyChanged;
             hasChanges = needsRowRemount || needsLocalReprocess || needsBackgroundToggle || needsToggleOnly
                     || liveCardConfigChanged || needsTranslationReprocess || needsTimingOnly;

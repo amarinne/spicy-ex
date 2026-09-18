@@ -43,6 +43,11 @@ public final class LyricAnimations {
         return -0.04f * wave * wave;
     }
 
+    /** Apple lift: quarter-sine rise to -0.04em, holding at the top while sung. */
+    public static float appleLiftYOffsetSpline(float t) {
+        return -0.04f * (float) Math.sin(clamp01(t) * (Math.PI / 2d));
+    }
+
     /** Spicy 6 GlowRange: 0 -> 0, 0.15 -> 1, 0.6 -> 1, 1 -> 0. */
     public static float glowSpline(float t) {
         if (t <= 0.15f) return lerp(0f, 1f, t / 0.15f);
@@ -77,6 +82,15 @@ public final class LyricAnimations {
     /** Spatial falloff of the letter glow around the active-letter anchor. */
     public static float letterGlowFalloff(float distance) {
         return (float) (1d / (1d + Math.max(0f, distance) * 0.9d));
+    }
+
+    /** Apple letter-glow falloffs: wider wash, tighter active anchor. */
+    public static float appleLetterGlowFalloff(float distance) {
+        return (float) (1d / (1d + Math.max(0f, distance) * 0.5d));
+    }
+
+    public static float appleActiveLetterGlowFalloff(float distance) {
+        return (float) (1d / (1d + Math.max(0f, distance) * 0.22d));
     }
 
     /** Fractional index of the active letter for a line at normalized time {@code timeAlpha}. */

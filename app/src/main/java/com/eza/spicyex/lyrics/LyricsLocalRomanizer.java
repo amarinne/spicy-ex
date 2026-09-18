@@ -19,13 +19,15 @@ public final class LyricsLocalRomanizer {
 
     public static boolean shouldLocalRomanize(boolean showRomanization, String chineseMode, LyricsDocument doc, LyricsLine line, String fullText) {
         if (!showRomanization || line == null || isBlank(line.text)) return false;
+        if (SpicyTextDetection.hasCjkIdeograph(line.text)
+                && ReadingLanguagePolicy.language(line.text, line.detection, doc == null ? "" : doc.language).isEmpty()) return false;
         List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
-        boolean chineseLine = isChineseLine(doc, line.text, fullText);
+        boolean chineseLine = isChineseLine(doc, line);
         if (chineseLine && isBlank(chineseMode)) return false;
         boolean needsChineseMode = chineseLine
                 && (isBlank(line.chineseMode) || !normalizeChineseMode(line.chineseMode).equals(normalizeChineseMode(chineseMode)));
         if (needsChineseMode) return true;
-        boolean needsJapaneseReading = isJapaneseLine(doc, line.text, fullText);
+        boolean needsJapaneseReading = isJapaneseLine(doc, line);
         if (needsJapaneseReading) return true;
         if (!shouldGoogleRomanize(showRomanization, line)) return false;
         return SpicyRomanizer.canRomanizeLocally(line.text, scripts, doc == null ? "" : doc.language);
@@ -33,8 +35,11 @@ public final class LyricsLocalRomanizer {
 
     public static String romanizeLine(RomanizationOptions opts, LyricsDocument doc, LyricsLine line, String fullText) {
         try {
+            if (line == null) return "";
+            if (SpicyTextDetection.hasCjkIdeograph(line.text)
+                    && ReadingLanguagePolicy.language(line.text, line.detection, doc == null ? "" : doc.language).isEmpty()) return "";
             List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
-            if (doc != null && isChineseLine(doc, line.text, fullText)) {
+            if (doc != null && isChineseLine(doc, line)) {
                 if (opts == null || isBlank(opts.chineseMode)) return "";
                 // Chinese mode changes must discard the previous plan and segment output. Otherwise
                 // an aligned row can keep displaying the prior mode before fallback resolution runs.
@@ -44,7 +49,8 @@ public final class LyricsLocalRomanizer {
                 line.chineseMode = normalizeChineseMode(opts.chineseMode);
                 return SpicyJapaneseChineseProcessor.romanizeChineseLine(line.text, line.chineseMode, opts.chineseTones);
             }
-            if (doc != null && isJapaneseLine(doc, line.text, fullText)) {
+            if (doc != null && isJapaneseLine(doc, line)) {
+                line.chineseMode = "";
                 SpicyJapaneseChineseProcessor.JapaneseReading local =
                         SpicyJapaneseChineseProcessor.analyzeJapaneseLine(
                                 line.text, null, japaneseAnalysisBoundaries(line));
@@ -90,7 +96,9 @@ public final class LyricsLocalRomanizer {
             // themselves. Drop any plan from the previous cycle before fallback resolution rebuilds it.
             line.readingRenderPlan = null;
             line.romanizedText = "";
-            return SpicyRomanizer.romanizeLine(line.text, scripts, doc == null ? "" : doc.language, opts);
+            return SpicyRomanizer.romanizeLine(line.text, scripts,
+                    line.detection != null && line.detection.hasLanguage() ? line.detection.language
+                            : doc == null ? "" : doc.language, opts);
         } catch (Throwable t) {
             XpLog.log(TAG + " local romanization failed: " + t);
             return "";
@@ -104,7 +112,7 @@ public final class LyricsLocalRomanizer {
             return;
         }
         List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
-        if (isJapaneseLine(doc, line.text, fullText)) {
+        if (isJapaneseLine(doc, line)) {
             ArrayList<String> syllableTexts = new ArrayList<>();
             for (SyllableSegment seg : line.syllables) syllableTexts.add(seg == null ? "" : seg.text);
             // Reuse the finalized line analysis when romanizeLine already produced one;
@@ -133,7 +141,7 @@ public final class LyricsLocalRomanizer {
         for (SyllableSegment seg : line.syllables) {
             if (seg == null || isBlank(seg.text)) continue;
             if (!isBlank(seg.romanizedText)) continue;
-            String local = romanizeText(opts, doc, seg.text, fullText, line.chineseMode);
+            String local = romanizeText(opts, doc, seg.text, fullText, line.chineseMode, line.detection);
             seg.romanizedText = !isBlank(local) && !local.equals(seg.text) && !SpicyTextDetection.hasRomanizableScript(local)
                     ? local : "";
         }
@@ -172,12 +180,14 @@ public final class LyricsLocalRomanizer {
         if (!showRomanization || line == null || isBlank(line.text)
                 || !SpicyTextDetection.hasNonLatinLetter(line.text)) return false;
         if (line.readingRenderPlan != null) return false;
+        if (ReadingLanguagePolicy.unresolvedHan(line.text, line.detection)) return false;
         return isBlank(line.romanizedText) || SpicyTextDetection.hasRomanizableScript(line.romanizedText);
     }
 
     public static boolean shouldGoogleTranslate(LyricsDocument doc, LyricsLine line) {
         if (line == null || isBlank(line.text) || !isBlank(line.translatedText)) return false;
-        return SpicyProcessing.shouldTranslateLine(line.text, doc == null ? "" : doc.language, "en");
+        return SpicyProcessing.shouldTranslateLine(line.text, doc == null ? "" : doc.language, "en",
+                line.detection);
     }
 
     public static String normalizeChineseMode(String mode) {
@@ -186,15 +196,22 @@ public final class LyricsLocalRomanizer {
     }
 
     public static String romanizeText(RomanizationOptions opts, LyricsDocument doc, String text, String fullText, String lineChineseMode) {
+        return romanizeText(opts, doc, text, fullText, lineChineseMode, null);
+    }
+
+    private static String romanizeText(RomanizationOptions opts, LyricsDocument doc, String text,
+            String fullText, String lineChineseMode,
+            com.eza.spicyex.lyrics.session.DetectionResult detection) {
         try {
-            String language = doc == null ? "" : doc.language;
+            String language = ReadingLanguagePolicy.language(text, detection, doc == null ? "" : doc.language);
+            if (SpicyTextDetection.hasCjkIdeograph(text) && language.isEmpty()) return "";
             List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
-            if (isChineseLine(doc, text, fullText)) {
+            if ("zh".equals(language) && SpicyTextDetection.hasCjkIdeograph(text)) {
                 if (opts == null || isBlank(opts.chineseMode)) return "";
                 String mode = normalizeChineseMode(isBlank(lineChineseMode) ? opts.chineseMode : lineChineseMode);
                 return SpicyJapaneseChineseProcessor.romanizeChineseLine(text, mode, opts.chineseTones);
             }
-            if (isJapaneseLine(doc, text, fullText)) {
+            if ("ja".equals(language)) {
                 SpicyJapaneseChineseProcessor.JapaneseReading local =
                         SpicyJapaneseChineseProcessor.analyzeJapaneseLine(text, null);
                 return local == null ? "" : safe(local.romaji);
@@ -212,22 +229,24 @@ public final class LyricsLocalRomanizer {
                                                 String fullText) {
         if (segment == null || isBlank(segment.text)) return "";
         if (!isBlank(segment.romanizedText)) return segment.romanizedText;
-        if (line != null && line.japaneseReading != null
+        if (LyricsDisplayMode.isJapaneseLine(line) && line.japaneseReading != null
                 && "syntheticLineWords".equals(segment.boundaryProvenance)) {
             return SpicyJapaneseChineseProcessor.romanizeJapaneseRange(
                     line.japaneseReading, segment.canonicalStartCp, segment.canonicalEndCp);
         }
         LyricsLine source = line == null ? null : line.sourceLine;
-        String local = romanizeText(opts, doc, segment.text, fullText,
-                source == null ? "" : source.chineseMode);
+        String local = romanizeText(opts, line != null && line.bgLine ? null : doc, segment.text, fullText,
+                source == null || line.bgLine ? "" : source.chineseMode, ReadingLanguagePolicy.detectionFor(line));
         if (isBlank(local) || local.equals(segment.text)
                 || SpicyTextDetection.hasRomanizableScript(local)) return "";
         segment.romanizedText = local;
         return local;
     }
 
-    private static boolean isChineseLine(LyricsDocument doc, String text, String fullText) {
-        return hanLineScript(doc, text, fullText) == SpicyTextDetection.Script.CHINESE;
+    private static boolean isChineseLine(LyricsDocument doc, LyricsLine line) {
+        return line != null && SpicyTextDetection.hasCjkIdeograph(line.text)
+                && "zh".equals(ReadingLanguagePolicy.language(line.text, line.detection,
+                        doc == null ? "" : doc.language));
     }
 
     /**
@@ -305,29 +324,9 @@ public final class LyricsLocalRomanizer {
                 || script == Character.UnicodeScript.KATAKANA;
     }
 
-    private static boolean isJapaneseLine(LyricsDocument doc, String text, String fullText) {
-        if (SpicyTextDetection.hasKana(text)) return true;
-        return hanLineScript(doc, text, fullText) == SpicyTextDetection.Script.JAPANESE;
-    }
-
-    private static SpicyTextDetection.Script hanLineScript(LyricsDocument doc, String text, String fullText) {
-        if (!SpicyTextDetection.itemChineseTest(text)) return null;
-        if (SpicyTextDetection.hasKana(text)) return SpicyTextDetection.Script.JAPANESE;
-        if (documentHasKana(doc, fullText)) return SpicyTextDetection.Script.JAPANESE;
-        SpicyTextDetection.Script languageScript = SpicyTextDetection.scriptFromLanguage(
-                doc == null ? "" : doc.language, "");
-        if (languageScript == SpicyTextDetection.Script.JAPANESE) return SpicyTextDetection.Script.JAPANESE;
-        if (languageScript == SpicyTextDetection.Script.CHINESE) return SpicyTextDetection.Script.CHINESE;
-        return SpicyTextDetection.Script.CHINESE;
-    }
-
-    private static boolean documentHasKana(LyricsDocument doc, String fullText) {
-        if (!isBlank(fullText)) return SpicyTextDetection.hasKana(fullText);
-        if (doc == null || doc.lines == null) return false;
-        for (LyricsLine line : doc.lines) {
-            if (line != null && SpicyTextDetection.hasKana(line.text)) return true;
-        }
-        return false;
+    private static boolean isJapaneseLine(LyricsDocument doc, LyricsLine line) {
+        return line != null && "ja".equals(ReadingLanguagePolicy.language(line.text,
+                line.detection, doc == null ? "" : doc.language));
     }
 
     private static List<SpicyTextDetection.Script> scriptsFor(LyricsDocument doc, String fullText) {

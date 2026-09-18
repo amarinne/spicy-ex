@@ -43,6 +43,9 @@ public final class LyricsSurfaceRowPlanner {
         options.lyricsFont = safePolicy.lyricsFont;
         options.textSizeMultiplier = safePolicy.textSizeMultiplier;
         options.adaptiveTextSizeEnabled = safePolicy.adaptiveTextSizeEnabled;
+        options.appleStyle = safePolicy.appleStyle;
+        options.appleCompactText = safePolicy.appleCompactText;
+        options.appleCjkWrap = safePolicy.appleCjkWrap;
         options.translationBright = safePolicy.translationBright;
         options.wrapLongLines = safePolicy.wrapLongLines;
         options.adaptiveSectioningEnabled = safePolicy.adaptiveSectioningEnabled;
@@ -192,11 +195,10 @@ public final class LyricsSurfaceRowPlanner {
         }
         String[] parts;
         boolean japaneseSyntheticWords = isJapaneseLine(line);
-        boolean chineseSyntheticWords = !japaneseSyntheticWords
-                && SpicyTextDetection.itemChineseTest(text);
+        boolean chineseSyntheticWords = "zh".equals(ReadingLanguagePolicy.layoutLanguage(line));
         if (japaneseSyntheticWords || chineseSyntheticWords) {
             List<DisplayLayoutGroup> groups = DisplayLayoutGroup.forLine(
-                    japaneseSyntheticWords ? "ja" : "zh", text, line.japaneseReading);
+                    ReadingLanguagePolicy.layoutLanguage(line), text, line.japaneseReading);
             if (groups.size() < 2) return;
             ArrayList<String> layoutParts = new ArrayList<>();
             int sourceCursor = 0;
@@ -247,7 +249,7 @@ public final class LyricsSurfaceRowPlanner {
     }
 
     private static boolean isJapaneseLine(AppliedLine line) {
-        return hasJapaneseReading(line) || (line != null && SpicyTextDetection.hasKana(line.text));
+        return LyricsDisplayMode.isJapaneseLine(line);
     }
 
     private static boolean hasJapaneseReading(AppliedLine line) {
@@ -280,6 +282,9 @@ public final class LyricsSurfaceRowPlanner {
         public final String lyricsFont;
         public final float textSizeMultiplier;
         public final boolean adaptiveTextSizeEnabled;
+        public final boolean appleStyle;
+        public final boolean appleCompactText;
+        public final boolean appleCjkWrap;
         public final boolean translationBright;
         public final boolean wrapLongLines;
         public final boolean adaptiveSectioningEnabled;
@@ -378,7 +383,7 @@ public final class LyricsSurfaceRowPlanner {
                     attachTransliterationToWords, lineLevelFillTopDown, lineLevelFillSentence,
                     wordLevelFill, interludeNoteIcon, lyricWeight, lyricsFont, textSizeMultiplier,
                     translationBright, wrapLongLines, forceStartAligned, horizontalSafetyPadding,
-                    adaptiveSectioningEnabled, true);
+                    adaptiveSectioningEnabled, true, false, false, false);
         }
 
         public SurfacePolicy(
@@ -401,6 +406,36 @@ public final class LyricsSurfaceRowPlanner {
                 boolean adaptiveSectioningEnabled,
                 boolean adaptiveTextSizeEnabled
         ) {
+            this(lineSpacingMultiplier, showRomanization, showTranslation, japaneseReadingMode,
+                    attachTransliterationToWords, lineLevelFillTopDown, lineLevelFillSentence,
+                    wordLevelFill, interludeNoteIcon, lyricWeight, lyricsFont, textSizeMultiplier,
+                    translationBright, wrapLongLines, forceStartAligned, horizontalSafetyPadding,
+                    adaptiveSectioningEnabled, adaptiveTextSizeEnabled, false, false, false);
+        }
+
+        public SurfacePolicy(
+                float lineSpacingMultiplier,
+                boolean showRomanization,
+                boolean showTranslation,
+                String japaneseReadingMode,
+                boolean attachTransliterationToWords,
+                boolean lineLevelFillTopDown,
+                boolean lineLevelFillSentence,
+                boolean wordLevelFill,
+                boolean interludeNoteIcon,
+                String lyricWeight,
+                String lyricsFont,
+                float textSizeMultiplier,
+                boolean translationBright,
+                boolean wrapLongLines,
+                boolean forceStartAligned,
+                boolean horizontalSafetyPadding,
+                boolean adaptiveSectioningEnabled,
+                boolean adaptiveTextSizeEnabled,
+                boolean appleStyle,
+                boolean appleCompactText,
+                boolean appleCjkWrap
+        ) {
             this.lineSpacingMultiplier = lineSpacingMultiplier;
             this.showRomanization = showRomanization;
             this.showTranslation = showTranslation;
@@ -417,6 +452,9 @@ public final class LyricsSurfaceRowPlanner {
             this.wrapLongLines = wrapLongLines;
             this.adaptiveSectioningEnabled = adaptiveSectioningEnabled;
             this.adaptiveTextSizeEnabled = adaptiveTextSizeEnabled;
+            this.appleStyle = appleStyle;
+            this.appleCompactText = appleCompactText;
+            this.appleCjkWrap = appleCjkWrap;
             this.forceStartAligned = forceStartAligned;
             this.horizontalSafetyPadding = horizontalSafetyPadding;
         }
@@ -446,7 +484,10 @@ public final class LyricsSurfaceRowPlanner {
                     false,
                     false,
                     cfg == null || cfg.adaptiveSectioningEnabled,
-                    cfg == null || cfg.adaptiveTextSizeEnabled);
+                    cfg == null || cfg.adaptiveTextSizeEnabled,
+                    cfg != null && cfg.appleStyle,
+                    cfg != null && cfg.appleCompactText,
+                    cfg != null && cfg.appleCjkWrap);
         }
 
         public static SurfacePolicy liveCard(LyricsRenderConfig config) {

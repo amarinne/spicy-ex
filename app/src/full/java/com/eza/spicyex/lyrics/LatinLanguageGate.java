@@ -1,61 +1,34 @@
 package com.eza.spicyex.lyrics;
 
-import com.github.pemistahl.lingua.api.Language;
-import com.github.pemistahl.lingua.api.LanguageDetector;
-import com.github.pemistahl.lingua.api.LanguageDetectorBuilder;
+import com.eza.spicyex.lyrics.session.DetectionResult;
 
-final class LatinLanguageGate {
-    private static final LanguageDetector DETECTOR = LanguageDetectorBuilder.fromLanguages(
-            Language.ENGLISH,
-            Language.SPANISH,
-            Language.FRENCH,
-            Language.GERMAN,
-            Language.ITALIAN,
-            Language.PORTUGUESE,
-            Language.DUTCH,
-            Language.POLISH,
-            Language.SWEDISH,
-            Language.DANISH,
-            Language.BOKMAL,
-            Language.FINNISH,
-            Language.TURKISH,
-            Language.INDONESIAN,
-            Language.MALAY,
-            Language.VIETNAMESE,
-            Language.RUSSIAN,
-            Language.UKRAINIAN,
-            Language.BULGARIAN,
-            Language.SERBIAN,
-            Language.MACEDONIAN,
-            Language.BELARUSIAN,
-            Language.GREEK,
-            Language.JAPANESE,
-            Language.KOREAN,
-            Language.CHINESE
-    ).build();
-
+/**
+ * Flavor-facing language-detection seam.
+ *
+ * <p>The real work lives in {@link LanguageDetectorManager}: one lazy compact CharSoup model
+ * with use-counted release on memory trim. This class only exposes the
+ * shared entry points used from the main source set. Lite provides the same signatures as no-ops.
+ */
+public final class LatinLanguageGate {
     private LatinLanguageGate() {
     }
 
-    static boolean lineLooksNonTargetLatin(String compactText, String targetLang) {
-        try {
-            String detectedIso2 = detectedIso2(compactText);
-            return !detectedIso2.equalsIgnoreCase(targetLang);
-        } catch (Throwable ignored) {
-            return false;
-        }
+    /** Detect one canonical row; reuse {@code known} when it already carries a usable result. */
+    public static DetectionResult detect(String text, DetectionResult known) {
+        return LanguageDetectorManager.shared().detect(text, known);
     }
 
-    static boolean lineLooksTargetLatin(String compactText, String targetLang) {
-        try {
-            return detectedIso2(compactText).equalsIgnoreCase(targetLang);
-        } catch (Throwable ignored) {
-            return false;
-        }
+    public static DetectionResult detect(String text) {
+        return LanguageDetectorManager.shared().detect(text);
     }
 
-    private static String detectedIso2(String compactText) {
-        Language detected = DETECTOR.detectLanguageOf(compactText);
-        return detected.getIsoCode639_1().toString().toLowerCase(java.util.Locale.ROOT);
+    /** Drops resident detector models. Persistent detection records are untouched. */
+    public static void trimMemory() {
+        LanguageDetectorManager.shared().trimMemory();
+    }
+
+    /** Exposed for tests: how many detector configurations have been created. */
+    static long detectionCountForTest() {
+        return LanguageDetectorManager.shared().detectionCount();
     }
 }

@@ -28,6 +28,8 @@ public final class SpotifyPlusConfig {
 
     private SpotifyPlusConfig(SharedPreferences hostPrefs) {
         this.hostPrefs = hostPrefs;
+        SettingsStore.migrateLikedSongsButton(hostPrefs);
+        SettingsStore.migrateLineBlurLevel(hostPrefs);
     }
 
     public static SpotifyPlusConfig from(Context context) {
@@ -39,18 +41,22 @@ public final class SpotifyPlusConfig {
     // no IPC. In the (now-removed) standalone app it was that app's prefs.
 
     public <T> T get(Settings.Setting<T> setting) {
-        Object value;
-        if (setting instanceof Settings.BooleanSetting) {
-            value = hostPrefs.getBoolean(setting.key, (Boolean) setting.defaultValue);
-        } else {
-            if (setting instanceof Settings.IntegerSetting) {
+        try {
+            Object value;
+            if (setting instanceof Settings.BooleanSetting) {
+                value = hostPrefs.getBoolean(setting.key, (Boolean) setting.defaultValue);
+            } else if (setting instanceof Settings.IntegerSetting) {
                 value = hostPrefs.getInt(setting.key, (Integer) setting.defaultValue);
             } else {
                 value = hostPrefs.getString(setting.key, (String) setting.defaultValue);
             }
+            if (value == null) value = setting.defaultValue;
+            return setting.coerce(value);
+        } catch (ClassCastException | IllegalArgumentException invalidStoredValue) {
+            // A preference may survive a schema type change. Ignore the invalid value and use
+            // the declared default; runtime settings must never crash Spotify during startup.
+            return setting.defaultValue;
         }
-        if (value == null) value = setting.defaultValue;
-        return setting.coerce(value);
     }
 
     public boolean getBoolean(String key, boolean defaultValue) {
