@@ -113,7 +113,7 @@
     <string name="settings_label_lyrics_chinese_mode">Китайское написание</string>
     <string name="settings_label_lyrics_korean_romanization">Корейское написание</string>
     <string name="settings_label_lyrics_chinese_tones">Показывать китайские тона</string>
-    <string name="settings_label_lyrics_cyrillic_mode">Киррилическое написание</string>
+    <string name="settings_label_lyrics_cyrillic_mode">Кириллическое написание</string>
     <string name="settings_label_lyrics_cyrillic_keep_signs">Оставить мягкие / твёрдые знаки</string>
     <string name="settings_label_lyrics_translation_enabled">Переводить текст</string>
     <string name="settings_label_lyrics_translation_target">Язык</string>
@@ -236,7 +236,7 @@
     <string name="settings_diagnostic_source_chosen">Источник выбран</string>
     <string name="settings_diagnostic_candidates_seen">Просмотренные кандидаты</string>
     <string name="settings_diagnostic_provider">Провайдер</string>
-    <string name="settings_diagnostic_type_chosen">Тип выбран</string>
+    <string name="settings_diagnostic_type_chosen">Выбранный тип</string>
     <string name="settings_diagnostic_spicy_version_sent">Версия Spicy отправлена</string>
     <string name="settings_diagnostic_spicy_latest_version">Последняя версия Spicy</string>
     <string name="settings_diagnostic_token_present">Токен присутствует</string>
@@ -246,4 +246,33 @@
     <string name="settings_diagnostic_cache_write">Запись кэша</string>
     <string name="settings_yes">да</string>
     <string name="settings_no">нет</string>
+
+    <string name="settings_section_apple_music">Стиль анимации Apple</string>
+    <string name="settings_label_lyric_auto_skip_intro_outro">Авто-скип интро / оутро</string>
+    <string name="settings_label_mini_player_lyrics_icon">Показывать иконку текста в мини плеере</string>
+    <string name="settings_label_lyric_liked_songs_button">Кнопка Добавить в Любимое</string>
+    <string name="settings_option_heart">Сердце</string>
+    <string name="settings_option_star">Звезда</string>
+    <string name="lyrics_like_add">Добавить в Любимое</string>
+    <string name="lyrics_like_remove">Убрать из Любимого</string>
+    <string name="lyrics_like_unavailable">Любимые недоступно</string>
+    <string name="settings_label_lyrics_track_info_position">Положении информации о треке</string>
+    <string name="settings_option_top">Сверху</string>
+    <string name="settings_option_bottom">Снизу</string>
+    <string name="settings_label_lyrics_track_info_text_size">Размер информации о треке</string>
+    <string name="settings_label_lyrics_track_info_text_size_custom">Свой размер</string>
+    <string name="settings_label_lyrics_track_info_text_overflow"></string>
+    <string name="settings_option_scroll">Прокрутка</string>
+    <string name="settings_label_lyrics_track_info_art_size">Размер обложки в информации о треке</string>
+    <string name="settings_label_lyrics_adaptive_landscape_layout">Адаптивный интерфейс в горизонтальном режиме</string>
+    <string name="settings_label_lyrics_panel_media_controls">Панель управления медиа</string>
+    <string name="settings_label_lyric_apple_fade_passed_lines">Fade passed lines</string>
+    <string name="settings_label_lyric_apple_compact_text">Компактный размер текста</string>
+    <string name="settings_label_lyric_apple_cjk_wrap_fix">Wrap long CJK words</string>
+    <string name="settings_label_lyric_line_slide_animation">Apple Music-style slide</string>
+    <string name="settings_label_lyric_apple_lift">Apple lift</string>
+    <string name="settings_option_lyric_word_bounce_style_apple_lift">Apple lift</string>
+    <string name="settings_label_lyric_extra_dark_background">Затемнить фон</string>
+    <string name="settings_option_slight">Лёгкое</string>
+    <string name="settings_option_heavy">Тяжёлое</string>
 </resources>
