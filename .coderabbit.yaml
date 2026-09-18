@@ -1,0 +1,17 @@
+language: en-US
+reviews:
+  profile: chill
+  high_level_summary: true
+  request_changes_workflow: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!app/src/main/res/values-*/**"
+    - "!app/translation/**"
+    - "!**/docs/**"
+    - "!**/*.md"
+    - "!**/generated/**"
+    - "!**/*.lock"
+    - "!**/node_modules/**"
+    - "!**/dist/**"
