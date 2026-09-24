@@ -93,7 +93,7 @@ public final class Settings {
     /** Experimental strict source switch. "Spicy" is a retired legacy alias for Apple Music. */
     public static final Setting<String> LYRICS_SOURCE_OVERRIDE = enumSetting(
             "lyrics_source_override", LYRICS_SOURCES, "Lyrics source", "Auto",
-            "Auto", "Apple Music", "Spicy", "Spotify", "LRCLIB"
+            "Auto", "Apple Music", "Spicy", "Spotify", "LRCLIB", "NetEase", "QQ Music", "Musixmatch"
     );
 
     /** Optional desktop-captured Spotify token (legacy; the retired Spicy remote is no longer queried). */
@@ -109,6 +109,12 @@ public final class Settings {
     /** Bounded JSON map of spotify track URI to source id; auto is represented by omission. */
     public static final Setting<String> LYRICS_SOURCE_OVERRIDES = internalSetting(
             "lyrics_source_overrides", "Per-track lyric sources", "{}"
+    );
+
+    // Karaoke / off-vocal / instrumental versions have no lyrics of their own; with this on the
+    // text sources are searched for the original song instead (see KaraokeTitles).
+    public static final Setting<Boolean> KARAOKE_ORIGINAL_LYRICS = boolSetting(
+            "lyrics_karaoke_original_lyrics", LYRICS_SOURCES, "Show original lyrics for karaoke versions", false
     );
 
     // Stored values are the exact display labels; allocation is in CacheStoragePolicy.
