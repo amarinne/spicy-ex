@@ -534,4 +534,12 @@
     <string name="settings_double_tap_like_note">두 번 탭은 가사 이동에 사용 중이에요. 켜면 그 기능은 꺼져요.</string>
     <string name="settings_label_lyrics_status_bar_hidden_portrait">상태 표시줄 숨기기 (세로)</string>
     <string name="settings_label_lyrics_status_bar_hidden_landscape">상태 표시줄 숨기기 (가로)</string>
+    <string name="settings_card_editor">재생 중 카드 편집기…</string>
+    <string name="settings_layout_editor_mode_card">재생 중 카드</string>
+    <string name="settings_layout_editor_mode_lyrics">가사 화면</string>
+    <string name="settings_layout_editor_demo_lyrics">데모</string>
+    <string name="settings_layout_editor_live_lyrics">실제 가사</string>
+    <string name="settings_layout_editor_element_card">재생 중 카드</string>
+    <string name="settings_layout_editor_card_caption">재생 중 카드</string>
+    <string name="settings_layout_editor_font_pick_failed">글꼴 파일을 읽을 수 없어요</string>
 </resources>

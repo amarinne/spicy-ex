@@ -41,7 +41,7 @@ public class SettingsDefaultsTest {
         assertTrue(Settings.APPLE_COMPACT_TEXT.defaultValue);
         assertFalse(Settings.LINE_SLIDE_ANIMATION.defaultValue);
         assertTrue(Settings.APPLE_LIFT.defaultValue);
-        assertEquals(Settings.APPLE, Settings.APPLE_LIFT.section);
+        assertEquals(Settings.INTERNAL, Settings.APPLE_LIFT.section); // edited in the layout editor
         assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);
         assertFalse(Settings.HYPERGLOW_ENABLED.defaultValue);
         assertEquals("en", Settings.UI_LANGUAGE.defaultValue);

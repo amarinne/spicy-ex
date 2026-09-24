@@ -16,6 +16,17 @@ public final class PanelPolicy {
     }
 
     public static boolean shouldRender(Settings.Setting<?> setting, PanelSnapshot snapshot) {
+        if (setting == Settings.FORCE_DARK_BACKGROUND) {
+            return snapshot.animatedBackgroundAvailable()
+                    && LyricsBackgroundStyle.usesTexture(snapshot.get(Settings.BACKGROUND_STYLE));
+        }
+        if (setting == Settings.EXTRA_DARK_BACKGROUND) {
+            return shouldRenderForceDark(snapshot)
+                    && Boolean.TRUE.equals(snapshot.get(Settings.FORCE_DARK_BACKGROUND));
+        }
+        if (isLayoutEditorOnly(setting)) {
+            return false;
+        }
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             return snapshot.spicySourceEnabled();
         }
@@ -40,14 +51,6 @@ public final class PanelPolicy {
                 || setting == Settings.CYRILLIC_KEEP_SIGNS) {
             return snapshot.transliterationAvailable()
                     && Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED));
-        }
-        if (setting == Settings.FORCE_DARK_BACKGROUND) {
-            return snapshot.animatedBackgroundAvailable()
-                    && LyricsBackgroundStyle.usesTexture(snapshot.get(Settings.BACKGROUND_STYLE));
-        }
-        if (setting == Settings.EXTRA_DARK_BACKGROUND) {
-            return shouldRenderForceDark(snapshot)
-                    && Boolean.TRUE.equals(snapshot.get(Settings.FORCE_DARK_BACKGROUND));
         }
         if (setting == Settings.BACKGROUND_RENDER_QUALITY) {
             return snapshot.animatedBackgroundAvailable()
@@ -106,6 +109,25 @@ public final class PanelPolicy {
         return true;
     }
 
+    private static boolean isLayoutEditorOnly(Settings.Setting<?> setting) {
+        return setting == Settings.TRACK_INFO_POSITION
+                || setting == Settings.BACKGROUND_STYLE
+                || setting == Settings.BACKGROUND_RENDER_QUALITY
+                || setting == Settings.FORCE_DARK_BACKGROUND
+                || setting == Settings.EXTRA_DARK_BACKGROUND
+                || setting == Settings.ANIMATION_STYLE
+                || setting == Settings.LOAD_LIFT_ANIMATION
+                || setting == Settings.APPLE_CASCADE_SPEED
+                || setting == Settings.APPLE_SPRING_STRENGTH
+                || setting == Settings.CHROME_CLUSTER_POSITION
+                || setting == Settings.FULLSCREEN_CONTROLS
+                || setting == Settings.LIKED_SONGS_BUTTON
+                || setting == Settings.SKIP_CHIP_POSITION
+                || setting == Settings.FOLLOW_CHIP_POSITION
+                || setting == Settings.SKIP_CHIP_STYLE
+                || setting == Settings.FOLLOW_CHIP_STYLE;
+    }
+
     private static boolean shouldRenderForceDark(PanelSnapshot snapshot) {
         return snapshot.animatedBackgroundAvailable()
                 && LyricsBackgroundStyle.usesTexture(snapshot.get(Settings.BACKGROUND_STYLE));
@@ -139,11 +161,6 @@ public final class PanelPolicy {
     /** Why one option is dimmed; empty means selectable. Locale-resolved, never hardcoded. */
     public static String optionUnavailableReason(Settings.StringSetting setting, String value,
                                                  PanelSnapshot snapshot, PanelStrings strings) {
-        if (setting == Settings.BACKGROUND_STYLE
-                && LyricsBackgroundStyle.usesTexture(value)
-                && !snapshot.animatedBackgroundAvailable()) {
-            return strings.get("settings_unavailable_android_13", "Android 13+ required");
-        }
         if (setting != Settings.LIVE_CARD_SECONDARY_MODE) return "";
         boolean needsTransliteration = "Transliteration".equals(value) || "Both".equals(value);
         boolean needsTranslation = "Translation".equals(value) || "Both".equals(value);

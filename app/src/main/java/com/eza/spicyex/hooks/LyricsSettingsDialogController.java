@@ -21,6 +21,7 @@ final class LyricsSettingsDialogController {
     private final LyricsAmbientController ambientController;
     private final LyricsHost host;
     private final Runnable onClosed;
+    private final java.util.function.IntConsumer onOpenLayoutEditor;
     private final Runnable onResyncTiming;
     private final String logTag;
 
@@ -30,6 +31,7 @@ final class LyricsSettingsDialogController {
             LyricsAmbientController ambientController,
             LyricsHost host,
             Runnable onClosed,
+            java.util.function.IntConsumer onOpenLayoutEditor,
             Runnable onResyncTiming,
             String logTag
     ) {
@@ -38,6 +40,7 @@ final class LyricsSettingsDialogController {
         this.ambientController = ambientController;
         this.host = host;
         this.onClosed = onClosed;
+        this.onOpenLayoutEditor = onOpenLayoutEditor;
         this.onResyncTiming = onResyncTiming;
         this.logTag = logTag;
     }
@@ -51,12 +54,19 @@ final class LyricsSettingsDialogController {
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
             Window window = dialog.getWindow();
             final View[] panelRef = new View[1];
+            // The dialog is its own window, layered above the activity's by the platform
+            // regardless of view z-order inside either one - the layout editor's overlay lives
+            // in the activity's hierarchy (see LyricsLayoutEditController), so opening it while
+            // this dialog's window is still up leaves it added but invisible underneath. Record
+            // the request instead of acting on it immediately, and run it from the dismiss
+            // listener below, once this window is actually gone.
+            int[] openLayoutEditorPending = {0};
             SettingsPanel panel = new SettingsPanel(activity, new SettingsStore(activity),
                     () -> halfMode, () -> {
                         halfMode = !halfMode;
                         applySize(window);
                     }, () -> Motion.exitCardThen(panelRef[0], dialog::isShowing, dialog::dismiss),
-                    host::clearLyricsCache, onResyncTiming);
+                    mode -> openLayoutEditorPending[0] = mode, host::clearLyricsCache, onResyncTiming);
             final View panelView = panel.build();
             panelRef[0] = panelView;
             // Back routes through the animated exit; outside-tap keeps platform behavior
@@ -90,6 +100,11 @@ final class LyricsSettingsDialogController {
             dialog.setOnDismissListener(d -> {
                 frameScheduler.start();
                 onClosed.run();
+                if (openLayoutEditorPending[0] != 0) {
+                    int mode = openLayoutEditorPending[0];
+                    openLayoutEditorPending[0] = 0;
+                    if (onOpenLayoutEditor != null) onOpenLayoutEditor.accept(mode);
+                }
             });
             dialog.show();
             Motion.enterCard(panelView);

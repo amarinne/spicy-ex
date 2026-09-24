@@ -27,6 +27,23 @@ public class TrackInfoReadoutRulesTest {
     }
 
     @Test
+    public void customArtSizeAppliesSameDpToEveryPlacement() {
+        // Custom is driven by dragging the actual rendered frame's corner handle in the layout
+        // editor, so every placement gets the exact size dragged to - no derived offset the way
+        // the fixed presets use, or a Top-mode frame would end up smaller than what was dragged.
+        assertArrayEquals(new int[]{96, 96},
+                TrackInfoReadoutController.readoutArtSizes("Custom", 96));
+        assertArrayEquals(new int[]{140, 140},
+                TrackInfoReadoutController.readoutArtSizes("Custom", 140));
+        // Clamped to a sane minimum.
+        assertArrayEquals(new int[]{24, 24},
+                TrackInfoReadoutController.readoutArtSizes("Custom", 4));
+        // Non-Custom values ignore the second argument and delegate to the fixed presets.
+        assertArrayEquals(new int[]{72, 48},
+                TrackInfoReadoutController.readoutArtSizes("Small", 999));
+    }
+
+    @Test
     public void overflowModesNormalizeWithWrapDefault() {
         assertTrue("Clip".equals(TrackInfoReadoutController.normalizeOverflow("Clip")));
         assertTrue("Wrap".equals(TrackInfoReadoutController.normalizeOverflow("Wrap")));

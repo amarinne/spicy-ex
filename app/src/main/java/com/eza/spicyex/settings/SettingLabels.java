@@ -41,8 +41,12 @@ public final class SettingLabels {
 
     public static String formatStepper(Settings.IntegerSetting setting, int value) {
         if (setting == Settings.EXTRA_DARK_BACKGROUND
+                || setting == Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT
                 || setting == Settings.LYRICS_BLUR_INTENSITY) {
             return value + "%";
+        }
+        if (setting == Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP) {
+            return value + "dp";
         }
         if (setting == Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS) {
             return value + "s";
