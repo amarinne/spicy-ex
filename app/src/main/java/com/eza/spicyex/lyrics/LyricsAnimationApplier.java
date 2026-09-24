@@ -394,12 +394,17 @@ public final class LyricsAnimationApplier {
         }
     }
 
+    // Reused across dots/frames: values are read immediately by the single caller in
+    // animateInterludeDots() before the next dot (or frame) overwrites them, so one shared
+    // mutable instance avoids allocating per dot per Choreographer frame.
+    private static final DotTargets DOT_TARGETS = new DotTargets();
+
     static DotTargets dotTargets(SyllableSegment seg, long positionMs) {
-        if (seg == null) return new DotTargets(0.75f, 0f, 0f, 0.35f, 0f);
-        if (positionMs < seg.startMs) return new DotTargets(0.75f, 0f, 0f, 0.35f, 0f);
-        if (positionMs >= seg.endMs) return new DotTargets(1f, 0f, 1f, 1f, 1f);
+        if (seg == null) return DOT_TARGETS.set(0.75f, 0f, 0f, 0.35f, 0f);
+        if (positionMs < seg.startMs) return DOT_TARGETS.set(0.75f, 0f, 0f, 0.35f, 0f);
+        if (positionMs >= seg.endMs) return DOT_TARGETS.set(1f, 0f, 1f, 1f, 1f);
         float progress = progress01(positionMs, seg.startMs, seg.endMs);
-        return new DotTargets(
+        return DOT_TARGETS.set(
                 LyricAnimations.dotScaleSpline(progress),
                 LyricAnimations.dotYOffsetSpline(progress),
                 LyricAnimations.dotGlowSpline(progress),
@@ -409,18 +414,19 @@ public final class LyricsAnimationApplier {
     }
 
     static final class DotTargets {
-        final float scale;
-        final float yOffset;
-        final float glow;
-        final float opacity;
-        final float gradientProgress;
+        float scale;
+        float yOffset;
+        float glow;
+        float opacity;
+        float gradientProgress;
 
-        DotTargets(float scale, float yOffset, float glow, float opacity, float gradientProgress) {
+        DotTargets set(float scale, float yOffset, float glow, float opacity, float gradientProgress) {
             this.scale = scale;
             this.yOffset = yOffset;
             this.glow = glow;
             this.opacity = opacity;
             this.gradientProgress = gradientProgress;
+            return this;
         }
     }
 

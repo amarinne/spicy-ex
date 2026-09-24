@@ -1,14 +1,12 @@
 package com.eza.spicyex.lyrics;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 
 import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.session.Digests;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
@@ -69,48 +67,33 @@ public final class LyricCaches {
     }
 
     private static int preferenceStoreEntryCount(Context context, String prefsName, String orderKey) {
-        if (context == null) return 0;
-        try {
-            int count = 0;
-            for (Map.Entry<String, ?> entry : context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getAll().entrySet()) {
-                if (entry.getKey() != null && entry.getKey().equals(orderKey)) continue;
-                if (entry.getValue() instanceof String) count++;
-            }
-            return count;
-        } catch (Throwable ignored) {
-            return 0;
-        }
+        return SpicyCacheStore.entryCount(context, prefsName);
     }
 
     public static void clearGoogle(Context context) {
-        if (context == null) return;
-        context.getSharedPreferences(PREFS_GOOGLE_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+        SpicyCacheStore.clear(context, PREFS_GOOGLE_CACHE);
     }
 
     public static void clearProcessed(Context context) {
-        if (context == null) return;
-        context.getSharedPreferences(PREFS_PROCESSED_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
-        context.getSharedPreferences(PREFS_SOUND_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
-        context.getSharedPreferences(PREFS_MEANING_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
-        context.getSharedPreferences(PREFS_DETECTION_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+        SpicyCacheStore.clear(context, PREFS_PROCESSED_CACHE);
+        SpicyCacheStore.clear(context, PREFS_SOUND_CACHE);
+        SpicyCacheStore.clear(context, PREFS_MEANING_CACHE);
+        SpicyCacheStore.clear(context, PREFS_DETECTION_CACHE);
     }
 
     /** Drops detection rows only. A detector or gate change must not touch readings/translations. */
     public static void clearDetectionArtifacts(Context context) {
-        if (context == null) return;
-        context.getSharedPreferences(PREFS_DETECTION_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+        SpicyCacheStore.clear(context, PREFS_DETECTION_CACHE);
     }
 
     /** Drops Sound artifacts only. A Sound contract change must not touch Meaning. */
     public static void clearSoundArtifacts(Context context) {
-        if (context == null) return;
-        context.getSharedPreferences(PREFS_SOUND_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+        SpicyCacheStore.clear(context, PREFS_SOUND_CACHE);
     }
 
     /** Drops Meaning artifacts only. A Meaning contract change must not touch Sound. */
     public static void clearMeaningArtifacts(Context context) {
-        if (context == null) return;
-        context.getSharedPreferences(PREFS_MEANING_CACHE, Context.MODE_PRIVATE).edit().clear().apply();
+        SpicyCacheStore.clear(context, PREFS_MEANING_CACHE);
     }
 
     public static String getSoundArtifact(Context context, String key) {
@@ -159,13 +142,7 @@ public final class LyricCaches {
     private static String getBoundedRecord(Context context, String prefsName, String key) {
         if (context == null) return null;
         try {
-            SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
-            String hashedKey = sha256(key);
-            synchronized (PROCESSED_CACHE_LOCK) {
-                String value = prefs.getString(hashedKey, null);
-                if (value == null) return null;
-                return value;
-            }
+            return SpicyCacheStore.get(context, prefsName, sha256(key));
         } catch (Throwable t) {
             Diagnostics.warn("LyricCaches", "getBoundedRecord", t);
             return null;
@@ -182,20 +159,8 @@ public final class LyricCaches {
                                          long quotaBytes, int maxEntries) {
         if (context == null || isBlank(value)) return false;
         try {
-            SharedPreferences prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE);
-            String hashedKey = sha256(key);
-            synchronized (PROCESSED_CACHE_LOCK) {
-                ProcessedCacheOrderUpdate update = boundedProcessedCacheOrder(
-                        prefs.getString(PREFS_PROCESSED_CACHE_ORDER_KEY, ""), hashedKey,
-                        value.getBytes(StandardCharsets.UTF_8).length, System.currentTimeMillis(),
-                        maxEntries, quotaBytes, 0L);
-                SharedPreferences.Editor editor = prefs.edit();
-                if (update.evictedKeys.contains(hashedKey)) editor.remove(hashedKey);
-                else editor.putString(hashedKey, value);
-                for (String evicted : update.evictedKeys) if (!hashedKey.equals(evicted)) editor.remove(evicted);
-                editor.putString(PREFS_PROCESSED_CACHE_ORDER_KEY, update.nextOrder).apply();
-                return true;
-            }
+            return SpicyCacheStore.put(context, prefsName, sha256(key), value, quotaBytes,
+                    maxEntries);
         } catch (Throwable t) {
             Diagnostics.warn("LyricCaches", "putBoundedRecord", t);
             return false;
@@ -272,7 +237,7 @@ public final class LyricCaches {
     private static String getGoogleValue(Context context, String key) {
         if (context == null) return null;
         try {
-            return context.getSharedPreferences(PREFS_GOOGLE_CACHE, Context.MODE_PRIVATE).getString(sha256(key), null);
+            return SpicyCacheStore.get(context, PREFS_GOOGLE_CACHE, sha256(key));
         } catch (Throwable t) {
             Diagnostics.warn("LyricCaches", "getGoogleValue", t);
             return null;
@@ -288,234 +253,37 @@ public final class LyricCaches {
     private static void putGoogleValues(Context context, Map<String, String> values) {
         if (context == null || values == null || values.isEmpty()) return;
         try {
-            SharedPreferences prefs = context.getSharedPreferences(PREFS_GOOGLE_CACHE, Context.MODE_PRIVATE);
+            long quota = googleQuotaBytes(context);
             synchronized (GOOGLE_CACHE_LOCK) {
-                SharedPreferences.Editor editor = prefs.edit();
-                LinkedHashMap<String, Long> newEntries = new LinkedHashMap<>();
                 for (Map.Entry<String, String> entry : values.entrySet()) {
                     if (entry == null || isBlank(entry.getValue())) continue;
-                    String hashedKey = sha256(entry.getKey());
-                    newEntries.put(hashedKey,
-                            (long) entry.getValue().getBytes(StandardCharsets.UTF_8).length);
-                    editor.putString(hashedKey, entry.getValue());
+                    SpicyCacheStore.put(context, PREFS_GOOGLE_CACHE,
+                            sha256(entry.getKey()), entry.getValue(), quota);
                 }
-                if (newEntries.isEmpty()) return;
-                if (!recordBoundedGoogleCachePut(context, prefs, editor, newEntries)) return;
-                editor.apply();
             }
         } catch (Throwable t) {
             Diagnostics.warn("LyricCaches", "putGoogleValue", t);
         }
     }
 
-    /**
-     * Google processing values are byte-quota bounded by the shared budget; the old 5000-entry cap
-     * is no longer an independent eviction cause. The order line carries each entry's payload size
-     * ({@code key|bytes}); legacy plain-key lines are sized once from the store and migrated on
-     * the first write. Under {@link CacheStoragePolicy#UNLIMITED} nothing is evicted.
-     */
-    private static boolean recordBoundedGoogleCachePut(Context context, SharedPreferences prefs,
-                                                    SharedPreferences.Editor editor,
-                                                    Map<String, Long> newEntries) {
-        String rawOrder = prefs.getString(PREFS_GOOGLE_CACHE_ORDER_KEY, "");
-        Map<String, Long> knownSizes = googleKnownSizesIfNeeded(prefs, rawOrder);
-        GoogleQuotaUpdate update = boundedGoogleCacheOrderByBytes(rawOrder, knownSizes, newEntries,
-                googleQuotaBytes(context));
-        for (String evicted : update.evictedKeys) editor.remove(evicted);
-        editor.putString(PREFS_GOOGLE_CACHE_ORDER_KEY, update.nextOrder);
-        return true;
-    }
-
-    /** Legacy order lines carry no size; fetch payload sizes only when one is present. */
-    private static Map<String, Long> googleKnownSizesIfNeeded(SharedPreferences prefs, String rawOrder) {
-        if (isBlank(rawOrder)) return java.util.Collections.emptyMap();
-        for (String line : rawOrder.split("\n")) {
-            if (isBlank(line) || PREFS_GOOGLE_CACHE_ORDER_KEY.equals(line)) continue;
-            if (line.indexOf('|') < 0) return googleValueSizes(prefs);
-        }
-        return java.util.Collections.emptyMap();
-    }
-
-    private static Map<String, Long> googleValueSizes(SharedPreferences prefs) {
-        Map<String, Long> sizes = new LinkedHashMap<>();
-        try {
-            for (Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
-                if (entry.getKey() == null || PREFS_GOOGLE_CACHE_ORDER_KEY.equals(entry.getKey())) continue;
-                if (entry.getValue() instanceof String) {
-                    sizes.put(entry.getKey(),
-                            (long) ((String) entry.getValue()).getBytes(StandardCharsets.UTF_8).length);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        return sizes;
-    }
-
-    static GoogleQuotaUpdate boundedGoogleCacheOrderByBytes(String rawOrder,
-                                                            Map<String, Long> knownSizes,
-                                                            Map<String, Long> newEntries,
-                                                            long quotaBytes) {
-        LinkedHashMap<String, Long> order = new LinkedHashMap<>();
-        if (!isBlank(rawOrder)) {
-            for (String line : rawOrder.split("\n")) {
-                if (isBlank(line) || PREFS_GOOGLE_CACHE_ORDER_KEY.equals(line)) continue;
-                int sep = line.indexOf('|');
-                if (sep > 0) {
-                    Long size = null;
-                    try {
-                        size = Math.max(0L, Long.parseLong(line.substring(sep + 1)));
-                    } catch (NumberFormatException ignored) {
-                    }
-                    if (size == null) size = googleKnownSize(knownSizes, line);
-                    order.put(line.substring(0, sep), size);
-                } else {
-                    order.put(line, googleKnownSize(knownSizes, line));
-                }
-            }
-        }
-        if (newEntries != null) {
-            for (Map.Entry<String, Long> entry : newEntries.entrySet()) {
-                if (entry == null || isBlank(entry.getKey())) continue;
-                order.remove(entry.getKey());
-                order.put(entry.getKey(), Math.max(0L, entry.getValue() == null ? 0L : entry.getValue()));
-            }
-        }
-        LinkedHashSet<String> evicted = new LinkedHashSet<>();
-        if (quotaBytes != CacheStoragePolicy.UNLIMITED) {
-            long total = 0L;
-            for (Long size : order.values()) total = CacheStoragePolicy.saturatingAdd(total, size);
-            while (total > Math.max(0L, quotaBytes) && !order.isEmpty()) {
-                String eldest = order.keySet().iterator().next();
-                Long removed = order.remove(eldest);
-                total -= Math.max(0L, removed == null ? 0L : removed);
-                evicted.add(eldest);
-            }
-        }
-        StringBuilder next = new StringBuilder();
-        for (Map.Entry<String, Long> entry : order.entrySet()) {
-            if (next.length() > 0) next.append('\n');
-            next.append(entry.getKey()).append('|').append(entry.getValue());
-        }
-        return new GoogleQuotaUpdate(next.toString(), evicted);
-    }
-
-    private static long googleKnownSize(Map<String, Long> knownSizes, String key) {
-        if (knownSizes == null) return 0L;
-        Long size = knownSizes.get(key);
-        return size == null ? 0L : Math.max(0L, size);
-    }
-
-    static final class GoogleQuotaUpdate {
-        boolean canRetainWrite() {
-            return evictedKeys.isEmpty();
-        }
-
-        final String nextOrder;
-        final LinkedHashSet<String> evictedKeys;
-
-        GoogleQuotaUpdate(String nextOrder, LinkedHashSet<String> evictedKeys) {
-            this.nextOrder = nextOrder;
-            this.evictedKeys = evictedKeys;
-        }
-    }
-
     /** Combined logical-payload usage of the Google processing store, for the settings panel. */
     public static long googleStoreUsageBytes(Context context) {
-        return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_GOOGLE_CACHE,
-                PREFS_GOOGLE_CACHE_ORDER_KEY);
+        return SpicyCacheStore.usageBytes(context, PREFS_GOOGLE_CACHE);
     }
 
     /** Combined logical-payload usage of the Sound artifact store, for the settings panel. */
     public static long soundStoreUsageBytes(Context context) {
-        return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_SOUND_CACHE,
-                PREFS_PROCESSED_CACHE_ORDER_KEY);
+        return SpicyCacheStore.usageBytes(context, PREFS_SOUND_CACHE);
     }
 
     /** Combined logical-payload usage of the Meaning artifact store, for the settings panel. */
     public static long meaningStoreUsageBytes(Context context) {
-        return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_MEANING_CACHE,
-                PREFS_PROCESSED_CACHE_ORDER_KEY);
+        return SpicyCacheStore.usageBytes(context, PREFS_MEANING_CACHE);
     }
 
     /** Combined logical-payload usage of the detection artifact store, for the settings panel. */
     public static long detectionStoreUsageBytes(Context context) {
-        return CacheStoragePolicy.preferenceStoreUsage(context, PREFS_DETECTION_CACHE,
-                PREFS_PROCESSED_CACHE_ORDER_KEY);
-    }
-
-    static ProcessedCacheOrderUpdate boundedProcessedCacheOrder(
-            String rawOrder, String key, long bytes, long now, int maxEntries, long maxBytes, long maxAgeMs) {
-        LinkedHashMap<String, ProcessedCacheEntry> order = new LinkedHashMap<>();
-        LinkedHashSet<String> evicted = new LinkedHashSet<>();
-        if (!isBlank(rawOrder)) {
-            for (String row : rawOrder.split("\n")) {
-                String[] parts = row.split("\\|", 3);
-                if (parts.length != 3 || isBlank(parts[0])) continue;
-                try {
-                    long updated = Long.parseLong(parts[1]);
-                    long size = Math.max(0L, Long.parseLong(parts[2]));
-                    if (maxAgeMs > 0L && now - updated > maxAgeMs) evicted.add(parts[0]);
-                    else order.put(parts[0], new ProcessedCacheEntry(updated, size));
-                } catch (NumberFormatException ignored) {
-                }
-            }
-        }
-        order.remove(key);
-        order.put(key, new ProcessedCacheEntry(now, Math.max(0L, bytes)));
-        long totalBytes = 0L;
-        for (ProcessedCacheEntry entry : order.values()) totalBytes += entry.bytes;
-        while (order.size() > Math.max(0, maxEntries) || totalBytes > Math.max(0L, maxBytes)) {
-            String eldest = order.keySet().iterator().next();
-            ProcessedCacheEntry removed = order.remove(eldest);
-            totalBytes -= removed.bytes;
-            evicted.add(eldest);
-        }
-        StringBuilder next = new StringBuilder();
-        for (Map.Entry<String, ProcessedCacheEntry> entry : order.entrySet()) {
-            if (next.length() > 0) next.append('\n');
-            next.append(entry.getKey()).append('|').append(entry.getValue().updatedAt)
-                    .append('|').append(entry.getValue().bytes);
-        }
-        String nextOrder = next.toString();
-        return new ProcessedCacheOrderUpdate(nextOrder, evicted, !nextOrder.equals(safe(rawOrder)));
-    }
-
-    static final class ProcessedCacheOrderUpdate {
-        boolean canRetainWrite() {
-            return evictedKeys.isEmpty();
-        }
-
-        final String nextOrder;
-        final LinkedHashSet<String> evictedKeys;
-        final boolean changed;
-
-        ProcessedCacheOrderUpdate(String nextOrder, LinkedHashSet<String> evictedKeys, boolean changed) {
-            this.nextOrder = nextOrder;
-            this.evictedKeys = evictedKeys;
-            this.changed = changed;
-        }
-    }
-
-    private static final class ProcessedCacheEntry {
-        final long updatedAt;
-        final long bytes;
-
-        ProcessedCacheEntry(long updatedAt, long bytes) {
-            this.updatedAt = updatedAt;
-            this.bytes = bytes;
-        }
-    }
-
-    private static String removeProcessedOrderEntry(String rawOrder, String key) {
-        StringBuilder out = new StringBuilder();
-        if (!isBlank(rawOrder)) {
-            for (String row : rawOrder.split("\n")) {
-                if (row.startsWith(key + "|")) continue;
-                if (out.length() > 0) out.append('\n');
-                out.append(row);
-            }
-        }
-        return out.toString();
+        return SpicyCacheStore.usageBytes(context, PREFS_DETECTION_CACHE);
     }
 
     private static String sha256(String value) {

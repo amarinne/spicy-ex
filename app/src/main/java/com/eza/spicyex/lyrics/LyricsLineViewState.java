@@ -247,7 +247,10 @@ public final class LyricsLineViewState {
     public static float stepLineGlow(AppliedLine line, float targetGlow, float deltaSeconds) {
         if (line == null) return targetGlow;
         if (state(line).lineGlowSpring == null) {
-            state(line).lineGlowSpring = new Spring(0f, 1.2f, 1.0f);
+            // Start where the row should already be. From 0, every row mounted as the window
+            // scrolled - including long-sung ones - re-glowed over about a second, and ran the full
+            // per-syllable frame path (re-rendering its cached blur layer) the whole time.
+            state(line).lineGlowSpring = new Spring(targetGlow, 1.2f, 1.0f);
         }
         state(line).lineGlowSpring.setGoal(targetGlow);
         return clamp(state(line).lineGlowSpring.step(frameDelta(deltaSeconds)), 0f, 1f);
@@ -260,6 +263,18 @@ public final class LyricsLineViewState {
         }
         state(line).lineShadowSpring.setGoal(targetIntensity);
         return clamp(state(line).lineShadowSpring.step(frameDelta(deltaSeconds)), 0f, 1f);
+    }
+
+    public static float stepLineBlur(AppliedLine line, float targetBlurPx, float deltaSeconds) {
+        if (line == null) return targetBlurPx;
+        AppliedLineRenderState st = state(line);
+        if (st.lineBlurSpring == null) {
+            // Snappy but controlled spring (2.8Hz, 0.92 damping) for a firm, "elastic"
+            // feel when blur follows the active line transition.
+            st.lineBlurSpring = new Spring(targetBlurPx, 2.8f, 0.92f);
+        }
+        st.lineBlurSpring.setGoal(targetBlurPx);
+        return Math.max(0f, st.lineBlurSpring.step(frameDelta(deltaSeconds)));
     }
 
     public static boolean hasDotViews(AppliedLine line) {
@@ -288,7 +303,21 @@ public final class LyricsLineViewState {
     public static boolean needsFrame(AppliedLine line, int targetClass) {
         if (line == null) return false;
         AppliedLineRenderState state = state(line);
-        return state.needsRender || state.lastTargetClass != targetClass || !isSettled(line);
+        if (state.needsRender || state.lastTargetClass != targetClass) return true;
+        // Walking every syllable and letter spring of every mounted row each frame was a large
+        // share of the frame loop. Once a row is fully settled only its opacity and blur springs
+        // can move (the fast path steps just those), so check only them until the full path runs.
+        if (state.settledExceptFade) {
+            return !springAtRest(state.opacitySpring) || !springAtRest(state.lineBlurSpring);
+        }
+        boolean settled = isSettled(line);
+        state.settledExceptFade = settled;
+        return !settled;
+    }
+
+    /** The full frame path is about to move this row's springs again. */
+    public static void invalidateSettled(AppliedLine line) {
+        if (line != null) state(line).settledExceptFade = false;
     }
 
     public static void markFrameApplied(AppliedLine line, int targetClass) {
@@ -301,7 +330,8 @@ public final class LyricsLineViewState {
         if (line == null) return true;
         AppliedLineRenderState state = state(line);
         if (!springAtRest(state.opacitySpring) || !springAtRest(state.lineScaleSpring)
-                || !springAtRest(state.lineGlowSpring) || !springAtRest(state.dotMainScaleSpring)
+                || !springAtRest(state.lineGlowSpring) || !springAtRest(state.lineBlurSpring)
+                || !springAtRest(state.dotMainScaleSpring)
                 || !springAtRest(state.dotMainOpacitySpring)
                 || !springAtRest(state.lineShadowSpring)) return false;
         if (line.words != null) {

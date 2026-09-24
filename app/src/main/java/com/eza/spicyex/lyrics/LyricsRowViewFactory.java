@@ -46,7 +46,8 @@ public final class LyricsRowViewFactory {
     public LinearLayout build(AppliedLine line, Options options,
                               RomanizedWordProvider romanizedWordProvider,
                               RowHeightListener heightListener) {
-        LinearLayout row = new LinearLayout(activity);
+        // Non-overlapping rendering and the cached blur layer: see BlurredRowLayout.
+        LinearLayout row = new BlurredRowLayout(activity);
         boolean rtlLine = isRtlLine(line);
         applyLineDirection(row, rtlLine);
         row.setOrientation(LinearLayout.VERTICAL);
@@ -649,7 +650,7 @@ public final class LyricsRowViewFactory {
             float step = 1f / Math.max(1, letterTexts.size());
             float relativeStart = 0f;
             for (String text : letterTexts) {
-                SpicyAnimatedTextView letterView = new SpicyAnimatedTextView(activity);
+                SpicyAnimatedTextView letterView = SpicyAnimatedTextView.unstyled(activity);
                 applyTextDirection(letterView, seg.text);
                 letterView.setTextSize(LyricsLineViewState.baseTextSp(line));
                 letterView.setTextColor(color);

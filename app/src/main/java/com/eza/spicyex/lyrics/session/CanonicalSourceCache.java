@@ -1,7 +1,6 @@
 package com.eza.spicyex.lyrics.session;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -29,11 +28,7 @@ public final class CanonicalSourceCache {
     public static CanonicalSourceCodec.Record load(Context context, String trackUri) {
         if (context == null || trackUri == null || trackUri.isEmpty()) return null;
         try {
-            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            String raw;
-            synchronized (LOCK) {
-                raw = prefs.getString(entryKey(trackUri), null);
-            }
+            String raw = com.eza.spicyex.lyrics.SpicyCacheStore.get(context, PREFS, entryKey(trackUri));
             return CanonicalSourceCodec.decode(raw);
         } catch (Throwable t) {
             Diagnostics.warn("CanonicalSourceCache", "load", t);
@@ -73,20 +68,11 @@ public final class CanonicalSourceCache {
             String value = CanonicalSourceCodec.encode(document, sourceRevision, canonicalDigest,
                     System.currentTimeMillis(), selectionIdentity);
             if (value.isEmpty()) return false;
-            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            String key = entryKey(trackUri);
-            long bytes = value.getBytes(StandardCharsets.UTF_8).length;
-            synchronized (LOCK) {
-                // Byte quota from the shared "Cache size" budget; the entry-count bound is passed
-                // non-binding so a store below quota never evicts on count alone. No age expiry.
-                Bound bound = plan(prefs.getString(ORDER_KEY, ""), key, bytes,
-                        Integer.MAX_VALUE,
-                        com.eza.spicyex.lyrics.CacheStoragePolicy.canonicalQuota(
-                                com.eza.spicyex.lyrics.CacheStoragePolicy.totalBudget(context)));
-                SharedPreferences.Editor editor = prefs.edit();
-                for (String evicted : bound.evicted) editor.remove(evicted);
-                return editor.putString(key, value).putString(ORDER_KEY, bound.nextOrder).commit();
-            }
+            // Byte quota from the shared "Cache size" budget. Eviction is least-recently-used
+            // inside the store; there is no entry-count bound and no age expiry.
+            return com.eza.spicyex.lyrics.SpicyCacheStore.put(context, PREFS, entryKey(trackUri), value,
+                    com.eza.spicyex.lyrics.CacheStoragePolicy.canonicalQuota(
+                            com.eza.spicyex.lyrics.CacheStoragePolicy.totalBudget(context)));
         } catch (Throwable t) {
             Diagnostics.warn("CanonicalSourceCache", "save", t);
             return false;
@@ -94,52 +80,22 @@ public final class CanonicalSourceCache {
     }
 
     public static void clear(Context context) {
-        if (context == null) return;
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+        com.eza.spicyex.lyrics.SpicyCacheStore.clear(context, PREFS);
     }
 
-    /**
-     * Drops only one track's canonical record, keeping every other cached song.
-     *
-     * <p>The order index is rewritten without the entry so later quota math never accounts for
-     * a record that is no longer there.
-     */
+    /** Drops only one track's canonical record, keeping every other cached song. */
     public static void remove(Context context, String trackUri) {
         if (context == null || trackUri == null || trackUri.isEmpty()) return;
-        try {
-            SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            String key = entryKey(trackUri);
-            String prefix = key + "|";
-            synchronized (LOCK) {
-                String order = prefs.getString(ORDER_KEY, "");
-                StringBuilder kept = new StringBuilder();
-                if (order != null && !order.isEmpty()) {
-                    for (String row : order.split("\n")) {
-                        if (row.startsWith(prefix)) continue;
-                        if (kept.length() > 0) kept.append('\n');
-                        kept.append(row);
-                    }
-                }
-                prefs.edit().remove(key).putString(ORDER_KEY, kept.toString()).apply();
-            }
-        } catch (Throwable t) {
-            Diagnostics.warn("CanonicalSourceCache", "remove", t);
-        }
+        com.eza.spicyex.lyrics.SpicyCacheStore.remove(context, PREFS, entryKey(trackUri));
     }
 
     /** Combined logical-payload usage of the canonical source store, for the settings panel. */
     public static long usageBytes(Context context) {
-        return com.eza.spicyex.lyrics.CacheStoragePolicy.preferenceStoreUsage(context, PREFS, ORDER_KEY);
+        return com.eza.spicyex.lyrics.SpicyCacheStore.usageBytes(context, PREFS);
     }
 
     public static int entryCount(Context context) {
-        if (context == null) return 0;
-        int count = 0;
-        for (Map.Entry<String, ?> entry : context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getAll().entrySet()) {
-            if (!ORDER_KEY.equals(entry.getKey()) && entry.getValue() instanceof String) count++;
-        }
-        return count;
+        return com.eza.spicyex.lyrics.SpicyCacheStore.entryCount(context, PREFS);
     }
 
     private static String entryKey(String trackUri) {

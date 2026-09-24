@@ -155,6 +155,7 @@ public final class LyricsAmbientController {
         }
         if (animatedBackground instanceof AmbientArtworkBackgroundView) {
             ((AmbientArtworkBackgroundView) animatedBackground).setDarkening(backgroundBrightness, extraDarkFilter);
+            ((AmbientArtworkBackgroundView) animatedBackground).setRenderScale(readRenderScale());
         }
         if (animatedBackground == null) return; // not attached this session — applies on next open
         if (animatedBackground instanceof AmbientArtworkBackgroundView) {
@@ -181,6 +182,15 @@ public final class LyricsAmbientController {
         createAnimatedLayer(parent, forceDark, LyricsBackgroundStyle.isAnimated(style));
     }
 
+    private float readRenderScale() {
+        try {
+            return (config == null ? Settings.BACKGROUND_RENDER_QUALITY.defaultValue
+                    : config.get(Settings.BACKGROUND_RENDER_QUALITY)) / 100f;
+        } catch (Throwable ignored) {
+            return Settings.BACKGROUND_RENDER_QUALITY.defaultValue / 100f;
+        }
+    }
+
     /** Scale only the completed background, including the artwork-loading fallback. */
     private void applyExtraDark(boolean enabled, int level) {
         enabled &= FeatureAvailability.animatedBackgroundAvailable();
@@ -204,6 +214,7 @@ public final class LyricsAmbientController {
         try {
             AmbientArtworkBackgroundView background = new AmbientArtworkBackgroundView(activity, forceDark);
             background.setDarkening(backgroundBrightness, extraDarkFilter);
+            background.setRenderScale(readRenderScale());
             background.setPlaying(playing);
             background.setMotionEnabled(animated);
             animatedBackground = background;
@@ -283,12 +294,17 @@ public final class LyricsAmbientController {
         // Borrow only artwork with matching metadata identity; own the small copy before dispatch.
         Bitmap borrowed = SpotifyArtworkCache.snapshot(imageId, currentTrackUri);
         final Bitmap local = borrowed;
-        Call call = http.newCall(new Request.Builder()
-                .url("https://i.scdn.co/image/" + Uri.encode(imageId)).build());
-        inFlightArtCall = call;
+        // Ad creatives / remote playback may already carry a full https URL as imageId —
+        // prefixing the CDN host again would produce an invalid URL and break ad artwork.
+        String artUrl = imageId.startsWith("http") ? imageId
+                : "https://i.scdn.co/image/" + Uri.encode(imageId);
         artWork = ART_WORKER.submit(() -> {
             Bitmap prepared = null;
             AmbientArtworkProfile profile = null;
+            // Built here, not on the main thread: the first request of the process initializes
+            // OkHttp/okio, a few hundred ms that used to land in the lyrics screen's first frame.
+            Call call = local != null ? null : http.newCall(new Request.Builder().url(artUrl).build());
+            if (call != null) inFlightArtCall = call;
             try {
                 if (local != null) {
                     AmbientArtworkTexture.Prepared done = AmbientArtworkTexture.prepareWithProfile(local);

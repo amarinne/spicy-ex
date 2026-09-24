@@ -97,6 +97,7 @@ public final class SettingsUiSchema {
             Settings.BACKGROUND_STYLE,
             Settings.FORCE_DARK_BACKGROUND,
             Settings.EXTRA_DARK_BACKGROUND,
+            Settings.BACKGROUND_RENDER_QUALITY,
             // Apple Music (dedicated section; renders only while the Animation style is Apple Music)
             Settings.APPLE_FADE_PASSED_LINES,
             Settings.APPLE_COMPACT_TEXT,

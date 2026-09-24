@@ -59,9 +59,45 @@ public final class SpicyTextDetection {
         return false;
     }
 
+    // Callers pass the whole song's text, once per line or even per word (the romanizer asks for
+    // every segment): scanning it again every time made opening the lyrics screen spend about a
+    // second here. The last few answers are kept; the same text object is matched by identity
+    // before falling back to equals().
+    private static final int SCRIPT_CACHE_SIZE = 6;
+    private static final String[] cachedText = new String[SCRIPT_CACHE_SIZE];
+    private static final String[] cachedLanguage = new String[SCRIPT_CACHE_SIZE];
+    private static final String[] cachedIso2 = new String[SCRIPT_CACHE_SIZE];
+    @SuppressWarnings("unchecked")
+    private static final List<Script>[] cachedScripts = new List[SCRIPT_CACHE_SIZE];
+    private static int cacheNext;
+
     public static List<Script> detectPresentScripts(String scriptText, String language, String iso2Language) {
-        ArrayList<Script> present = new ArrayList<>();
         String text = scriptText == null ? "" : scriptText;
+        String lang = language == null ? "" : language;
+        String iso2 = iso2Language == null ? "" : iso2Language;
+        synchronized (cachedText) {
+            for (int i = 0; i < SCRIPT_CACHE_SIZE; i++) {
+                String t = cachedText[i];
+                if (t != null && (t == text || (t.length() == text.length() && t.equals(text)))
+                        && lang.equals(cachedLanguage[i]) && iso2.equals(cachedIso2[i])) {
+                    return new ArrayList<>(cachedScripts[i]);
+                }
+            }
+        }
+        List<Script> result = detectPresentScriptsUncached(text, lang, iso2);
+        synchronized (cachedText) {
+            int slot = cacheNext;
+            cacheNext = (cacheNext + 1) % SCRIPT_CACHE_SIZE;
+            cachedText[slot] = text;
+            cachedLanguage[slot] = lang;
+            cachedIso2[slot] = iso2;
+            cachedScripts[slot] = new ArrayList<>(result);
+        }
+        return result;
+    }
+
+    private static List<Script> detectPresentScriptsUncached(String text, String language, String iso2Language) {
+        ArrayList<Script> present = new ArrayList<>();
 
         // Match ProcessLyrics.ts: kana wins over Chinese for mixed kanji/kana Japanese songs.
         if (hasJapaneseText(text)) {

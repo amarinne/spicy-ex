@@ -3,6 +3,7 @@ package com.eza.spicyex.beautifullyrics.entities;
 import android.content.Context;
 import android.graphics.*;
 import android.os.Build;
+import android.os.PowerManager;
 import android.view.Choreographer;
 import android.view.View;
 import androidx.annotation.RequiresApi;
@@ -91,7 +92,7 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
             + "    c = mix(normal, dim, dark) * brightness;\n"
             + "    // Desktop hash/dither strength, moved after final darkening to retain output precision.\n"
             + "    // Zero brightness must stay exactly black.\n"
-            + "    float noise = hash(float3(floor(p), floor(time * 60.0)));\n"
+            + "    float noise = hash(float3(floor(p), 0.0));\n"
             + "    c += (noise - 0.5) * 0.008 * min(1.0, brightness * 255.0);\n"
             + "    return half4(clamp(c, 0.0, 1.0), 1.0);\n"
             + "}\n";
@@ -105,6 +106,23 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
     private double elapsedSeconds;
     private int colorA = Color.rgb(30,21,18), colorB = Color.rgb(16,15,16);
     private final Choreographer.FrameCallback frame = this::tick;
+    /**
+     * The AGSL noise shader's cost is per output pixel, so it's rendered into a much smaller
+     * offscreen surface and upscaled (the blur/warp look hides the extra softness) instead of at
+     * full view resolution every frame - a full-res fragment shader running continuously for the
+     * whole lyrics session is a real sustained-heat source on older/weaker GPUs.
+     */
+    private static final float DEFAULT_RENDER_SCALE = 0.34f;
+    /** User-configurable via {@link #setRenderScale}, backing the Background panel's Quality
+     *  slider - lower trades softness for less sustained GPU/heat load, higher for crisper noise. */
+    private float renderScale = DEFAULT_RENDER_SCALE;
+    // A RenderNode is drawn on RenderThread/GPU like the main canvas, unlike a Bitmap-backed
+    // Canvas (always CPU raster) which RuntimeShader/AGSL cannot draw into at all.
+    private RenderNode offscreenNode;
+    /** Freezes the animation (last frame stays visible) once the OS reports the device running
+     *  hot, instead of continuing to add GPU load on top of whatever caused it. */
+    private boolean thermalThrottled;
+    private PowerManager.OnThermalStatusChangedListener thermalListener;
 
     public AmbientArtworkBackgroundView(Context context, boolean dark) {
         super(context);
@@ -169,8 +187,8 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
         invalidate();
     }
     private boolean animating() {
-        return enabled && moving && playing && texture != null && isAttachedToWindow()
-                && getWindowVisibility() == VISIBLE && isShown();
+        return enabled && moving && playing && !thermalThrottled && texture != null
+                && isAttachedToWindow() && getWindowVisibility() == VISIBLE && isShown();
     }
     private void schedule() {
         if (!animating()) {
@@ -179,7 +197,9 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
         }
         if (!posted) {
             posted = true;
-            Choreographer.getInstance().postFrameCallbackDelayed(frame, 30);
+            // ~20fps: slow drifting noise reads the same as at 33fps but wakes the GPU less often.
+            // The beat itself is not tied to this rate (see stepPulse).
+            Choreographer.getInstance().postFrameCallbackDelayed(frame, 50);
         }
     }
     private void tick(long now) {
@@ -190,11 +210,42 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
         invalidate();
         schedule();
     }
-    protected void onAttachedToWindow() { super.onAttachedToWindow(); schedule(); }
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        registerThermalListener();
+        schedule();
+    }
     protected void onDetachedFromWindow() {
+        unregisterThermalListener();
         Choreographer.getInstance().removeFrameCallback(frame);
         posted = false; lastFrame = 0;
         super.onDetachedFromWindow();
+    }
+    private void registerThermalListener() {
+        if (thermalListener != null || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return;
+        PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        if (pm == null) return;
+        try {
+            thermalListener = status -> {
+                boolean hot = status >= PowerManager.THERMAL_STATUS_MODERATE;
+                if (hot == thermalThrottled) return;
+                thermalThrottled = hot;
+                schedule();
+            };
+            pm.addThermalStatusListener(getContext().getMainExecutor(), thermalListener);
+            thermalThrottled = pm.getCurrentThermalStatus() >= PowerManager.THERMAL_STATUS_MODERATE;
+        } catch (Throwable ignored) {
+            thermalListener = null;
+        }
+    }
+    private void unregisterThermalListener() {
+        if (thermalListener == null) return;
+        PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        if (pm != null) {
+            try { pm.removeThermalStatusListener(thermalListener); } catch (Throwable ignored) { }
+        }
+        thermalListener = null;
+        thermalThrottled = false;
     }
     protected void onWindowVisibilityChanged(int visibility) {
         super.onWindowVisibilityChanged(visibility);
@@ -204,9 +255,42 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
         super.onVisibilityChanged(changed,visibility);
         if (frame != null) schedule();
     }
+    /** Quality<->performance slider (Background panel), 0.15-1.0: lower renders the offscreen
+     *  noise surface at a coarser resolution (softer, cheaper on the GPU), 1.0 is full view
+     *  resolution. Re-sizes the offscreen surface immediately if already laid out. */
+    public void setRenderScale(float scale) {
+        float clamped = Math.max(0.15f, Math.min(1f, scale));
+        if (clamped == renderScale) return;
+        renderScale = clamped;
+        if (getWidth() > 0 && getHeight() > 0) onSizeChanged(getWidth(), getHeight(), getWidth(), getHeight());
+    }
+
     protected void onSizeChanged(int w,int h,int oldw,int oldh) {
         super.onSizeChanged(w,h,oldw,oldh);
-        shader.setFloatUniform("resolution",Math.max(1,w),Math.max(1,h));
+        int lowW = Math.max(1, Math.round(w * renderScale));
+        int lowH = Math.max(1, Math.round(h * renderScale));
+        // Uniform tracks the offscreen surface's own size, not the view's - the shader's uv
+        // mapping (p / resolution) only needs to span 0..1 across whatever it's drawn onto.
+        shader.setFloatUniform("resolution", lowW, lowH);
+        if (offscreenNode == null) {
+            offscreenNode = new RenderNode("ambientArtwork");
+            // The compositing layer is what makes this node an actual lowW x lowH surface. Without
+            // it, drawRenderNode just replays the rect under the parent's scale, so the shader ran
+            // per full-resolution screen pixel on every frame the lyrics above it redrew. With it,
+            // the shader runs only when onDraw re-records (the ~20fps tick); other frames reuse
+            // the layer texture, bilinear-upscaled.
+            offscreenNode.setUseCompositingLayer(true, null);
+        }
+        // Soften the low-resolution layer before it is upscaled. Unblurred, its warp edges and
+        // dither stair-step and shimmer once magnified (the background "crawled"), while the
+        // blurred lyric rows over it are smooth; a small blur at layer scale gives both the same
+        // soft texture. Cheap: it runs on the small layer, and only when the layer is redrawn.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            float radius = Math.max(1.5f, 3.2f * renderScale / DEFAULT_RENDER_SCALE);
+            offscreenNode.setRenderEffect(RenderEffect.createBlurEffect(
+                    radius, radius, Shader.TileMode.CLAMP));
+        }
+        offscreenNode.setPosition(0, 0, lowW, lowH);
         updateFallback();
     }
     private void updateFallback() {
@@ -214,7 +298,20 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
                 colorA,colorB,Shader.TileMode.CLAMP));
     }
     protected void onDraw(Canvas canvas) {
-        if (texture != null) shader.setFloatUniform("time", (float) elapsedSeconds);
+        if (texture != null) {
+            shader.setFloatUniform("time", (float) elapsedSeconds);
+            if (offscreenNode != null && canvas.isHardwareAccelerated()) {
+                int lowW = offscreenNode.getWidth(), lowH = offscreenNode.getHeight();
+                RecordingCanvas recording = offscreenNode.beginRecording();
+                recording.drawRect(0, 0, lowW, lowH, paint);
+                offscreenNode.endRecording();
+                canvas.save();
+                canvas.scale(getWidth() / (float) lowW, getHeight() / (float) lowH);
+                canvas.drawRenderNode(offscreenNode);
+                canvas.restore();
+                return;
+            }
+        }
         canvas.drawRect(0,0,getWidth(),getHeight(),texture == null ? fallback : paint);
     }
 }

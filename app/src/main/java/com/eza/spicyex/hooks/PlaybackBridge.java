@@ -267,14 +267,57 @@ final class PlaybackBridge {
         return -1;
     }
 
+    private static final String[] PAUSED_ACCESSOR_NAMES = {"isPaused", "paused"};
+    private static final Method[] NO_PAUSED_ACCESSORS = new Method[0];
+    /** Resolved once per PlayerState class - see {@link #pausedAccessors}. */
+    private Class<?> pausedAccessorOwner;
+    private Method[] pausedAccessorCache;
+
+    /**
+     * Spotify's own paused accessors, resolved reflectively but only once per PlayerState class.
+     *
+     * <p>This is polled from the lyric screen's vsync callback, so it runs on every frame the
+     * screen is up. Resolving it through the generic reflection facade each time walked the whole
+     * (obfuscated, method-heavy) class hierarchy calling {@code getDeclaredMethods} - which
+     * allocates a fresh array per class on ART - and then threw and caught a
+     * {@code NoSuchMethodError}, stack trace and all, for whichever of the two spellings this build
+     * does not have. Milliseconds of pure overhead per frame on a slow device, spent entirely on
+     * re-deriving an answer that cannot change while the class does not. The empty result is cached
+     * too, so a build with neither spelling does not re-pay the miss every frame either.
+     */
+    private Method[] pausedAccessors(Class<?> stateClass) {
+        if (stateClass == pausedAccessorOwner && pausedAccessorCache != null) {
+            return pausedAccessorCache;
+        }
+        pausedAccessorOwner = stateClass;
+        pausedAccessorCache = NO_PAUSED_ACCESSORS;
+        ArrayList<Method> found = new ArrayList<>(PAUSED_ACCESSOR_NAMES.length);
+        for (String name : PAUSED_ACCESSOR_NAMES) {
+            for (Class<?> current = stateClass; current != null && current != Object.class;
+                    current = current.getSuperclass()) {
+                try {
+                    Method candidate = current.getDeclaredMethod(name);
+                    if (Modifier.isStatic(candidate.getModifiers())) continue;
+                    candidate.setAccessible(true);
+                    found.add(candidate);
+                    break;
+                } catch (NoSuchMethodException | RuntimeException ignored) {
+                }
+            }
+        }
+        if (!found.isEmpty()) pausedAccessorCache = found.toArray(new Method[0]);
+        return pausedAccessorCache;
+    }
+
+
     boolean isPlayerActuallyPlaying() {
         if (!isPlaying) return false;
         try {
             Object state = References.playerState == null ? null : References.playerState.get();
             if (state != null) {
-                for (String method : new String[]{"isPaused", "paused"}) {
+                for (Method paused : pausedAccessors(state.getClass())) {
                     try {
-                        Object result = XpReflect.callMethod(state, method);
+                        Object result = paused.invoke(state);
                         if (result instanceof Boolean && (Boolean) result) return false;
                     } catch (Throwable ignored) {
                     }
