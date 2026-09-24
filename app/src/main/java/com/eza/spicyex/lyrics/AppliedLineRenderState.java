@@ -16,6 +16,7 @@ public final class AppliedLineRenderState {
     public Spring lineLitSpring;
     public View rowView;
     public SpicyAnimatedTextView mainView;
+    public SpicyAnimatedTextView miniView;
     public SpicyAnimatedTextView romanView;
     public SpicyAnimatedTextView translationView;
     /** Per-word reading row under timed lyrics (the ViewGroup counterpart of romanView). */
@@ -40,6 +41,7 @@ public final class AppliedLineRenderState {
     public void clearMounts() {
         rowView = null;
         mainView = null;
+        miniView = null;
         romanView = null;
         translationView = null;
         timedRomanRow = null;

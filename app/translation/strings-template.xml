@@ -543,4 +543,20 @@
     <string name="share_pick_count" formatted="false">%1$d selected</string>
     <string name="share_done">Done</string>
     <string name="settings_label_lyrics_long_press_share">Long-press a line to share</string>
+    <string name="settings_label_lyric_auto_resume_follow_delay_seconds">Auto-resume follow delay</string>
+    <string name="settings_label_lyrics_font_custom_path">Custom font file</string>
+    <string name="settings_lyrics_font_path_absent">Not set</string>
+    <string name="settings_lyrics_font_path_edit">Edit font path</string>
+    <string name="settings_lyrics_font_check_title">Font language check</string>
+    <string name="settings_lyrics_font_check_result">Result</string>
+    <string name="settings_lyrics_font_check_all_covered">Covers every supported language</string>
+    <string name="settings_lyrics_font_check_missing">Falls back for</string>
+    <string name="settings_label_lyrics_blur_intensity">Blur intensity</string>
+    <string name="settings_label_lyrics_furigana_brightness">Furigana brightness</string>
+    <string name="settings_label_lyrics_furigana_position_percent">Furigana position</string>
+    <string name="settings_action_resync_timing">Reset lyrics sync</string>
+    <string name="settings_resync_timing_done">Lyrics sync reset</string>
+    <string name="lyrics_instrumental">Instrumental</string>
+    <string name="settings_label_lyrics_status_bar_hidden_portrait">Hide status bar (portrait)</string>
+    <string name="settings_label_lyrics_status_bar_hidden_landscape">Hide status bar (landscape)</string>
 </resources>

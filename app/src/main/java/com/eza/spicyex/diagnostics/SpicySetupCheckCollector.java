@@ -34,7 +34,8 @@ public final class SpicySetupCheckCollector {
     public static SpicySetupCheckPolicy.Result collect(Context context, SettingsStore settings) {
         int xposedApiVersion = xposedApiVersion();
         boolean xposedApiAvailable = xposedApiVersion > 0;
-        String processName = Application.getProcessName();
+        String processName = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P
+                ? Application.getProcessName() : "unknown";
         String bridgeStatus = safeToken(Diagnostics.hyperGlowBridgeStatus());
         return SpicySetupCheckPolicy.resolve(new SpicySetupCheckPolicy.Input(
                 Diagnostics.runtimeHookActive(),
@@ -65,7 +66,10 @@ public final class SpicySetupCheckCollector {
 
     private static boolean hasLspatchMarker(Context context) {
         try {
-            String factory = context.getApplicationInfo().appComponentFactory;
+            String factory = null;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                factory = context.getApplicationInfo().appComponentFactory;
+            }
             String application = context.getApplicationInfo().className;
             if (startsWithLspatch(factory) || startsWithLspatch(application)) return true;
         } catch (Throwable ignored) {

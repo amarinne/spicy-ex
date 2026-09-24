@@ -242,6 +242,7 @@ public final class SettingsUiStrings {
             case "rrStandard": return "Standard Korean RR";
             case "rrPronunciation": return "Follow pronunciation (RR)";
             case "vnPronunciation": return "Follow pronunciation (VN)";
+            case "off": return "Off";
             case "furigana_romaji": return "Furigana + romaji";
             case "google_unofficial": return "Automatic (provider + Google)";
             case "provider": return "Lyrics provider only";

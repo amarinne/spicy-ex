@@ -69,6 +69,14 @@ public final class LyricsLineViewState {
         if (line != null) state(line).romanView = view;
     }
 
+    public static void setMiniView(AppliedLine line, SpicyAnimatedTextView view) {
+        if (line != null) state(line).miniView = view;
+    }
+
+    public static SpicyAnimatedTextView getMiniView(AppliedLine line) {
+        return line == null ? null : state(line).miniView;
+    }
+
     public static void setTranslationView(AppliedLine line, SpicyAnimatedTextView view) {
         if (line != null) state(line).translationView = view;
     }
@@ -114,6 +122,7 @@ public final class LyricsLineViewState {
         if (line == null || styleBatcher == null) return;
         styleBatcher.invalidateRecursive(state(line).rowView);
         styleBatcher.invalidateRecursive(state(line).mainView);
+        styleBatcher.invalidateRecursive(state(line).miniView);
         styleBatcher.invalidateRecursive(state(line).romanView);
         styleBatcher.invalidateRecursive(state(line).translationView);
         if (state(line).dotViews == null) return;
@@ -165,6 +174,11 @@ public final class LyricsLineViewState {
             styleBatcher.applyScaleIfChanged(state(line).mainView, 1f, 1f);
             state(line).mainView.setBrightnessMultiplier(1f);
             state(line).mainView.setGradientPosition(100f, 0f);
+        }
+        if (state(line).miniView != null) {
+            styleBatcher.applyScaleIfChanged(state(line).miniView, 1f, 1f);
+            state(line).miniView.setBrightnessMultiplier(1f);
+            state(line).miniView.setGradientPosition(100f, 0f);
         }
         if (state(line).romanView != null) {
             state(line).romanView.setBrightnessMultiplier(1f);
@@ -328,6 +342,10 @@ public final class LyricsLineViewState {
             } else {
                 state(line).translationView.setGradientPosition(LyricAnimations.GRADIENT_SUNG, 0f);
             }
+        }
+        if (state(line).miniView != null) {
+            state(line).miniView.setBrightnessMultiplier(brightness);
+            applyLineGradientView(state(line).miniView, row, blockGradient, gradient, glow);
         }
     }
 

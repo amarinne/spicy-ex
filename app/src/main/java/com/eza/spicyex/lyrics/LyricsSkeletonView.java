@@ -29,11 +29,20 @@ public final class LyricsSkeletonView extends View {
     private LinearGradient shimmer;
     private ValueAnimator animator;
     private float sweep;
+    private int horizontalPaddingPx;
 
     public LyricsSkeletonView(Context context) {
         super(context);
         density = context.getResources().getDisplayMetrics().density;
         barPaint.setColor(0x1FFFFFFF);
+        horizontalPaddingPx = dp(18);
+    }
+
+    public void setHorizontalPaddingPx(int px) {
+        if (px >= 0 && px != horizontalPaddingPx) {
+            horizontalPaddingPx = px;
+            invalidate();
+        }
     }
 
     private int dp(float value) {
@@ -67,10 +76,12 @@ public final class LyricsSkeletonView extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        int contentWidth = getWidth() - dp(12);
+        int padLeft = Math.max(horizontalPaddingPx, getPaddingLeft());
+        int padRight = Math.max(horizontalPaddingPx, getPaddingRight());
+        int contentWidth = getWidth() - padLeft - padRight;
         if (contentWidth <= 0) return;
         float radius = dp(9);
-        float left = dp(6);
+        float left = padLeft;
         if (shimmer != null) {
             shimmerMatrix.setTranslate((sweep * 2f - 1f) * getWidth(), 0f);
             shimmer.setLocalMatrix(shimmerMatrix);

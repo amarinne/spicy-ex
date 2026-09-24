@@ -60,6 +60,14 @@ public final class Settings {
             "lyric_auto_resume_follow", LYRICS, "Auto-resume lyric follow", true
     );
 
+    // Cooldown, in seconds, after a manual scroll settles before auto-resuming follow - see
+    // NativeSpicyShellViewImpl#maybeAutoResumeFollow. 3s is close to the old hardcoded 2.5s,
+    // rounded to a whole second so the stepper reads cleanly.
+    public static final IntegerSetting AUTO_RESUME_FOLLOW_DELAY_SECONDS = intSetting(
+            "lyric_auto_resume_follow_delay_seconds", LYRICS, "Auto-resume follow delay",
+            3, 1, 10, 1
+    );
+
     // Intro/outro skip: Off hides the affordance entirely; On demand shows a chevrons-right
     // chip next to the jump-to-current control while a lyric gap is active; Auto seeks past
     // the gap with no button. New-feature default Off; no bool predecessor on private main,
@@ -69,10 +77,63 @@ public final class Settings {
             "Off", "On demand", "Auto"
     );
 
+    // How the "On demand" skip chip presents itself: a plain icon, a permanently-labelled pill,
+    // or Auto (opens as a labelled pill so an unexplained chevron icon doesn't have to speak for
+    // itself, then collapses to the icon after a few seconds so it stops competing with the
+    // lyrics for attention).
+    public static final Setting<String> SKIP_CHIP_STYLE = enumSetting(
+            "lyric_skip_chip_style", INTERNAL, "Skip chip style", "Auto",
+            "Icon", "Label", "Auto"
+    );
+
+    // Which side the skip chip floats above the jump-to-current control at (always along the
+    // bottom edge). The two only stack vertically when both share the same horizontal anchor -
+    // see FOLLOW_CHIP_POSITION.
+    public static final Setting<String> SKIP_CHIP_POSITION = enumSetting(
+            "lyric_skip_chip_position", INTERNAL, "Skip chip position", "Right",
+            "Left", "Center", "Right"
+    );
+
+    // Which side the "Follow lyrics" jump-to-current chip floats along the bottom edge at.
+    // Editable from the layout editor's Follow-lyrics element; hidden from the normal settings
+    // panel so the editor remains the single place a user can move this chip visually.
+    public static final Setting<String> FOLLOW_CHIP_POSITION = enumSetting(
+            "lyric_follow_chip_position", INTERNAL, "Follow-lyrics chip position", "Right",
+            "Left", "Center", "Right"
+    );
+
+    // How the "Follow lyrics" chip presents itself - same three states as SKIP_CHIP_STYLE
+    // (a plain icon, a permanently-labelled pill, or Auto: labelled pill that collapses to the
+    // icon after a few seconds). Editable from the layout editor's Follow-lyrics element.
+    public static final Setting<String> FOLLOW_CHIP_STYLE = enumSetting(
+            "lyric_follow_chip_style", INTERNAL, "Follow-lyrics chip style", "Auto",
+            "Icon", "Label", "Auto"
+    );
+
+    // Enable/disable dynamic animation for follow chip entrance and exit
+    public static final Setting<Boolean> FOLLOW_CHIP_ANIMATION = boolSetting(
+            "lyric_follow_chip_animation", INTERNAL, "Follow chip animation", false
+    );
+
+    // Show progress bar on follow chip indicating time remaining
+    public static final Setting<Boolean> FOLLOW_CHIP_PROGRESS = boolSetting(
+            "lyric_follow_chip_progress", INTERNAL, "Follow chip progress bar", false
+    );
+
     // Adds a button to Spotify's persistent mini player (every non-lyrics screen) that jumps
     // straight to the native fullscreen lyrics - see LyricsActivityTakeoverHook.
     public static final Setting<Boolean> MINI_PLAYER_LYRICS_ICON = boolSetting(
             "mini_player_lyrics_icon", LYRICS, "Show lyrics icon on mini player", false
+    );
+
+    // Whether the lyrics screen keeps the status bar hidden, per orientation. A swipe from the
+    // edge still shows it for a moment.
+    public static final Setting<Boolean> STATUS_BAR_HIDDEN_PORTRAIT = boolSetting(
+            "lyrics_status_bar_hidden_portrait", LYRICS, "Hide status bar (portrait)", false
+    );
+
+    public static final Setting<Boolean> STATUS_BAR_HIDDEN_LANDSCAPE = boolSetting(
+            "lyrics_status_bar_hidden_landscape", LYRICS, "Hide status bar (landscape)", false
     );
 
     // Holding a lyric line opens a share card for it (see LyricsShareCardController). Off by
@@ -254,7 +315,17 @@ public final class Settings {
     public static final Setting<String> LYRICS_FONT = enumSetting(
             "lyrics_font", TEXT, "Lyric font",
             "spotify",
-            "spotify", "apple"
+            "spotify", "apple", "custom"
+    );
+
+    // Absolute file path to a user-supplied .ttf/.otf, used when LYRICS_FONT == "custom". Entered
+    // by hand (see PanelDialogs#promptLyricsFontPath) rather than a system file picker - this
+    // module has no Activity of its own to receive a picker result from inside Spotify's process.
+    // A custom font is validated on save (see LyricsFontValidator) so the user is warned up front
+    // about which of the app's supported scripts it doesn't cover; unsupported scripts still fall
+    // back correctly at render time regardless (LyricsTextFactory's per-script fallback chain).
+    public static final Setting<String> LYRICS_FONT_CUSTOM_PATH = stringSetting(
+            "lyrics_font_custom_path", TEXT, "Custom font file", ""
     );
 
     public static final Setting<String> LYRICS_TEXT_SIZE = enumSetting(
@@ -383,10 +454,6 @@ public final class Settings {
             "lyric_apple_compact_text", APPLE, "Compact text size", true
     );
 
-    public static final Setting<Boolean> APPLE_CJK_WRAP_FIX = boolSetting(
-            "lyric_apple_cjk_wrap_fix", APPLE, "Wrap long CJK words", true
-    );
-
     // Row-scroll cascade. Apple-owned: rendered only inside the Apple sub-section.
     public static final Setting<Boolean> LINE_SLIDE_ANIMATION = boolSetting(
             "lyric_line_slide_animation", APPLE, "Apple Music-style slide", false
@@ -437,6 +504,15 @@ public final class Settings {
     public static final Setting<String> ENABLE_LINE_BLUR = enumSetting(
             "lyric_enable_line_blur", ANIMATION, "Blur distant lines", "Off",
             "Off", "Slight", "Heavy"
+    );
+
+    // Percent multiplier over the Slight/Heavy blur curve above (100 = unchanged). Since the
+    // curve is max * distanceFalloff(distance), scaling it scales both how strong the blur gets
+    // and how quickly it ramps up with distance together - a single safe knob rather than
+    // exposing the falloff shape's own constants directly. See
+    // LyricsFrameRenderer#mobileLineBlurPx.
+    public static final IntegerSetting LYRICS_BLUR_INTENSITY = intSetting(
+            "lyrics_blur_intensity", ANIMATION, "Blur intensity", 100, 25, 250, 5
     );
 
     // Direction the karaoke gradient fills each line as it plays: down the line ("Top to bottom")
@@ -495,6 +571,20 @@ public final class Settings {
             "off", "furigana_only", "furigana_romaji", "romaji_only", "cycle"
     );
 
+    // Design controls for the furigana reading itself (color/position), separate from
+    // JAPANESE_READING_MODE (which reading mode is active at all - a function choice, not a
+    // design one). See FuriganaText#applySettings. Default 59% reproduces the previous hardcoded
+    // gray (150,150,150).
+    public static final IntegerSetting FURIGANA_BRIGHTNESS = intSetting(
+            "lyrics_furigana_brightness", TRANSLITERATION, "Furigana brightness", 59, 20, 100, 5
+    );
+
+    // Percent scale on the gap between the furigana reading and the kanji it annotates (100 =
+    // the previous fixed spacing). Below 100 pulls the reading closer; above pushes it further up.
+    public static final IntegerSetting FURIGANA_POSITION_PERCENT = intSetting(
+            "lyrics_furigana_position_percent", TRANSLITERATION, "Furigana position", 100, 40, 200, 10
+    );
+
     public static final Setting<String> CHINESE_MODE = enumSetting(
             "lyrics_chinese_mode", TRANSLITERATION, "Chinese reading",
             "pinyin",
@@ -504,6 +594,7 @@ public final class Settings {
     public static final Setting<String> KOREAN_ROMANIZATION = enumSetting(
             "lyrics_korean_romanization", TRANSLITERATION, "Korean reading",
             KoreanDisplayMode.RR_STANDARD.value,
+            "off",
             KoreanDisplayMode.RR_STANDARD.value,
             KoreanDisplayMode.WORD_TRANSLIT.value,
             KoreanDisplayMode.RR_PRONUNCIATION.value,

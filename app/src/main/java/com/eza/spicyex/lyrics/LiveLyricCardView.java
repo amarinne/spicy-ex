@@ -362,6 +362,7 @@ public final class LiveLyricCardView extends LinearLayout {
         return config.liveCardTextSizeMode
                 + "|" + config.liveCardWeight
                 + "|" + config.lyricsFont
+                + "|" + config.lyricsFontCustomPath
                 + "|" + config.liveCardSecondaryMode
                 + "|" + config.liveCardShowTransliteration
                 + "|" + config.liveCardShowTranslation

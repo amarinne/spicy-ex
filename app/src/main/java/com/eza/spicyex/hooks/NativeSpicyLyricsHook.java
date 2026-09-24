@@ -64,7 +64,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     @Override
     protected void hook() {
         Diagnostics.event("bootstrap", "hook_start",
-                Diagnostics.context("process", Application.getProcessName()));
+                Diagnostics.context("process", processName()));
         dbg("hook", "native Spicy renderer hook enabled version=" + BuildStamp.FULL);
         new NativeLyricsCaptureHook(
                 lpparm.classLoader(),
@@ -74,7 +74,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         ).hook();
         playbackBridge.install(lpparm, symbols);
         activityTakeoverHook.hook();
-        String processName = Application.getProcessName();
+        String processName = processName();
         XpLog.log(TAG + " bridge init package=" + lpparm.packageName()
                 + " appProcess=" + processName);
         if (lpparm.packageName().equals(processName)) {
@@ -98,6 +98,13 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "secondary_process"));
         }
+    }
+
+    private static String processName() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            return Application.getProcessName();
+        }
+        return "unknown";
     }
 
     public void markExplicitLyricsExit(Activity activity) {
@@ -142,6 +149,11 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
 
     public boolean seekSpotifyTo(long positionMs) {
         return playbackBridge.seekSpotifyTo(positionMs);
+    }
+
+    @Override
+    public boolean canSeek() {
+        return playbackBridge.canSeek();
     }
 
     @Override

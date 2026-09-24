@@ -27,6 +27,8 @@ import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
+import com.eza.spicyex.lyrics.reading.ReadingModels.ReadingUnit;
+import com.eza.spicyex.lyrics.reading.CodePointRanges;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /** Builds mounted Android views for applied lyric rows. */
@@ -61,11 +63,19 @@ public final class LyricsRowViewFactory {
             if (line.oppositeAligned) leadingPadding = dp(18);
             else trailingPadding = dp(18);
         }
+        if (options != null && options.horizontalOffsetPx > 0) {
+            leadingPadding += options.horizontalOffsetPx;
+            trailingPadding += options.horizontalOffsetPx;
+            if (row instanceof BlurredRowLayout) {
+                ((BlurredRowLayout) row).horizontalOffsetPx = options.horizontalOffsetPx;
+            }
+        }
         row.setPaddingRelative(leadingPadding, topClearancePx(dp(10), multiplier, 0f, false),
                 trailingPadding, Math.round(dp(13) * multiplier));
         row.setClickable(false);
         row.setClipChildren(false);
         row.setClipToPadding(false);
+        row.setClipToOutline(false);
 
         if (line.dotLine) {
             LinearLayout dots = new LinearLayout(activity);
@@ -114,8 +124,15 @@ public final class LyricsRowViewFactory {
                 : LyricVisuals.lyricTextSizeSp(line.text, adaptiveTextSize);
         LyricsLineViewState.setBaseTextSp(line, Math.max(1, Math.round(textCurve * sizeMultiplier)));
         float baseTextPx = sp(LyricsLineViewState.baseTextSp(line));
-        row.setPaddingRelative(leadingPadding, topClearancePx(dp(10), multiplier, baseTextPx, showJapaneseFurigana),
-                trailingPadding, Math.round(dp(13) * multiplier));
+        // Scaled with the actual text size rather than a fixed dp value, so shrinking the font
+        // (LYRICS_TEXT_SIZE/custom) proportionally tightens the gap between lines instead of
+        // leaving disproportionately large whitespace around now-smaller text - floored so a very
+        // small custom size never crushes lines together illegibly.
+        int adaptiveTopPadding = Math.max(dp(6), Math.round(baseTextPx * 0.36f));
+        int adaptiveBottomPadding = Math.max(dp(8), Math.round(baseTextPx * 0.46f));
+        row.setPaddingRelative(leadingPadding,
+                topClearancePx(adaptiveTopPadding, multiplier, baseTextPx, showJapaneseFurigana),
+                trailingPadding, Math.round(adaptiveBottomPadding * multiplier));
         String weight = options == null ? "Medium" : options.lyricWeight;
         String font = options == null ? "spotify" : options.lyricsFont;
         LyricsLineViewState.clearMainView(line);
@@ -135,7 +152,12 @@ public final class LyricsRowViewFactory {
                 && exactTimedReading
                 && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji);
         // Ruby groups remain visual-only; timed provider children keep their existing word path.
-        boolean useSyllableWords = !indicLine && (hasRealTimedWords || (hasSyllableWords
+        // A ruby run can span two timed words. Per-word slicing rejects that run on both sides,
+        // silently producing no furigana, so keep such lines in one TextView.
+        boolean rubyRequiresLineLayout = showJapaneseFurigana
+                && FuriganaText.hasRubyCrossingWordBoundaries(line);
+        boolean useSyllableWords = !indicLine && !rubyRequiresLineLayout
+                && (hasRealTimedWords || (hasSyllableWords
                 && (options.wordLevelFill || options.lineLevelFillSentence || showJapaneseFurigana || showAlignedRomaji)));
         // Gradient direction is a document-level choice. Do not switch one row to horizontal
         // merely because that row has timed syllables; mixed rows otherwise render with different
@@ -191,9 +213,65 @@ public final class LyricsRowViewFactory {
             LyricsLineViewState.setTranslationView(line, translated);
         }
 
+        alignSecondaryInk(row, line);
         attachHeightListener(row, line, heightListener);
         LyricsLineViewState.setRowView(line, row);
         return row;
+    }
+
+    /**
+     * Lines up the translation/reading text with where the lyric's first glyph is actually
+     * inked. Both views start at the same edge, but a glyph's left side bearing grows with its
+     * size, so the large lyric's ink began visibly further in than the small translation under
+     * it - it read as the translation being outdented. Pads the secondary views by the
+     * difference (start side; end-aligned rows align at the other edge and are left alone).
+     */
+    private static void alignSecondaryInk(LinearLayout row, AppliedLine line) {
+        if (line == null || line.oppositeAligned) return;
+        List<View> secondary = LyricsLineViewState.secondaryViews(line);
+        if (secondary.isEmpty()) return;
+        TextView main = firstInkedText(row, secondary);
+        int mainInk = leadingInkPx(main);
+        if (mainInk <= 0) return;
+        for (View view : secondary) {
+            TextView first = view instanceof TextView ? (TextView) view
+                    : firstInkedText(view, java.util.Collections.emptyList());
+            int pad = Math.max(0, mainInk - leadingInkPx(first));
+            if (pad > 0) {
+                view.setPaddingRelative(view.getPaddingStart() + pad, view.getPaddingTop(),
+                        view.getPaddingEnd(), view.getPaddingBottom());
+            }
+        }
+    }
+
+    /** First TextView with text in depth-first order, skipping the secondary rows. */
+    private static TextView firstInkedText(View view, List<View> skip) {
+        if (view == null || skip.contains(view)) return null;
+        if (view instanceof TextView) {
+            CharSequence text = ((TextView) view).getText();
+            return text != null && text.toString().trim().length() > 0 ? (TextView) view : null;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView found = firstInkedText(group.getChildAt(i), skip);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /** Distance from the view's text start to the first glyph's ink, in px. */
+    private static int leadingInkPx(TextView view) {
+        if (view == null) return 0;
+        String text = view.getText() == null ? "" : view.getText().toString();
+        int start = 0;
+        while (start < text.length() && Character.isWhitespace(text.charAt(start))) start++;
+        if (start >= text.length()) return 0;
+        int end = start + Character.charCount(text.codePointAt(start));
+        android.graphics.Rect bounds = new android.graphics.Rect();
+        view.getPaint().getTextBounds(text, start, end, bounds);
+        return Math.max(0, bounds.left);
     }
 
     static boolean canBuildTimedRomanRow(AppliedLine line, boolean useSyllableWords,
@@ -267,6 +345,23 @@ public final class LyricsRowViewFactory {
         List<int[]> adaptiveChildRanges = adaptiveWordRow ? new ArrayList<>() : null;
         for (int groupStart = 0; groupStart < line.words.size();) {
             int groupEnd = TimedWordGrouping.groupEnd(line, groupStart);
+            SyllableSegment flowing = groupEnd == groupStart ? line.words.get(groupStart) : null;
+            TimedTextRowProjection.Chunk flowingRoman = showAlignedRomaji
+                    && groupStart < romanizedWords.size() ? romanizedWords.get(groupStart) : null;
+            if (flowing != null && wrapLongLines && !showJapaneseFurigana
+                    && (flowingRoman == null || isBlank(flowingRoman.text))
+                    && CjkLineBreak.flowsByCharacter(flowing.text)) {
+                int[] sourceRange = FuriganaText.wordRange(line, flowing, groupStart, furiganaOffset);
+                furiganaOffset = Math.max(furiganaOffset, sourceRange[1]);
+                boolean certain = adaptiveRangeCertain(line.text, flowing.text, sourceRange);
+                TimedTextRowProjection.Chunk mainChunk = groupStart < mainProjection.size()
+                        ? mainProjection.get(groupStart) : null;
+                addFlowingCjkSegment(words, line, flowing, options,
+                        mainChunk != null && mainChunk.spaceAfter,
+                        certain ? sourceRange[0] : -1, adaptiveChildRanges);
+                groupStart = groupEnd + 1;
+                continue;
+            }
             TimedWordMotionLayout motionGroup = groupEnd > groupStart
                     ? new TimedWordMotionLayout(activity) : null;
             if (motionGroup != null) {
@@ -291,7 +386,7 @@ public final class LyricsRowViewFactory {
                 View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
                         options == null ? "Medium" : options.lyricWeight,
                         options == null ? "spotify" : options.lyricsFont,
-                        options, wrapLongLines, syllableContentWidthPx());
+                        options, wrapLongLines);
                 TimedTextRowProjection.Chunk romanChunk = showAlignedRomaji
                         && wordIndex < romanizedWords.size() ? romanizedWords.get(wordIndex) : null;
                 String romanizedWordText = romanChunk == null ? "" : romanChunk.text;
@@ -340,6 +435,87 @@ public final class LyricsRowViewFactory {
         row.addView(words, new LinearLayout.LayoutParams(
                 wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /**
+     * A Han/kana segment in a wrapping row, laid out as running text: each break unit from
+     * {@link CjkLineBreak#clusters} is its own item of the row's flexbox, so the segment continues
+     * on the current line and wraps part-way through exactly like the rest of the lyric. Every
+     * character is a letter view of the one segment (so fill, glow and letter motion are timed as
+     * a whole); the units only decide where lines may break. The first unit is the segment's
+     * motion view and the rest follow its word-level transform.
+     */
+    private void addFlowingCjkSegment(ViewGroup words, AppliedLine line, SyllableSegment seg,
+                                      Options options, boolean spaceAfter, int sourceStart,
+                                      List<int[]> adaptiveChildRanges) {
+        String text = LyricUtils.safe(seg.text);
+        String weight = options == null ? "Medium" : options.lyricWeight;
+        String font = options == null ? "spotify" : options.lyricsFont;
+        int total = text.codePointCount(0, text.length());
+        LyricsSyllableViewState.clearLetters(seg);
+        LyricsSyllableViewState.clearTextView(seg);
+        LyricsSyllableViewState.clearRomanizedTextView(seg);
+        List<View> units = new ArrayList<>();
+        int letterIndex = 0;
+        for (int[] cluster : CjkLineBreak.clusters(text)) {
+            LinearLayout unit = new LinearLayout(activity);
+            unit.setOrientation(LinearLayout.HORIZONTAL);
+            unit.setGravity(Gravity.CENTER_VERTICAL);
+            unit.setClipChildren(false);
+            unit.setClipToPadding(false);
+            List<String> letters = LyricVisuals.splitCodePoints(text.substring(cluster[0], cluster[1]));
+            addLetterViews(unit, line, seg, letters, letterIndex, total, weight, font);
+            letterIndex += letters.size();
+            FlexboxLayout.LayoutParams lp = new FlexboxLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            words.addView(unit, lp);
+            units.add(unit);
+            if (adaptiveChildRanges != null) {
+                adaptiveChildRanges.add(sourceStart >= 0
+                        ? new int[]{sourceStart + cluster[0], sourceStart + cluster[1]} : null);
+            }
+        }
+        if (units.isEmpty()) return;
+        View first = units.get(0);
+        LyricsSyllableViewState.setWordView(seg, first);
+        LyricsSyllableViewState.configureWordMotion(seg, first, words, true);
+        LyricsSyllableViewState.setFollowerMotionViews(seg, units.subList(1, units.size()));
+        if (spaceAfter) {
+            View last = units.get(units.size() - 1);
+            ((ViewGroup.MarginLayoutParams) last.getLayoutParams()).setMarginEnd(measuredSpacePx(last));
+        }
+    }
+
+    /** Appends one letter view per code point, timed as letters {@code firstIndex..} of
+     *  {@code total} across the segment. */
+    private void addLetterViews(ViewGroup parent, AppliedLine line, SyllableSegment seg,
+                                List<String> letters, int firstIndex, int total,
+                                String weight, String font) {
+        int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
+        float step = 1f / Math.max(1, total);
+        for (int i = 0; i < letters.size(); i++) {
+            String text = letters.get(i);
+            SpicyAnimatedTextView letterView = SpicyAnimatedTextView.unstyled(activity);
+            applyTextDirection(letterView, seg.text);
+            letterView.setTextSize(LyricsLineViewState.baseTextSp(line));
+            letterView.setTextColor(color);
+            textFactory.applyLyricTypeface(letterView, text, weight, font);
+            letterView.setIncludeFontPadding(true);
+            letterView.setMaxLines(1);
+            letterView.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
+            parent.addView(letterView, parent instanceof LinearLayout
+                    ? new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT)
+                    : new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT));
+            float relativeStart = (firstIndex + i) * step;
+            AnimatedLetterState letter = new AnimatedLetterState();
+            letter.start = relativeStart;
+            letter.duration = step;
+            letter.glowDuration = Math.max(step, 1f - relativeStart);
+            letter.view = letterView;
+            LyricsSyllableViewState.addLetter(seg, letter);
+        }
     }
 
     /** Arms adaptive wrapBefore planning on the wrapping word-row flexbox when the Adaptive
@@ -520,10 +696,44 @@ public final class LyricsRowViewFactory {
                                     RomanizedWordProvider romanizedWordProvider) {
         TimedTextLookup planned = timedTextForSpan(timedBySpanId, spanId(seg, wordIndex));
         if (planned.found) return planned.text;
+        // A line-fallback plan (or an older cached plan) can legitimately have no timingRefs,
+        // and provider adapters can rewrite span IDs while preserving canonical ranges. Resolve
+        // that case by source range before falling back to the legacy provider callback; otherwise
+        // the whole pronunciation either disappears or gets assigned to the first word.
+        String ranged = plannedReadingForSegment(line, seg, wordIndex);
+        if (!isBlank(ranged)) return ranged;
         if (seg != null && !isBlank(seg.romanizedText)) return seg.romanizedText;
         return romanizedWordProvider == null ? ""
                 : LyricUtils.safe(romanizedWordProvider.romanizedText(
                 line, seg, options == null ? "" : options.documentText));
+    }
+
+    private static String plannedReadingForSegment(AppliedLine line, SyllableSegment segment,
+                                                   int fallbackIndex) {
+        if (line == null || line.readingRenderPlan == null || segment == null
+                || line.readingRenderPlan.readingUnits == null) return "";
+        int start = segment.canonicalStartCp;
+        int end = segment.canonicalEndCp;
+        if (start < 0 || end <= start) {
+            int[] range = FuriganaText.wordRange(line, segment, fallbackIndex, 0);
+            start = CodePointRanges.utf16IndexToCodePointOffset(line.text, range[0]);
+            end = CodePointRanges.utf16IndexToCodePointOffset(line.text, range[1]);
+        }
+        StringBuilder out = new StringBuilder();
+        for (ReadingUnit unit : line.readingRenderPlan.readingUnits) {
+            if (unit == null || unit.canonicalRange == null || isBlank(unit.text)) continue;
+            int unitStart = unit.canonicalRange.startCp;
+            int unitEnd = unit.canonicalRange.endCp;
+            boolean overlaps = unitEnd > start && unitStart < end;
+            // A line-level fallback belongs to the first source span only; attaching it to every
+            // word is the old "all pronunciation in one word" failure in reverse.
+            boolean wholeLineFallback = line.words != null && line.words.size() > 1
+                    && unitStart == 0 && unitEnd >= CodePointRanges.length(line.text);
+            if (!overlaps || wholeLineFallback) continue;
+            if (out.length() > 0 && !Character.isWhitespace(out.charAt(out.length() - 1))) out.append(' ');
+            out.append(unit.text);
+        }
+        return out.toString();
     }
 
     private static List<String> romanizedWordTexts(
@@ -630,44 +840,20 @@ public final class LyricsRowViewFactory {
     }
 
     private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font,
-                               Options options, boolean wrapLongLines, float contentWidthPx) {
+                               Options options, boolean wrapLongLines) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
         boolean appleStyle = options != null && options.appleStyle;
-        boolean appleCjkWrap = options != null && options.appleCjkWrap;
-        boolean longWrappingWord = false;
-        if (appleCjkWrap && wrapLongLines && seg != null && !isBlank(seg.text)) {
-            android.graphics.Paint measurePaint = new android.graphics.Paint();
-            measurePaint.setTextSize(sp(LyricsLineViewState.baseTextSp(line)));
-            measurePaint.setTypeface(textFactory.resolveTypeface(true));
-            longWrappingWord = measurePaint.measureText(seg.text) + dp(8) > contentWidthPx;
-        }
-        if (!showJapaneseFurigana && !longWrappingWord && LyricVisuals.shouldUseLetterAnimator(seg, appleStyle)) {
+        if (!showJapaneseFurigana && LyricVisuals.shouldUseLetterAnimator(seg, appleStyle)) {
+            // Single-line on purpose: a segment that must wrap mid-word is Han/kana, and those are
+            // laid out as running text by addFlowingCjkSegment instead of a nested wrap box.
             LinearLayout letters = new LinearLayout(activity);
             letters.setOrientation(LinearLayout.HORIZONTAL);
-            letters.setClipToPadding(false);
             letters.setGravity(Gravity.CENTER_VERTICAL);
+            letters.setClipToPadding(false);
+            letters.setClipChildren(false);
             LyricsSyllableViewState.clearLetters(seg);
             List<String> letterTexts = LyricVisuals.splitCodePoints(seg.text);
-            float step = 1f / Math.max(1, letterTexts.size());
-            float relativeStart = 0f;
-            for (String text : letterTexts) {
-                SpicyAnimatedTextView letterView = SpicyAnimatedTextView.unstyled(activity);
-                applyTextDirection(letterView, seg.text);
-                letterView.setTextSize(LyricsLineViewState.baseTextSp(line));
-                letterView.setTextColor(color);
-                textFactory.applyLyricTypeface(letterView, text, weight, font);
-                letterView.setIncludeFontPadding(true);
-                letterView.setMaxLines(1);
-                letterView.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
-                letters.addView(letterView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                AnimatedLetterState letter = new AnimatedLetterState();
-                letter.start = relativeStart;
-                letter.duration = step;
-                letter.glowDuration = Math.max(step, 1f - relativeStart);
-                letter.view = letterView;
-                LyricsSyllableViewState.addLetter(seg, letter);
-                relativeStart += step;
-            }
+            addLetterViews(letters, line, seg, letterTexts, 0, letterTexts.size(), weight, font);
             LyricsSyllableViewState.clearTextView(seg);
             return letters;
         }
@@ -682,14 +868,29 @@ public final class LyricsRowViewFactory {
         if (showJapaneseFurigana) {
             word.setPadding(0, FuriganaText.rubyGapReservationPx(sp(LyricsLineViewState.baseTextSp(line))), 0, 0);
         }
-        word.setMaxLines(appleCjkWrap && wrapLongLines ? 4 : 1);
-        if (appleCjkWrap && wrapLongLines) {
-            word.setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY);
+        if (wrapLongLines && showJapaneseFurigana && isCjkWrapText(seg == null ? "" : seg.text)) {
+            // Ruby needs one contiguous layout, so a furigana word cannot be split into flowing
+            // units; it may wrap inside itself instead. The flexbox measures it against the row's
+            // real width, so no width cap is needed here.
+            word.setHorizontallyScrolling(false);
+            word.setEllipsize(null);
+            word.setMaxLines(Integer.MAX_VALUE);
+            applyAdaptiveWrapping(word, true, true);
+        } else {
+            word.setMaxLines(1);
+        }
+        if (showJapaneseFurigana) {
             word.setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE);
         }
         LyricsSyllableViewState.clearLetters(seg);
         LyricsSyllableViewState.setTextView(seg, word);
         return word;
+    }
+
+    private static boolean isCjkWrapText(String text) {
+        return SpicyTextDetection.hasCjkIdeograph(text)
+                || SpicyTextDetection.hasKana(text)
+                || SpicyTextDetection.itemKoreanTest(text);
     }
 
     private View stackRomanizedWord(AppliedLine line, SyllableSegment seg, View wordView, String romanizedWordText) {
@@ -716,13 +917,26 @@ public final class LyricsRowViewFactory {
                                     String weight, String font, boolean wrapLongLines,
                                     boolean adaptiveSectioningEnabled) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
+
+        // Extract mini lyric from parentheses
+        String[] textParts = showJapaneseFurigana
+                ? new String[]{LyricUtils.safe(line.text), ""}
+                : extractMainAndMiniText(line.text);
+        String mainTextStr = textParts[0];
+        String miniTextStr = textParts[1];
+
+        // Create vertical container for main + mini lyrics (mini below main)
+        LinearLayout textContainer = new LinearLayout(activity);
+        textContainer.setOrientation(LinearLayout.VERTICAL);
+        textContainer.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
+
         SpicyAnimatedTextView main = new SpicyAnimatedTextView(activity);
-        CharSequence mainText = showJapaneseFurigana ? FuriganaText.build(line) : line.text;
-        applyTextDirection(main, line.text);
+        CharSequence mainText = showJapaneseFurigana ? FuriganaText.build(line) : mainTextStr;
+        applyTextDirection(main, mainTextStr);
         main.setTextSize(LyricsLineViewState.baseTextSp(line));
         main.setTextColor(color);
         textFactory.applyLyricTypeface(main, mainText, weight, font);
-        main.setSelfGlow(true); // line-level row: no GlowFlexbox parent, draw its own halo
+        main.setSelfGlow(true);
         main.setIncludeFontPadding(true);
         if (showJapaneseFurigana) {
             main.setPadding(0, FuriganaText.rubyGapReservationPx(sp(LyricsLineViewState.baseTextSp(line))), 0, 0);
@@ -735,10 +949,59 @@ public final class LyricsRowViewFactory {
         main.setVerticalGradient(lineLevelFillTopDown);
         main.setContentGradient(lineLevelFillSentence);
         main.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
-        row.addView(main, new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams mainLp = new LinearLayout.LayoutParams(
+                wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        textContainer.addView(main, mainLp);
+        LyricsLineViewState.setMainView(line, main);
+
+        // Add mini lyric below main if present
+        if (!isBlank(miniTextStr)) {
+            SpicyAnimatedTextView mini = new SpicyAnimatedTextView(activity);
+            mini.setText(miniTextStr);
+            applyTextDirection(mini, miniTextStr);
+            float miniTextSize = LyricsLineViewState.baseTextSp(line) * 0.65f; // 65% of main size
+            mini.setTextSize(miniTextSize);
+            mini.setTextColor(Color.argb(180, 255, 255, 255)); // Slightly transparent white
+            textFactory.applyLyricTypeface(mini, miniTextStr, weight, font);
+            mini.setSelfGlow(true);
+            mini.setIncludeFontPadding(true);
+            mini.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
+            // Background lines projected into the compact card are newline-separated mini rows.
+            // Keep them vertical instead of allowing the TextView to collapse the projection
+            // into one horizontal line.
+            mini.setMaxLines(Math.max(1, Math.min(3, miniTextStr.split("\\n", -1).length)));
+            mini.setVerticalGradient(lineLevelFillTopDown);
+
+            // Add mini lyric below main with small top margin
+            LinearLayout.LayoutParams miniLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            miniLp.topMargin = dp(2);
+            textContainer.addView(mini, miniLp);
+
+            // Store for animation
+            LyricsLineViewState.setMiniView(line, mini);
+        }
+
+        row.addView(textContainer, new LinearLayout.LayoutParams(
                 wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
-        LyricsLineViewState.setMainView(line, main);
+    }
+
+    private String[] extractMainAndMiniText(String text) {
+        if (isBlank(text)) {
+            return new String[]{"", ""};
+        }
+
+        int newline = text.indexOf('\n');
+        if (newline >= 0) {
+            return new String[]{text.substring(0, newline).trim(),
+                    text.substring(newline + 1).trim()};
+        }
+
+        // Parentheses and quotation marks are lyric content, not mini-row delimiters. Only the
+        // explicit projection newline creates a compact-card mini row.
+        return new String[]{text, ""};
     }
 
     @SuppressLint("WrongConstant") // API-23 Layout constants alias the newer LineBreaker IntDef values.
@@ -751,6 +1014,7 @@ public final class LyricsRowViewFactory {
         } else {
             view.setBreakStrategy(Layout.BREAK_STRATEGY_BALANCED);
         }
+        // Prevent hyphenation which can break CJK text oddly
         view.setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE);
     }
 
@@ -762,6 +1026,8 @@ public final class LyricsRowViewFactory {
         view.setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY);
         view.setLineBreakStyle(LineBreakConfig.LINE_BREAK_STYLE_STRICT);
         view.setLineBreakWordStyle(LineBreakConfig.LINE_BREAK_WORD_STYLE_PHRASE);
+        // Prevent punctuation (quotes, brackets, etc.) from starting a new line
+        // by treating them as part of the preceding word/phrase
     }
 
     static AdaptiveBreakMode adaptiveBreakMode(boolean enabled, boolean cjkPhrase, int sdkInt) {
@@ -796,7 +1062,7 @@ public final class LyricsRowViewFactory {
 
     private boolean isCjkPhraseLine(AppliedLine line) {
         String language = ReadingLanguagePolicy.layoutLanguage(line);
-        return "ja".equals(language) || "zh".equals(language);
+        return "ja".equals(language) || "zh".equals(language) || "ko".equals(language);
     }
 
     private boolean hasJapaneseReading(AppliedLine line) {
@@ -812,12 +1078,6 @@ public final class LyricsRowViewFactory {
      * Width basis for the Apple long-CJK-word check: screen width minus chrome margin. Slightly
      * conservative on purpose — wrapping a word a touch early is the safe direction.
      */
-    private float syllableContentWidthPx() {
-        int screenWidthPx = activity == null ? 0
-                : activity.getResources().getDisplayMetrics().widthPixels;
-        return Math.max(1, screenWidthPx - dp(32));
-    }
-
     private float sp(float value) {
         float scaledDensity = activity == null ? 1f : activity.getResources().getDisplayMetrics().scaledDensity;
         return value * scaledDensity;
@@ -875,6 +1135,9 @@ public final class LyricsRowViewFactory {
         public String documentText = "";
         public boolean appleStyle;
         public boolean appleCompactText;
-        public boolean appleCjkWrap;
+        /** Explicit horizontal offset for the lyric text, moved from the scroll container 
+         *  (see LyricsScrollController) so the row view can remain full-screen width for 
+         *  unclipped blur/glow effects while the text keeps its margin. */
+        public int horizontalOffsetPx;
     }
 }

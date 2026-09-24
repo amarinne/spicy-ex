@@ -163,13 +163,16 @@ final class LyricsShellEmptyStateController {
         lyricsColumn.removeAllViews();
         if (config.get(Settings.SHOW_SKELETON)) {
             LyricsSkeletonView skeleton = new LyricsSkeletonView(activity);
+            int horizontalPad = horizontalInsetPx > 0 ? horizontalInsetPx : dp(18);
+            skeleton.setHorizontalPaddingPx(horizontalPad);
             LinearLayout.LayoutParams skeletonLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            skeletonLp.topMargin = loadingTopMargin(
-                    lyricsScroll.getHeight(), lyricsScroll.getPaddingTop());
             lyricsColumn.addView(skeleton, skeletonLp);
-            alignLoadingStart(lyricsScroll, lyricsColumn, skeleton);
+            // Height may be 0 if called before layout; defer margin calculation to
+            // the first layout pass via a posted runnable (never immediate) so the
+            // offset is always correct.
+            alignLoadingStart(lyricsScroll, lyricsColumn, skeleton, horizontalPad);
             return;
         }
         TextView loading = textFactory.createText(
@@ -179,16 +182,28 @@ final class LyricsShellEmptyStateController {
                 Color.rgb(179, 179, 179),
                 textFactory.resolveTypeface(true));
         loading.setGravity(Gravity.CENTER);
-        loading.setPadding(dp(16), dp(100), dp(16), dp(16));
+        int pad = horizontalInsetPx > 0 ? horizontalInsetPx : dp(16);
+        loading.setPadding(pad, dp(100), pad, dp(16));
         lyricsColumn.addView(loading, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+        // Defer scroll reset to the layout pass so lyricsScroll.getHeight() is valid.
+        lyricsScroll.post(() -> lyricsScroll.scrollTo(0, 0));
     }
 
     private void alignLoadingStart(
             ScrollView lyricsScroll,
             LinearLayout lyricsColumn,
             View loadingView
+    ) {
+        alignLoadingStart(lyricsScroll, lyricsColumn, loadingView, 0);
+    }
+
+    private void alignLoadingStart(
+            ScrollView lyricsScroll,
+            LinearLayout lyricsColumn,
+            View loadingView,
+            int horizontalMarginPx
     ) {
         Runnable align = () -> {
             if (loadingView.getParent() != lyricsColumn) return;
@@ -199,19 +214,68 @@ final class LyricsShellEmptyStateController {
                     lyricsScroll.getHeight(), lyricsScroll.getPaddingTop());
             if (params.topMargin != topMargin) {
                 params.topMargin = topMargin;
-                loadingView.setLayoutParams(params);
             }
-            // A song change can leave the prior document's scroll offset in place. Reset both now
-            // and after layout, when ScrollView has recalculated the shorter loading content range.
+            int hMargin = horizontalMarginPx > 0 ? horizontalMarginPx : dp(12);
+            if (params.leftMargin != hMargin) params.leftMargin = hMargin;
+            if (params.rightMargin != hMargin) params.rightMargin = hMargin;
+            loadingView.setLayoutParams(params);
             lyricsScroll.scrollTo(0, 0);
         };
-        align.run();
+        // Height may be 0 on first call (pre-layout). Post instead of running immediately
+        // so lyricsScroll.getHeight() always returns a valid value after layout.
         lyricsScroll.post(align);
     }
 
     static int loadingTopMargin(int viewportHeightPx, int paddingTopPx) {
         if (viewportHeightPx <= 0) return 0;
-        return Math.max(0, viewportHeightPx / 2 - Math.max(0, paddingTopPx));
+        // The loading state should sit around the viewport midpoint; if the lyric area has
+        // already shifted past halfway, keep the start flush with the top instead of overshooting.
+        return paddingTopPx >= viewportHeightPx / 2 ? 0 : dp(56);
+    }
+
+    /** An instrumental track: a quiet, centred note and label in place of "No lyrics found". */
+    void showInstrumental(LinearLayout lyricsColumn, java.util.function.Supplier<float[]> spectrum) {
+        ++stateToken;
+        lyricsColumn.removeAllViews();
+        LinearLayout box = new LinearLayout(activity);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView note = textFactory.createText(activity, "\u266B", 56, Color.WHITE,
+                textFactory.resolveTypeface(true));
+        note.setGravity(Gravity.CENTER);
+        note.setPadding(dp(16), dp(72), dp(16), dp(4));
+        box.addView(note, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        String label = com.eza.spicyex.UiLanguage.strings(activity,
+                config.get(com.eza.spicyex.Settings.UI_LANGUAGE))
+                .get("lyrics_instrumental", "Instrumental");
+        TextView title = textFactory.createText(activity, label, 22, Color.WHITE,
+                textFactory.resolveTypeface(true));
+        title.setGravity(Gravity.CENTER);
+        title.setAlpha(0.85f);
+        box.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        lyricsColumn.addView(box, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // A slow breath on the note, so the screen reads as music playing rather than an error.
+        android.animation.ObjectAnimator breathe = android.animation.ObjectAnimator.ofFloat(
+                note, View.ALPHA, 0.55f, 1f);
+        breathe.setDuration(1600L);
+        breathe.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        breathe.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+        breathe.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        note.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {
+                breathe.start();
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+                breathe.cancel();
+            }
+        });
+        if (note.isAttachedToWindow()) breathe.start();
     }
 
     void showError(LinearLayout lyricsColumn, String error) {

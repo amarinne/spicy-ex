@@ -34,8 +34,16 @@ public final class DisplayLayoutGroup {
                     ? reading : SpicyJapaneseChineseProcessor.analyzeJapaneseLine(source, null);
             if (analyzed != null && analyzed.readingContext != null
                     && analyzed.readingContext.tokens != null && !analyzed.readingContext.tokens.isEmpty()) {
-                return japanese(source, analyzed.readingContext.tokens);
+                // Morphology is authoritative where it reaches, but it routinely leaves stretches
+                // uncovered (an unknown word, a name, a stylised spelling). Those gaps used to have
+                // no grouping at all, so the wrapper could break anywhere inside them.
+                return fillJapaneseGaps(source, japanese(source, analyzed.readingContext.tokens));
             }
+            // No morphological analysis for this line - script runs are a far better guess than
+            // whitespace tokenisation, which on a space-less Japanese line yields one group
+            // covering everything and forces the planner to give up and wrap greedily.
+            List<DisplayLayoutGroup> runs = JapaneseScriptRunGrouping.forText(source);
+            if (!runs.isEmpty()) return runs;
         }
         if (isChinese(language, source)) {
             List<DisplayLayoutGroup> icu = icuChineseGroups(source);
@@ -58,6 +66,10 @@ public final class DisplayLayoutGroup {
                 }
                 if (!groups.isEmpty()) return groups;
             }
+        }
+        if (isKorean(language, source)) {
+            // Korean: use syllable-based grouping with punctuation awareness
+            return koreanGroups(source);
         }
         return whitespaceGroups(source);
     }
@@ -87,6 +99,30 @@ public final class DisplayLayoutGroup {
             cursor = end;
         }
         return groups.isEmpty() ? whitespaceGroups(text) : groups;
+    }
+
+    /** Groups the stretches of {@code text} no analyzer token claimed, using the same script-run
+     *  heuristics as the no-analysis path, and returns the merged list in document order. */
+    private static List<DisplayLayoutGroup> fillJapaneseGaps(String text, List<DisplayLayoutGroup> tokens) {
+        if (tokens.isEmpty()) return tokens;
+        ArrayList<DisplayLayoutGroup> merged = new ArrayList<>();
+        int cursor = 0;
+        for (DisplayLayoutGroup token : tokens) {
+            if (token.start > cursor) addGapGroups(merged, text, cursor, token.start);
+            merged.add(token);
+            cursor = Math.max(cursor, token.end);
+        }
+        if (cursor < text.length()) addGapGroups(merged, text, cursor, text.length());
+        return merged;
+    }
+
+    private static void addGapGroups(List<DisplayLayoutGroup> out, String text, int start, int end) {
+        String slice = text.substring(start, end);
+        if (slice.trim().isEmpty()) return;
+        for (DisplayLayoutGroup group : JapaneseScriptRunGrouping.forText(slice)) {
+            out.add(new DisplayLayoutGroup(start + group.start, start + group.end,
+                    group.kind, group.keepTogether, group.confidence));
+        }
     }
 
     private static boolean isJapaneseAttachToken(JapaneseReadingPolicyModels.ReadingTokenEvidence token) {
@@ -171,5 +207,112 @@ public final class DisplayLayoutGroup {
     private static boolean isChinese(String language, String text) {
         String value = language == null ? "" : language.toLowerCase();
         return value.startsWith("zh") || value.isEmpty() && SpicyTextDetection.itemChineseTest(text);
+    }
+
+    private static boolean isKorean(String language, String text) {
+        String value = language == null ? "" : language.toLowerCase();
+        return value.equals("ko") || value.isEmpty() && SpicyTextDetection.itemKoreanTest(text);
+    }
+
+    /** Korean syllable-based grouping with punctuation awareness.
+     *  Korean doesn't use spaces between words, so we group by syllables
+     *  and ensure punctuation stays with the preceding text. */
+    private static List<DisplayLayoutGroup> koreanGroups(String text) {
+        ArrayList<DisplayLayoutGroup> groups = new ArrayList<>();
+        int start = 0;
+        int syllableCount = 0;
+        final int MAX_SYLLABLES_PER_GROUP = 8; // ~8 syllables per visual group
+        
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            int charCount = Character.charCount(cp);
+            
+            boolean isPunct = isKoreanPunctuation(cp);
+            boolean isSpace = Character.isWhitespace(cp);
+            
+            // Count Hangul syllables (each syllable = 1 code point in precomposed form)
+            if (!isPunct && !isSpace && cp >= 0xAC00 && cp <= 0xD7A3) {
+                syllableCount++;
+            }
+            
+            // Check if we should break here
+            boolean shouldBreak = false;
+            
+            // Break after punctuation if followed by non-punctuation
+            if (isPunct && i + charCount < text.length()) {
+                int nextCp = text.codePointAt(i + charCount);
+                if (!isKoreanPunctuation(nextCp) && !Character.isWhitespace(nextCp)) {
+                    shouldBreak = true;
+                }
+            }
+            // Break at space. Keep the space out of the previous group so authored gaps remain
+            // explicit boundaries instead of swallowing the separator into the syllable run.
+            else if (isSpace) {
+                shouldBreak = true;
+            }
+            // Break at max syllable count
+            else if (syllableCount >= MAX_SYLLABLES_PER_GROUP) {
+                shouldBreak = true;
+            }
+
+            if (shouldBreak) {
+                int end = isSpace ? i : i + charCount;
+                // Extend to include following punctuation, but never absorb the separating space.
+                while (end < text.length()) {
+                    int nextCp = text.codePointAt(end);
+                    if (isKoreanPunctuation(nextCp)) {
+                        end += Character.charCount(nextCp);
+                    } else {
+                        break;
+                    }
+                }
+                if (end > start) {
+                    groups.add(new DisplayLayoutGroup(start, end, "ko-syllable-group", true, 0.8));
+                }
+                start = isSpace ? end + 1 : end;
+                if (isSpace) {
+                    while (start < text.length() && Character.isWhitespace(text.charAt(start))) {
+                        start++;
+                    }
+                }
+                syllableCount = 0;
+            }
+            
+            i += charCount;
+        }
+        
+        // Add remaining
+        if (start < text.length()) {
+            groups.add(new DisplayLayoutGroup(start, text.length(), "ko-syllable-group", true, 0.8));
+        }
+        
+        // If no groups formed, fall back to whole text
+        if (groups.isEmpty()) {
+            groups.add(new DisplayLayoutGroup(0, text.length(), "ko-fallback", true, 0.5));
+        }
+        
+        return groups;
+    }
+
+    private static boolean isKoreanPunctuation(int cp) {
+        return cp == 0x3000 || // ideographic space
+               cp == 0x3001 || // ideographic comma
+               cp == 0x3002 || // ideographic full stop
+               cp == 0xFF01 || // fullwidth exclamation
+               cp == 0xFF0C || // fullwidth comma
+               cp == 0xFF0E || // fullwidth period
+               cp == 0xFF1A || // fullwidth colon
+               cp == 0xFF1B || // fullwidth semicolon
+               cp == 0xFF1F || // fullwidth question mark
+               cp == 0x2018 || cp == 0x2019 || // single quotes
+               cp == 0x201C || cp == 0x201D || // double quotes
+               cp == 0x3008 || cp == 0x3009 || // angle brackets
+               cp == 0x300A || cp == 0x300B || // double angle brackets
+               cp == 0x300C || cp == 0x300D || // corner brackets
+               cp == 0x300E || cp == 0x300F || // white corner brackets
+               cp == 0x3010 || cp == 0x3011 || // lenticular brackets
+               cp == 0xFF08 || cp == 0xFF09 || // fullwidth parentheses
+               cp == 0xFF3B || cp == 0xFF3D || // fullwidth brackets
+               cp >= 0xFE30 && cp <= 0xFE6B; // various CJK punctuation
     }
 }

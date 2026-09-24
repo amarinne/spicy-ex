@@ -1,5 +1,6 @@
 package com.eza.spicyex.settings;
 
+import android.graphics.Typeface;
 import android.widget.EditText;
 import android.widget.TextView;
 
@@ -8,12 +9,14 @@ import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.SettingsUiStrings;
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.lyrics.CacheStoragePolicy;
+import com.eza.spicyex.lyrics.LyricsFontValidator;
 import com.eza.spicyex.lyrics.SpicyManualTokenStore;
 import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 import com.eza.spicyex.lyrics.session.CanonicalSourceCache;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.PanelDialog;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -171,6 +174,58 @@ public final class PanelDialogs {
         });
         dialog.secondary(strings.get("settings_ai_cancel", "Cancel"), null);
         dialog.show();
+    }
+
+    /** Custom lyric font: a plain file path rather than a system picker (this module has no
+     *  Activity of its own to receive a picker result from inside Spotify's process). Saving
+     *  immediately runs {@link LyricsFontValidator} against the chosen file and reports which of
+     *  the app's supported scripts it doesn't cover - unsupported scripts still render correctly
+     *  via Android's own font fallback either way, this is purely informational up front. */
+    public void promptLyricsFontPath() {
+        PanelStyle style = host.style();
+        SettingsUiStrings strings = host.strings();
+        PanelDialog dialog = new PanelDialog(style.context(),
+                strings.setting(Settings.LYRICS_FONT_CUSTOM_PATH));
+        EditText field = dialog.field(false, host.store().get(Settings.LYRICS_FONT_CUSTOM_PATH));
+        dialog.primary(strings.get("settings_ai_save", "Save"), () -> {
+            String path = field.getText().toString().trim();
+            host.onOptionChosen((Settings.StringSetting) Settings.LYRICS_FONT_CUSTOM_PATH, path);
+            host.afterSettingChosen(Settings.LYRICS_FONT_CUSTOM_PATH);
+            reportFontCoverage(path);
+        });
+        dialog.secondary(strings.get("settings_ai_cancel", "Cancel"), null);
+        dialog.show();
+    }
+
+    private void reportFontCoverage(String path) {
+        if (path.isEmpty()) return;
+        PanelStyle style = host.style();
+        SettingsUiStrings strings = host.strings();
+        // Mirrors LyricsTextFactory#resolveLyricTypeface: a real file on disk wins, otherwise
+        // treat the text as an installed/system font family name (e.g. "sans-serif-medium")
+        // rather than failing outright - Typeface#create() never throws for an unknown name.
+        Typeface typeface = null;
+        File file = new File(path);
+        if (file.isFile()) {
+            try {
+                typeface = Typeface.createFromFile(file);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (typeface == null) typeface = Typeface.create(path, Typeface.NORMAL);
+        List<String> missing = LyricsFontValidator.missingScripts(typeface);
+        PanelDialog result = new PanelDialog(style.context(),
+                strings.get("settings_lyrics_font_check_title", "Font language check"));
+        if (missing.isEmpty()) {
+            result.infoRow(strings.get("settings_lyrics_font_check_result", "Result"),
+                    strings.get("settings_lyrics_font_check_all_covered",
+                            "Covers every supported language"));
+        } else {
+            result.infoRow(strings.get("settings_lyrics_font_check_missing", "Falls back for"),
+                    String.join(", ", missing));
+        }
+        result.secondary(strings.get("settings_cache_details_close", "Close"), null);
+        result.show();
     }
 
     public void revealSpicyToken() {

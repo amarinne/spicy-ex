@@ -3,6 +3,8 @@ package com.eza.spicyex.lyrics;
 import android.graphics.Color;
 import android.view.View;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 
@@ -55,6 +57,7 @@ public final class LyricsSyllableViewState {
         if (segment == null) return;
         SyllableRenderState state = state(segment);
         state.motionView = motionView;
+        state.followerMotionViews = new ArrayList<>();
         state.containerView = containerView;
         state.motionOwner = motionOwner;
         state.scaleSpring = null;
@@ -66,6 +69,15 @@ public final class LyricsSyllableViewState {
             // rest, so the mount state and animated state stay pixel-identical near row edges.
             motionView.removeOnLayoutChangeListener(REST_MOTION_PIVOT_LISTENER);
             motionView.addOnLayoutChangeListener(REST_MOTION_PIVOT_LISTENER);
+        }
+    }
+
+    public static void setFollowerMotionViews(SyllableSegment segment, List<View> views) {
+        if (segment == null) return;
+        state(segment).followerMotionViews = new ArrayList<>(views);
+        for (View view : views) {
+            view.removeOnLayoutChangeListener(REST_MOTION_PIVOT_LISTENER);
+            view.addOnLayoutChangeListener(REST_MOTION_PIVOT_LISTENER);
         }
     }
 
@@ -292,12 +304,16 @@ public final class LyricsSyllableViewState {
     }
 
     public static void applyWordFrame(SyllableSegment segment, LyricsAnimationApplier.StyleSink sink,
-                                      float scale, float y, float basePx) {
+                                       float scale, float y, float basePx) {
         View motion = motionView(segment);
         if (segment == null || !state(segment).motionOwner || motion == null || sink == null) return;
         sink.applyScale(motion, scale, scale);
         sink.applyTranslationY(motion, basePx * y);
         sink.applyAlpha(motion, 1.0f);
+        for (View follower : state(segment).followerMotionViews) {
+            sink.applyScale(follower, scale, scale);
+            sink.applyTranslationY(follower, basePx * y);
+        }
     }
 
     public static void applyLocalWordFrame(SyllableSegment segment,
@@ -325,6 +341,10 @@ public final class LyricsSyllableViewState {
                 sink.applyScale(motion, 1f, 1f);
                 sink.applyTranslationY(motion, 0f);
                 sink.applyAlpha(motion, 1f);
+            }
+            for (View follower : state(segment).followerMotionViews) {
+                sink.applyScale(follower, 1f, 1f);
+                sink.applyTranslationY(follower, 0f);
             }
         }
         if (hasGroupedMotion(segment) && state(segment).view != null) {
@@ -506,6 +526,7 @@ public final class LyricsSyllableViewState {
         snapWordMotionSprings(segment, 1f, 0f);
         snapLocalWordSprings(segment, 1f, 0f);
         if (state(segment).motionOwner) resetTransform(motionView(segment));
+        for (View follower : state(segment).followerMotionViews) resetTransform(follower);
         if (hasGroupedMotion(segment)) resetTransform(state(segment).view);
     }
 

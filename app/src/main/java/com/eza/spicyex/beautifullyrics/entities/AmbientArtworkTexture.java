@@ -1,6 +1,7 @@
 package com.eza.spicyex.beautifullyrics.entities;
 
 import android.graphics.*;
+import android.os.Build;
 import android.util.Half;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -46,7 +47,10 @@ public final class AmbientArtworkTexture {
         }
         Bitmap atlas = Bitmap.createBitmap(SIZE * 2, SIZE, Bitmap.Config.RGBA_F16);
         // Explicit sRGB encoding matches WebGL's texture arithmetic (no implicit linearization).
-        atlas.setColorSpace(ColorSpace.get(ColorSpace.Named.SRGB));
+        // This API is only available on Android 10+; the module still supports API 27.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            atlas.setColorSpace(ColorSpace.get(ColorSpace.Named.SRGB));
+        }
         ByteBuffer buffer = ByteBuffer.allocate(atlas.getByteCount()).order(ByteOrder.nativeOrder());
         for (int y = 0; y < SIZE; y++) {
             buffer.position(y * atlas.getRowBytes());
@@ -54,10 +58,10 @@ public final class AmbientArtworkTexture {
                 float[] rgb = tile == 0 ? normal : dark;
                 for (int x = 0; x < SIZE; x++) {
                     int i = 3 * (y * SIZE + x);
-                    buffer.putShort(Half.toHalf(rgb[i]));
-                    buffer.putShort(Half.toHalf(rgb[i+1]));
-                    buffer.putShort(Half.toHalf(rgb[i+2]));
-                    buffer.putShort(Half.toHalf(1f));
+                    buffer.putShort((short) Half.toHalf(rgb[i]));
+                    buffer.putShort((short) Half.toHalf(rgb[i+1]));
+                    buffer.putShort((short) Half.toHalf(rgb[i+2]));
+                    buffer.putShort((short) Half.toHalf(1f));
                 }
             }
         }

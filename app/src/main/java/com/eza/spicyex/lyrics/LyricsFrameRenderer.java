@@ -324,20 +324,32 @@ public final class LyricsFrameRenderer {
                         && wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
                     animateContinuousLineWords(line, lineState, lineGlow, deltaSeconds);
                 } else if (lineState.active || lineState.sung) {
-                    LyricsAnimationApplier.animateSyllables(
-                            line,
-                            positionMs,
-                            deltaSeconds,
-                            spToPx(LyricsLineViewState.effectiveBaseTextSp(line)),
-                            styleSink,
-                            config.spotlight,
-                            config.glowBlurEnabled,
-                            wordBounceEnabled(config, line),
-                            !config.appleStyle,
-                            liftMotion(config),
-                            individualWordBounce(config),
-                            config.appleLift,
-                            config.appleDimPassed);
+                    if (line.syntheticWords
+                            && wordGradientRoute == WordGradientRoute.TIMED_WORDS) {
+                        // These word spans are fabricated (evenly spread across the line purely to
+                        // attach romanization - see AppliedLine#syntheticWords), not real per-word
+                        // timing, so animating them under a word-by-word fill mode faked a
+                        // karaoke-style reveal for plain Line-synced lyrics. Same fallback as the
+                        // degenerate-provider-timing case above: reset the words and sweep the
+                        // line as one sentence instead.
+                        LyricsAnimationApplier.resetSyllables(line, styleSink, false);
+                        applyContinuousWordGradient(line, lineState, lineGlow);
+                    } else {
+                        LyricsAnimationApplier.animateSyllables(
+                                line,
+                                positionMs,
+                                deltaSeconds,
+                                spToPx(LyricsLineViewState.effectiveBaseTextSp(line)),
+                                styleSink,
+                                config.spotlight,
+                                config.glowBlurEnabled,
+                                wordBounceEnabled(config, line),
+                                !config.appleStyle,
+                                liftMotion(config),
+                                individualWordBounce(config),
+                                config.appleLift,
+                                config.appleDimPassed);
+                    }
                 } else {
                     if (config.lineSyncFillWord() || config.lineSyncFillSentence()) {
                         resetNearbySyllables(
@@ -458,23 +470,45 @@ public final class LyricsFrameRenderer {
     /** True when provider word spans are too compressed or malformed to fill word by word — every
      *  word would effectively light at once (the "full block" pop). Under "Left to right
      *  (sentence)" those lines fall back to the continuous sentence sweep, matching line-synced
-     *  rows. A line whose words genuinely cover most of it keeps the timed word fill. */
+     *  rows. A line whose words genuinely cover most of it keeps the timed word fill.
+     *  Synthetic word lines (no provider timing, words are segment placeholders spanning the
+     *  whole line) are always degenerate: each word shares the line's start/end so lighting
+     *  them word-by-word fills the entire line at once instead of sweeping left-to-right. */
     static boolean hasDegenerateWordTiming(AppliedLine line) {
         if (line == null || line.words == null || line.words.isEmpty()) return false;
+        if (line.syntheticWords) return true;
         long firstStart = Long.MAX_VALUE;
         long lastEnd = Long.MIN_VALUE;
+        int counted = 0;
+        int collapsed = 0;
         for (SyllableSegment seg : line.words) {
             if (seg == null) continue;
-            if (seg.endMs <= seg.startMs) return true;
+            counted++;
+            // A single zero-length span is normal provider noise, not a broken line: QQ's QRC in
+            // particular emits them for trailing punctuation and for the spacer "words" it uses
+            // between sung syllables. Condemning the whole line on the first one threw away real
+            // karaoke timing on lines that were otherwise perfectly word-synced, so this now asks
+            // whether MOST of the line is collapsed.
+            if (seg.endMs <= seg.startMs) {
+                collapsed++;
+                continue;
+            }
             firstStart = Math.min(firstStart, seg.startMs);
             lastEnd = Math.max(lastEnd, seg.endMs);
         }
-        if (firstStart == Long.MAX_VALUE) return false;
+        if (counted == 0 || firstStart == Long.MAX_VALUE) return false;
+        if (collapsed * 2 >= counted) return true;
         long wordSpan = lastEnd - firstStart;
         if (wordSpan <= 0) return true;
-        long lineSpan = line.endMs - line.startMs;
+        // fillEndMs(), not endMs: a row's endMs is its ACTIVE window, which applySyncedRows extends
+        // across any gap shorter than the interlude threshold so the highlight carries to the next
+        // line. Measuring against that made a short, fast line followed by a ~3s instrumental gap
+        // look as though its words covered a tiny fraction of it, and word-by-word fill was dropped
+        // for the sentence sweep on exactly the lines that most needed it.
+        long lineSpan = LyricTimeline.fillEndMs(line) - line.startMs;
         return lineSpan > 0 && wordSpan * 100L < lineSpan * 15L;
     }
+
 
     private void resetNearbySyllables(AppliedLine line, int index, int activeIndex,
                                       LyricsAnimationApplier.StyleSink sink,

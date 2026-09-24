@@ -40,8 +40,12 @@ public final class SettingLabels {
     }
 
     public static String formatStepper(Settings.IntegerSetting setting, int value) {
-        if (setting == Settings.EXTRA_DARK_BACKGROUND) {
+        if (setting == Settings.EXTRA_DARK_BACKGROUND
+                || setting == Settings.LYRICS_BLUR_INTENSITY) {
             return value + "%";
+        }
+        if (setting == Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS) {
+            return value + "s";
         }
         if (setting == Settings.BACKGROUND_RENDER_QUALITY) {
             return value + "%";
@@ -49,11 +53,17 @@ public final class SettingLabels {
         if (setting == Settings.APPLE_CASCADE_SPEED || setting == Settings.APPLE_SPRING_STRENGTH) {
             return value + "%";
         }
+        if (setting == Settings.FURIGANA_BRIGHTNESS || setting == Settings.FURIGANA_POSITION_PERCENT) {
+            return value + "%";
+        }
         if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM || setting == Settings.LINE_SPACING_CUSTOM
                 || setting == Settings.LIVE_CARD_TEXT_SIZE_CUSTOM
                 || setting == Settings.TRACK_INFO_TEXT_SIZE_CUSTOM) {
             return String.format(java.util.Locale.US, "×%.2f", value / 100f);
         }
+        // Falls through to a millisecond-offset display (e.g. "+0.1s") - only correct for
+        // SYNC_OFFSET_MS. Any new stepper-style IntegerSetting must be added above, or it will
+        // silently render as a bogus seconds value here instead of failing to compile.
         return formatOffset(value);
     }
 

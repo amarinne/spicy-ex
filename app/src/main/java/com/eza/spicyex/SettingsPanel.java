@@ -79,6 +79,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     private final Runnable onToggleSize;
     private final Runnable onClose;
     private final java.util.function.Consumer<CacheClearKind> onClearCache;
+    private final Runnable onResyncTiming;
 
     private LinearLayout sectionsContainer;
     private TextView panelTitle;
@@ -114,7 +115,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     public SettingsPanel(Context context, SettingsStore store,
                          java.util.function.BooleanSupplier isHalfSize,
                          Runnable onToggleSize, Runnable onClose,
-                         java.util.function.Consumer<CacheClearKind> onClearCache) {
+                         java.util.function.Consumer<CacheClearKind> onClearCache,
+                         Runnable onResyncTiming) {
         this.context = context;
         this.style = new PanelStyle(context);
         this.store = store;
@@ -126,6 +128,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
         this.onClearCache = onClearCache;
+        this.onResyncTiming = onResyncTiming;
         writer.ensureBackgroundStyleMigrated(store.get(Settings.ENABLE_BACKGROUND));
         this.uiStrings = UiLanguage.strings(context, store.get(Settings.UI_LANGUAGE));
     }
@@ -374,6 +377,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         }
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             spicyTokenRow(content);
+            return;
+        }
+        if (setting == Settings.LYRICS_FONT_CUSTOM_PATH) {
+            lyricsFontPathRow(content);
             return;
         }
         if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) {
@@ -757,12 +764,60 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                 new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
     }
 
+    private void lyricsFontPathRow(LinearLayout content) {
+        String path = store.get(Settings.LYRICS_FONT_CUSTOM_PATH);
+        String display = path == null || path.isEmpty()
+                ? uiStrings.get("settings_lyrics_font_path_absent", "Not set") : path;
+        List<AiSettingsRows.IconAction> actions = new ArrayList<>();
+        actions.add(new AiSettingsRows.IconAction(Kind.EDIT,
+                uiStrings.get("settings_lyrics_font_path_edit", "Edit font path"),
+                v -> dialogs.promptLyricsFontPath()));
+        rows.aiFieldRow(content, uiStrings.setting(Settings.LYRICS_FONT_CUSTOM_PATH),
+                display, false, Settings.LYRICS_FONT_CUSTOM_PATH.key,
+                v -> dialogs.promptLyricsFontPath(),
+                actions.toArray(new AiSettingsRows.IconAction[0]));
+        String coverage = fontCoverageSummaryForPanel(path);
+        if (!coverage.isEmpty()) {
+            TextView cov = style.text(coverage, 12, PanelStyle.COL_SUMMARY, false);
+            cov.setPadding(style.dp(52), 0, style.dp(16), style.dp(12));
+            content.addView(cov, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        }
+    }
+
+    private String fontCoverageSummaryForPanel(String path) {
+        if (path == null || path.isEmpty()) return "";
+        android.graphics.Typeface typeface = null;
+        java.io.File file = new java.io.File(path);
+        if (file.isFile()) {
+            try {
+                typeface = android.graphics.Typeface.createFromFile(file);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (typeface == null) typeface = android.graphics.Typeface.create(path, android.graphics.Typeface.NORMAL);
+        java.util.List<String> missing = com.eza.spicyex.lyrics.LyricsFontValidator.missingScripts(typeface);
+        return missing.isEmpty()
+                ? uiStrings.get("settings_lyrics_font_check_all_covered", "Covers every supported language")
+                : uiStrings.get("settings_lyrics_font_check_missing", "Falls back for") + ": "
+                        + String.join(", ", missing);
+    }
+
     // --- Diagnostics card ---
 
     private void renderActions(LinearLayout content) {
         rows.actionRow(content, Kind.BUG,
                 DiagnosticReportingDialog.reportProblemLabel(context, store),
                 v -> DiagnosticReportingDialog.show(context, store));
+        rows.actionRow(content, null,
+                uiStrings.get("settings_action_resync_timing", "Reset lyrics sync"),
+                v -> {
+                    writer.put(Settings.SYNC_OFFSET_MS, 0);
+                    if (onResyncTiming != null) onResyncTiming.run();
+                    android.widget.Toast.makeText(context,
+                            uiStrings.get("settings_resync_timing_done", "Lyrics sync reset"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
         rows.actionRow(content, null,
                 uiStrings.get("settings_action_ad_music_test", "Play / stop ad replacement music"),
                 v -> {

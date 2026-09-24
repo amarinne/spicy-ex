@@ -64,7 +64,13 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
             if (touchCallback != null) touchCallback.touching(true);
             hold();
         } else if (action == MotionEvent.ACTION_MOVE) {
+            // Refresh the "last manual scroll" timestamp on every move, not just the initial
+            // down - otherwise a drag held longer than the auto-resume cooldown leaves that
+            // timestamp stale from the start of the gesture, so the moment the finger lifts the
+            // cooldown already reads as elapsed and auto-resume can snap back with no grace
+            // period at all, which feels like it's fighting an in-progress touch.
             if (Math.abs(event.getY() - scrollDownY) >= dp(10)) cancelLongPress();
+            if (touchCallback != null) touchCallback.touching(true);
             hold();
         } else if (action == MotionEvent.ACTION_UP) {
             cancelLongPress();

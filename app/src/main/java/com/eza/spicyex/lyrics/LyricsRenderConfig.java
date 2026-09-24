@@ -22,7 +22,6 @@ public final class LyricsRenderConfig {
     public final boolean appleLift;
     public final boolean appleDimPassed;
     public final boolean appleCompactText;
-    public final boolean appleCjkWrap;
     public final boolean glowBlurEnabled;
     public final boolean lineBlurEnabled;
     public final boolean lineBlurHeavy;
@@ -37,6 +36,7 @@ public final class LyricsRenderConfig {
     public final String lyricWeight;
     public final String liveCardWeight;
     public final String lyricsFont;
+    public final String lyricsFontCustomPath;
     public final String lyricsTextSizeMode;
     public final float lyricsTextSizeMultiplier;
     public final boolean adaptiveTextSizeEnabled;
@@ -84,7 +84,6 @@ public final class LyricsRenderConfig {
             boolean appleLift,
             boolean appleDimPassed,
             boolean appleCompactText,
-            boolean appleCjkWrap,
             boolean glowBlurEnabled,
             boolean lineBlurEnabled,
             boolean lineBlurHeavy,
@@ -99,6 +98,7 @@ public final class LyricsRenderConfig {
             String lyricWeight,
             String liveCardWeight,
             String lyricsFont,
+            String lyricsFontCustomPath,
             String lyricsTextSizeMode,
             float lyricsTextSizeMultiplier,
             boolean adaptiveTextSizeEnabled,
@@ -147,7 +147,6 @@ public final class LyricsRenderConfig {
         this.appleLift = appleLift;
         this.appleDimPassed = appleDimPassed;
         this.appleCompactText = appleCompactText;
-        this.appleCjkWrap = appleCjkWrap;
         this.glowBlurEnabled = glowBlurEnabled;
         this.lineBlurEnabled = lineBlurEnabled;
         this.lineBlurHeavy = lineBlurHeavy;
@@ -162,6 +161,7 @@ public final class LyricsRenderConfig {
         this.lyricWeight = safe(lyricWeight);
         this.liveCardWeight = safe(liveCardWeight);
         this.lyricsFont = safe(lyricsFont);
+        this.lyricsFontCustomPath = safe(lyricsFontCustomPath);
         this.lyricsTextSizeMode = safe(lyricsTextSizeMode);
         this.lyricsTextSizeMultiplier = lyricsTextSizeMultiplier;
         this.adaptiveTextSizeEnabled = adaptiveTextSizeEnabled;
@@ -222,10 +222,10 @@ public final class LyricsRenderConfig {
     ) {
         this(backgroundStyle, forceDarkBackground, 0, lineGradientEnabled, spotlight,
                 wordBounceEnabled, "Word/syllable synced only", "Phrase zoom", false, false, false,
-                false, false, glowBlurEnabled,
+                false, glowBlurEnabled,
                 lineBlurEnabled, false, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
                 attachTransliterationToWords, transliterationEnabled, adaptiveSectioningEnabled,
-                lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont,
+                lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont, "",
                 lyricsTextSizeMode, lyricsTextSizeMultiplier, true, liveCardTextSizeMode,
                 liveCardTextSizeMultiplier, liveCardSecondaryMode, liveCardShowTransliteration,
                 liveCardShowTranslation, liveCardMinimalAnimation, liveCardAnimationMode,
@@ -292,11 +292,14 @@ public final class LyricsRenderConfig {
                 appleLift,
                 appleStyle && get(cfg, Settings.APPLE_FADE_PASSED_LINES),
                 appleStyle && get(cfg, Settings.APPLE_COMPACT_TEXT),
-                appleStyle && get(cfg, Settings.APPLE_CJK_WRAP_FIX),
                 get(cfg, Settings.ENABLE_GLOW_BLUR),
                 !"Off".equals(lineBlurLevel),
                 "Heavy".equals(lineBlurLevel),
-                shell.lineBlurQualityMultiplier(),
+                // Blur intensity is a user-facing artistic knob (Settings#LYRICS_BLUR_INTENSITY,
+                // 100 = unchanged), separate from lineBlurQualityMultiplier()'s device-performance
+                // tier scaling - folded into the same blurQuality slot since both are plain
+                // multipliers over the same curve (LyricsFrameRenderer#mobileLineBlurPx).
+                shell.lineBlurQualityMultiplier() * (get(cfg, Settings.LYRICS_BLUR_INTENSITY) / 100f),
                 "note".equals(get(cfg, Settings.INTERLUDE_ICON)),
                 get(cfg, Settings.TOGGLE_PROGRESS_RING),
                 transliterationAvailable && shell.attachTransliterationToWordsEnabled(),
@@ -307,6 +310,7 @@ public final class LyricsRenderConfig {
                 shell.lyricWeight(),
                 shell.liveCardWeight(),
                 get(cfg, Settings.LYRICS_FONT),
+                get(cfg, Settings.LYRICS_FONT_CUSTOM_PATH),
                 shell.lyricsTextSizeMode(),
                 shell.lyricsTextSizeMultiplier(),
                 shell.adaptiveTextSizeEnabled(),
@@ -382,8 +386,8 @@ public final class LyricsRenderConfig {
                  wordBounceEnabled,
                  wordBounceScope,
                  wordBounceStyle,
-                 false, false, false, false, false,
-                 glow,
+ false, false, false, false,
+                  glow,
                  false,
                  false,
                  blurQuality,
@@ -397,6 +401,7 @@ public final class LyricsRenderConfig {
                 lyricWeight,
                 liveCardWeight,
                 lyricsFont,
+                lyricsFontCustomPath,
                 lyricsTextSizeMode,
                 lyricsTextSizeMultiplier,
                 adaptiveTextSizeEnabled,
@@ -505,7 +510,9 @@ public final class LyricsRenderConfig {
             }
 
             boolean interludeChanged = oldValue.interludeNoteIcon != next.interludeNoteIcon;
-            boolean fontChanged = changed(oldValue.lyricsFont, next.lyricsFont);
+            boolean fontChanged = changed(oldValue.lyricsFont, next.lyricsFont)
+                    || ("custom".equals(next.lyricsFont)
+                            && changed(oldValue.lyricsFontCustomPath, next.lyricsFontCustomPath));
             boolean weightChanged = changed(oldValue.lyricWeight, next.lyricWeight) || fontChanged;
             boolean textSizeChanged = changed(oldValue.lyricsTextSizeMode, next.lyricsTextSizeMode)
                     || changed(oldValue.lyricsTextSizeMultiplier, next.lyricsTextSizeMultiplier)
@@ -563,8 +570,7 @@ public final class LyricsRenderConfig {
             needsRowRemount = interludeChanged || weightChanged || textSizeChanged || attachChanged || transliterationChanged
                     || adaptiveSectioningChanged || spacingChanged || fillChanged || japaneseModeConfigChanged
                     || oldValue.translationBright != next.translationBright
-                    || oldValue.appleCompactText != next.appleCompactText
-                    || oldValue.appleCjkWrap != next.appleCjkWrap;
+                    || oldValue.appleCompactText != next.appleCompactText;
             needsLocalReprocess = transliterationChanged || chineseModeConfigChanged || koreanChanged || chineseTonesChanged || cyrillicChanged;
             needsBackgroundToggle = changed(oldValue.backgroundStyle, next.backgroundStyle)
                     || oldValue.forceDarkBackground != next.forceDarkBackground
