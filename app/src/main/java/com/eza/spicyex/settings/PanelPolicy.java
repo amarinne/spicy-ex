@@ -105,7 +105,7 @@ public final class PanelPolicy {
     }
 
     public static boolean unavailable(Settings.Setting<?> setting, PanelSnapshot snapshot) {
-        return (setting == Settings.TRANSLITERATION_ENABLED && !snapshot.transliterationAvailable())
+        return (setting == Settings.TRANSLITERATION_ENABLED && (!snapshot.transliterationAvailable() || !snapshot.languageModelReady()))
                 || (setting == Settings.TRANSLATION_ENABLED && !snapshot.translationAvailable())
                 || (setting == Settings.LYRICS_FONT && !snapshot.appleFontAvailable());
     }

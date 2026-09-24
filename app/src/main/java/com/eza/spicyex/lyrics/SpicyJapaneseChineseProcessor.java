@@ -2170,9 +2170,9 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static List<TokenFuriganaReading> jmdictFuriganaSegments(String surface, String kana) {
-        Map<String, List<FuriganaSegment>> data = JapaneseReadingEngine.shared().jmdictFurigana();
+        FuriganaTable data = JapaneseReadingEngine.shared().jmdictFurigana();
         if (data.isEmpty()) return null;
-        List<FuriganaSegment> segments = data.get(kataToHira(surface) + "|" + kataToHira(kana));
+        List<FuriganaSegment> segments = data.lookup(kataToHira(surface) + "|" + kataToHira(kana));
         if (segments == null) return null;
         ArrayList<TokenFuriganaReading> out = new ArrayList<>(segments.size());
         for (FuriganaSegment segment : segments) {
@@ -2448,6 +2448,15 @@ public final class SpicyJapaneseChineseProcessor {
      * Releases the tokenizer and JMdict tables. Persistent reading artifacts on disk stay; the next
      * Japanese analysis reloads lazily.
      */
+    /**
+     * Application context, forwarded to the reading engine so the UniDic tables can be served
+     * from a mapped file instead of the Java heap. Safe to call more than once.
+     */
+    public static void attachContext(android.content.Context context) {
+        JapaneseReadingEngine.attachContext(context);
+        LanguageModelPack.attachContext(context);
+    }
+
     public static void trimMemory() {
         JapaneseReadingEngine.shared().trimMemory();
     }

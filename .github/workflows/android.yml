@@ -67,8 +67,7 @@ jobs:
             | tr '[:upper:]' '[:lower:]')
           test -n "$expected"
           for apk in \
-            app/build/outputs/apk/lite/release/app-lite-release.apk \
-            app/build/outputs/apk/full/release/app-full-release.apk
+            app/build/outputs/apk/release/app-release.apk
           do
             actual=$(apksigner verify --print-certs "$apk" \
               | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
@@ -81,5 +80,4 @@ jobs:
         with:
           name: spicy-ex-release-apks
           path: |
-            app/build/outputs/apk/lite/release/*.apk
-            app/build/outputs/apk/full/release/*.apk
+            app/build/outputs/apk/release/*.apk

@@ -399,6 +399,10 @@ public final class Settings {
             "lyric_extra_dark_background", BACKGROUND, "Darken background", 35, 0, 100, 5
     );
 
+    public static final Setting<Boolean> DOWNLOAD_LANGUAGE_MODELS = boolSetting(
+            "download_language_models", TRANSLITERATION, "Download language models", false
+    );
+
     // --- Romanization (transliteration controls) ---
     public static final Setting<Boolean> TRANSLITERATION_ENABLED = boolSetting(
             "lyrics_transliteration_enabled", TRANSLITERATION, "Transliterate lyrics", false

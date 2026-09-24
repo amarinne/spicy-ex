@@ -125,7 +125,7 @@ public final class SpicyDiagnosticReportFactory {
         product.addProperty("buildClue", bounded(BuildStamp.CLUE, 128));
         product.addProperty("versionCode", BuildConfig.VERSION_CODE);
         product.addProperty("networkCacheEpoch", bounded(BuildStamp.NETWORK_CACHE_EPOCH, 128));
-        product.addProperty("flavor", "lite".equals(BuildConfig.FLAVOR) ? "lite" : "full");
+        product.addProperty("flavor", "standard");
         try {
             product.addProperty("xposedApiVersion", XpLog.apiVersion());
         } catch (Throwable ignored) {

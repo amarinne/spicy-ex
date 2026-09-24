@@ -40,7 +40,8 @@ public final class SettingUiSpec {
         if (setting == Settings.LYRICS_SOURCE_MODE
                 || setting == Settings.LYRICS_SOURCE_OVERRIDE
                 || setting == Settings.LYRICS_SOURCE_ORDER
-                || setting == Settings.SPICY_MANUAL_TOKEN) {
+                || setting == Settings.SPICY_MANUAL_TOKEN
+                || setting == Settings.DOWNLOAD_LANGUAGE_MODELS) {
             return RowKind.COMPOSITE;
         }
         if (setting instanceof Settings.BooleanSetting) return RowKind.TOGGLE;

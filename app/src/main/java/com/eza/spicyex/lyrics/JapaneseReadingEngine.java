@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -27,7 +28,7 @@ public final class JapaneseReadingEngine {
     private static volatile JapaneseReadingEngine shared;
 
     private volatile Tokenizer tokenizer;
-    private volatile Map<String, List<SpicyJapaneseChineseProcessor.FuriganaSegment>> jmdictFurigana;
+    private volatile FuriganaTable jmdictFurigana;
     private volatile Map<String, String> jmdictPreferredReadings;
     /** Active analysis count. A trim never drops resources an analysis is still using. */
     private int activeUses;
@@ -35,6 +36,17 @@ public final class JapaneseReadingEngine {
     private int tokenizerLoads;
     /** Test seam: fired each time {@link #tokenizer()} is consulted, before returning. */
     volatile Runnable tokenizerObserverForTest;
+
+    private static volatile android.content.Context appContext;
+
+    /**
+     * Application context, used only to reach the extracted dictionary cache that
+     * {@link MappedTokenizerBuilder} maps. A null one simply means the tokenizer loads the way it
+     * always did.
+     */
+    public static void attachContext(android.content.Context context) {
+        if (context != null) appContext = context.getApplicationContext();
+    }
 
     public static JapaneseReadingEngine shared() {
         JapaneseReadingEngine local = shared;
@@ -73,7 +85,7 @@ public final class JapaneseReadingEngine {
         if (local != null) return local;
         synchronized (this) {
             if (tokenizer == null) {
-                tokenizer = new Tokenizer();
+                tokenizer = MappedTokenizerBuilder.build(appContext);
                 tokenizerLoads++;
             }
             return tokenizer;
@@ -95,8 +107,8 @@ public final class JapaneseReadingEngine {
     }
 
     /** JMdict furigana span table, loaded only when decomposition needs it. */
-    public Map<String, List<SpicyJapaneseChineseProcessor.FuriganaSegment>> jmdictFurigana() {
-        Map<String, List<SpicyJapaneseChineseProcessor.FuriganaSegment>> local = jmdictFurigana;
+    public FuriganaTable jmdictFurigana() {
+        FuriganaTable local = jmdictFurigana;
         if (local != null) return local;
         synchronized (this) {
             if (jmdictFurigana == null) jmdictFurigana = loadJmdictFurigana();
@@ -135,50 +147,48 @@ public final class JapaneseReadingEngine {
         trimPending = false;
     }
 
-    private static Map<String, List<SpicyJapaneseChineseProcessor.FuriganaSegment>> loadJmdictFurigana() {
-        HashMap<String, List<SpicyJapaneseChineseProcessor.FuriganaSegment>> out = new HashMap<>();
-        try (InputStream in = JapaneseReadingEngine.class.getResourceAsStream("JmdictFurigana.txt.gz")) {
-            if (in == null) return out;
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(new GZIPInputStream(in), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (!line.isEmpty() && line.charAt(0) == '\uFEFF') line = line.substring(1);
-                    int first = line.indexOf('|');
-                    int second = first < 0 ? -1 : line.indexOf('|', first + 1);
-                    if (first <= 0 || second <= first + 1 || second >= line.length() - 1) continue;
-                    String surface = line.substring(0, first);
-                    String reading = line.substring(first + 1, second);
-                    List<SpicyJapaneseChineseProcessor.FuriganaSegment> segments =
-                            parseJmdictSpanSpec(line.substring(second + 1));
-                    if (segments.isEmpty()) continue;
-                    String key = kataToHira(surface) + "|" + kataToHira(reading);
-                    if (!out.containsKey(key)) out.put(key, segments);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        return out;
+    private static FuriganaTable loadJmdictFurigana() {
+        FuriganaTable.Builder out = new FuriganaTable.Builder();
+        readJmdict("JmdictFurigana.txt.gz", line -> {
+            int first = line.indexOf('|');
+            int second = first < 0 ? -1 : line.indexOf('|', first + 1);
+            if (first <= 0 || second <= first + 1 || second >= line.length() - 1) return;
+            List<SpicyJapaneseChineseProcessor.FuriganaSegment> segments =
+                    parseJmdictSpanSpec(line.substring(second + 1));
+            if (segments.isEmpty()) return;
+            // Builder.add keeps the first entry for a key.
+            out.add(kataToHira(line.substring(0, first)) + "|"
+                    + kataToHira(line.substring(first + 1, second)), segments);
+        });
+        return out.build();
     }
 
     private static Map<String, String> loadJmdictPreferredReadings() {
         HashMap<String, String> out = new HashMap<>();
-        try (InputStream in = JapaneseReadingEngine.class.getResourceAsStream("JmdictPreferredReadings.txt.gz")) {
-            if (in == null) return out;
+        readJmdict("JmdictPreferredReadings.txt.gz", line -> {
+            int separator = line.indexOf('|');
+            if (separator <= 0 || separator >= line.length() - 1) return;
+            out.put(kataToHira(line.substring(0, separator)),
+                    kataToHira(line.substring(separator + 1)));
+        });
+        return out;
+    }
+
+    /** Feeds each line of a gzipped JMdict table from the language model pack, BOM stripped. A
+     *  missing pack or a damaged file just yields fewer (or no) lines. */
+    private static void readJmdict(String name, Consumer<String> onLine) {
+        try (InputStream in = LanguageModelPack.openOrClasspath("jmdict/" + name, "/jmdict/" + name)) {
+            if (in == null) return;
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(new GZIPInputStream(in), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (!line.isEmpty() && line.charAt(0) == '\uFEFF') line = line.substring(1);
-                    int separator = line.indexOf('|');
-                    if (separator <= 0 || separator >= line.length() - 1) continue;
-                    out.put(kataToHira(line.substring(0, separator)),
-                            kataToHira(line.substring(separator + 1)));
+                    onLine.accept(line);
                 }
             }
         } catch (Throwable ignored) {
         }
-        return out;
     }
 
     static List<SpicyJapaneseChineseProcessor.FuriganaSegment> parseJmdictSpanSpec(String spec) {

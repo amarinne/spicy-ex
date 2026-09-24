@@ -456,6 +456,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         SharedPreferences prefs = activity.getSharedPreferences("SpotifyPlus", Context.MODE_PRIVATE);
         preferences = prefs;
         renderConfig = LyricsRenderConfig.read(activity, config);
+        // SettingsStore normally attaches this context when the settings panel is opened, but
+        // lyrics can be mounted first (or restored from a warm Spotify process). Attach it here as
+        // well so post-install model packs are visible to the tokenizer/detector on every entry
+        // path, not only after the user has visited Settings.
+        com.eza.spicyex.lyrics.LanguageModelPack.attachContext(activity);
+        com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.attachContext(activity);
+        com.eza.spicyex.lyrics.LanguageModelPack.setReadyListener(
+                () -> handler.post(this::reprocessForInstalledLanguageModels));
         autoResumeFollow = config.get(Settings.AUTO_RESUME_FOLLOW);
         slideAnimationEnabled = readSlideEnabled();
         transliterationSession = new LyricsTransliterationSession(
@@ -2790,6 +2798,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             updateToggleVisuals();
             renderDocument();
         }
+    }
+
+    /**
+     * A downloaded language pack changes the tokenizer and dictionary underneath an already
+     * mounted document. A plain redraw used to reuse its old, often empty, Sound projection, so
+     * installing the pack looked successful in Settings while furigana/reading never appeared
+     * until the next track or a manual toggle. Invalidate only the local Sound projection and run
+     * the normal serialized local pipeline again; translations and canonical lyrics stay intact.
+     */
+    private void reprocessForInstalledLanguageModels() {
+        if (!running || document == null || document.lines == null || document.lines.isEmpty()) return;
+        if (!showRomanization()) {
+            // The pack supplies data, not an implicit visibility preference.
+            updateToggleVisuals();
+            return;
+        }
+        LyricsDocumentProcessor.resetSoundLayer(activity.getApplicationContext(), document);
+        reprocessLocalModeOnly("language models installed");
     }
 
     private void reprocessTranslationForConfig(String reason) {

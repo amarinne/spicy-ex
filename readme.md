@@ -50,14 +50,21 @@ Spotify enforces Play Integrity during login. Bypass this using the **Downgrade-
 JDK 21 and an Android SDK are required. Gradle wrapper builds should be run with JDK 21; newer JDKs can fail during build-script compilation. The Android app still targets Java 11 bytecode unless that is changed intentionally.
 
 ```sh
-# Build both debug flavors and copy stamped APKs into artifacts/.
-JAVA_HOME=/path/to/jdk21 ./gradlew :app:assembleLiteDebug :app:assembleFullDebug
+# Build the debug APK and copy the stamped APK into artifacts/.
+JAVA_HOME=/path/to/jdk21 ./gradlew :app:assembleDebug
 
-# Run the primary JVM unit suite (current tests exercise full-flavor romanization code).
-JAVA_HOME=/path/to/jdk21 ./gradlew :app:testFullDebugUnitTest
+# Run the primary JVM unit suite.
+JAVA_HOME=/path/to/jdk21 ./gradlew :app:testDebugUnitTest
 ```
 
-`lite` disables transliteration/translation features; `full` enables them and includes the heavier language dependencies. For app-code changes, validate both flavors unless the change is demonstrably scoped to one source set.
+The single APK includes transliteration, translation, language dictionaries and extra fonts.
+
+Language models (kuromoji, CharSoup, JMdict) are not in the APK; they are
+delivered as a separate pack that the app downloads from Settings. Create the
+versioned archive with `:app:packageLanguageModelPack` (JMdict sources live in
+`app/language-models/`), publish it over HTTPS, and point builds at it with
+`-PLANGUAGE_MODEL_PACK_URL=...` and its SHA-256 in
+`-PLANGUAGE_MODEL_PACK_SHA256=...`.
 
 Docs-only changes do not require unit/device testing. Device behavior remains the final validation path for UI, hook, and Spotify-host integration changes.
 

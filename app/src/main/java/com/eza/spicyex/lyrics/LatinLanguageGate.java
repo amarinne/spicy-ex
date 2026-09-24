@@ -7,7 +7,7 @@ import com.eza.spicyex.lyrics.session.DetectionResult;
  *
  * <p>The real work lives in {@link LanguageDetectorManager}: one lazy compact CharSoup model
  * with use-counted release on memory trim. This class only exposes the
- * shared entry points used from the main source set. Lite provides the same signatures as no-ops.
+ * shared entry points used from the main source set.
  */
 public final class LatinLanguageGate {
     private LatinLanguageGate() {

@@ -3,6 +3,7 @@ package com.eza.spicyex;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.eza.spicyex.lyrics.LanguageModelPack;
 import com.eza.spicyex.settings.TypedStore;
 
 import java.util.Map;
@@ -14,14 +15,19 @@ import java.util.Map;
  */
 public final class SettingsStore implements TypedStore {
     private final SharedPreferences prefs;
+    private final Context context;
 
     public SettingsStore(Context context) {
         // NB: not getApplicationContext() — it's null during Application.attach on the hook path.
-        this(context.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE));
+        this(context.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE), context);
     }
 
-    SettingsStore(SharedPreferences prefs) {
+    SettingsStore(SharedPreferences prefs, Context context) {
         this.prefs = prefs;
+        this.context = context;
+        if (context != null) {
+            com.eza.spicyex.lyrics.LanguageModelPack.attachContext(context);
+        }
         migrateLikedSongsButton(prefs);
         migrateLineBlurLevel(prefs);
         migratePanelMediaControls(prefs);
@@ -91,6 +97,10 @@ public final class SettingsStore implements TypedStore {
 
     @Override
     public void putBoolean(Settings.BooleanSetting setting, boolean value) {
+        if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) {
+            // The row is intentionally a tap-to-download action rather than a persisted toggle.
+            return;
+        }
         prefs.edit().putBoolean(setting.key, value).apply();
     }
 

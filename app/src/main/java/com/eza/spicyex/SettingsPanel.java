@@ -3,17 +3,21 @@ package com.eza.spicyex;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.CacheStoragePolicy;
+import com.eza.spicyex.lyrics.LanguageModelPack;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
 import com.eza.spicyex.lyrics.SpicyManualTokenStore;
 import com.eza.spicyex.settings.PanelDialogs;
@@ -91,6 +95,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
      * repaint a detached badge.
      */
     private volatile boolean panelAttached;
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
 
     /** Locale lookup for the pure policy layer; reads the current uiStrings on every call. */
     private final PanelStrings panelStrings = new PanelStrings() {
@@ -230,6 +235,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         PanelSnapshot.Builder snapshot = PanelSnapshot.builder()
                 .translationAvailable(FeatureAvailability.translationAvailable())
                 .transliterationAvailable(FeatureAvailability.transliterationAvailable())
+                .languageModelReady(com.eza.spicyex.lyrics.LanguageModelPack.isReady())
                 .appleFontAvailable(FeatureAvailability.appleFontAvailable())
                 .animatedBackgroundAvailable(FeatureAvailability.animatedBackgroundAvailable())
                 .spicySourceEnabled(com.eza.spicyex.lyrics.session.LyricsSourcePreferences.sourceEnabled(
@@ -358,6 +364,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         }
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             spicyTokenRow(content);
+            return;
+        }
+        if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) {
+            downloadLanguageModelsRow(content);
             return;
         }
         // Renderer dispatch follows the UI schema; composite rows above stay hand-built.
@@ -631,6 +641,90 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                 masked.isEmpty() ? uiStrings.get("settings_spicy_token_absent", "Not set") : masked,
                 false, Settings.SPICY_MANUAL_TOKEN.key, v -> dialogs.promptSpicyToken(),
                 actions.toArray(new AiSettingsRows.IconAction[0]));
+    }
+
+    private void refreshLanguageModelDownloadStatus() {
+        if (!panelAttached) return;
+        LanguageModelPack.DownloadStatus status = LanguageModelPack.status();
+        // Rebuild once more after the worker switches to READY or ERROR; otherwise the polling
+        // loop would stop before the terminal state became visible in the panel.
+        rebuildSection(Settings.TRANSLITERATION);
+        if (status.phase == LanguageModelPack.Phase.DOWNLOADING) {
+            uiHandler.postDelayed(this::refreshLanguageModelDownloadStatus, 500);
+        }
+    }
+
+    private void downloadLanguageModelsRow(LinearLayout content) {
+        LanguageModelPack.DownloadStatus status = LanguageModelPack.status();
+        LinearLayout row = style.newRow(content);
+        row.setTag(PanelTags.row(Settings.DOWNLOAD_LANGUAGE_MODELS.key));
+        row.setOnClickListener(v -> {
+            if (LanguageModelPack.isReady()) {
+                new PanelDialog(context, uiStrings.get("settings_language_model_delete_title", "Delete language model"))
+                        .paragraph(uiStrings.get("settings_language_model_delete_desc",
+                                "Delete the downloaded language model pack?"))
+                        .primary(uiStrings.get("settings_language_model_delete", "Delete"), () -> {
+                            LanguageModelPack.deleteDownload();
+                            rebuildSection(Settings.TRANSLITERATION);
+                        })
+                        .secondary(uiStrings.get("settings_ai_cancel", "Cancel"), null)
+                        .show();
+                return;
+            }
+            if (status.phase == LanguageModelPack.Phase.ERROR) {
+                LanguageModelPack.clearTransientState();
+            }
+            LanguageModelPack.requestDownload();
+            rebuildSection(Settings.TRANSLITERATION);
+            refreshLanguageModelDownloadStatus();
+        });
+
+        TextView title = style.text(uiStrings.setting(Settings.DOWNLOAD_LANGUAGE_MODELS), 16, PanelStyle.COL_TITLE, false);
+        LinearLayout info = new LinearLayout(context);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.addView(title);
+
+        String summary;
+        String small = "";
+        if (status.phase == LanguageModelPack.Phase.READY) {
+            summary = uiStrings.get("settings_language_model_installed", "Downloaded");
+            small = uiStrings.get("settings_language_model_tap_to_delete", "Tap to delete");
+        } else if (status.phase == LanguageModelPack.Phase.DOWNLOADING) {
+            summary = uiStrings.get("settings_language_model_downloading", "Downloading…");
+            small = uiStrings.get("settings_language_model_progress", status.progressPercent + "%");
+        } else if (status.phase == LanguageModelPack.Phase.ERROR) {
+            summary = uiStrings.get("settings_language_model_failed", "Download failed");
+            small = status.errorCode.isEmpty()
+                    ? uiStrings.get("settings_language_model_retry", "Tap to retry")
+                    : status.errorCode;
+        } else {
+            summary = uiStrings.get("settings_language_model_idle", "Tap to download");
+            small = uiStrings.get("settings_language_model_size", "Optional language pack");
+        }
+
+        TextView statusView = style.text(summary, 12, PanelStyle.COL_SUMMARY, false);
+        statusView.setPadding(0, style.dp(2), 0, 0);
+        info.addView(statusView);
+
+        if (status.phase == LanguageModelPack.Phase.DOWNLOADING || status.phase == LanguageModelPack.Phase.ERROR) {
+            ProgressBar progress = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
+            progress.setMax(100);
+            progress.setProgress(status.phase == LanguageModelPack.Phase.DOWNLOADING ? status.progressPercent : 0);
+            progress.setIndeterminate(status.phase == LanguageModelPack.Phase.DOWNLOADING && status.progressPercent <= 0);
+            progress.setPadding(0, style.dp(8), 0, style.dp(6));
+            info.addView(progress, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+
+        if (!small.isEmpty()) {
+            TextView extra = style.text(small, 11, status.phase == LanguageModelPack.Phase.ERROR ? 0xFFFFB4B4 : PanelStyle.COL_SECTION, false);
+            extra.setPadding(0, style.dp(2), 0, 0);
+            info.addView(extra);
+        }
+
+        row.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(style.kindView(Kind.LANGUAGES, PanelStyle.COL_ACCENT, 18),
+                new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
     }
 
     // --- Diagnostics card ---
