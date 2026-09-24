@@ -409,4 +409,7 @@
     <string name="settings_option_lyrics_source_override_qq_music">QQ Music</string>
     <string name="settings_option_lyrics_source_override_musixmatch">Musixmatch</string>
     <string name="settings_label_lyrics_karaoke_original_lyrics">Show original lyrics for karaoke versions</string>
+    <string name="settings_label_lyric_load_lift_animation">Rise in on load</string>
+    <string name="settings_label_apple_cascade_speed">Slide speed</string>
+    <string name="settings_label_apple_spring_strength">Spring strength</string>
 </resources>

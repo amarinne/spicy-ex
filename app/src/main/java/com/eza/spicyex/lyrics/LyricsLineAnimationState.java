@@ -93,7 +93,15 @@ public final class LyricsLineAnimationState {
             float eased = LyricAnimations.easeSinOut(progress);
             brightnessTarget = 0.42f + 0.58f * eased * eased;
         }
-        float scaleTarget = active ? (spotlight ? 1.04f : 1.0f) : 0.95f;
+        float scaleTarget;
+        if (active) {
+            float baseScale = 1.0f;
+            // Kept small: the emphasis now goes to held words (GlowFlexbox word emphasis).
+            float maxScale = spotlight ? 1.05f : 1.03f;
+            scaleTarget = baseScale + (maxScale - baseScale) * LyricAnimations.easeSinOut(progress);
+        } else {
+            scaleTarget = 0.95f;
+        }
         LyricsLineAnimationState state = line == null ? new LyricsLineAnimationState() : state(line);
         state.set(active, sung, spotlight, progress, gradient, glowTarget, brightnessTarget, scaleTarget);
         return state;
