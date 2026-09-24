@@ -503,4 +503,22 @@
     <string name="lyrics_ad_music">Playing music instead · lyrics resume after the ad</string>
     <string name="lyrics_ad_resume">Lyrics resume after the ad</string>
     <string name="lyrics_ad_position" formatted="false">%1$d of %2$d</string>
+    <string name="share_hint">Swipe up to add lyrics · Tap to toggle translation</string>
+    <string name="share_design_glass">Glass</string>
+    <string name="share_design_classic">Classic</string>
+    <string name="share_design_minimal">Minimal</string>
+    <string name="share_design_polaroid">Polaroid</string>
+    <string name="share_backdrop_blur">Blurred artwork</string>
+    <string name="share_backdrop_lyrics">Lyrics background</string>
+    <string name="share_backdrop_artist">Artist photo</string>
+    <string name="share_spotify_code">Spotify Code</string>
+    <string name="share_code_unavailable">Spotify Code unavailable</string>
+    <string name="share_save">Save</string>
+    <string name="share_share">Share</string>
+    <string name="share_full">No room for more lines on this card</string>
+    <string name="share_artist_unavailable">Artist photo unavailable</string>
+    <string name="share_saved">Saved to Pictures/SpicyEx</string>
+    <string name="share_save_failed">Could not save the card</string>
+    <string name="share_chooser">Share lyric</string>
+    <string name="settings_label_lyrics_long_press_share">Long-press a line to share</string>
 </resources>

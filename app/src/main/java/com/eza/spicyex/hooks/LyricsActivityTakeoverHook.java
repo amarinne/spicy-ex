@@ -220,9 +220,11 @@ final class LyricsActivityTakeoverHook {
             return;
         }
         if (!shouldInterceptLyricsBack(nativeLyricsSessionActive, hasNativeSpicyRoot(activity))) return;
+        param.setResult(null);
+        // The lyrics screen closes its own layers first (share sheet, line picker, editor).
+        if (shellConsumesBack(activity)) return;
         markExplicitLyricsExit(activity);
         activity.finish();
-        param.setResult(null);
     }
 
     // getDeclaredMethod lookups are exact-class only, so an onBackPressed
@@ -304,6 +306,10 @@ final class LyricsActivityTakeoverHook {
                     unregisterSystemBackCallback(activity);
                     return;
                 }
+                // This callback outranks everything else on the dispatcher, so the layout editor
+                // never saw a back press and back closed the whole lyrics screen mid-edit. Ask
+                // the shell first: the editor's sheet closes, then the editor, then the screen.
+                if (shellConsumesBack(activity)) return;
                 markExplicitLyricsExit(activity);
                 activity.finish();
             };
@@ -957,6 +963,15 @@ final class LyricsActivityTakeoverHook {
         }
     }
 
+    private boolean shellConsumesBack(Activity activity) {
+        try {
+            FrameLayout content = activity.findViewById(android.R.id.content);
+            View root = content == null ? null : content.findViewWithTag(TAG_NATIVE_SPICY_ROOT);
+            return root instanceof NativeSpicyShellView && ((NativeSpicyShellView) root).consumeBack();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
 
     private boolean hasNativeSpicyRoot(Activity activity) {
         try {

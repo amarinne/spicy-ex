@@ -123,6 +123,7 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
      *  hot, instead of continuing to add GPU load on top of whatever caused it. */
     private boolean thermalThrottled;
     private PowerManager.OnThermalStatusChangedListener thermalListener;
+    private float baseBrightness = 1f;
 
     public AmbientArtworkBackgroundView(Context context, boolean dark) {
         super(context);
@@ -136,6 +137,7 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
         invalidate();
     }
     public void setDarkening(float brightness, ColorFilter filter) {
+        baseBrightness = brightness;
         shader.setFloatUniform("brightness", brightness);
         // Animated shader receives brightness directly; only the fallback canvas needs a filter.
         fallback.setColorFilter(filter);
@@ -177,6 +179,61 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
         // Dropping references lets RenderThread finish using the previous texture before collection.
         paint.setShader(shader);
         schedule(); invalidate();
+    }
+
+    /**
+     * One frame of this background at {@code width} x {@code height}, for the lyric share card.
+     * Renders with its own copy of the shader (so the live view's uniforms are never touched from
+     * another thread) through an offscreen HardwareRenderer, and softens it like the live layer.
+     * Null when there is no artwork texture yet or the platform refuses.
+     */
+    public Bitmap snapshot(int width, int height) {
+        Bitmap source = texture;
+        if (source == null || source.isRecycled()) return null;
+        android.media.ImageReader reader = null;
+        HardwareRenderer renderer = null;
+        try {
+            RuntimeShader copy = new RuntimeShader(AGSL);
+            BitmapShader input = new BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            input.setFilterMode(BitmapShader.FILTER_MODE_LINEAR);
+            copy.setInputShader("image", input);
+            copy.setFloatUniform("resolution", width, height);
+            copy.setFloatUniform("time", (float) elapsedSeconds);
+            copy.setFloatUniform("dark", 0f);
+            copy.setFloatUniform("brightness", baseBrightness);
+            Paint p = new Paint(Paint.FILTER_BITMAP_FLAG);
+            p.setShader(copy);
+            RenderNode node = new RenderNode("ambientSnapshot");
+            node.setPosition(0, 0, width, height);
+            node.setRenderEffect(RenderEffect.createBlurEffect(9f, 9f, Shader.TileMode.CLAMP));
+            RecordingCanvas canvas = node.beginRecording();
+            canvas.drawRect(0, 0, width, height, p);
+            node.endRecording();
+            reader = android.media.ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1,
+                    android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE
+                            | android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT);
+            renderer = new HardwareRenderer();
+            renderer.setSurface(reader.getSurface());
+            renderer.setContentRoot(node);
+            renderer.createRenderRequest().setWaitForPresent(true).syncAndDraw();
+            try (android.media.Image image = reader.acquireNextImage()) {
+                if (image == null) return null;
+                android.hardware.HardwareBuffer buffer = image.getHardwareBuffer();
+                if (buffer == null) return null;
+                try {
+                    Bitmap wrapped = Bitmap.wrapHardwareBuffer(buffer,
+                            ColorSpace.get(ColorSpace.Named.SRGB));
+                    return wrapped == null ? null : wrapped.copy(Bitmap.Config.ARGB_8888, false);
+                } finally {
+                    buffer.close();
+                }
+            }
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            if (renderer != null) renderer.destroy();
+            if (reader != null) reader.close();
+        }
     }
 
     public void release() {

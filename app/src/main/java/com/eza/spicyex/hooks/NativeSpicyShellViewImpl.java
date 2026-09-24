@@ -261,6 +261,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final LyricsSettingsDialogController settingsDialogController;
     private final LyricsFollowState followState = new LyricsFollowState();
     private final LyricsShellEmptyStateController emptyStateController;
+    /** Lazily built: the long-press-to-share preview is opened far less often than the screen itself. */
+    private LyricsShareCardController shareCardController;
     private LyricsRowMountController rowMountController;
     private LinearLayout contentColumn;
     /** Non-null only in the adaptive two-column landscape mode; owns header/lyrics/status. */
@@ -439,6 +441,17 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     };
 
+
+    boolean consumeBack() {
+        return consumeShareSheetBack();
+    }
+
+    /** Back closes the lyric share sheet first, like any other sheet over the lyrics. */
+    private boolean consumeShareSheetBack() {
+        if (shareCardController == null || !shareCardController.isShowing()) return false;
+        shareCardController.dismiss();
+        return true;
+    }
     private boolean isLandscape() {
         return getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
     }
@@ -556,6 +569,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 activity, frameScheduler, ambientController, host, this::onSettingsClosed, TAG);
         this.emptyStateController = new LyricsShellEmptyStateController(activity, config, textFactory);
         this.shellLifecycle = new LyricsShellLifecycle(activity, () -> {
+            if (consumeShareSheetBack()) return;
             host.markExplicitLyricsExit(activity);
             activity.finish();
         });
@@ -913,7 +927,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 config,
                 followState::holdUntil,
                 followState::setTouching,
-                this::seekNearestLineAt);
+                this::seekNearestLineAt,
+                this::shareLyricLineAt);
         lyricsScroll.setOnTouchListener((view, event) -> {
             if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN
                     || event.getActionMasked() == android.view.MotionEvent.ACTION_MOVE) {
@@ -2769,6 +2784,55 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             }
         }
         return bestIndex;
+    }
+
+    /** Long-press-to-share: quotes the nearest lyric row, or falls back to a plain track card
+     *  when there's no usable line under the touch (no document, or an empty/dot row). */
+    /** The mounted lyric row actually under a scroll-view touch Y (with a little slack), or -1. */
+    private int appliedLineIndexUnder(float yInScroll) {
+        if (document == null || document.appliedLines == null || scrollController == null) return -1;
+        int contentY = scrollController.contentYForTouch(yInScroll);
+        int slack = dp(8);
+        for (int i : rowMountController.mountedIndices()) {
+            if (i < 0 || i >= document.appliedLines.size()) continue;
+            AppliedLine line = document.appliedLines.get(i);
+            View row = line == null ? null : rowMountController.attachedRowView(line);
+            if (row == null || row.getHeight() <= 0) continue;
+            int center = scrollController.rowCenterInContent(row);
+            int half = row.getHeight() / 2 + slack;
+            if (contentY >= center - half && contentY <= center + half) return i;
+        }
+        return -1;
+    }
+
+    private void shareLyricLineAt(float yInScroll) {
+        if (config == null || !Boolean.TRUE.equals(config.get(Settings.LONG_PRESS_SHARE))) return;
+        SpotifyTrack track = currentTrackThrottled();
+        if (track == null) return;
+        // Only a press on a lyric line opens the sheet. The nearest-row lookup used to pick a line
+        // however far away the touch was, so holding the empty space below the last line (or the
+        // credits) opened it too.
+        if (document != null && document.appliedLines != null && !document.appliedLines.isEmpty()
+                && appliedLineIndexUnder(yInScroll) < 0) {
+            return;
+        }
+        // Don't share during ads - only share actual songs
+        if (isAdTrack(track)) return;
+        if (shareCardController == null) {
+            shareCardController = new LyricsShareCardController(activity);
+            shareCardController.setBackgroundSnapshot(
+                    (w, h) -> ambientController.snapshotBackground(w, h));
+        }
+        Bitmap art = SpotifyArtworkCache.snapshotLarge(track.imageId, track.uri, dp(420));
+        int index = appliedLineIndexUnder(yInScroll);
+        AppliedLine line = (document != null && index >= 0 && index < document.appliedLines.size())
+                ? document.appliedLines.get(index) : null;
+        if (line != null && line.text != null && !line.text.trim().isEmpty()) {
+            shareCardController.showForLine(this, document, track, art, index,
+                    rowMountController.attachedRowView(line));
+        } else {
+            shareCardController.showTrackCard(this, track, art);
+        }
     }
 
     private void seekToLine(AppliedLine line, int index) {

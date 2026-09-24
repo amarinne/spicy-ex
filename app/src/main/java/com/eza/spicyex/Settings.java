@@ -75,6 +75,13 @@ public final class Settings {
             "mini_player_lyrics_icon", LYRICS, "Show lyrics icon on mini player", false
     );
 
+    // Holding a lyric line opens a share card for it (see LyricsShareCardController). Off by
+    // default: long-pressing the lyrics did nothing before, and a held finger while reading
+    // should not start throwing up sheets unexpectedly.
+    public static final Setting<Boolean> LONG_PRESS_SHARE = boolSetting(
+            "lyrics_long_press_share", LYRICS, "Long-press a line to share", false
+    );
+
     // What to do while a spotify:ad: track plays - see AdMuteController. Mute silences only
     // Spotify's own AudioTrack (the phone's media volume is untouched); music additionally fades
     // in soft generated instrumental music for the length of the ad break.
