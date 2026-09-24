@@ -1345,12 +1345,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return Math.signum(dx) * (bound + (ax - bound) * 0.3f);
     }
 
+    // Matches AdMuteController's own detection - Spotify's ad tracks use this URI scheme.
+    private static boolean isAdTrack(SpotifyTrack track) {
+        return track != null && track.uri != null && track.uri.startsWith("spotify:ad:");
+    }
+
     private void updateState(float deltaSeconds) {
         SpotifyTrack track = currentTrackThrottled();
         boolean playingNow = host.isPlayerActuallyPlaying();
         ambientController.setPlaying(playingNow);
         updateJumpToCurrentVisibility();
         updateToggleSpinners();
+        // Ad break: Spotify models it as an ordinary track under a spotify:ad: URI. It has its
+        // own title/artwork (whatever the ad creative provides), which is worth showing rather
+        // than hiding, so it flows through the normal per-track update below like any other
+        // track; only the seek/skip-gap chip is suppressed, since seeking within an ad doesn't
+        // mean anything (AdMuteController separately mutes its AudioTrack using the same signal).
+        boolean adTrack = isAdTrack(track);
+        if (adTrack) skipGapController.update(false);
         if (track == null) {
             setTextIfChanged(title, "Waiting for Spotify track…");
             setTextIfChanged(subtitle, "Player state hook has not emitted yet");
@@ -1387,10 +1399,20 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             String id = trackIdFromUri(uri);
             ambientController.updateForTrack(track, () -> running);
             XpLog.log(TAG + " active track uri=" + uri + " title=\"" + safe(track.title) + "\"");
-            showLoading("Loading lyrics…");
-            loadLyrics(track, id);
+            if (adTrack) {
+                // Ads carry no lyrics: no loading skeleton, just an empty lyrics area. Title and
+                // artwork update below via the per-frame path.
+                loadingTrackId = "";
+                rowMountController.reset();
+                followState.resetActive();
+                emptyStateController.showAdState(lyricsScroll, lyricsColumn);
+            } else {
+                showLoading("Loading lyrics…");
+                loadLyrics(track, id);
+            }
         }
         long pos = playbackClock.getPosition(track, playingNow);
+        if (adTrack) updateAdCard(track, pos);
 
         String trackTitle = emptyFallback(track.title, "Unknown title");
         String trackArtist = emptyFallback(track.artist, "Unknown artist");
@@ -1437,7 +1459,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 int nextActive = LyricTimeline.findPrimaryActiveRow(document.appliedLines, lyricPos);
                 boolean drasticSeek = lastLyricPositionMs >= 0 && Math.abs(lyricPos - lastLyricPositionMs) > 1000;
                 lastLyricPositionMs = lyricPos;
-                updateSkipGap(track, uri, lyricPos, playingNow);
+                if (!adTrack) updateSkipGap(track, uri, lyricPos, playingNow);
                 maybeAutoResumeFollow(nextActive, track, lyricPos);
                 if (nextActive != followState.activeIndex() || drasticSeek) {
                     setActiveLine(nextActive, lyricPos, track, drasticSeek);
@@ -1477,6 +1499,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             setTextIfChanged(status, (playingNow ? "Playing" : "Paused") + " • fetching lyrics for " + shortTrackId(uri));
         }
         updateFrameDemand(playingNow, rendererPending);
+    }
+
+    /** "1 of 3 · 0:23" under the ad card: where this ad sits in the break and how long it has left. */
+    private void updateAdCard(SpotifyTrack track, long positionMs) {
+        StringBuilder text = new StringBuilder();
+        AdBreakInfo info = AdBreakInfo.current(track.uri);
+        if (info != null && info.known()) {
+            text.append(com.eza.spicyex.UiLanguage.strings(activity, config.get(Settings.UI_LANGUAGE))
+                    .get("lyrics_ad_position", "%1$d of %2$d")
+                    .replace("%1$d", String.valueOf(info.index))
+                    .replace("%2$d", String.valueOf(info.count)));
+        }
+        if (track.duration > 0 && positionMs >= 0) {
+            long left = Math.max(0L, (track.duration - positionMs + 999L) / 1000L);
+            if (text.length() > 0) text.append("  ·  ");
+            text.append(left / 60).append(':').append(left % 60 < 10 ? "0" : "").append(left % 60);
+        }
+        emptyStateController.updateAdProgress(text.toString());
     }
 
     /**

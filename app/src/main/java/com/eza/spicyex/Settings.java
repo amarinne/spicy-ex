@@ -75,6 +75,24 @@ public final class Settings {
             "mini_player_lyrics_icon", LYRICS, "Show lyrics icon on mini player", false
     );
 
+    // What to do while a spotify:ad: track plays - see AdMuteController. Mute silences only
+    // Spotify's own AudioTrack (the phone's media volume is untouched); music additionally fades
+    // in soft generated instrumental music for the length of the ad break.
+    public static final String AD_MODE_OFF = "Off";
+    public static final String AD_MODE_MUTE = "Mute";
+    public static final String AD_MODE_MUSIC = "Play music instead";
+    public static final Setting<String> AD_MODE = enumSetting(
+            "ad_mode", LYRICS, "Ads", AD_MODE_OFF,
+            AD_MODE_OFF, AD_MODE_MUTE, AD_MODE_MUSIC
+    );
+    // Style of the music that replaces ads (AD_MODE_MUSIC); Random picks one per ad break.
+    public static final Setting<String> AD_MUSIC_THEME = enumSetting(
+            "ad_music_theme", LYRICS, "Ad music style", "Random",
+            "Random", "Lofi", "Cafe jazz", "Bossa nova", "Ambient"
+    );
+    /** Pre-AD_MODE boolean; read once by SettingsStore#migrateAdMode. */
+    public static final String LEGACY_AUTO_MUTE_ADS = "auto_mute_ads";
+
     public static final IntegerSetting SYNC_OFFSET_MS = intSetting(
             "lyric_sync_offset_ms", LYRICS, "Sync offset",
             0, -5000, 5000, 100

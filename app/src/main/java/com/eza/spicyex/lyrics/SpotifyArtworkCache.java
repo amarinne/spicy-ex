@@ -81,10 +81,22 @@ public final class SpotifyArtworkCache {
                 }
                 normalized = "spotify:image:" + normalized.substring(start, end);
             }
+            // imageId may already be a full https URL (ad creatives, remote playback) —
+            // compare directly in that case too.
+            if (imageId.startsWith("http")) {
+                if (normalized.equals(imageId)) return true;
+            }
             return normalized.equals("spotify:image:"+imageId)
                     || normalized.equals("https://i.scdn.co/image/"+imageId)
                     || normalized.equals(imageId);
         }
-        return trackUri != null && trackUri.startsWith("spotify:track:") && trackUri.equals(mediaId);
+        // No embedded URI to compare (remote/ad playback): fall back to track identity.
+        // Ads use spotify:ad: URIs, so both prefixes must match here — otherwise ad artwork
+        // captured from MediaMetadata could never be served back.
+        if (trackUri != null && mediaId != null && trackUri.equals(mediaId)) {
+            return trackUri.startsWith("spotify:track:") || trackUri.startsWith("spotify:ad:")
+                    || trackUri.startsWith("spotify:episode:");
+        }
+        return false;
     }
 }

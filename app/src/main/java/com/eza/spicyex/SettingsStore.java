@@ -66,6 +66,21 @@ public final class SettingsStore implements TypedStore {
      * Bool-to-enum migration for the blur level: stored {@code true} keeps the legacy look as
      * {@code Slight}, {@code false} becomes {@code Off}. Already-migrated strings pass through.
      */
+    /** The old "Auto-mute ads" switch becomes the Mute choice of the ad mode. */
+    static synchronized void migrateAdMode(SharedPreferences prefs) {
+        if (!prefs.contains(Settings.LEGACY_AUTO_MUTE_ADS)) return;
+        boolean muted = false;
+        try {
+            muted = prefs.getBoolean(Settings.LEGACY_AUTO_MUTE_ADS, false);
+        } catch (ClassCastException ignored) {
+        }
+        SharedPreferences.Editor editor = prefs.edit().remove(Settings.LEGACY_AUTO_MUTE_ADS);
+        if (muted && !prefs.contains(Settings.AD_MODE.key)) {
+            editor.putString(Settings.AD_MODE.key, Settings.AD_MODE_MUTE);
+        }
+        editor.apply();
+    }
+
     static synchronized void migrateLineBlurLevel(SharedPreferences prefs) {
         if (!prefs.contains(Settings.ENABLE_LINE_BLUR.key)) return;
         Object raw = prefs.getAll().get(Settings.ENABLE_LINE_BLUR.key);

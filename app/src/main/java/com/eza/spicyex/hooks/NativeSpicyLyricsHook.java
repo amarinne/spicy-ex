@@ -88,6 +88,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             bridgeCoordinator = new SpicyLyricBridgeCoordinator(
                     lyricsSessionManager, applicationContext);
             bridgeCoordinator.start();
+            // Ad muting runs process-wide, not per screen: it applies to local playback
+            // everywhere while changing only Spotify's ad AudioTrack.
+            new AdMuteController(this, applicationContext).start();
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "main_process"));
         } else {
@@ -167,6 +170,10 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
 
     public boolean isPlayerActuallyPlaying() {
         return playbackBridge.isPlayerActuallyPlaying();
+    }
+
+    boolean isPlayerStatePaused() {
+        return playbackBridge.isPlayerStatePaused();
     }
 
     @Override

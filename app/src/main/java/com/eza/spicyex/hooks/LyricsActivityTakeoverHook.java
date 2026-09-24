@@ -566,6 +566,9 @@ final class LyricsActivityTakeoverHook {
      * carousel's own flexible zone immediately left of the device icon - encroaching there just
      * trims the track-title marquee a bit, it doesn't sit on top of a real control.
      */
+    // Smallest height each mini player bar has had: its normal, ad-free control-row height.
+    private static final java.util.Map<View, Integer> NORMAL_BAR_HEIGHT = new java.util.WeakHashMap<>();
+
     private void repositionMiniPlayerButton(View button, View bar, View content, int side,
                                              View connectButton, View carousel) {
         try {
@@ -586,7 +589,25 @@ final class LyricsActivityTakeoverHook {
                 x = barLeftInContent + bar.getWidth() - dp(PLAY_PAUSE_MARGIN_END_DP) - side * 3 - dp(8);
             }
             button.setX(x);
-            button.setY(barTopInContent + (bar.getHeight() - side) / 2f);
+            // Vertically: the bar's control row, not the whole bar. During an ad Spotify grows
+            // the bar (ad label/progress), and centring on that pushed the button up into the
+            // middle of it while the real controls stayed at the bottom.
+            int barHeight = bar.getHeight();
+            Integer normal = NORMAL_BAR_HEIGHT.get(bar);
+            if (barHeight > 0 && (normal == null || barHeight < normal)) {
+                NORMAL_BAR_HEIGHT.put(bar, barHeight);
+                normal = barHeight;
+            }
+            float centreY;
+            if (connectButton != null && connectButton.isShown() && connectButton.getHeight() > 0) {
+                int[] connLoc = new int[2];
+                connectButton.getLocationOnScreen(connLoc);
+                centreY = (connLoc[1] - contentLoc[1]) + connectButton.getHeight() / 2f;
+            } else {
+                int row = normal == null ? barHeight : normal;
+                centreY = barTopInContent + barHeight - row / 2f;
+            }
+            button.setY(centreY - side / 2f);
             // This button is a floating overlay, not a real MotionLayout participant, so the
             // marquee track title still scrolls straight into our button's space rather than
             // making room for it on its own. Push the carousel's own end margin out to actually

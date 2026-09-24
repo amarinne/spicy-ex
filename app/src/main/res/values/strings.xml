@@ -412,4 +412,21 @@
     <string name="settings_label_lyric_load_lift_animation">Rise in on load</string>
     <string name="settings_label_apple_cascade_speed">Slide speed</string>
     <string name="settings_label_apple_spring_strength">Spring strength</string>
+    <string name="settings_label_ad_mode">Ads</string>
+    <string name="settings_option_mute">Mute</string>
+    <string name="settings_option_play_music_instead">Play music instead</string>
+    <string name="settings_label_ad_music_theme">Ad music style</string>
+    <string name="settings_option_random">Random</string>
+    <string name="settings_option_lofi">Lo-fi</string>
+    <string name="settings_option_cafe_jazz">Cafe jazz</string>
+    <string name="settings_option_bossa_nova">Bossa nova</string>
+    <string name="settings_option_ambient">Ambient</string>
+    <string name="settings_action_ad_music_test">Play / stop ad replacement music</string>
+    <string name="settings_ad_music_test_playing">Playing a new piece</string>
+    <string name="settings_ad_music_test_stopped">Stopped</string>
+    <string name="lyrics_ad_title">Advertisement</string>
+    <string name="lyrics_ad_muted">Ad audio muted · lyrics resume after the ad</string>
+    <string name="lyrics_ad_music">Playing music instead · lyrics resume after the ad</string>
+    <string name="lyrics_ad_resume">Lyrics resume after the ad</string>
+    <string name="lyrics_ad_position" formatted="false">%1$d of %2$d</string>
 </resources>

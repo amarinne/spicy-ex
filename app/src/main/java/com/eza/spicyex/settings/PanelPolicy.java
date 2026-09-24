@@ -53,6 +53,9 @@ public final class PanelPolicy {
             return snapshot.animatedBackgroundAvailable()
                     && LyricsBackgroundStyle.isAnimated(snapshot.get(Settings.BACKGROUND_STYLE));
         }
+        if (setting == Settings.AD_MUSIC_THEME) {
+            return Settings.AD_MODE_MUSIC.equals(snapshot.get(Settings.AD_MODE));
+        }
         if (setting == Settings.LINE_SYNC_FILL) {
             return "Gradient wash".equals(snapshot.get(Settings.ANIMATION_STYLE));
         }

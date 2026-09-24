@@ -31,6 +31,7 @@ public final class SpotifyPlusConfig {
         SettingsStore.migrateLikedSongsButton(hostPrefs);
         SettingsStore.migrateLineBlurLevel(hostPrefs);
         SettingsStore.migrateSourceRankingLabel(hostPrefs);
+        SettingsStore.migrateAdMode(hostPrefs);
     }
 
     public static SpotifyPlusConfig from(Context context) {

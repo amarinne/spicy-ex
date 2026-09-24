@@ -48,6 +48,8 @@ public final class SettingsUiSchema {
             Settings.AUTO_RESUME_FOLLOW,
             Settings.AUTO_SKIP_INTRO_OUTRO,
             Settings.MINI_PLAYER_LYRICS_ICON,
+            Settings.AD_MODE,
+            Settings.AD_MUSIC_THEME,
             Settings.SYNC_OFFSET_MS,
             Settings.HYPERGLOW_ENABLED,
             // Lyrics sources
