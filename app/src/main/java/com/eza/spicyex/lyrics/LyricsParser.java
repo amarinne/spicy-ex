@@ -21,7 +21,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 
-/** Source adapters for Spicy API and LRCLIB lyric payloads. */
+/** Source adapters for remote (Apple Music, Spicy-shaped JSON) and LRCLIB lyric payloads. */
 public final class LyricsParser implements LyricsRepository.Parser {
     private static final String TAG = "[SpotifyPlusSpicyParser]";
     private static final Pattern LRC_TIMESTAMP = Pattern.compile("^\\[(\\d{1,3}):(\\d{2})(?:\\.(\\d{1,3}))?\\]\\s*(.*)$");
@@ -42,7 +42,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         JsonElement selected = envelope;
         if (envelope.isJsonObject() && envelope.getAsJsonObject().has("queries")) {
             selected = SpicyQueryEnvelope.result(envelope);
-            if (selected == null) throw new IllegalStateException("Spicy operation 0 missing");
+            if (selected == null) throw new IllegalStateException("Apple Music operation 0 missing");
         }
         JsonElement root = unpackSpicyPayloads(selected, metadata, false);
         JsonObject data = findLyricsData(root);
@@ -88,22 +88,27 @@ public final class LyricsParser implements LyricsRepository.Parser {
     @Override
     public LyricsDocument parseLrclibLyrics(Context context, SpotifyTrack track, String body) {
         JsonElement root = JsonParser.parseString(body);
-        JsonObject best = null;
+        List<JsonObject> candidates = new ArrayList<>();
         if (root.isJsonArray()) {
-            JsonArray array = root.getAsJsonArray();
-            for (JsonElement element : array) {
-                if (!element.isJsonObject()) continue;
-                JsonObject candidate = element.getAsJsonObject();
-                if (best == null) best = candidate;
-                if (!isBlank(Json.optString(candidate, "syncedLyrics"))) {
-                    best = candidate;
-                    break;
-                }
+            for (JsonElement element : root.getAsJsonArray()) {
+                if (element.isJsonObject()) candidates.add(element.getAsJsonObject());
             }
         } else if (root.isJsonObject()) {
-            best = root.getAsJsonObject();
+            candidates.add(root.getAsJsonObject());
         }
-        if (best == null) throw new IllegalStateException("no LRCLIB result");
+        return parseLrclibCandidates(context, track, candidates);
+    }
+
+    /**
+     * Builds a document from merged LRCLIB candidates gathered across query variants
+     * (raw title, normalized title, free-text fallback). Raw-variant results must come first;
+     * residual ties keep their order so exact remaster records win.
+     */
+    LyricsDocument parseLrclibCandidates(Context context, SpotifyTrack track, List<JsonObject> candidates) {
+        double trackDurationSec = track == null || track.duration <= 0 ? -1d : track.duration / 1000d;
+        int best = LrclibQueryPlanner.pickBest(candidates, trackDurationSec);
+        if (best < 0) throw new IllegalStateException("no LRCLIB result");
+        JsonObject chosen = candidates.get(best);
 
         LyricsDocument doc = new LyricsDocument();
         doc.trackId = trackIdFromUri(track == null ? "" : track.uri);
@@ -112,16 +117,35 @@ public final class LyricsParser implements LyricsRepository.Parser {
         doc.provider = "LRCLIB";
         doc.language = "";
 
-        String synced = Json.optString(best, "syncedLyrics");
+        String synced = Json.optString(chosen, "syncedLyrics");
         if (!isBlank(synced)) {
             doc.type = "Line";
             parseLrcLines(synced, doc);
         } else {
             doc.type = "Static";
-            parsePlainLines(Json.optString(best, "plainLyrics"), doc);
+            parsePlainLines(Json.optString(chosen, "plainLyrics"), doc);
         }
         finalizeParsedDocument(context, doc);
         return doc;
+    }
+
+    /**
+     * AMLL TTML DB adapter: word-timed community TTML becomes a {@code Word} document through
+     * the same finalizer as every other source, so downstream lanes see identical shape.
+     */
+    public LyricsDocument parseAmllTtml(Context context, SpotifyTrack track, String ttml) {
+        try {
+            LyricsDocument doc = AmllTtmlParser.parse(ttml,
+                    trackIdFromUri(track == null ? "" : track.uri),
+                    track == null ? 0 : Math.max(0, track.duration));
+            finalizeParsedDocument(context, doc);
+            return doc;
+        } catch (RuntimeException rethrown) {
+            throw rethrown;
+        } catch (Exception malformed) {
+            throw new IllegalStateException("AMLL TTML parse failed: " + malformed.getMessage(),
+                    malformed);
+        }
     }
 
     private void parseLrcLines(String synced, LyricsDocument doc) {

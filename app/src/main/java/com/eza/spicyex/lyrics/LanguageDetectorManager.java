@@ -113,8 +113,12 @@ final class LanguageDetectorManager {
 
         CharSoupHandle() throws java.io.IOException {
             long started = System.nanoTime();
-            model = CharSoupModel.loadFromClasspath(
-                    "/org/apache/tika/langdetect/charsoup/langdetect-20260320.bin");
+            try (java.io.InputStream input = LanguageModelPack.openOrClasspath(
+                    "tika/langdetect-20260320.bin",
+                    "/org/apache/tika/langdetect/charsoup/langdetect-20260320.bin")) {
+                if (input == null) throw new java.io.IOException("language model is not installed");
+                model = CharSoupModel.load(input);
+            }
             extractor = model.createExtractor();
             for (String language : Locale.getISOLanguages()) {
                 iso2.put(new Locale(language).getISO3Language(), language);

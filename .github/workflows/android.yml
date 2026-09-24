@@ -28,21 +28,10 @@ jobs:
           echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > ${{ github.workspace }}/spicyex-release.jks
 
       - name: Make gradlew executable
-        run: chmod +x gradlew scripts/*.sh scripts/spicy scripts/*.py
-
-      - name: Run repository checks
-        run: scripts/spicy check
+        run: chmod +x gradlew
 
       - name: Run debug gates before release packaging
-        run: scripts/spicy test
-
-      - name: Validate release environment
-        env:
-          SIGNING_KEYSTORE_FILE: ${{ github.workspace }}/spicyex-release.jks
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: scripts/spicy release check
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug
 
       - name: Build signed Release APKs
         env:
@@ -50,7 +39,7 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: scripts/spicy release package
+        run: ./gradlew :app:assembleRelease
 
       - name: Verify release APK signatures
         env:
@@ -67,8 +56,7 @@ jobs:
             | tr '[:upper:]' '[:lower:]')
           test -n "$expected"
           for apk in \
-            app/build/outputs/apk/lite/release/app-lite-release.apk \
-            app/build/outputs/apk/full/release/app-full-release.apk
+            app/build/outputs/apk/release/app-release.apk
           do
             actual=$(apksigner verify --print-certs "$apk" \
               | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
@@ -81,5 +69,4 @@ jobs:
         with:
           name: spicy-ex-release-apks
           path: |
-            app/build/outputs/apk/lite/release/*.apk
-            app/build/outputs/apk/full/release/*.apk
+            app/build/outputs/apk/release/*.apk

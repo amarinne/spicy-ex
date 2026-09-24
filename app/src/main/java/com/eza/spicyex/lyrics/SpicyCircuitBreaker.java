@@ -48,7 +48,7 @@ final class SpicyCircuitBreaker {
     }
     static final class Suppressed extends IOException {
         final long retryAfterMs;
-        Suppressed(long delay) { super("Spicy rate-limited: request suppressed"); retryAfterMs = delay; }
+        Suppressed(long delay) { super("Apple Music rate-limited: request suppressed"); retryAfterMs = delay; }
     }
     synchronized Lease acquire(boolean userProbe) throws Suppressed {
         long now = clock.getAsLong();

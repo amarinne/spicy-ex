@@ -21,7 +21,7 @@ public class SpicyQueryEnvelopeTest {
         assertTrue(SpicyNetworkDiagnostics.spicyEnvelopeNoticePresent);
         assertEquals(Integer.valueOf(429), SpicyNetworkDiagnostics.spicyQueryStatus);
         assertEquals("unknown", SpicyNetworkDiagnostics.source);
-        assertTrue(failure.contains("Spicy upstream degraded / Spotify API error"));
+        assertTrue(failure.contains("Apple Music upstream degraded / Spotify API error"));
         assertFalse(LyricsFetchErrors.isDurableNoLyrics(failure + "; LRCLIB empty"));
     }
     @Test public void statusMappingKeeps204AsErrorAnd503AsQueue() {
@@ -31,7 +31,7 @@ public class SpicyQueryEnvelopeTest {
             assertNotNull(failure);
             if (status == 404) assertTrue(failure.contains("no-match"));
             else assertFalse(failure.contains("no-match"));
-            if (status == 503) assertEquals("Spicy queued", failure);
+            if (status == 503) assertEquals("Apple Music queued", failure);
             if (status != 404) assertFalse(LyricsFetchErrors.isDurableNoLyrics(failure + "; LRCLIB HTTP 404"));
         }
     }

@@ -44,7 +44,7 @@ final class LyricsProviderChain {
     }
 
     Decision acceptCached(LyricsDocument doc) {
-        Result result = fromSpicyDocument(doc, Source.CACHE);
+        Result result = fromRemoteDocument(doc, Source.CACHE);
         if (result instanceof Synced) {
             deliveredCached = true;
             deliveredCachedSynced = true;
@@ -60,14 +60,14 @@ final class LyricsProviderChain {
         return Decision.ignore(result);
     }
 
-    Decision spicyUnavailable(String message) {
+    Decision remoteUnavailable(String message) {
         if (deliveredCachedSynced) return Decision.suppress();
         return Decision.continueAfter(new TransientFailure(Source.SPICY, message), pendingStatic);
     }
 
-    Decision acceptSpicyNetwork(LyricsDocument doc, String raw) {
+    Decision acceptRemoteNetwork(LyricsDocument doc, String raw) {
         addCandidate(Source.SPICY);
-        Result result = fromSpicyDocument(doc, Source.SPICY);
+        Result result = fromRemoteDocument(doc, Source.SPICY);
         if (result instanceof Synced) {
             if (deliveredCached && safe(raw).equals(safe(cachedRaw))) {
                 return Decision.suppress();
@@ -130,6 +130,35 @@ final class LyricsProviderChain {
         return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
     }
 
+    /** Word-level AMLL TTML ranks against a held Apple static the same way LRCLIB does. */
+    Decision acceptAmll(LyricsDocument doc) {
+        Result result = fromDocument(doc, Source.AMLL);
+        if (!(result instanceof Synced) && !(result instanceof Static)) {
+            return finishWithoutStatic(result);
+        }
+        addCandidate(Source.AMLL);
+        LyricsDocument amllDoc = result.document();
+        if (pendingStatic == null) {
+            return Decision.deliver(amllDoc, false, null, false);
+        }
+        LyricsDocument winner = prefer(amllDoc, pendingStatic) ? amllDoc : pendingStatic;
+        if (winner == amllDoc) {
+            return Decision.deliver(amllDoc, false, null, false);
+        }
+        if (staticAlreadyShown) return Decision.suppress();
+        return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
+    }
+
+    /** An AMLL miss is never durable: LRCLIB may still hold the track. */
+    Decision acceptAmllError(String error) {
+        Result result = new TransientFailure(Source.AMLL, error);
+        if (pendingStatic != null) {
+            if (staticAlreadyShown) return Decision.suppress();
+            return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
+        }
+        return finishWithoutStatic(result, error);
+    }
+
     Decision acceptLrclibError(String error) {
         Result result = LyricsFetchErrors.isDurableNoLyrics(error)
                 ? new Empty(Source.LRCLIB, true)
@@ -180,12 +209,12 @@ final class LyricsProviderChain {
         return Decision.error(message, false, result);
     }
 
-    private Result fromSpicyDocument(LyricsDocument doc, Source source) {
+    private Result fromRemoteDocument(LyricsDocument doc, Source source) {
         if (doc == null) return new Empty(source, false);
         doc.generation = generation;
         SpicyResponseClassifier.apply(doc);
         if (doc.spicyPoisoned) {
-            return new TransientFailure(source, "Spicy response suspicious: " + safe(doc.spicyQualityReason));
+            return new TransientFailure(source, "Apple Music response suspicious: " + safe(doc.spicyQualityReason));
         }
         return fromDocument(doc, source);
     }
@@ -221,8 +250,10 @@ final class LyricsProviderChain {
     enum Source {
         CACHE("cache"),
         APPLE_MUSIC("apple_music"),
+        /** Retired legacy alias: maps to the same Apple Music label. */
         SPICY("apple_music"),
         NATIVE("native"),
+        AMLL("amll"),
         LRCLIB("lrclib"),
         UNSUPPORTED("unsupported");
 

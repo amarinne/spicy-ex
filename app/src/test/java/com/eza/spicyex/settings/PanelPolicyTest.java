@@ -91,6 +91,19 @@ public class PanelPolicyTest {
     }
 
     @Test
+    public void transliterationToggleNeedsDownloadedLanguageModel() {
+        PanelSnapshot hasModel = PanelSnapshot.builder().allCapabilities()
+                .languageModelReady(true)
+                .put(Settings.TRANSLITERATION_ENABLED, true).build();
+        assertFalse(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED, hasModel));
+
+        PanelSnapshot missingModel = PanelSnapshot.builder().allCapabilities()
+                .languageModelReady(false)
+                .put(Settings.TRANSLITERATION_ENABLED, true).build();
+        assertTrue(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED, missingModel));
+    }
+
+    @Test
     public void readingFamilyNeedsCapabilityAndMasterSwitch() {
         PanelSnapshot on = PanelSnapshot.builder().allCapabilities()
                 .put(Settings.TRANSLITERATION_ENABLED, true).build();
@@ -201,6 +214,11 @@ public class PanelPolicyTest {
         assertEquals("Enable transliteration", PanelPolicy.optionUnavailableReason(
                 (Settings.StringSetting) Settings.LIVE_CARD_SECONDARY_MODE,
                 "Both", fullOff, strings()));
+        PanelSnapshot missingModel = PanelSnapshot.builder().allCapabilities()
+                .languageModelReady(false).build();
+        assertEquals("Download language models", PanelPolicy.optionUnavailableReason(
+                (Settings.StringSetting) Settings.LIVE_CARD_SECONDARY_MODE,
+                "Both", missingModel, strings()));
         PanelSnapshot fullOn = PanelSnapshot.builder().allCapabilities()
                 .put(Settings.TRANSLITERATION_ENABLED, true)
                 .put(Settings.TRANSLATION_ENABLED, true).build();

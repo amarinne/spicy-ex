@@ -103,6 +103,7 @@ public final class SpicyEXModule extends XposedModule {
                     Context context = (Context) p.args[0];
                     Diagnostics.initialize(context);
                     LyricsMemoryPressure.install(context);
+                    com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.attachContext(context);
                     Diagnostics.event("bootstrap", "application_attach",
                             Diagnostics.context("process", Application.getProcessName()));
                     cleanUpCache(context);

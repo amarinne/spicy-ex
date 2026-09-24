@@ -6,7 +6,13 @@ import okhttp3.RequestBody;
 
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
-/** Exact compact request contract pinned to the requested official 6.3.15 protocol. */
+/** Exact compact request contract pinned to the requested official 6.3.15 protocol.
+ *
+ * <p>Retired: the spicylyrics.org remote is no longer queried. The live remote path is the
+ * Apple Music (Lenerd) endpoint in {@link LyricsRepository}. This contract is kept only as a
+ * byte-exact pin covered by tests.
+ */
+@Deprecated
 final class SpicyLyricsRequestContract {
     static final String UPSTREAM_VERSION = "6.3.15";
     static final String SPICY_QUERY_URL = "https://api.spicylyrics.org/query";

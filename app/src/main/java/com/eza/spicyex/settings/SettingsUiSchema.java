@@ -104,6 +104,7 @@ public final class SettingsUiSchema {
             Settings.LINE_SLIDE_ANIMATION,
             Settings.APPLE_LIFT,
             // Reading & transliteration
+            Settings.DOWNLOAD_LANGUAGE_MODELS,
             Settings.TRANSLITERATION_ENABLED,
             Settings.ALIGNED_PER_WORD_ROMAJI,
             Settings.JAPANESE_READING_MODE,

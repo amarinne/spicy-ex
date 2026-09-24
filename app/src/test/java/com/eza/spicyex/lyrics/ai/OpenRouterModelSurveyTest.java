@@ -38,7 +38,7 @@ import okhttp3.ResponseBody;
  * <pre>
  *   # .env:  OPENROUTER_SURVEY=1
  *   #        OPENROUTER_API_KEY=sk-or-…
- *   ./gradlew :app:testFullDebugUnitTest --rerun-tasks \
+ *   ./gradlew :app:testDebugUnitTest --rerun-tasks \
  *       --tests "com.eza.spicyex.lyrics.ai.OpenRouterModelSurveyTest" -i
  * </pre>
  *

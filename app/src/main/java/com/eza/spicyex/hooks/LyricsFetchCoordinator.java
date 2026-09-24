@@ -162,7 +162,8 @@ final class LyricsFetchCoordinator {
             if (inFlight.get(operation.key) != operation) return;
             operation.latest = LyricsDocument.copyOf(document);
             callbacks = new ArrayList<>(operation.callbacks);
-            boolean cachePreview = "spicy_api_cache".equals(document == null ? "" : document.fetchSource);
+            boolean cachePreview = "spicy_api_cache".equals(document == null ? "" : document.fetchSource)
+                    || "apple_music_cache".equals(document == null ? "" : document.fetchSource);
             boolean baselineUpgrade = document != null && document.fetchSource != null
                     && document.fetchSource.startsWith("spotify_native") && operation.latestWasBaseline == false;
             operation.latestWasBaseline = true;

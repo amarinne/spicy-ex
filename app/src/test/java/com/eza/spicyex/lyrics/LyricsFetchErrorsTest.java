@@ -8,6 +8,7 @@ import org.junit.Test;
 public class LyricsFetchErrorsTest {
     @Test
     public void durableNoLyricsMatchesOnlyConfirmedNoResultErrors() {
+        assertTrue(LyricsFetchErrors.isDurableNoLyrics("Apple Music lyrics empty; LRCLIB empty"));
         assertTrue(LyricsFetchErrors.isDurableNoLyrics("Spicy lyrics empty; LRCLIB empty"));
         assertTrue(LyricsFetchErrors.isDurableNoLyrics("native miss; no LRCLIB result"));
         assertTrue(LyricsFetchErrors.isDurableNoLyrics("native miss; LRCLIB HTTP 404"));
@@ -16,7 +17,10 @@ public class LyricsFetchErrorsTest {
 
     @Test
     public void transientFailuresStayRetryable() {
+        assertFalse(LyricsFetchErrors.isDurableNoLyrics("Apple Music network failed: timeout; LRCLIB failed: timeout"));
         assertFalse(LyricsFetchErrors.isDurableNoLyrics("Spicy network failed: timeout; LRCLIB failed: timeout"));
+        assertFalse(LyricsFetchErrors.isDurableNoLyrics("Apple Music upstream-error HTTP 500; LRCLIB HTTP 503"));
+        assertFalse(LyricsFetchErrors.isDurableNoLyrics("Apple Music rate-limited: request suppressed; LRCLIB parse failed: no LRCLIB result"));
         assertFalse(LyricsFetchErrors.isDurableNoLyrics("native miss; LRCLIB HTTP 500"));
         assertFalse(LyricsFetchErrors.isDurableNoLyrics("LRCLIB parse failed: malformed json"));
         assertFalse(LyricsFetchErrors.isDurableNoLyrics(""));

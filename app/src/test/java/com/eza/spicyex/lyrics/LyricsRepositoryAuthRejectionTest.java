@@ -9,7 +9,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Packet M3: inner Spicy 401 detection, retry-once-only guard, and token-privacy of the
+ * Packet M3: inner remote 401 detection, retry-once-only guard, and token-privacy of the
  * {@link LyricsRepository.Authorization} snapshot. All seams are pure JVM statics.
  */
 public class LyricsRepositoryAuthRejectionTest {
@@ -19,41 +19,41 @@ public class LyricsRepositoryAuthRejectionTest {
     @Test
     public void innerResultStatus401IsDetectedInRawBody() {
         String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":401,\"message\":\"Unauthorized\"}}]}";
-        assertEquals(Integer.valueOf(401), LyricsRepository.innerSpicyAuthRejectionStatus(raw));
+        assertEquals(Integer.valueOf(401), LyricsRepository.innerRemoteAuthRejectionStatus(raw));
     }
 
     @Test
     public void innerResultStatus403DoesNotRefreshToken() {
         String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":403}}]}";
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(raw));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus(raw));
     }
 
     @Test
     public void nonAuthInnerStatusIsNotAuthRejection() {
         String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":404}}]}";
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(raw));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus(raw));
     }
 
     @Test
     public void statusOutsideResultObjectIsNotAuthRejection() {
         // A top-level status must not trigger scoped invalidation; only the inner query result counts.
         String raw = "{\"status\":401,\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":200}}]}";
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(raw));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus(raw));
     }
 
     @Test
     public void malformedOrEmptyBodiesAreNotAuthRejections() {
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(null));
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus("   "));
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus("not-json {"));
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus("[]"));
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus("{}"));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus(null));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus("   "));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus("not-json {"));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus("[]"));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus("{}"));
     }
 
     @Test
     public void otherOperationRejectionDoesNotRejectRequestedOperation() {
         String raw = "{\"queries\":[{\"operationId\":\"0\",\"result\":{\"status\":200}},{\"operationId\":\"1\",\"result\":{\"status\":401}}]}";
-        assertNull(LyricsRepository.innerSpicyAuthRejectionStatus(raw));
+        assertNull(LyricsRepository.innerRemoteAuthRejectionStatus(raw));
     }
 
     // ---------- inner auth-rejection detection (parsed document) ----------
@@ -62,23 +62,23 @@ public class LyricsRepositoryAuthRejectionTest {
     public void parsedDocumentWithAuthRejectionStatusIsDetected() {
         LyricsDocument doc = new LyricsDocument();
         doc.spicyQueryStatus = 401;
-        assertTrue(LyricsRepository.isInnerSpicyAuthRejection(doc));
+        assertTrue(LyricsRepository.isInnerRemoteAuthRejection(doc));
     }
 
     @Test
     public void parsedDocumentWithOtherStatusIsNotAuthRejection() {
         LyricsDocument doc = new LyricsDocument();
         doc.spicyQueryStatus = 200;
-        assertFalse(LyricsRepository.isInnerSpicyAuthRejection(doc));
+        assertFalse(LyricsRepository.isInnerRemoteAuthRejection(doc));
         doc.spicyQueryStatus = 403;
-        assertFalse(LyricsRepository.isInnerSpicyAuthRejection(doc));
+        assertFalse(LyricsRepository.isInnerRemoteAuthRejection(doc));
         doc.spicyQueryStatus = 404;
-        assertFalse(LyricsRepository.isInnerSpicyAuthRejection(doc));
+        assertFalse(LyricsRepository.isInnerRemoteAuthRejection(doc));
     }
 
     @Test
     public void nullDocumentIsNotAuthRejection() {
-        assertFalse(LyricsRepository.isInnerSpicyAuthRejection(null));
+        assertFalse(LyricsRepository.isInnerRemoteAuthRejection(null));
     }
 
     // ---------- retry-once guard ----------

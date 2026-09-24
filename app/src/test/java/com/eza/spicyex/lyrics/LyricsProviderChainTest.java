@@ -11,11 +11,11 @@ public class LyricsProviderChainTest {
     @Test
     public void cachedSyncedSuppressesDuplicateEqualNetworkSynced() {
         LyricsProviderChain chain = new LyricsProviderChain(7, "same-raw");
-        LyricsDocument cached = doc("Line", "spicy_api_cache", "Spicy Lyrics", true);
+        LyricsDocument cached = doc("Line", "apple_music_cache", "Apple Music", true);
 
         LyricsProviderChain.Decision cachedDecision = chain.acceptCached(cached);
-        LyricsProviderChain.Decision networkDecision = chain.acceptSpicyNetwork(
-                doc("Line", "spicy_api", "Spicy Lyrics", true), "same-raw");
+        LyricsProviderChain.Decision networkDecision = chain.acceptRemoteNetwork(
+                doc("Line", "apple_music_lenerd", "Apple Music", true), "same-raw");
 
         assertEquals(LyricsProviderChain.Action.DELIVER, cachedDecision.action);
         assertEquals(LyricsProviderChain.Action.SUPPRESS, networkDecision.action);
@@ -25,7 +25,7 @@ public class LyricsProviderChainTest {
     @Test
     public void cachedStaticCanBeUpgradedByNativeSyncedLyrics() {
         LyricsProviderChain chain = new LyricsProviderChain(11, "cached-static");
-        LyricsDocument cachedStatic = doc("Static", "spicy_api_cache", "Spicy Lyrics", true);
+        LyricsDocument cachedStatic = doc("Static", "apple_music_cache", "Apple Music", true);
         LyricsDocument nativeSynced = doc("Line", "spotify_native_model", "Musixmatch", false);
 
         chain.acceptCached(cachedStatic);
@@ -37,10 +37,10 @@ public class LyricsProviderChainTest {
     }
 
     @Test
-    public void spicyTransientFailureFallsThroughWithoutDurableNoLyrics() {
+    public void remoteTransientFailureFallsThroughWithoutDurableNoLyrics() {
         LyricsProviderChain chain = new LyricsProviderChain(3, null);
 
-        LyricsProviderChain.Decision decision = chain.spicyUnavailable("Spicy network failed: timeout");
+        LyricsProviderChain.Decision decision = chain.remoteUnavailable("Apple Music network failed: timeout");
 
         assertEquals(LyricsProviderChain.Action.CONTINUE, decision.action);
         assertFalse(decision.durableNoLyrics);
@@ -51,7 +51,7 @@ public class LyricsProviderChainTest {
     public void lrclib404MarksDurableNoLyricsWhenNoStaticFallbackExists() {
         LyricsProviderChain chain = new LyricsProviderChain(4, null);
 
-        LyricsProviderChain.Decision decision = chain.acceptLrclibError("Spicy failed; LRCLIB HTTP 404");
+        LyricsProviderChain.Decision decision = chain.acceptLrclibError("Apple Music failed; LRCLIB HTTP 404");
 
         assertEquals(LyricsProviderChain.Action.ERROR, decision.action);
         assertTrue(decision.durableNoLyrics);
@@ -59,23 +59,23 @@ public class LyricsProviderChainTest {
     }
 
     @Test
-    public void nativeStaticDoesNotReplaceSpicyStaticOnSyncTie() {
+    public void nativeStaticDoesNotReplaceRemoteStaticOnSyncTie() {
         LyricsProviderChain chain = new LyricsProviderChain(5, "raw-static");
-        LyricsDocument spicyStatic = doc("Static", "spicy_api", "Spicy Lyrics", true);
+        LyricsDocument remoteStatic = doc("Static", "apple_music_lenerd", "Apple Music", true);
         LyricsDocument nativeStatic = doc("Static", "spotify_native_model", "Musixmatch", false);
 
-        chain.acceptSpicyNetwork(spicyStatic, "raw-static");
+        chain.acceptRemoteNetwork(remoteStatic, "raw-static");
         LyricsProviderChain.Decision decision = chain.acceptNative(nativeStatic);
 
-        assertFalse(LyricQualityRanker.preferAuto(nativeStatic, spicyStatic));
-        assertSame(spicyStatic, decision.document);
+        assertFalse(LyricQualityRanker.preferAuto(nativeStatic, remoteStatic));
+        assertSame(remoteStatic, decision.document);
         assertFalse(decision.cacheDeliveredRaw);
     }
 
     @Test
     public void staleGenerationPreservedOnDeliveredDocuments() {
         LyricsProviderChain chain = new LyricsProviderChain(42, "cached");
-        LyricsDocument cached = doc("Static", "spicy_api_cache", "Spicy Lyrics", true);
+        LyricsDocument cached = doc("Static", "apple_music_cache", "Apple Music", true);
         LyricsDocument lrclib = doc("Line", "lrclib", "LRCLIB", false);
 
         chain.acceptCached(cached);
@@ -88,12 +88,12 @@ public class LyricsProviderChainTest {
     }
 
     @Test
-    public void poisonedSpicyResponseRejectedBeforeCacheOrDelivery() {
+    public void poisonedRemoteResponseRejectedBeforeCacheOrDelivery() {
         LyricsProviderChain chain = new LyricsProviderChain(9, null);
-        LyricsDocument poisoned = doc("Static", "spicy_api", "Spicy Lyrics", false);
+        LyricsDocument poisoned = doc("Static", "apple_music_lenerd", "Apple Music", false);
         poisoned.spicyQueryStatus = 204;
 
-        LyricsProviderChain.Decision decision = chain.acceptSpicyNetwork(poisoned, "poisoned-raw");
+        LyricsProviderChain.Decision decision = chain.acceptRemoteNetwork(poisoned, "poisoned-raw");
 
         assertEquals(LyricsProviderChain.Action.CONTINUE, decision.action);
         assertTrue(decision.result instanceof LyricsProviderChain.TransientFailure);

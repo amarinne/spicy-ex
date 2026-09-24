@@ -6,11 +6,10 @@ card, language-learning helpers, translation, and visual customization.
 
 This is the user-facing feature list.
 
-## APK Flavors
+## APK Contents
 
-- Full includes transliteration, romanization, translation, language dictionaries and extra fonts.
-- Lite removes the heavy language-processing assets.
-- Both flavors include the complete lyric renderer and HyperGlow bridge.
+- The APK includes transliteration, romanization, translation, language dictionaries,
+  extra fonts, the complete lyric renderer, and the HyperGlow bridge.
 
 ## Lyrics Experience
 
@@ -33,10 +32,10 @@ This is the user-facing feature list.
 - Live current lyric line in Spotify's now-playing view.
 - Placeholder display for tracks without lyrics.
 - Configurable single- or double-tap shortcut to fullscreen lyrics.
-- Main, transliteration, translation or combined secondary line in Full.
+- Main, transliteration, translation or combined secondary line.
 - Independent size, weight, animation, glow, fill, overflow and transition settings.
 
-## Transliteration And Reading Aids — Full
+## Transliteration And Reading Aids
 
 - Global transliteration toggle.
 - Optional per-word transliteration attached under lyrics.
@@ -67,7 +66,7 @@ Supported reading modes:
 - Greek:
   - static table romanization.
 
-## Translation — Full
+## Translation
 
 - Optional lyric translation.
 - Google unofficial translation backend.
@@ -82,7 +81,7 @@ is enabled.
 ## Visual Customization
 
 - Lyric text size: small, normal, large, xlarge or custom.
-- Lyric font: Spotify Mix; Apple font in Full.
+- Lyric font: Spotify Mix or Apple font.
 - Lyric weight: regular, medium, bold.
 - Line spacing: compact, default, spacious, more, max or custom.
 - Interlude indicator: dots or note.
@@ -106,8 +105,8 @@ is enabled.
 ## HyperGlow Integration
 
 - Publishes synchronized lyrics to HyperGlow for HyperOS 3 lockscreen/AOD rendering.
-- Lite and Full publish original lyrics, timing, metadata and playback lifecycle.
-- Full can also publish generated transliteration and translation.
+- Publishes original lyrics, timing, metadata, generated transliteration, and
+  translation together with the playback lifecycle.
 - No Spotify bearer token is sent to HyperGlow.
 
 ## In-Spotify Settings

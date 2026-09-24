@@ -6,7 +6,7 @@ import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import okhttp3.*;
 
-/** Shared Spicy transport; native and LRCLIB keep their own network policy. */
+/** Shared remote transport for the Apple Music (Lenerd) endpoint; native and LRCLIB keep their own network policy. */
 final class SpicyTransport {
     static final class Probe {}
     private static SpicyCircuitBreaker breaker;

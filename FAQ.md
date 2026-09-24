@@ -7,11 +7,13 @@ Spicy EX compatibility depends on the Spotify version.
 This release was built and tested against Spotify **9.1.68.1888** (`versionCode 144192416`) from
 Google Play. Older, beta, ReVanced, or modified builds may not work.
 
-### Full or Lite?
+### What is included?
 
-- **Full:** translation, transliteration, romanization, dictionaries, extra fonts.
-- **Lite:** smaller APK. No language-processing features.
-- Renderer, now-playing card, settings, and HyperGlow bridge exist in both.
+- Translation, transliteration, romanization, dictionaries, extra fonts, and the
+	renderer are included in the single APK.
+- The now-playing card, settings, and HyperGlow bridge are included as well.
+- Language models (Japanese/Chinese dictionaries, language detection) are downloaded
+	on demand from Settings instead of being bundled.
 
 ### Which LSPosed scope?
 
@@ -49,7 +51,5 @@ Optional.
 ### How do I update?
 
 Install the new APK over the old installation. Then restart Spotify.
-
-Do not install Full and Lite together.
 
 If you use LSPatch, enable **Override version code**.

@@ -105,7 +105,7 @@ public final class PanelPolicy {
     }
 
     public static boolean unavailable(Settings.Setting<?> setting, PanelSnapshot snapshot) {
-        return (setting == Settings.TRANSLITERATION_ENABLED && !snapshot.transliterationAvailable())
+        return (setting == Settings.TRANSLITERATION_ENABLED && (!snapshot.transliterationAvailable() || !snapshot.languageModelReady()))
                 || (setting == Settings.TRANSLATION_ENABLED && !snapshot.translationAvailable())
                 || (setting == Settings.LYRICS_FONT && !snapshot.appleFontAvailable());
     }
@@ -123,6 +123,9 @@ public final class PanelPolicy {
         boolean needsTranslation = "Translation".equals(value) || "Both".equals(value);
         if (needsTransliteration && !snapshot.transliterationAvailable()) {
             return fullBuildRequired(strings);
+        }
+        if (needsTransliteration && !snapshot.languageModelReady()) {
+            return strings.get("settings_label_download_language_models", "Download language models");
         }
         if (needsTranslation && !snapshot.translationAvailable()) {
             return fullBuildRequired(strings);

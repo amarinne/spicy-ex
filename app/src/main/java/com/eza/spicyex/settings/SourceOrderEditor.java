@@ -100,6 +100,7 @@ public final class SourceOrderEditor {
         if (source == Source.APPLE_MUSIC) return "Apple Music";
         if (source == Source.SPICY) return "Spicy";
         if (source == Source.SPOTIFY) return "Spotify";
+        if (source == Source.AMLL) return "AMLL";
         return "LRCLIB";
     }
 

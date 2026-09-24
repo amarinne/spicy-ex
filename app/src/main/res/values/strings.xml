@@ -401,4 +401,7 @@
     <string name="lyrics_ai_refined_google">AI refined the Google Translate version.</string>
     <string name="lyrics_ai_from_source">AI translated from the original lyrics.</string>
     <string name="lyrics_ai_model_used">Model: %1$s</string>
+    <string name="settings_label_download_language_models">Download language models</string>
+    <string name="settings_language_model_delete_desc">Delete the downloaded language model pack? This frees about %1$s MB.</string>
+    <string name="settings_language_model_tap_to_delete_size">Tap to delete · %1$s MB</string>
 </resources>

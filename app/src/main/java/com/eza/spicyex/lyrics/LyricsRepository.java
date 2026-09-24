@@ -10,31 +10,30 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import com.eza.spicyex.xposed.XpLog;
 import okhttp3.Call;
 import okhttp3.Callback;
-import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
-import okhttp3.RequestBody;
 import okhttp3.Response;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 
-/** Fetch/fallback coordinator for native Spicy lyrics. */
+/** Fetch/fallback coordinator for remote lyrics (Apple Music + Spotify native + LRCLIB). */
 public final class LyricsRepository {
     private static final String TAG = "[SpotifyPlusLyricsRepository]";
-    private static final MediaType JSON = MediaType.get("application/json");
     private static final int NATIVE_LYRICS_RETRY_LIMIT = 4;
     private static final long NATIVE_LYRICS_RETRY_DELAY_MS = 125;
 
     // Tracks confirmed to have no lyrics from ANY source this session — shared across callers (the
     // in-player card and the fullscreen screen both fetch through here), so a no-lyric song isn't
-    // re-queried (and re-billed against the Spicy quota) when the other surface opens. In-memory:
+    // re-queried (and re-billed against the remote quota) when the other surface opens. In-memory:
     // resets on process restart so a track that later gains lyrics is re-checked next launch.
     private static final int NO_LYRICS_LIMIT = 256;
     private static final java.util.Map<String, Boolean> NO_LYRICS = java.util.Collections.synchronizedMap(
@@ -129,7 +128,7 @@ public final class LyricsRepository {
                 callback.onError(error);
             }
         };
-        fetchSpicyLyricsFallback(context, track, generation, sendToken, accessToken,
+        fetchRemoteLyricsFallback(context, track, generation, sendToken, accessToken,
                 tokenGeneration, authRecovery, false, gated,
                 remoteEnabled, nativeEnabled, lrclibEnabled);
     }
@@ -169,6 +168,7 @@ public final class LyricsRepository {
             case APPLE_MUSIC: return "Apple Music";
             case SPICY: return "Spicy";
             case SPOTIFY: return "Spotify";
+            case AMLL: return "AMLL";
             case LRCLIB: return "LRCLIB";
             default: return "Auto";
         }
@@ -188,9 +188,10 @@ public final class LyricsRepository {
                                    String source, String accessToken, ResultCallback callback,
                                    int nativeRetryCount) {
         if ("Apple Music".equals(source) || "Spicy".equals(source)) {
-            Request request = "Spicy".equals(source)
-                    ? SpicyLyricsRequestContract.buildLyricsRequest(trackIdFromUri(track.uri), accessToken)
-                    : buildLenerdLyricsRequest(trackIdFromUri(track.uri));
+            // "Spicy" is a retired legacy alias: it resolves to the same Apple Music (Lenerd)
+            // endpoint so old persisted strict selections keep working without hitting
+            // the retired spicylyrics.org remote.
+            Request request = buildLenerdLyricsRequest(trackIdFromUri(track.uri));
             http.newCall(request).enqueue(new Callback() {
                 @Override public void onFailure(Call call, IOException error) {
                     callback.onError(source + " source unavailable: " + safe(error.getMessage()));
@@ -204,7 +205,7 @@ public final class LyricsRepository {
                         }
                         LyricsDocument document = parser.parseSpicyLyrics(
                                 context, track, response.body().string(), false);
-                        document.fetchSource = "Spicy".equals(source) ? "spicy_api" : "apple_music_lenerd";
+                        document.fetchSource = "apple_music_lenerd";
                         document.selectedSource = source;
                         document.selectionMode = "strict";
                         document.selectionOverride = source;
@@ -250,10 +251,150 @@ public final class LyricsRepository {
             }, "strict LRCLIB");
             return;
         }
+        if ("AMLL".equals(source)) {
+            fetchStrictAmll(context, track, generation, callback);
+            return;
+        }
         callback.onError("Unknown lyrics source");
     }
 
-    private void fetchSpicyLyricsFallback(
+    /** Strict per-track AMLL: direct Spotify-ID TTML first, title search second, no fallback. */
+    private void fetchStrictAmll(Context context, SpotifyTrack track, int generation,
+                                 ResultCallback callback) {
+        String trackId = trackIdFromUri(track == null ? "" : track.uri);
+        if (!trackId.isEmpty()) {
+            Request direct = new Request.Builder()
+                    .url("https://amll-ttml-db.stevexmh.net/spotify/" + trackId + "?format=ttml")
+                    .get()
+                    .header("User-Agent", "SpotifyPlus-Mobile")
+                    .header("Accept", "application/xml, text/xml, text/plain;q=0.9")
+                    .build();
+            http.newCall(direct).enqueue(new Callback() {
+                @Override public void onFailure(Call call, IOException error) {
+                    fetchStrictAmllSearch(context, track, generation, callback);
+                }
+
+                @Override public void onResponse(Call call, Response response) throws IOException {
+                    try (Response ignored = response) {
+                        if (response.isSuccessful() && response.body() != null) {
+                            String body = response.body().string();
+                            if (looksLikeTtml(body)) {
+                                try {
+                                    callback.onSuccess(strictAmllDocument(
+                                            context, track, generation, body));
+                                    return;
+                                } catch (Throwable parseError) {
+                                    XpLog.log(TAG + " strict AMLL direct parse failed: "
+                                            + parseError);
+                                }
+                            }
+                        }
+                        fetchStrictAmllSearch(context, track, generation, callback);
+                    }
+                }
+            });
+            return;
+        }
+        fetchStrictAmllSearch(context, track, generation, callback);
+    }
+
+    private void fetchStrictAmllSearch(Context context, SpotifyTrack track, int generation,
+                                       ResultCallback callback) {
+        List<String> queries = new ArrayList<>();
+        for (String title : LrclibQueryPlanner.queryTitles(
+                safe(track == null ? "" : track.title))) {
+            if (!isBlank(title) && !queries.contains(title)) queries.add(title);
+        }
+        fetchStrictAmllSearchQuery(context, track, generation, callback, queries, 0);
+    }
+
+    private void fetchStrictAmllSearchQuery(Context context, SpotifyTrack track, int generation,
+                                            ResultCallback callback, List<String> queries,
+                                            int index) {
+        if (index >= queries.size()) {
+            callback.onError("AMLL source unavailable: no match");
+            return;
+        }
+        String payload = "{\"query\":\"" + queries.get(index).replace("\\", "\\\\")
+                .replace("\"", "\\\"") + "\",\"type\":\"title\"}";
+        Request request = new Request.Builder()
+                .url("https://amlldb.bikonoo.com/api/search-lyrics")
+                .post(okhttp3.RequestBody.create(payload,
+                        okhttp3.MediaType.get("application/json; charset=utf-8")))
+                .header("User-Agent", "SpotifyPlus-Mobile")
+                .header("Accept", "application/json")
+                .build();
+        final int nextIndex = index + 1;
+        http.newCall(request).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                fetchStrictAmllSearchQuery(context, track, generation, callback, queries,
+                        nextIndex);
+            }
+
+            @Override public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    String file = "";
+                    if (response.isSuccessful() && response.body() != null) {
+                        file = matchAmllSearchResult(response.body().string(), track);
+                    }
+                    if (isBlank(file)) {
+                        fetchStrictAmllSearchQuery(context, track, generation, callback,
+                                queries, nextIndex);
+                        return;
+                    }
+                    Request raw = new Request.Builder()
+                            .url("https://amlldb.bikonoo.com/raw-lyrics/" + file)
+                            .get()
+                            .header("User-Agent", "SpotifyPlus-Mobile")
+                            .header("Accept", "application/xml, text/xml, text/plain;q=0.9")
+                            .build();
+                    http.newCall(raw).enqueue(new Callback() {
+                        @Override public void onFailure(Call call, IOException e) {
+                            fetchStrictAmllSearchQuery(context, track, generation, callback,
+                                    queries, nextIndex);
+                        }
+
+                        @Override public void onResponse(Call call, Response response)
+                                throws IOException {
+                            try (Response ignored = response) {
+                                if (response.isSuccessful() && response.body() != null) {
+                                    String body = response.body().string();
+                                    if (looksLikeTtml(body)) {
+                                        try {
+                                            callback.onSuccess(strictAmllDocument(
+                                                    context, track, generation, body));
+                                            return;
+                                        } catch (Throwable parseError) {
+                                            XpLog.log(TAG + " strict AMLL raw parse failed: "
+                                                    + parseError);
+                                        }
+                                    }
+                                }
+                                fetchStrictAmllSearchQuery(context, track, generation, callback,
+                                        queries, nextIndex);
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private LyricsDocument strictAmllDocument(Context context, SpotifyTrack track, int generation,
+                                              String ttml) {
+        LyricsDocument document = parser.parseAmllTtml(context, track, ttml);
+        document.generation = generation;
+        if (document.lines.isEmpty()
+                || LyricQualityRanker.score(document) == LyricQualityRanker.REJECT) {
+            throw new IllegalStateException("rejected candidate");
+        }
+        document.selectedSource = "AMLL";
+        document.selectionMode = "strict";
+        document.selectionOverride = "AMLL";
+        return document;
+    }
+
+    private void fetchRemoteLyricsFallback(
             Context context,
             SpotifyTrack track,
             int generation,
@@ -273,13 +414,13 @@ public final class LyricsRepository {
             return;
         }
 
-        OkHttpClient spicyHttp = SpicyTransport.client(http, SpicyTransport.breaker(context));
+        OkHttpClient remoteHttp = SpicyTransport.client(http, SpicyTransport.breaker(context));
 
         final boolean hasToken = hasUsableToken(sendToken, accessToken);
         final String cached = remoteEnabled ? LyricsResponseCache.get(context, trackId) : null;
         final LyricsProviderChain chain = new LyricsProviderChain(generation, cached);
         // Native Spotify lyrics are the baseline. They are read from the existing captured
-        // document/cache and published immediately; Spicy may replace them only during the
+        // document/cache and published immediately; the remote source may replace them only during the
         // bounded upgrade window when a usable token is available.
         LyricsDocument nativeBaseline = nativeEnabled
                 ? nativeLyricsProvider.getNativeLyricsDocument(track) : null;
@@ -295,7 +436,7 @@ public final class LyricsRepository {
                 LyricsDocument doc = parser.parseSpicyLyrics(context, track, cached, true);
                 LyricsProviderChain.Decision decision = chain.acceptCached(doc);
                 if (doc.spicyPoisoned) {
-                    XpLog.log(TAG + " warning: ignored suspicious cached Spicy response reason="
+                    XpLog.log(TAG + " warning: ignored suspicious cached remote response reason="
                             + safe(doc.spicyQualityReason)
                             + " status=" + (doc.spicyQueryStatus == null ? "unknown" : doc.spicyQueryStatus)
                             + " format=" + safe(doc.spicyFormat)
@@ -312,7 +453,7 @@ public final class LyricsRepository {
 
         Request request = buildLenerdLyricsRequest(trackId).newBuilder()
                 .tag(SpicyTransport.Probe.class, authRetryUsed ? null : new SpicyTransport.Probe()).build();
-        logSpicyWireRequest(request, tokenGeneration, authRetryUsed);
+        logRemoteWireRequest(request, tokenGeneration, authRetryUsed);
 
         if (!remoteEnabled) {
             if (!chain.deliveredCachedSynced()) {
@@ -321,13 +462,13 @@ public final class LyricsRepository {
             }
             return;
         }
-        spicyHttp.newCall(request).enqueue(new Callback() {
+        remoteHttp.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
                 if (chain.deliveredCachedSynced()) return;
                 fetchNativeThenLrclib(context, track, generation, callback, 0,
                         (authRetryUsed && e instanceof SpicyCircuitBreaker.Suppressed
-                                ? "Spicy auth rejected HTTP 401" : "Spicy upstream-error status 0: " + e.getMessage()), chain, hasToken,
+                                ? "Apple Music auth rejected HTTP 401" : "Apple Music upstream-error status 0: " + e.getMessage()), chain, hasToken,
                         nativeEnabled, lrclibEnabled);
             }
 
@@ -337,12 +478,12 @@ public final class LyricsRepository {
                     if (!response.isSuccessful() || response.body() == null) {
                         if (chain.deliveredCachedSynced()) return;
                         fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                (response.code() == 429 ? "Spicy rate-limited HTTP 429" : "Spicy upstream-error HTTP " + response.code()), chain, hasToken,
+                                (response.code() == 429 ? "Apple Music rate-limited HTTP 429" : "Apple Music upstream-error HTTP " + response.code()), chain, hasToken,
                                 nativeEnabled, lrclibEnabled);
                         return;
                     }
                     String raw = response.body().string();
-                    logSpicyWireResponse(response.code(), raw);
+                    logRemoteWireResponse(response.code(), raw);
                     // M3: an HTTP-200 envelope can still carry an inner result status of 401.
                     // Check the raw body first (the auth-error shape has no lyrics data, so the
                     // parser would only throw), then the parsed document (covers packed payloads
@@ -352,12 +493,12 @@ public final class LyricsRepository {
                     JsonElement envelope = JsonParser.parseString(raw);
                     boolean isEnveloped = envelope.isJsonObject() && envelope.getAsJsonObject().has("queries");
                     Integer authRejection = isEnveloped && hasUsableToken(sendToken, accessToken)
-                            ? innerSpicyAuthRejectionStatus(raw) : null;
+                            ? innerRemoteAuthRejectionStatus(raw) : null;
                     JsonObject queryResult = isEnveloped ? SpicyQueryEnvelope.result(envelope) : null;
                     String queryFailure = isEnveloped ? SpicyNetworkDiagnostics.recordEnvelope(envelope, queryResult) : null;
                     if (isEnveloped && authRejection == null && (queryResult == null || queryFailure != null)) {
                         if (!chain.deliveredCachedSynced()) fetchNativeThenLrclib(context, track, generation,
-                                callback, 0, queryFailure == null ? "Spicy operation 0 missing" : queryFailure, chain, hasToken,
+                                callback, 0, queryFailure == null ? "Apple Music operation 0 missing" : queryFailure, chain, hasToken,
                                 nativeEnabled, lrclibEnabled);
                         return;
                     }
@@ -369,36 +510,36 @@ public final class LyricsRepository {
                             if (chain.deliveredCachedSynced()) return;
                             XpLog.log(TAG + " parse failed: " + parseErr);
                             fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                    "Spicy parse failed: " + parseErr.getMessage(), chain, hasToken,
+                                    "Apple Music parse failed: " + parseErr.getMessage(), chain, hasToken,
                                     nativeEnabled, lrclibEnabled);
                             return;
                         }
-                        if (hasUsableToken(sendToken, accessToken) && isInnerSpicyAuthRejection(doc)) {
+                        if (hasUsableToken(sendToken, accessToken) && isInnerRemoteAuthRejection(doc)) {
                             authRejection = doc.spicyQueryStatus;
                         }
                     }
                     if (authRejection != null) {
-                        handleSpicyAuthRejection(context, track, generation, sendToken,
+                        handleRemoteAuthRejection(context, track, generation, sendToken,
                                 accessToken, tokenGeneration, authRecovery, authRetryUsed, callback,
                                 chain, hasToken, authRejection, remoteEnabled, nativeEnabled, lrclibEnabled);
                         return;
                     }
-                    LyricsProviderChain.Decision decision = chain.acceptSpicyNetwork(doc, raw);
+                    LyricsProviderChain.Decision decision = chain.acceptRemoteNetwork(doc, raw);
                     if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
                     if (doc.lines.isEmpty()) {
                         fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                "Spicy lyrics empty", chain, hasToken, nativeEnabled, lrclibEnabled);
+                                "Apple Music lyrics empty", chain, hasToken, nativeEnabled, lrclibEnabled);
                         return;
                     }
                     if (doc.spicyPoisoned) {
-                        XpLog.log(TAG + " warning: rejected suspicious Spicy response reason="
+                        XpLog.log(TAG + " warning: rejected suspicious remote response reason="
                                 + safe(doc.spicyQualityReason)
                                 + " status=" + (doc.spicyQueryStatus == null ? "unknown" : doc.spicyQueryStatus)
                                 + " format=" + safe(doc.spicyFormat)
                                 + " packed=" + doc.spicyPackedPayload
                                 + " type=" + safe(doc.type));
                         fetchNativeThenLrclib(context, track, generation, callback, 0,
-                                "Spicy response suspicious: " + safe(doc.spicyQualityReason), chain, hasToken,
+                                "Apple Music response suspicious: " + safe(doc.spicyQualityReason), chain, hasToken,
                                 nativeEnabled, lrclibEnabled);
                         return;
                     }
@@ -414,20 +555,20 @@ public final class LyricsRepository {
                         return;
                     }
                     XpLog.log(TAG + " remote returned static type=" + doc.type + "; probing native synced upgrade");
-                    fetchNativeThenLrclib(context, track, generation, callback, 0, "Spicy static", chain, hasToken,
+                    fetchNativeThenLrclib(context, track, generation, callback, 0, "Apple Music static", chain, hasToken,
                             nativeEnabled, lrclibEnabled);
                 } catch (java.util.concurrent.CancellationException cancelled) {
-                    if (!chain.deliveredCachedSynced()) callback.onError("Spicy request cancelled");
+                    if (!chain.deliveredCachedSynced()) callback.onError("Apple Music request cancelled");
                 } catch (IOException networkFailure) {
                     SpicyNetworkDiagnostics.recordTransport("upstream-error", 0, null);
                     if (!chain.deliveredCachedSynced()) fetchNativeThenLrclib(context, track, generation,
-                            callback, 0, "Spicy upstream-error status 0", chain, hasToken,
+                            callback, 0, "Apple Music upstream-error status 0", chain, hasToken,
                             nativeEnabled, lrclibEnabled);
                 } catch (Throwable t) {
                     if (chain.deliveredCachedSynced()) return;
                     XpLog.log(TAG + " response handling failed: " + t);
                     fetchNativeThenLrclib(context, track, generation, callback, 0,
-                            "Spicy response failed: " + t.getMessage(), chain, hasToken,
+                            "Apple Music response failed: " + t.getMessage(), chain, hasToken,
                             nativeEnabled, lrclibEnabled);
                 }
             }
@@ -435,13 +576,13 @@ public final class LyricsRepository {
     }
 
     /**
-     * M3: an inner Spicy result status of 401 rejects the token epoch this request was issued
+     * M3: an inner remote result status of 401 rejects the token epoch this request was issued
      * under. The coordinator-owned {@link AuthRecovery} seam tombstones exactly that generation via
      * the token store and returns a replacement authorization only when a newer generation already
      * exists. One retry maximum; with no newer generation the request proceeds to the normal
      * native/LRCLIB fallback instead of looping.
      */
-    private void handleSpicyAuthRejection(
+    private void handleRemoteAuthRejection(
             Context context,
             SpotifyTrack track,
             int generation,
@@ -458,21 +599,21 @@ public final class LyricsRepository {
             boolean nativeEnabled,
             boolean lrclibEnabled
     ) {
-        XpLog.log(TAG + " inner Spicy auth rejection status=" + rejectionStatus
+        XpLog.log(TAG + " inner remote auth rejection status=" + rejectionStatus
                 + " tokenGeneration=" + rejectedTokenGeneration
                 + (authRetryUsed ? " retryAlreadyUsed" : ""));
         Authorization replacement = resolveAfterAuthRejection(authRecovery, rejectedTokenGeneration);
         if (chain.deliveredCachedSynced()) return; // cached synced already delivered; nothing to do
         if (shouldRetryAuthorization(rejectedToken, rejectedTokenGeneration, authRetryUsed, replacement)) {
-            XpLog.log(TAG + " retrying Spicy once with newer token generation="
+            XpLog.log(TAG + " retrying remote once with newer token generation="
                     + replacement.generation());
-            fetchSpicyLyricsFallback(context, track, generation, sendToken,
+            fetchRemoteLyricsFallback(context, track, generation, sendToken,
                     replacement.token(), replacement.generation(), authRecovery, true, callback,
                     remoteEnabled, nativeEnabled, lrclibEnabled);
             return;
         }
         fetchNativeThenLrclib(context, track, generation, callback, 0,
-                "Spicy auth rejected HTTP " + rejectionStatus, chain, hasToken,
+                "Apple Music auth rejected HTTP " + rejectionStatus, chain, hasToken,
                 nativeEnabled, lrclibEnabled);
     }
 
@@ -506,12 +647,12 @@ public final class LyricsRepository {
     }
 
     /**
-     * Scans a raw Spicy HTTP-200 body for an inner query-result status of 401 (the shape
+     * Scans a raw remote HTTP-200 body for an inner query-result status of 401 (the shape
      * {@code {"queries":[{"result":{"status":401,...}}]}}). Returns the rejecting status, or null
      * when the body is absent, malformed, or carries no rejecting inner status. Statuses outside
      * the query-result objects are deliberately ignored to avoid false positives.
      */
-    static Integer innerSpicyAuthRejectionStatus(String raw) {
+    static Integer innerRemoteAuthRejectionStatus(String raw) {
         if (raw == null || raw.trim().isEmpty()) return null;
         try {
             return innerAuthRejectionInQueries(JsonParser.parseString(raw));
@@ -525,68 +666,13 @@ public final class LyricsRepository {
         return isAuthRejectionStatus(status) ? status : null;
     }
 
-    /** Pure M3 seam: inner Spicy query status 401 on a parsed document means auth rejection. */
-    static boolean isInnerSpicyAuthRejection(LyricsDocument doc) {
+    /** Pure M3 seam: inner remote query status 401 on a parsed document means auth rejection. */
+    static boolean isInnerRemoteAuthRejection(LyricsDocument doc) {
         return doc != null && isAuthRejectionStatus(doc.spicyQueryStatus);
     }
 
     private static boolean isAuthRejectionStatus(Integer status) {
         return status != null && status == 401;
-    }
-
-    private void probeSpicyVersionOnce(OkHttpClient spicyHttp) {
-        final String requestVersion = SpicyLyricsRequestContract.UPSTREAM_VERSION;
-        if (!SpicyVersionProbeState.beginProbe(requestVersion)) return;
-
-        RequestBody body = RequestBody.create(
-                SpicyVersionProbeState.buildExtVersionQueryBody(requestVersion).getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                JSON);
-        Request request = new Request.Builder()
-                .url(SpicyLyricsRequestContract.SPICY_QUERY_URL)
-                .post(body)
-                .header("Accept", "*/*")
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .header("Content-Type", "application/json")
-                .header("X-mode", "2")
-                .header("Origin", SpicyLyricsRequestContract.SPICY_ORIGIN)
-                .header("Referer", SpicyLyricsRequestContract.SPICY_ORIGIN + "/")
-                .header("Sec-Fetch-Dest", "empty")
-                .header("Sec-Fetch-Mode", "cors")
-                .header("Sec-Fetch-Site", "cross-site")
-                .header("SpicyLyrics-Version", requestVersion)
-                .header("User-Agent", SpicyLyricsRequestContract.SPICY_USER_AGENT)
-                .build();
-
-        spicyHttp.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                String type = e == null ? "unknown" : e.getClass().getSimpleName();
-                SpicyVersionProbeState.recordFailure("network_failed:" + type);
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                try (Response ignored = response) {
-                    if (!response.isSuccessful() || response.body() == null) {
-                        SpicyVersionProbeState.recordFailure("http_" + response.code());
-                        return;
-                    }
-                    String latest = SpicyVersionProbeState.parseLatestVersion(response.body().string());
-                    if (isBlank(latest)) {
-                        SpicyVersionProbeState.recordFailure("parse_failed");
-                        return;
-                    }
-                    SpicyVersionProbeState.recordSuccess(requestVersion, latest);
-                    if (SpicyVersionProbeState.spicyVersionOutdated) {
-                        XpLog.log(TAG + " warning: Spicy client version outdated sent="
-                                + SpicyVersionProbeState.spicyVersionSent
-                                + " latest=" + SpicyVersionProbeState.spicyLatestVersion);
-                    }
-                } catch (Throwable t) {
-                    SpicyVersionProbeState.recordFailure("response_failed:" + t.getClass().getSimpleName());
-                }
-            }
-        });
     }
 
     private void fetchNativeThenLrclib(Context context, SpotifyTrack track, int generation,
@@ -627,12 +713,12 @@ public final class LyricsRepository {
                     LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
                     callback.onSuccess(nativeDoc);
                 } else {
-                    LyricsDocument spicyStatic = chain.pendingStatic();
+                    LyricsDocument remoteStatic = chain.pendingStatic();
                     boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
-                    XpLog.log(TAG + " keeping Spicy static over native static score="
-                            + LyricQualityRanker.score(spicyStatic) + " nativeScore=" + LyricQualityRanker.score(nativeDoc));
-                    LyricsFetchDiagnosticsState.record(sourceLabel(spicyStatic, "spicy"), chain.candidatesSeen(), spicyStatic, tokenPresent, cacheWrite);
-                    callback.onSuccess(spicyStatic);
+                    XpLog.log(TAG + " keeping remote static over native static score="
+                            + LyricQualityRanker.score(remoteStatic) + " nativeScore=" + LyricQualityRanker.score(nativeDoc));
+                    LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
+                    callback.onSuccess(remoteStatic);
                 }
                 return;
             }
@@ -663,16 +749,17 @@ public final class LyricsRepository {
         chain.nativeMissAfterRetries(reason);
         if (chain.hasPendingStatic()) {
             if (!lrclibEnabled) {
-                LyricsDocument spicyStatic = chain.pendingStatic();
-                XpLog.log(TAG + " native absent and LRCLIB disabled; delivering Spicy static lines="
-                        + spicyStatic.lines.size());
-                LyricsFetchDiagnosticsState.record(sourceLabel(spicyStatic, "spicy"), chain.candidatesSeen(),
-                        spicyStatic, tokenPresent, false);
-                callback.onSuccess(spicyStatic);
+                LyricsDocument remoteStatic = chain.pendingStatic();
+                XpLog.log(TAG + " native absent and LRCLIB disabled; delivering remote static lines="
+                        + remoteStatic.lines.size());
+                LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(),
+                        remoteStatic, tokenPresent, false);
+                callback.onSuccess(remoteStatic);
                 return;
             }
-            XpLog.log(TAG + " native absent; probing LRCLIB against Spicy static lines=" + chain.pendingStatic().lines.size());
-            fetchLrclibWithSpicyFallback(context, track, generation, callback, reason, chain, tokenPresent);
+            XpLog.log(TAG + " native absent; probing AMLL/LRCLIB against remote static lines=" + chain.pendingStatic().lines.size());
+            fetchAmllStageOrLrclib(context, track, generation, callback, reason, chain, tokenPresent,
+                    lrclibEnabled, true);
             return;
         }
         if (!lrclibEnabled) {
@@ -680,44 +767,306 @@ public final class LyricsRepository {
             callback.onError(reason + "; native miss, LRCLIB disabled");
             return;
         }
-        XpLog.log(TAG + " native lyrics miss (" + safe(reason) + "); falling back to LRCLIB");
-        fetchLrclib(context, track, generation, callback, reason, chain, tokenPresent);
+        XpLog.log(TAG + " native lyrics miss (" + safe(reason) + "); falling back to AMLL/LRCLIB");
+        fetchAmllStageOrLrclib(context, track, generation, callback, reason, chain, tokenPresent,
+                lrclibEnabled, false);
     }
 
-    private void fetchLrclibWithSpicyFallback(Context context, SpotifyTrack track, int generation,
-                                              ResultCallback callback, String reason, LyricsProviderChain chain,
-                                              boolean tokenPresent) {
+    /**
+     * Word-level AMLL TTML sits between native and LRCLIB: it beats held Apple statics and
+     * LRCLIB lines on sync tier, but never delays them — a miss falls straight through to the
+     * existing LRCLIB stage. The toggle is read here (not threaded) so a mid-fetch settings
+     * change applies to the next stage, and an AMLL miss never surfaces as an error.
+     */
+    private void fetchAmllStageOrLrclib(Context context, SpotifyTrack track, int generation,
+                                        ResultCallback callback, String reason,
+                                        LyricsProviderChain chain, boolean tokenPresent,
+                                        boolean lrclibEnabled, boolean rankAgainstStatic) {
+        boolean amllEnabled = com.eza.spicyex.lyrics.session.LyricsSourcePreferences
+                .enabledSourceOrder(context).contains(
+                        com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.AMLL);
+        if (!amllEnabled) {
+            fetchLrclibStage(context, track, generation, callback, reason, chain, tokenPresent,
+                    rankAgainstStatic);
+            return;
+        }
+        fetchAmllDirect(context, track, generation, callback, reason, chain, tokenPresent,
+                lrclibEnabled, rankAgainstStatic);
+    }
+
+    private void fetchLrclibStage(Context context, SpotifyTrack track, int generation,
+                                  ResultCallback callback, String reason, LyricsProviderChain chain,
+                                  boolean tokenPresent, boolean rankAgainstStatic) {
+        if (rankAgainstStatic) {
+            fetchLrclibWithRemoteFallback(context, track, generation, callback, reason, chain,
+                    tokenPresent);
+        } else {
+            fetchLrclib(context, track, generation, callback, reason, chain, tokenPresent);
+        }
+    }
+
+    private void fetchAmllDirect(Context context, SpotifyTrack track, int generation,
+                                 ResultCallback callback, String reason, LyricsProviderChain chain,
+                                 boolean tokenPresent, boolean lrclibEnabled, boolean rankAgainstStatic) {
+        String trackId = trackIdFromUri(track == null ? "" : track.uri);
+        if (trackId.isEmpty()) {
+            fetchAmllSearch(context, track, generation, callback, reason, chain, tokenPresent,
+                    lrclibEnabled, rankAgainstStatic);
+            return;
+        }
+        Request request = new Request.Builder()
+                .url("https://amll-ttml-db.stevexmh.net/spotify/" + trackId + "?format=ttml")
+                .get()
+                .header("User-Agent", "SpotifyPlus-Mobile")
+                .header("Accept", "application/xml, text/xml, text/plain;q=0.9")
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                fetchAmllSearch(context, track, generation, callback, reason, chain, tokenPresent,
+                        lrclibEnabled, rankAgainstStatic);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (response.isSuccessful() && response.body() != null) {
+                        String body = response.body().string();
+                        if (looksLikeTtml(body)) {
+                            try {
+                                deliverAmll(context, track, generation, callback, chain,
+                                        tokenPresent, body);
+                                return;
+                            } catch (Throwable parseError) {
+                                XpLog.log(TAG + " AMLL direct parse failed: " + parseError);
+                            }
+                        }
+                    }
+                    fetchAmllSearch(context, track, generation, callback, reason, chain,
+                            tokenPresent, lrclibEnabled, rankAgainstStatic);
+                }
+            }
+        });
+    }
+
+    private void fetchAmllSearch(Context context, SpotifyTrack track, int generation,
+                                 ResultCallback callback, String reason, LyricsProviderChain chain,
+                                 boolean tokenPresent, boolean lrclibEnabled, boolean rankAgainstStatic) {
+        List<String> queries = new ArrayList<>();
+        for (String title : LrclibQueryPlanner.queryTitles(safe(track == null ? "" : track.title))) {
+            if (!isBlank(title) && !queries.contains(title)) queries.add(title);
+        }
+        fetchAmllSearchQuery(context, track, generation, callback, reason, chain, tokenPresent,
+                lrclibEnabled, rankAgainstStatic, queries, 0);
+    }
+
+    private void fetchAmllSearchQuery(Context context, SpotifyTrack track, int generation,
+                                      ResultCallback callback, String reason,
+                                      LyricsProviderChain chain, boolean tokenPresent,
+                                      boolean lrclibEnabled, boolean rankAgainstStatic,
+                                      List<String> queries, int index) {
+        if (index >= queries.size()) {
+            XpLog.log(TAG + " AMLL miss; falling back to LRCLIB");
+            fetchLrclibStage(context, track, generation, callback, reason, chain, tokenPresent,
+                    rankAgainstStatic);
+            return;
+        }
+        String payload = "{\"query\":\"" + queries.get(index).replace("\\", "\\\\")
+                .replace("\"", "\\\"") + "\",\"type\":\"title\"}";
+        Request request = new Request.Builder()
+                .url("https://amlldb.bikonoo.com/api/search-lyrics")
+                .post(okhttp3.RequestBody.create(payload,
+                        okhttp3.MediaType.get("application/json; charset=utf-8")))
+                .header("User-Agent", "SpotifyPlus-Mobile")
+                .header("Accept", "application/json")
+                .build();
+        final int nextIndex = index + 1;
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                fetchAmllSearchQuery(context, track, generation, callback, reason, chain,
+                        tokenPresent, lrclibEnabled, rankAgainstStatic, queries, nextIndex);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (response.isSuccessful() && response.body() != null) {
+                        String file = matchAmllSearchResult(response.body().string(), track);
+                        if (!isBlank(file)) {
+                            fetchAmllRaw(context, track, generation, callback, reason, chain,
+                                    tokenPresent, lrclibEnabled, rankAgainstStatic, queries,
+                                    nextIndex, file);
+                            return;
+                        }
+                    }
+                    fetchAmllSearchQuery(context, track, generation, callback, reason, chain,
+                            tokenPresent, lrclibEnabled, rankAgainstStatic, queries, nextIndex);
+                }
+            }
+        });
+    }
+
+    private void fetchAmllRaw(Context context, SpotifyTrack track, int generation,
+                              ResultCallback callback, String reason, LyricsProviderChain chain,
+                              boolean tokenPresent, boolean lrclibEnabled, boolean rankAgainstStatic,
+                              List<String> queries, int nextIndex, String file) {
+        Request request = new Request.Builder()
+                .url("https://amlldb.bikonoo.com/raw-lyrics/" + file)
+                .get()
+                .header("User-Agent", "SpotifyPlus-Mobile")
+                .header("Accept", "application/xml, text/xml, text/plain;q=0.9")
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                fetchAmllSearchQuery(context, track, generation, callback, reason, chain,
+                        tokenPresent, lrclibEnabled, rankAgainstStatic, queries, nextIndex);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (response.isSuccessful() && response.body() != null) {
+                        String body = response.body().string();
+                        if (looksLikeTtml(body)) {
+                            try {
+                                deliverAmll(context, track, generation, callback, chain,
+                                        tokenPresent, body);
+                                return;
+                            } catch (Throwable parseError) {
+                                XpLog.log(TAG + " AMLL raw parse failed: " + parseError);
+                            }
+                        }
+                    }
+                    fetchAmllSearchQuery(context, track, generation, callback, reason, chain,
+                            tokenPresent, lrclibEnabled, rankAgainstStatic, queries, nextIndex);
+                }
+            }
+        });
+    }
+
+    private void deliverAmll(Context context, SpotifyTrack track, int generation,
+                             ResultCallback callback, LyricsProviderChain chain,
+                             boolean tokenPresent, String ttml) {
+        LyricsDocument doc = parser.parseAmllTtml(context, track, ttml);
+        doc.generation = generation;
+        if (doc.lines.isEmpty()) throw new IllegalStateException("AMLL lyrics empty");
+        LyricsProviderChain.Decision decision = chain.acceptAmll(doc);
+        if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
+        if (decision.action == LyricsProviderChain.Action.DELIVER) {
+            boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
+            if (decision.document != doc && decision.document != null) {
+                XpLog.log(TAG + " keeping remote static over AMLL score="
+                        + LyricQualityRanker.score(decision.document) + " amllScore="
+                        + LyricQualityRanker.score(doc));
+            } else {
+                XpLog.log(TAG + " using AMLL lyrics type=" + doc.type
+                        + " lines=" + doc.lines.size());
+            }
+            LyricsDocument delivered = decision.document != null ? decision.document : doc;
+            LyricsFetchDiagnosticsState.record(sourceLabel(delivered, "amll"),
+                    chain.candidatesSeen(), delivered, tokenPresent, cacheWrite);
+            callback.onSuccess(delivered);
+            return;
+        }
+        throw new IllegalStateException("AMLL candidate rejected");
+    }
+
+    /** First usable search hit: title match required, artist overlap preferred, file present. */
+    static String matchAmllSearchResult(String body, SpotifyTrack track) {
+        JsonElement root;
+        try {
+            root = JsonParser.parseString(body);
+        } catch (Throwable bad) {
+            return "";
+        }
+        if (root == null || !root.isJsonArray()) return "";
+        String title = track == null ? "" : safe(track.title).toLowerCase(java.util.Locale.US);
+        String artist = track == null ? "" : safe(track.artist).toLowerCase(java.util.Locale.US);
+        for (JsonElement element : root.getAsJsonArray()) {
+            if (!element.isJsonObject()) continue;
+            JsonObject result = element.getAsJsonObject();
+            String file = Json.optString(result, "file");
+            if (isBlank(file) || file.contains("..") || file.contains("/")) continue;
+            List<String> titles = new ArrayList<>();
+            titles.add(Json.optString(result, "title"));
+            com.google.gson.JsonArray more = Json.optArray(result, "titles");
+            if (more != null) {
+                for (JsonElement extra : more) {
+                    if (extra.isJsonPrimitive()) titles.add(extra.getAsString());
+                }
+            }
+            boolean titleHit = false;
+            for (String candidate : titles) {
+                String c = safe(candidate).toLowerCase(java.util.Locale.US);
+                if (c.isEmpty() || title.isEmpty()) continue;
+                if (c.equals(title) || c.contains(title) || title.contains(c)) {
+                    titleHit = true;
+                    break;
+                }
+            }
+            if (!titleHit) continue;
+            List<String> artists = new ArrayList<>();
+            artists.add(Json.optString(result, "artist"));
+            com.google.gson.JsonArray moreArtists = Json.optArray(result, "artists");
+            if (moreArtists != null) {
+                for (JsonElement extra : moreArtists) {
+                    if (extra.isJsonPrimitive()) artists.add(extra.getAsString());
+                }
+            }
+            boolean artistHit = artist.isEmpty();
+            for (String candidate : artists) {
+                String c = safe(candidate).toLowerCase(java.util.Locale.US);
+                if (c.isEmpty()) continue;
+                if (c.equals(artist) || c.contains(artist) || artist.contains(c)) {
+                    artistHit = true;
+                    break;
+                }
+            }
+            if (artistHit) return file.trim();
+        }
+        return "";
+    }
+
+    static boolean looksLikeTtml(String body) {
+        return body != null && body.matches("(?s)\\s*(<\\?xml[^>]*>\\s*)?<tt[\\s>].*");
+    }
+
+    private void fetchLrclibWithRemoteFallback(Context context, SpotifyTrack track, int generation,
+                                               ResultCallback callback, String reason, LyricsProviderChain chain,
+                                               boolean tokenPresent) {
         fetchLrclib(context, track, generation, new ResultCallback() {
             @Override
             public void onSuccess(LyricsDocument lrclibDoc) {
                 LyricsProviderChain.Decision decision = chain.acceptLrclib(lrclibDoc);
-                LyricsDocument spicyStatic = chain.pendingStatic();
+                LyricsDocument remoteStatic = chain.pendingStatic();
                 if (decision.document == lrclibDoc) {
-                    XpLog.log(TAG + " using LRCLIB lyrics over Spicy static type=" + lrclibDoc.type
+                    XpLog.log(TAG + " using LRCLIB lyrics over remote static type=" + lrclibDoc.type
                             + " lines=" + lrclibDoc.lines.size()
                             + " score=" + LyricQualityRanker.score(lrclibDoc)
-                            + " spicyScore=" + LyricQualityRanker.score(spicyStatic));
+                            + " remoteScore=" + LyricQualityRanker.score(remoteStatic));
                     LyricsFetchDiagnosticsState.record("lrclib", chain.candidatesSeen(), lrclibDoc, tokenPresent, false);
                     callback.onSuccess(lrclibDoc);
                     return;
                 }
                 if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
                 boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
-                XpLog.log(TAG + " native/LRCLIB lower ranked; delivering Spicy static lines="
-                        + spicyStatic.lines.size() + " score=" + LyricQualityRanker.score(spicyStatic));
-                LyricsFetchDiagnosticsState.record(sourceLabel(spicyStatic, "spicy"), chain.candidatesSeen(), spicyStatic, tokenPresent, cacheWrite);
-                callback.onSuccess(spicyStatic);
+                XpLog.log(TAG + " native/LRCLIB lower ranked; delivering remote static lines="
+                        + remoteStatic.lines.size() + " score=" + LyricQualityRanker.score(remoteStatic));
+                LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
+                callback.onSuccess(remoteStatic);
             }
 
             @Override
             public void onError(String error) {
                 LyricsProviderChain.Decision decision = chain.acceptLrclibError(error);
                 if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
-                LyricsDocument spicyStatic = chain.pendingStatic();
+                LyricsDocument remoteStatic = chain.pendingStatic();
                 boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
-                XpLog.log(TAG + " LRCLIB miss; delivering Spicy static lines=" + spicyStatic.lines.size());
-                LyricsFetchDiagnosticsState.record(sourceLabel(spicyStatic, "spicy"), chain.candidatesSeen(), spicyStatic, tokenPresent, cacheWrite);
-                callback.onSuccess(spicyStatic);
+                XpLog.log(TAG + " LRCLIB miss; delivering remote static lines=" + remoteStatic.lines.size());
+                LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
+                callback.onSuccess(remoteStatic);
             }
         }, reason, chain, tokenPresent);
     }
@@ -736,43 +1085,149 @@ public final class LyricsRepository {
 
     private void fetchLrclib(Context context, SpotifyTrack track, int generation, ResultCallback callback,
                              String reason, LyricsProviderChain chain, boolean tokenPresent) {
-        String url = "https://lrclib.net/api/search?track_name="
-                + Uri.encode(safe(track.title))
-                + "&artist_name=" + Uri.encode(safe(track.artist))
-                + "&album_name=" + Uri.encode(safe(track.album));
+        // Remaster-suffixed titles miss synced originals when queried verbatim, and single
+        // responses mix duplicate durations (including junk). Query raw, then normalized, then
+        // free-text, merging candidates in provenance order; stop early once a usable synced
+        // record is in hand so popular tracks still cost one request.
+        fetchLrclibVariant(context, track, generation, callback, reason, chain, tokenPresent,
+                lrclibQueryUrls(track), 0, new JsonArray());
+    }
+
+    private static List<String> lrclibQueryUrls(SpotifyTrack track) {
+        List<String> urls = new ArrayList<>();
+        for (String title : LrclibQueryPlanner.queryTitles(safe(track.title))) {
+            urls.add("https://lrclib.net/api/search?track_name="
+                    + Uri.encode(title)
+                    + "&artist_name=" + Uri.encode(safe(track.artist))
+                    + "&album_name=" + Uri.encode(safe(track.album)));
+        }
+        String freeText = LrclibQueryPlanner.freeTextQuery(safe(track.title), safe(track.artist));
+        if (!freeText.isEmpty()) urls.add("https://lrclib.net/api/search?q=" + Uri.encode(freeText));
+        return urls;
+    }
+
+    private void fetchLrclibVariant(Context context, SpotifyTrack track, int generation,
+                                    ResultCallback callback, String reason, LyricsProviderChain chain,
+                                    boolean tokenPresent, List<String> urls, int index, JsonArray merged) {
+        if (index >= urls.size()) {
+            if (merged.size() == 0) {
+                reportLrclibError(chain, callback, reason + "; LRCLIB empty");
+            } else {
+                deliverMergedLrclib(context, track, generation, callback, reason, chain,
+                        tokenPresent, merged);
+            }
+            return;
+        }
         Request request = new Request.Builder()
-                .url(url)
+                .url(urls.get(index))
                 .get()
                 .header("User-Agent", "SpotifyPlus MobileLyrics/1.1")
                 .build();
+        final int nextIndex = index + 1;
+        final boolean lastVariant = nextIndex >= urls.size();
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                reportLrclibError(chain, callback, reason + "; LRCLIB failed: " + e.getMessage());
+                if (lastVariant && merged.size() == 0) {
+                    reportLrclibError(chain, callback, reason + "; LRCLIB failed: " + e.getMessage());
+                } else {
+                    scheduleLrclibVariant(context, track, generation, callback, reason, chain,
+                            tokenPresent, urls, nextIndex, merged);
+                }
             }
 
             @Override
             public void onResponse(Call call, Response response) throws IOException {
                 try (Response ignored = response) {
-                    if (!response.isSuccessful() || response.body() == null) {
-                        reportLrclibError(chain, callback, reason + "; LRCLIB HTTP " + response.code());
-                        return;
+                    if (response.isSuccessful() && response.body() != null) {
+                        appendLrclibCandidates(merged, response.body().string());
+                        if (hasUsableSyncedLrclib(merged, track)) {
+                            deliverMergedLrclib(context, track, generation, callback, reason,
+                                    chain, tokenPresent, merged);
+                            return;
+                        }
                     }
-                    LyricsDocument doc = parser.parseLrclibLyrics(context, track, response.body().string());
-                    doc.generation = generation;
-                    if (doc.lines.isEmpty()) {
-                        reportLrclibError(chain, callback, reason + "; LRCLIB empty");
-                        return;
+                    if (lastVariant) {
+                        if (merged.size() == 0) {
+                            reportLrclibError(chain, callback, reason + "; LRCLIB HTTP "
+                                    + response.code());
+                        } else {
+                            deliverMergedLrclib(context, track, generation, callback, reason,
+                                    chain, tokenPresent, merged);
+                        }
+                    } else {
+                        scheduleLrclibVariant(context, track, generation, callback, reason, chain,
+                                tokenPresent, urls, nextIndex, merged);
                     }
-                    chain.acceptLrclib(doc);
-                    LyricsFetchDiagnosticsState.record("lrclib", chain.candidatesSeen(), doc, tokenPresent, false);
-                    callback.onSuccess(doc);
                 } catch (Throwable t) {
-                    reportLrclibError(chain, callback, reason + "; LRCLIB parse failed: " + t.getMessage());
-                    XpLog.log(TAG + " LRCLIB parse failed: " + t);
+                    XpLog.log(TAG + " LRCLIB variant failed: " + t);
+                    if (lastVariant && merged.size() == 0) {
+                        reportLrclibError(chain, callback, reason + "; LRCLIB parse failed: "
+                                + t.getMessage());
+                    } else if (!lastVariant) {
+                        scheduleLrclibVariant(context, track, generation, callback, reason, chain,
+                                tokenPresent, urls, nextIndex, merged);
+                    } else {
+                        deliverMergedLrclib(context, track, generation, callback, reason, chain,
+                                tokenPresent, merged);
+                    }
                 }
             }
         });
+    }
+
+    private void scheduleLrclibVariant(Context context, SpotifyTrack track, int generation,
+                                       ResultCallback callback, String reason,
+                                       LyricsProviderChain chain, boolean tokenPresent,
+                                       List<String> urls, int nextIndex, JsonArray merged) {
+        try {
+            ioScheduler.schedule(() -> fetchLrclibVariant(context, track, generation, callback,
+                            reason, chain, tokenPresent, urls, nextIndex, merged),
+                    LrclibQueryPlanner.FOLLOW_UP_DELAY_MS, TimeUnit.MILLISECONDS);
+        } catch (Throwable scheduled) {
+            fetchLrclibVariant(context, track, generation, callback, reason, chain, tokenPresent,
+                    urls, nextIndex, merged);
+        }
+    }
+
+    private static void appendLrclibCandidates(JsonArray merged, String body) {
+        JsonElement root = JsonParser.parseString(body);
+        if (root.isJsonArray()) {
+            for (JsonElement element : root.getAsJsonArray()) {
+                if (element.isJsonObject()) merged.add(element.getAsJsonObject());
+            }
+        } else if (root.isJsonObject()) {
+            merged.add(root.getAsJsonObject());
+        }
+    }
+
+    private static boolean hasUsableSyncedLrclib(JsonArray merged, SpotifyTrack track) {
+        List<JsonObject> candidates = new ArrayList<>(merged.size());
+        for (JsonElement element : merged) {
+            if (element.isJsonObject()) candidates.add(element.getAsJsonObject());
+        }
+        double trackDurationSec = track == null || track.duration <= 0 ? -1d : track.duration / 1000d;
+        int pick = LrclibQueryPlanner.pickBest(candidates, trackDurationSec);
+        return pick >= 0 && !isBlank(Json.optString(candidates.get(pick), "syncedLyrics"));
+    }
+
+    private void deliverMergedLrclib(Context context, SpotifyTrack track, int generation,
+                                     ResultCallback callback, String reason,
+                                     LyricsProviderChain chain, boolean tokenPresent, JsonArray merged) {
+        try {
+            LyricsDocument doc = parser.parseLrclibLyrics(context, track, merged.toString());
+            doc.generation = generation;
+            if (doc.lines.isEmpty()) {
+                reportLrclibError(chain, callback, reason + "; LRCLIB empty");
+                return;
+            }
+            chain.acceptLrclib(doc);
+            LyricsFetchDiagnosticsState.record("lrclib", chain.candidatesSeen(), doc, tokenPresent, false);
+            callback.onSuccess(doc);
+        } catch (Throwable t) {
+            reportLrclibError(chain, callback, reason + "; LRCLIB parse failed: " + t.getMessage());
+            XpLog.log(TAG + " LRCLIB parse failed: " + t);
+        }
     }
 
     private static void reportLrclibError(LyricsProviderChain chain, ResultCallback callback, String error) {
@@ -784,32 +1239,23 @@ public final class LyricsRepository {
 
     private static final boolean WIRE_DEBUG_CAPTURE = false;
 
-    private static void logSpicyWireRequest(Request request, int generation, boolean retry) {
+    private static void logRemoteWireRequest(Request request, int generation, boolean retry) {
         if (!WIRE_DEBUG_CAPTURE || request == null) return;
         try {
             XpLog.log(TAG + " remote request url=" + request.url());
         } catch (Throwable ignored) { }
     }
 
-    private static void logSpicyWireResponse(int status, String raw) {
+    private static void logRemoteWireResponse(int status, String raw) {
         if (!WIRE_DEBUG_CAPTURE) return;
         XpLog.log(TAG + " remote response status=" + status + " bytes=" + (raw == null ? 0 : raw.length()));
     }
 
-    static String buildSpicyLyricsQueryBody(String trackId) {
-        return new String(SpicyLyricsRequestContract.buildLyricsQueryBytes(trackId),
-                java.nio.charset.StandardCharsets.UTF_8);
-    }
-
     static boolean hasUsableToken(boolean sendToken, String accessToken) {
-        return SpicyLyricsRequestContract.hasUsableToken(sendToken, accessToken);
+        return sendToken && !isBlank(accessToken) && !"0".equals(accessToken);
     }
 
     private static final String LENERD_ENDPOINT_URL = "https://spotifyplus-api.devon-shoutz.workers.dev/api/lyrics/";
-
-    static Request buildSpicyLyricsRequest(String trackId, String accessToken) {
-        return SpicyLyricsRequestContract.buildLyricsRequest(trackId, accessToken);
-    }
 
     static Request buildLenerdLyricsRequest(String trackId) {
         return new Request.Builder()
@@ -824,8 +1270,10 @@ public final class LyricsRepository {
         String source = doc == null ? "" : safe(doc.fetchSource).toLowerCase(java.util.Locale.US);
         if (source.contains("cache")) return "cache";
         if (source.contains("lrclib")) return "lrclib";
+        if (source.contains("amll")) return "amll";
         if (source.contains("native")) return "native";
-        if (source.contains("spicy")) return "spicy";
+        if (source.contains("spicy")) return "apple_music";
+        if (source.contains("apple_music")) return "apple_music";
         return fallback;
     }
 
@@ -836,7 +1284,7 @@ public final class LyricsRepository {
 
     /**
      * M3 seam implemented hook-side (the lyrics layer must never depend on hooks). Reports that an
-     * inner Spicy 401 rejected the request issued under {@code rejectedTokenGeneration}; the
+     * inner remote 401 rejected the request issued under {@code rejectedTokenGeneration}; the
      * implementation tombstones exactly that generation in the token store and returns a
      * replacement {@link Authorization} only when a newer usable generation already exists, or
      * {@code null} to let the caller proceed to the native/LRCLIB fallback.
@@ -883,6 +1331,7 @@ public final class LyricsRepository {
     public interface Parser {
         LyricsDocument parseSpicyLyrics(Context context, SpotifyTrack track, String raw, boolean fromCache);
         LyricsDocument parseLrclibLyrics(Context context, SpotifyTrack track, String body);
+        LyricsDocument parseAmllTtml(Context context, SpotifyTrack track, String ttml);
     }
 
     public interface NativeLyricsProvider {

@@ -97,6 +97,16 @@ public class LyricQualityRankerTest {
         assertFalse(LyricQualityRanker.preferAuto(spicy("Syllable", true, true), lrclib("Static")));
     }
 
+    @Test
+    public void amllWordRanksAsAppleTier() {
+        assertTrue(score(amll("Word")) > score(appleDoc("Line")));
+        assertTrue(score(amll("Word")) > score(appleDoc("Static")));
+        assertTrue(score(amll("Word")) > score(lrclib("Static")));
+        assertTrue(score(appleDoc("Syllable")) > score(amll("Word")));
+        assertTrue(LyricQualityRanker.preferAuto(amll("Word"), appleDoc("Line")));
+        assertFalse(LyricQualityRanker.preferAuto(appleDoc("Line"), amll("Word")));
+    }
+
     private static LyricsDocument appleDoc(String type) {
         return doc(type, "apple_music_lenerd", "Apple Music");
     }
@@ -122,6 +132,10 @@ public class LyricQualityRankerTest {
 
     private static LyricsDocument lrclib(String type) {
         return doc(type, "lrclib", "LRCLIB");
+    }
+
+    private static LyricsDocument amll(String type) {
+        return doc(type, "amll_ttml", "AMLL");
     }
 
     private static LyricsDocument doc(String type, String fetchSource, String provider) {

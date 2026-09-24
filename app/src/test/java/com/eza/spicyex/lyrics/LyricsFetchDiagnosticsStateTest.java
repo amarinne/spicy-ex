@@ -21,15 +21,27 @@ public class LyricsFetchDiagnosticsStateTest {
     }
 
     @Test
-    public void rawSpicyCacheDisplaysItsSpicyOrigin() {
-        LyricsDocument document = document("spicy_api_cache", "Musixmatch");
+    public void rawRemoteCacheDisplaysItsRemoteOrigin() {
+        LyricsDocument document = document("apple_music_cache", "Musixmatch");
 
-        LyricsFetchDiagnosticsState.record("cache", Collections.singletonList("spicy"),
+        LyricsFetchDiagnosticsState.record("cache", Collections.singletonList("apple_music"),
                 document, true, false);
 
         LyricsFetchDiagnosticsState.Snapshot snapshot = LyricsFetchDiagnosticsState.get();
-        assertEquals("spicy", snapshot.cacheSource);
-        assertEquals("cache (spicy)", snapshot.displayedSourceChosen());
+        assertEquals("apple_music", snapshot.cacheSource);
+        assertEquals("cache (apple_music)", snapshot.displayedSourceChosen());
+    }
+
+    @Test
+    public void legacySpicyCacheMapsToRemoteOrigin() {
+        LyricsDocument document = document("spicy_api_cache", "Spicy Lyrics");
+
+        LyricsFetchDiagnosticsState.record("cache", Collections.singletonList("apple_music"),
+                document, true, false);
+
+        LyricsFetchDiagnosticsState.Snapshot snapshot = LyricsFetchDiagnosticsState.get();
+        assertEquals("apple_music", snapshot.cacheSource);
+        assertEquals("cache (apple_music)", snapshot.displayedSourceChosen());
     }
 
     @Test
@@ -47,9 +59,9 @@ public class LyricsFetchDiagnosticsStateTest {
     }
 
     @Test
-    public void lrclibWinnerKeepsSpicyNetworkStatus() {
+    public void lrclibWinnerKeepsRemoteNetworkStatus() {
         SpicyNetworkDiagnostics.spicyQueryStatus = 401;
-        SpicyNetworkDiagnostics.reason = "Spicy auth rejected HTTP 401";
+        SpicyNetworkDiagnostics.reason = "Apple Music auth rejected HTTP 401";
         try {
             LyricsFetchDiagnosticsState.record("lrclib", Collections.singletonList("lrclib"),
                     document("lrclib", "LRCLIB"), true, false);

@@ -20,7 +20,7 @@ public final class SpicyNetworkDiagnostics {
         spicyQueryStatus = SpicyQueryEnvelope.status(result);
         transportStatus = 200; retryAfterMs = null; source = "";
         String failure = SpicyQueryEnvelope.failureReason(result);
-        if (result == null) failure = "Spicy operation 0 missing";
+        if (result == null) failure = "Apple Music operation 0 missing";
         JsonElement data = result == null ? null : result.get("data");
         try {
             if (SpicyObjPack.isPackedPayload(data)) data = SpicyObjPack.unpack(data);
@@ -29,7 +29,7 @@ public final class SpicyNetworkDiagnostics {
                 if (source == null) source = "";
                 if (Integer.valueOf(429).equals(spicyQueryStatus)
                         && "Spotify API error".equals(Json.optString(data.getAsJsonObject(), "error"))) {
-                    failure = "Spicy rate-limited: Spicy upstream degraded / Spotify API error";
+                    failure = "Apple Music rate-limited: Apple Music upstream degraded / Spotify API error";
                 }
             }
         } catch (RuntimeException ignored) { }

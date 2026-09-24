@@ -47,10 +47,10 @@ final class SpicyQueryEnvelope {
     static String failureReason(JsonObject result) {
         Integer status = status(result);
         if (status == null || status == 200) return null;
-        if (status == 429) return "Spicy rate-limited / upstream degraded";
-        if (status == 401) return "Spicy auth rejected HTTP 401";
-        if (status == 404) return "Spicy no-match";
-        if (status == 503) return "Spicy queued";
-        return "Spicy upstream-error HTTP " + status;
+        if (status == 429) return "Apple Music rate-limited / upstream degraded";
+        if (status == 401) return "Apple Music auth rejected HTTP 401";
+        if (status == 404) return "Apple Music no-match";
+        if (status == 503) return "Apple Music queued";
+        return "Apple Music upstream-error HTTP " + status;
     }
 }

@@ -90,13 +90,13 @@ public final class Settings {
             "Auto", "Source order"
     );
 
-    /** Experimental strict source switch. Spicy restores the retired remote provider path. */
+    /** Experimental strict source switch. "Spicy" is a retired legacy alias for Apple Music. */
     public static final Setting<String> LYRICS_SOURCE_OVERRIDE = enumSetting(
             "lyrics_source_override", LYRICS_SOURCES, "Lyrics source", "Auto",
             "Auto", "Apple Music", "Spicy", "Spotify", "LRCLIB"
     );
 
-    /** Optional desktop-captured Spotify token used only by strict Spicy requests. */
+    /** Optional desktop-captured Spotify token (legacy; the retired Spicy remote is no longer queried). */
     public static final Setting<String> SPICY_MANUAL_TOKEN = stringSetting(
             "lyrics_spicy_manual_token", LYRICS_SOURCES, "Spicy manual token", ""
     );
@@ -397,6 +397,10 @@ public final class Settings {
 
     public static final IntegerSetting EXTRA_DARK_BACKGROUND = intSetting(
             "lyric_extra_dark_background", BACKGROUND, "Darken background", 35, 0, 100, 5
+    );
+
+    public static final Setting<Boolean> DOWNLOAD_LANGUAGE_MODELS = boolSetting(
+            "download_language_models", TRANSLITERATION, "Download language models", false
     );
 
     // --- Romanization (transliteration controls) ---
