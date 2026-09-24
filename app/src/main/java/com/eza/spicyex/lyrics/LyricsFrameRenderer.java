@@ -41,6 +41,23 @@ public final class LyricsFrameRenderer {
         };
     }
 
+    // Cascading rows are drawn away from their layout slot for a moment, so the culling keeps a
+    // couple of rows beyond the estimated viewport.
+    private static final int OFFSCREEN_MARGIN_ROWS = 2;
+
+    /** True while a mounted row still has a renderer-owned spring to drain. */
+    public boolean hasPendingAnimation(LyricsDocument document, Set<Integer> mountedIndices,
+                                       ViewGroup mountedRowsHost) {
+        if (document == null || document.appliedLines == null || mountedIndices == null) return false;
+        for (int i : mountedIndices) {
+            if (i < 0 || i >= document.appliedLines.size()) continue;
+            AppliedLine line = document.appliedLines.get(i);
+            if (LyricsLineViewState.isMounted(line, mountedRowsHost)
+                    && !LyricsLineViewState.isSettled(line)) return true;
+        }
+        return false;
+    }
+
     /** Unsynced lyrics: every mounted row drawn fully bright, no blur/scale/wash. */
     public void applyStatic(LyricsDocument document, Set<Integer> mountedIndices, ViewGroup mountedRowsHost) {
         if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) return;
@@ -99,11 +116,15 @@ public final class LyricsFrameRenderer {
         boolean scrollHoldChanged = userScrollHeld != lastUserScrollHeld;
         for (int i : mountedIndices) {
             if (i < 0 || i >= document.appliedLines.size()) continue;
-            if (userScrollHeld && i != activeIndex
-                    && (i < boundedVisibleStart || i > boundedVisibleEnd)) continue;
             AppliedLine line = document.appliedLines.get(i);
             if (!LyricsLineViewState.isMounted(line, mountedRowsHost)) continue;
-
+            boolean isOutsideVisibleHoldWindow = userScrollHeld && i != activeIndex
+                    && (i < boundedVisibleStart || i > boundedVisibleEnd);
+            // Off screen (mounted ahead of the viewport, or already scrolled past): nobody sees its
+            // per-syllable motion, so it keeps only its cheap row-level fade/blur. When it scrolls
+            // into view its springs are still unsettled and it gets the full pass from then on.
+            boolean offscreen = i != activeIndex && visibleEnd != Integer.MAX_VALUE
+                    && (i < visibleStart - OFFSCREEN_MARGIN_ROWS || i > visibleEnd + OFFSCREEN_MARGIN_ROWS);
             LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
                     line, positionMs, config.spotlight, config.lineGradientEnabled,
                     config.appleDimPassed);
@@ -114,14 +135,29 @@ public final class LyricsFrameRenderer {
             // snap-back (hold release), which arrives as scrollHoldChanged.
             boolean blurNeedsRefresh = blurNeedsRefresh(
                     config.lineBlurEnabled, activeChanged, scrollHoldChanged, userScrollHeld);
-            if (!lineState.active && !blurNeedsRefresh
-                    && !LyricsLineViewState.needsFrame(line, targetClass)) {
+            if (!lineState.active && (offscreen || !blurNeedsRefresh
+                    && !LyricsLineViewState.needsFrame(line, targetClass))) {
+                // Keep applying the frame while the blur spring settles. Stepping the spring but
+                // returning here left the View's RenderEffect at its old value, so the next
+                // active-line refresh appeared to "undo" the gradual blur in one frame.
+                float blurTarget = mobileLineBlurPx(line, i, activeIndex, lineState.active, userScrollHeld, config);
+                float blur = LyricsLineViewState.stepLineBlur(line, blurTarget, deltaSeconds);
+                float opacity = LyricsAnimationApplier.stepLineOpacity(line, lineState.active,
+                        lineState.sung, deltaSeconds, config.appleDimPassed);
+                LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity, blur);
                 continue;
             }
+            LyricsLineViewState.invalidateSettled(line);
             float opacity = LyricsAnimationApplier.stepLineOpacity(line, lineState.active, lineState.sung,
                     deltaSeconds, config.appleDimPassed);
             float blurTarget = mobileLineBlurPx(line, i, activeIndex, lineState.active, userScrollHeld, config);
-            LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity, blurTarget);
+            float blur = LyricsLineViewState.stepLineBlur(line, blurTarget, deltaSeconds);
+            // Always drain blur for rows outside the visible hold window, but skip
+            // expensive rendering since they're not visible during the scroll hold.
+            if (isOutsideVisibleHoldWindow) {
+                continue;
+            }
+            LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity, blur);
             if (config.appleStyle) {
                 float lineShadowTarget = lineState.active && !line.bgLine ? 1f : 0f;
                 float lineShadow = LyricsLineViewState.stepLineShadow(line, lineShadowTarget, deltaSeconds);

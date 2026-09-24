@@ -36,11 +36,10 @@ public class AppleFadePassedTest {
 
     @Test
     public void forLineDimsSungGlowOnlyUnderAppleFlag() {
-        AppliedLine row = line(10000, 15000);
-        LyricsLineAnimationState shared =
-                LyricsLineAnimationState.forLine(row, 20000, false, true, false);
-        LyricsLineAnimationState dimmed =
-                LyricsLineAnimationState.forLine(row, 20000, false, true, true);
-        assertEquals(shared.glowTarget * 0.3f, dimmed.glowTarget, 0.001f);
+        // forLine() reuses one mutable instance per line, so each line needs its own
+        // AppliedLine to hold two results (shared vs. dimmed) at once for comparison.
+        float sharedGlow = LyricsLineAnimationState.forLine(line(10000, 15000), 20000, false, true, false).glowTarget;
+        float dimmedGlow = LyricsLineAnimationState.forLine(line(10000, 15000), 20000, false, true, true).glowTarget;
+        assertEquals(sharedGlow * 0.3f, dimmedGlow, 0.001f);
     }
 }

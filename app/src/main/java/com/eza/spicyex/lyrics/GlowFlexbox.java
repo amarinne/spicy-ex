@@ -28,8 +28,10 @@ public class GlowFlexbox extends FlexboxLayout {
     private float lineShadowAlpha;
     // Blur filters cached by quantized sigma; sigma animates every frame and BlurMaskFilter is
     // immutable, so allocating one per word per frame would churn. Shared with the selfGlow path
-    // in SpicyAnimatedTextView; only touched from the UI thread.
+    // in SpicyAnimatedTextView; only touched from the UI thread. Bounded to 32 entries to cap
+    // native memory (each BlurMaskFilter is a few hundred bytes).
     private static final SparseArray<BlurMaskFilter> blurCache = new SparseArray<>();
+    private static final int MAX_BLUR_CACHE = 32;
 
     // Adaptive sectioning state, armed by LyricsRowViewFactory for wrapping word rows when the
     // setting is on. Default (disarmed) keeps plain greedy Flexbox wrapping.
@@ -134,12 +136,23 @@ public class GlowFlexbox extends FlexboxLayout {
 
     static BlurMaskFilter blurFilter(float sigma) {
         int key = Math.max(1, Math.round(sigma * 4f)); // quantize to 0.25px steps
-        BlurMaskFilter filter = blurCache.get(key);
-        if (filter == null) {
-            filter = new BlurMaskFilter(key / 4f, BlurMaskFilter.Blur.NORMAL);
-            blurCache.put(key, filter);
+        synchronized (blurCache) {
+            BlurMaskFilter filter = blurCache.get(key);
+            if (filter == null) {
+                filter = new BlurMaskFilter(key / 4f, BlurMaskFilter.Blur.NORMAL);
+                blurCache.put(key, filter);
+                if (blurCache.size() > MAX_BLUR_CACHE) {
+                    blurCache.remove(blurCache.keyAt(0));
+                }
+            }
+            return filter;
         }
-        return filter;
+    }
+
+    public static void clearBlurCache() {
+        synchronized (blurCache) {
+            blurCache.clear();
+        }
     }
 
     public void setGlowLayerEnabled(boolean enabled) {

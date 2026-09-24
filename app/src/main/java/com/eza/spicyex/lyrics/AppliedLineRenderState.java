@@ -11,6 +11,7 @@ public final class AppliedLineRenderState {
     public Spring opacitySpring;
     public Spring lineScaleSpring;
     public Spring lineGlowSpring;
+    public Spring lineBlurSpring;
     public View rowView;
     public SpicyAnimatedTextView mainView;
     public SpicyAnimatedTextView romanView;
@@ -21,6 +22,9 @@ public final class AppliedLineRenderState {
     public Spring lineShadowSpring;
     public int lastTargetClass = Integer.MIN_VALUE;
     public boolean needsRender = true;
+    /** Every spring except opacity/blur was at rest when last fully checked, and only the
+     *  opacity/blur fast path has run since - see LyricsLineViewState#needsFrame. */
+    public boolean settledExceptFade;
 
     public void clearMounts() {
         rowView = null;
@@ -31,11 +35,13 @@ public final class AppliedLineRenderState {
         opacitySpring = null;
         lineScaleSpring = null;
         lineGlowSpring = null;
+        lineBlurSpring = null;
         dotMainScaleSpring = null;
         dotMainOpacitySpring = null;
         lineShadowSpring = null;
         measuredHeightPx = 0;
         lastTargetClass = Integer.MIN_VALUE;
         needsRender = true;
+        settledExceptFade = false;
     }
 }

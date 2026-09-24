@@ -1,17 +1,33 @@
 package com.eza.spicyex.lyrics;
 
-/** Shared line-level animation target for fullscreen rows, synthetic word rows, and live card. */
-public final class LyricsLineAnimationState {
-    public final boolean active;
-    public final boolean sung;
-    public final boolean spotlight;
-    public final float progress;
-    public final float gradient;
-    public final float glowTarget;
-    public final float brightnessTarget;
-    public final float scaleTarget;
+import java.util.Map;
+import java.util.WeakHashMap;
 
-    private LyricsLineAnimationState(
+/**
+ * Shared line-level animation target for fullscreen rows, synthetic word rows, and live card.
+ *
+ * <p>The instance returned by {@link #forLine} is reused per {@link AppliedLine} and mutated in
+ * place on each call (keyed weakly so entries die with the line) instead of allocating a new
+ * object every Choreographer frame. Callers must read the fields they need before the next
+ * {@code forLine} call for the same line — don't hold two results for the same line to compare
+ * "before" and "after", since both references point at the same mutated instance.
+ */
+public final class LyricsLineAnimationState {
+    private static final Map<AppliedLine, LyricsLineAnimationState> STATES = new WeakHashMap<>();
+
+    public boolean active;
+    public boolean sung;
+    public boolean spotlight;
+    public float progress;
+    public float gradient;
+    public float glowTarget;
+    public float brightnessTarget;
+    public float scaleTarget;
+
+    private LyricsLineAnimationState() {
+    }
+
+    private void set(
             boolean active,
             boolean sung,
             boolean spotlight,
@@ -78,7 +94,18 @@ public final class LyricsLineAnimationState {
             brightnessTarget = 0.42f + 0.58f * eased * eased;
         }
         float scaleTarget = active ? (spotlight ? 1.04f : 1.0f) : 0.95f;
-        return new LyricsLineAnimationState(active, sung, spotlight, progress, gradient, glowTarget, brightnessTarget, scaleTarget);
+        LyricsLineAnimationState state = line == null ? new LyricsLineAnimationState() : state(line);
+        state.set(active, sung, spotlight, progress, gradient, glowTarget, brightnessTarget, scaleTarget);
+        return state;
+    }
+
+    private static LyricsLineAnimationState state(AppliedLine line) {
+        LyricsLineAnimationState state = STATES.get(line);
+        if (state == null) {
+            state = new LyricsLineAnimationState();
+            STATES.put(line, state);
+        }
+        return state;
     }
 
     private static float progress01(long positionMs, long startMs, long endMs) {

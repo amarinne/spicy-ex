@@ -49,21 +49,22 @@ public class LyricsLineAnimationStateTest {
 
     @Test
     public void inactiveAndSungEndpointsMatchRendererStates() {
-        AppliedLine line = line(1_000, 5_000);
+        // forLine() reuses one mutable instance per line, so each call's fields must be read
+        // before the next call for the same line overwrites them.
+        AppliedLine before = line(1_000, 5_000);
+        LyricsLineAnimationState beforeState = LyricsLineAnimationState.forLine(before, 500, false, true);
+        assertFalse(beforeState.active);
+        assertFalse(beforeState.sung);
+        assertEquals(LyricAnimations.GRADIENT_UNSUNG, beforeState.gradient, EPS);
+        assertEquals(0.95f, beforeState.scaleTarget, EPS);
 
-        LyricsLineAnimationState before = LyricsLineAnimationState.forLine(line, 500, false, true);
-        LyricsLineAnimationState after = LyricsLineAnimationState.forLine(line, 5_500, false, true);
-
-        assertFalse(before.active);
-        assertFalse(before.sung);
-        assertEquals(LyricAnimations.GRADIENT_UNSUNG, before.gradient, EPS);
-        assertEquals(0.95f, before.scaleTarget, EPS);
-
-        assertFalse(after.active);
-        assertTrue(after.sung);
-        assertEquals(100f, after.gradient, EPS);
-        assertEquals(0.5f, after.glowTarget, EPS);
-        assertEquals(0.95f, after.scaleTarget, EPS);
+        AppliedLine after = line(1_000, 5_000);
+        LyricsLineAnimationState afterState = LyricsLineAnimationState.forLine(after, 5_500, false, true);
+        assertFalse(afterState.active);
+        assertTrue(afterState.sung);
+        assertEquals(100f, afterState.gradient, EPS);
+        assertEquals(0.5f, afterState.glowTarget, EPS);
+        assertEquals(0.95f, afterState.scaleTarget, EPS);
     }
 
     @Test

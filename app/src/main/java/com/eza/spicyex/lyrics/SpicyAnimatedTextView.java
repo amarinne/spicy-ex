@@ -53,6 +53,20 @@ public class SpicyAnimatedTextView extends TextView {
         super(context);
     }
 
+    /**
+     * Without the theme's default TextView style. Resolving that style (AssetManager.applyStyle)
+     * was most of the cost of building a lyric row: CJK lyrics get one view per character, and
+     * the caller sets size, colour and typeface explicitly anyway.
+     */
+    public static SpicyAnimatedTextView unstyled(Context context) {
+        return new SpicyAnimatedTextView(context, null, 0, 0);
+    }
+
+    private SpicyAnimatedTextView(Context context, android.util.AttributeSet attrs, int defStyleAttr,
+                                  int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+    }
+
     /** Enable a self-drawn blur halo (for rows NOT inside a GlowFlexbox). */
     public void setSelfGlow(boolean enabled) {
         this.selfGlow = enabled;

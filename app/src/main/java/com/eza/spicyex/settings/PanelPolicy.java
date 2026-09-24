@@ -49,6 +49,10 @@ public final class PanelPolicy {
             return shouldRenderForceDark(snapshot)
                     && Boolean.TRUE.equals(snapshot.get(Settings.FORCE_DARK_BACKGROUND));
         }
+        if (setting == Settings.BACKGROUND_RENDER_QUALITY) {
+            return snapshot.animatedBackgroundAvailable()
+                    && LyricsBackgroundStyle.isAnimated(snapshot.get(Settings.BACKGROUND_STYLE));
+        }
         if (setting == Settings.LINE_SYNC_FILL) {
             return "Gradient wash".equals(snapshot.get(Settings.ANIMATION_STYLE));
         }

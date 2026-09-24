@@ -71,10 +71,14 @@ final class NativeRuntime {
                 new ArrayBlockingQueue<>(32), factory, backpressure);
     }
     static final int GOOGLE_PROCESSING_VERSION = SpicyProcessing.PROCESSING_VERSION + 2;
-    static final int LYRIC_FULL_RENDER_THRESHOLD = 72;
-    static final int LYRIC_WINDOW_BEFORE_ACTIVE = 18;
-    static final int LYRIC_WINDOW_AFTER_ACTIVE = 24;
-    static final int LYRIC_WINDOW_EDGE_BUFFER = 7;
+    // Rows mounted around the active line. The screen shows ~8-10; everything past the window is a
+    // virtual spacer. Mounting every row of any song up to 72 lines (the old threshold) built all
+    // of them - one text view per character in CJK lyrics, thousands in all - on the main thread
+    // when the screen opened (~1.5 s) and kept them, with their blur layers, for the whole song.
+    static final int LYRIC_FULL_RENDER_THRESHOLD = 24;
+    static final int LYRIC_WINDOW_BEFORE_ACTIVE = 8;
+    static final int LYRIC_WINDOW_AFTER_ACTIVE = 12;
+    static final int LYRIC_WINDOW_EDGE_BUFFER = 4;
     static final int LYRIC_ESTIMATED_ROW_HEIGHT_DP = 74;
     static final long SCROLL_SETTLE_REMEASURE_DELAY_MS = 140;
 

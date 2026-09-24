@@ -40,6 +40,7 @@ final class LyricsActivityTakeoverHook {
     private static final int TAG_NATIVE_SPICY_ROOT = 0x53504C53; // SPLS
     private static final int TAG_EXTRA_LYRICS_BUTTON = 0x53504C58; // SPLX
     private static final int TAG_MINI_PLAYER_LYRICS_BUTTON = 0x53504C4D; // SPLM
+    private static final int TAG_COVERED_SIBLINGS = 0x53504C43; // SPLC
     private static final long KEEP_LYRICS_ACTIVITY_AFTER_MOUNT_MS = 3500L;
     private static final long[] EXTRA_INJECTION_DELAYS_MS = {450L, 950L, 1400L, 2400L};
     private static final long MINI_PLAYER_STEADY_RETRY_MS = 3000L;
@@ -697,6 +698,10 @@ final class LyricsActivityTakeoverHook {
                 removeNativeSpicyRoot(activity);
                 return;
             }
+            // Captured before the flag flips below: true here means a lyrics session was already
+            // active going into this call, i.e. this mount is a reattach after an orientation-
+            // driven activity recreate, not the screen's first open this session.
+            boolean rotationContinuation = nativeLyricsSessionActive;
             nativeLyricsSessionActive = true; // our screen owns this lyrics session (survives rotation)
             ensureSystemBackCallback(activity);
 
@@ -709,21 +714,34 @@ final class LyricsActivityTakeoverHook {
             View existing = content.findViewWithTag(TAG_NATIVE_SPICY_ROOT);
             if (existing instanceof NativeSpicyShellView) {
                 ((NativeSpicyShellView) existing).start();
+                if (existing.getAlpha() >= 1f) hideCoveredSiblings(content, existing);
                 ensureSystemBackCallback(activity);
                 return;
             }
 
             NativeSpicyShellView root = new NativeSpicyShellView(host, activity);
             root.setTag(TAG_NATIVE_SPICY_ROOT);
-            root.setAlpha(0f);
-            root.setTranslationY(NativeLyricsUtils.dp(24));
+            // Rotation reattach: panel was already visible a moment ago, show it instantly
+            // without fading in. Fresh open: start invisible and fade up to announce arrival.
+            if (rotationContinuation) {
+                root.setAlpha(1f);
+                root.setTranslationY(0f);
+            } else {
+                root.setAlpha(0f);
+                root.setTranslationY(NativeLyricsUtils.dp(24));
+            }
             content.addView(root, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
             ));
             markLyricsActivityKeepWindow(activity);
             root.start();
-            root.animate().alpha(1f).translationY(0f).setDuration(260).start();
+            if (!rotationContinuation) {
+                root.animate().alpha(1f).translationY(0f).setDuration(260)
+                        .withEndAction(() -> hideCoveredSiblings(content, root)).start();
+            } else {
+                hideCoveredSiblings(content, root);
+            }
             XpLog.log(NativeSpicyLyricsHook.TAG + " mounted native Spicy renderer shell");
             Diagnostics.event("renderer", "mount_state",
                     Diagnostics.context("surface", "fullscreen", "mounted", "true"));
@@ -743,6 +761,9 @@ final class LyricsActivityTakeoverHook {
             View existing = content.findViewWithTag(TAG_NATIVE_SPICY_ROOT);
             if (existing instanceof NativeSpicyShellView) {
                 NativeSpicyShellView shell = (NativeSpicyShellView) existing;
+                // Before any fade-out: the page underneath must be drawn again once the shell
+                // stops covering it.
+                restoreCoveredSiblings(shell);
                 // Host activity may already be leaving for rotation or a track-driven recreate.
                 // Do not rely on an exit animation callback from a detached window to stop the
                 // shell; that callback can be skipped, leaving stale subscriptions alive.
@@ -768,6 +789,47 @@ final class LyricsActivityTakeoverHook {
         // owned back when ownership itself ended. Explicit exit and destroy unregister directly.
         if (!nativeLyricsSessionActive) unregisterSystemBackCallback(activity);
     }
+
+    /**
+     * Spotify's own lyrics page (a full-screen ComposeView) stays mounted under the opaque shell.
+     * Left VISIBLE it is still recorded and rasterized every frame behind the lyrics - a whole
+     * extra screen of drawing, plus Compose's own lyric animations - without a single pixel of it
+     * ever reaching the display. Hiding it once the shell fully covers it changes nothing on
+     * screen; it stays attached and laid out, so anything reading its views still works.
+     */
+    private static void hideCoveredSiblings(FrameLayout content, View root) {
+        try {
+            if (content == null || root == null || root.getParent() != content) return;
+            if (root.getTag(TAG_COVERED_SIBLINGS) != null) return;
+            java.util.ArrayList<View> hidden = new java.util.ArrayList<>();
+            int rootIndex = content.indexOfChild(root);
+            for (int i = 0; i < rootIndex; i++) {
+                View child = content.getChildAt(i);
+                if (child == null || child.getVisibility() != View.VISIBLE) continue;
+                child.setVisibility(View.INVISIBLE);
+                hidden.add(child);
+            }
+            root.setTag(TAG_COVERED_SIBLINGS, hidden);
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " hide covered page failed: " + t);
+        }
+    }
+
+    private static void restoreCoveredSiblings(View root) {
+        try {
+            Object tag = root == null ? null : root.getTag(TAG_COVERED_SIBLINGS);
+            if (!(tag instanceof java.util.List)) return;
+            root.setTag(TAG_COVERED_SIBLINGS, null);
+            for (Object o : (java.util.List<?>) tag) {
+                // Only undo our own change; Spotify may have hidden the view itself meanwhile.
+                if (o instanceof View && ((View) o).getVisibility() == View.INVISIBLE) {
+                    ((View) o).setVisibility(View.VISIBLE);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
 
     private boolean hasNativeSpicyRoot(Activity activity) {
         try {

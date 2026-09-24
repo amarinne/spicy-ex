@@ -229,6 +229,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             scrollInProgress = false;
             remeasureMountedRows();
             renderWindowForActive(currentWindowAnchor());
+            // Blur springs are renderer-owned and may still be releasing after the scroll
+            // callback. Keep vsync alive until the rows have actually returned to their target;
+            // otherwise paused playback could stop the scheduler with a few rows still blurred.
+            frameScheduler.setContinuous(true);
+            frameScheduler.requestFrame();
+            
         }
     };
     private String lastUri = "";
@@ -1274,7 +1280,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     setActiveLine(nextActive, lyricPos, track, drasticSeek);
                 }
                 boolean userScrollHeld = followState.isHoldingNow();
-                long visibleRange = userScrollHeld && scrollController != null
+                // Always, not only while held: rows outside it skip per-syllable animation work.
+                long visibleRange = scrollController != null
                         ? scrollController.visibleLineRange(rowHeightPrefix(), document.appliedLines.size())
                         : LyricsScrollController.ALL_LINES;
                 frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
@@ -1305,12 +1312,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void updateFrameDemand(boolean playingNow) {
         boolean processing = document != null && document.processingPending;
+        boolean rendererPending = !staticDoc && frameRenderer.hasPendingAnimation(
+                document, rowMountController.mountedIndices(), mountedRowsHost);
         boolean continuous = (playingNow && document != null && !staticDoc)
                 || !loadingTrackId.isEmpty()
                 || processing
                 || localReprocessController.isProcessing()
                 || !rowCascades.isEmpty()
-                || scrollInProgress;
+                || scrollInProgress
+                || rendererPending;
         if (continuous) {
             visuallySettledFrames = 0;
             handler.removeCallbacks(idleFrameProbe);

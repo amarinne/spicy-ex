@@ -476,4 +476,5 @@
     <string name="lyrics_ai_from_source">AI translated from the original lyrics.</string>
     <string name="lyrics_ai_model_used">Model: %1$s</string>
     <string name="settings_label_download_language_models">Download language models</string>
+    <string name="settings_label_lyric_background_render_quality">Background render quality</string>
 </resources>

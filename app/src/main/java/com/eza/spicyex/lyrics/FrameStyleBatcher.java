@@ -38,7 +38,25 @@ public final class FrameStyleBatcher {
         queueFloatStyle(view, StyleField.TRANSLATION_Y, translationY, 0.5f);
     }
 
+    /**
+     * Queues a row blur radius. {@code epsilon} is the dedupe threshold, and it is the only thing
+     * that should be throttling these writes.
+     *
+     * <p>Rounding the radius onto a coarser grid to save RenderEffect churn was tried and reverted:
+     * the whole blur range is small (about 1.7px end to end on the "low" render-quality tier, since
+     * the tier already scales every radius down), so a grid wide enough to matter turns the curve
+     * into one or two visible steps and the column reads as flickering between sharp and blurred on
+     * every line advance. The existing epsilon already drops sub-quarter-pixel writes, which is as
+     * much as can be taken here without it being seen.
+     */
     public void queueBlurIfChanged(View view, float blurPx, float epsilon) {
+        // A blur easing out lands within epsilon of 0 and, without this, was never written as 0:
+        // the focused line kept a sub-pixel blur, which still made it a blurred layer re-rendered
+        // (and re-blurred) on every karaoke frame - most of the lyric column's GPU time.
+        if (blurPx <= epsilon) {
+            queueFloatStyle(view, StyleField.BLUR, 0f, 0.001f);
+            return;
+        }
         queueFloatStyle(view, StyleField.BLUR, blurPx, epsilon);
     }
 
@@ -92,13 +110,39 @@ public final class FrameStyleBatcher {
         }
     }
 
+    /**
+     * Composite for out-of-focus rows: additive, like Apple Music's plus-lighter lyrics. Drawn
+     * normally, a blurred white line is a grey-white haze laid over the artwork colours - on a
+     * brown or pale background it visibly floats apart from it. Added instead, it brightens
+     * whatever colour is underneath, so the soft glyphs read as light on the background and take
+     * its hue. Only blurred rows use it; the sharp, focused line keeps plain drawing for contrast.
+     */
+    private static final android.graphics.Paint BLURRED_ROW_PAINT = blurredRowPaint();
+
+    private static android.graphics.Paint blurredRowPaint() {
+        android.graphics.Paint paint = new android.graphics.Paint();
+        if (Build.VERSION.SDK_INT >= 29) paint.setBlendMode(android.graphics.BlendMode.PLUS);
+        return paint;
+    }
+
     private void applyBlurEffectImmediate(View view, float blurPx) {
         if (view == null || Build.VERSION.SDK_INT < 31) return;
+        if (view instanceof BlurredRowLayout) {
+            // Blur baked into the row's own cached layer instead of re-applied every frame.
+            ((BlurredRowLayout) view).setContentBlur(blurPx <= 0.05f ? 0f : blurPx * density);
+            return;
+        }
         if (blurPx <= 0.05f) {
             view.setRenderEffect(null);
+            if (view.getLayerType() != View.LAYER_TYPE_NONE) view.setLayerType(View.LAYER_TYPE_NONE, null);
         } else {
             float radius = blurPx * density;
-            view.setRenderEffect(RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP));
+            // DECAL: outside the row is transparent. CLAMP stretched the layer's edge pixels
+            // outward, which smeared glyph outlines into streaks at the row bounds.
+            view.setRenderEffect(RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.DECAL));
+            if (view.getLayerType() != View.LAYER_TYPE_HARDWARE) {
+                view.setLayerType(View.LAYER_TYPE_HARDWARE, BLURRED_ROW_PAINT);
+            }
         }
     }
 

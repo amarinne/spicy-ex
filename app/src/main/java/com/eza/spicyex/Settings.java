@@ -399,6 +399,15 @@ public final class Settings {
             "lyric_extra_dark_background", BACKGROUND, "Darken background", 35, 0, 100, 5
     );
 
+    // Only meaningful when BACKGROUND_STYLE is ANIMATED_TEXTURE - the AGSL noise shader renders
+    // into a downsampled offscreen surface (see AmbientArtworkBackgroundView#setRenderScale) and
+    // upscales it, since its cost is per output pixel and a full-res shader running continuously
+    // for the whole lyrics session is a real sustained heat source on weaker GPUs. Lower values
+    // trade a softer/grainier look for less GPU load; higher values render crisper at more cost.
+    public static final IntegerSetting BACKGROUND_RENDER_QUALITY = intSetting(
+            "lyric_background_render_quality", BACKGROUND, "Background render quality", 35, 15, 100, 5
+    );
+
     public static final Setting<Boolean> DOWNLOAD_LANGUAGE_MODELS = boolSetting(
             "download_language_models", TRANSLITERATION, "Download language models", false
     );
