@@ -23,6 +23,11 @@ interface LyricsHost {
 
     boolean seekSpotifyTo(long positionMs);
 
+    /** Whether a seek would currently be honored (ACTION_SEEK_TO advertised right now) - lets
+     *  callers hide/disable seek affordances proactively instead of finding out after a silent
+     *  rejection. See PlaybackBridge#canSeek. */
+    boolean canSeek();
+
     /** Play/pause toggle and track skips via the captured MediaSession transport.
      * False when no session is captured (callers degrade to no-op visuals). */
     boolean togglePlayPause();

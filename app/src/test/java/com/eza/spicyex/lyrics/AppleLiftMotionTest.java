@@ -12,15 +12,15 @@ public class AppleLiftMotionTest {
     @Test
     public void appleLiftSplineRisesAndHolds() {
         assertEquals(0f, LyricAnimations.appleLiftYOffsetSpline(0f), EPS);
-        assertEquals(-0.04f, LyricAnimations.appleLiftYOffsetSpline(1f), EPS);
+        assertEquals(-LyricAnimations.APPLE_LIFT_EM, LyricAnimations.appleLiftYOffsetSpline(1f), EPS);
         float mid = LyricAnimations.appleLiftYOffsetSpline(0.5f);
-        assertTrue(mid < 0f && mid > -0.04f);
+        assertTrue(mid < 0f && mid > -LyricAnimations.APPLE_LIFT_EM);
     }
 
     @Test
     public void wordMotionYPicksSplineByFlag() {
-        // Apple lift holds -0.04 once sung; the shared lift arc returns to 0.
-        assertEquals(-0.04f,
+        // Apple lift holds -APPLE_LIFT_EM once sung; the shared lift arc returns to 0.
+        assertEquals(-LyricAnimations.APPLE_LIFT_EM,
                 LyricsAnimationApplier.wordMotionY(true, false, true, 0.9f, true), EPS);
         assertEquals(0f,
                 LyricsAnimationApplier.wordMotionY(true, false, true, 0.9f, false), EPS);

@@ -155,27 +155,24 @@ final class LyricsShellChromeController {
             chrome.configCluster.removeView(button);
             chrome.configCluster.addView(button, new LinearLayout.LayoutParams(size, size));
         }
-        int visibleIndex = 0;
+        // The gap is a transparent divider rather than per-button margins: LinearLayout draws a
+        // middle divider only between children that are not GONE, and re-evaluates that on every
+        // layout. Margins were computed from visibility at the moment this ran, so a toggle that
+        // appeared or disappeared later (a new song, an ad) left two buttons touching.
+        android.graphics.drawable.GradientDrawable divider = new android.graphics.drawable.GradientDrawable();
+        divider.setColor(Color.TRANSPARENT);
+        divider.setSize(gap, gap);
+        chrome.configCluster.setDividerDrawable(divider);
+        chrome.configCluster.setShowDividers(LinearLayout.SHOW_DIVIDER_MIDDLE);
         for (int i = 0; i < chrome.configCluster.getChildCount(); i++) {
             View child = chrome.configCluster.getChildAt(i);
             if (!(child.getLayoutParams() instanceof LinearLayout.LayoutParams)) continue;
             LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) child.getLayoutParams();
-            boolean gone = child.getVisibility() != View.VISIBLE;
-            int wantTop = 0;
-            int wantLeft = 0;
-            if (!gone) {
-                if (topActive) {
-                    wantTop = visibleIndex == 0 ? 0 : gap;
-                } else {
-                    wantLeft = visibleIndex == 0 ? 0 : gap;
-                }
-                visibleIndex++;
-            }
             lp.width = size;
             lp.height = size;
-            lp.topMargin = wantTop;
+            lp.topMargin = 0;
             lp.bottomMargin = 0;
-            lp.leftMargin = wantLeft;
+            lp.leftMargin = 0;
             lp.rightMargin = 0;
             child.setLayoutParams(lp);
             child.setMinimumWidth(size);

@@ -30,6 +30,9 @@ public class References {
     public static WeakReference<Object> playerStateWrapper = new WeakReference<>(null);
     /** Strong playback snapshots keep background track detection alive while Spotify UI is idle. */
     public static volatile Object playerStateStrong;
+    /** Artist of the most recently read track, for features that need more than the name. */
+    public static volatile String lastTrackUri = "";
+    public static volatile String lastArtistUri = "";
     public static volatile Object playerStateWrapperStrong;
     /**
      * Legacy compatibility mirror of the currently captured Spotify access token. Never
@@ -98,12 +101,28 @@ public class References {
 
                     @SuppressWarnings("unchecked")
                     Map<String, String> md = (Map<String, String>) XpReflect.callMethod(track, "metadata");
+                    if (uri != null && uri.startsWith("spotify:ad:")) {
+                        com.eza.spicyex.hooks.AdBreakInfo.noteMetadata(uri, md);
+                    }
 
-                    String title = md.get("title");
-                    String artist = md.get("artist_name");
-                    String album = md.get("album_title");
+                    String title = firstNonBlankMeta(md,
+                            "title", "ad_title", "context_title", "name", "track_title", "advertiser_name", "ad_advertiser_name");
+                    String artist = firstNonBlankMeta(md,
+                            "artist_name", "ad_advertiser_name", "artist_name:0", "artist", "subtitle", "advertiser_name", "ad_advertiser");
+                    String album = firstNonBlankMeta(md,
+                            "album_title", "ad_advertiser_name", "album", "context_title", "advertiser_name", "ad_album_title");
+
+                    String artistUri = firstNonBlankMeta(md, "artist_uri", "artist_uri:0");
+                    if (artistUri != null && !artistUri.isEmpty()) {
+                        lastTrackUri = uri == null ? "" : uri;
+                        lastArtistUri = artistUri;
+                    }
+
                     String color = md.get("extracted_color");
-                    String imageId = md.get("image_large_url");
+
+                    String imageId = firstNonBlankMeta(md,
+                            "image_large_url", "image_url", "ad_image_url", "image_small_url",
+                            "coverart_image_url", "image_preview_url", "ad_image_url:0", "image_url:0");
                     long duration = 0;
                     try {
                         String durationValue = md.get("duration_ms");
@@ -150,6 +169,18 @@ public class References {
             Log.e("SpotifyPlus", "Error getting track information", e);
             return null;
         }
+    }
+
+    private static String firstNonBlankMeta(Map<String, String> md, String... keys) {
+        if (md == null || keys == null) return null;
+        for (String key : keys) {
+            try {
+                String value = md.get(key);
+                if (value != null && !value.trim().isEmpty()) return value;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
     }
 
     private static long previousMs;

@@ -24,10 +24,77 @@ public final class LyricAnimations {
 
     // --- word-level karaoke curves ---
 
+    // --- held-note emphasis (Apple "swell") ---------------------------------
+    //
+    // Apple Music grows a word while it is being held, and how much it grows depends on how long
+    // it is held relative to the rest of its own line - so a ballad's sustained note swells while
+    // a rap verse, whose words are all short, stays flat. Judging each line against its own
+    // average is what keeps both readable; an absolute duration threshold would emphasise every
+    // word of a slow song and none of a fast one.
+    //
+    // The previous curve here (slowWordDistortion) had two problems this replaces. It applied one
+    // fixed amplitude no matter how long the note actually was, so a half-second word and a
+    // four-second word swelled identically; and it *dipped below* its resting size at 70% before
+    // recovering, which reads as a wobble rather than a note being held. A held note rises, stays
+    // risen for as long as it is sung, and settles as it ends.
+
+    /** Peak growth, as a fraction of resting size, at full strength. */
+    public static final float EMPHASIS_MAX_SCALE = 0.18f;
+    /** Peak float-up, in em, at full strength. */
+    public static final float EMPHASIS_MAX_LIFT_EM = 0.03f;
+    /** Duration ratio against the line average at which a word starts to swell at all. */
+    public static final float EMPHASIS_MIN_RATIO = 1.6f;
+    /** Duration ratio against the line average at which the swell reaches full strength. */
+    public static final float EMPHASIS_FULL_RATIO = 4.0f;
+    /** A word held for less than this never swells, however short its line's average is. */
+    public static final long EMPHASIS_MIN_HOLD_MS = 600L;
+    private static final float EMPHASIS_RISE = 0.28f;
+    private static final float EMPHASIS_RELEASE = 0.80f;
+
+    /**
+     * How strongly a word should swell, in [0,1], from its own duration against its line's average
+     * word duration. Zero for anything at or below {@link #EMPHASIS_MIN_RATIO}, or shorter than
+     * {@link #EMPHASIS_MIN_HOLD_MS} in absolute terms.
+     */
+    public static float emphasisStrength(long wordMs, long lineAverageMs) {
+        if (wordMs < EMPHASIS_MIN_HOLD_MS || lineAverageMs <= 0) return 0f;
+        float ratio = wordMs / (float) lineAverageMs;
+        if (ratio <= EMPHASIS_MIN_RATIO) return 0f;
+        return clamp01((ratio - EMPHASIS_MIN_RATIO) / (EMPHASIS_FULL_RATIO - EMPHASIS_MIN_RATIO));
+    }
+
+    /** Rise, hold, release. Returns a scale multiplier around 1. */
+    public static float emphasisScale(float t, float strength) {
+        return 1f + EMPHASIS_MAX_SCALE * clamp01(strength) * emphasisEnvelope(t);
+    }
+
+    /** Vertical companion to {@link #emphasisScale}, in em (negative is up). */
+    public static float emphasisLiftEm(float t, float strength) {
+        return -EMPHASIS_MAX_LIFT_EM * clamp01(strength) * emphasisEnvelope(t);
+    }
+
+    /** 0 -> 1 over the opening, held at 1 through the sustain, back to 0 as the note ends. */
+    public static float emphasisEnvelope(float t) {
+        float p = clamp01(t);
+        if (p < EMPHASIS_RISE) return smoothStep(p / EMPHASIS_RISE);
+        if (p < EMPHASIS_RELEASE) return 1f;
+        return 1f - smoothStep((p - EMPHASIS_RELEASE) / (1f - EMPHASIS_RELEASE));
+    }
+
     /** Zoom style: recessed rest -> gentle peak -> neutral sung state. */
     public static float scaleSpline(float t) {
         if (t <= 0.7f) return lerp(0.95f, 1.025f, smoothStep(t / 0.7f));
         return lerp(1.025f, 1f, smoothStep((t - 0.7f) / 0.3f));
+    }
+
+    /** Word-granularity version of {@link #letterScaleSpline}'s amplitude (0.95 -> 1.18 -> 1.0),
+     *  for words that qualify for the strong pop but can't run the per-letter animator - e.g. a
+     *  furigana-annotated Japanese word, whose ruby span needs a single contiguous text layout
+     *  rather than one view per code point. Keeps grow intensity comparable to English's
+     *  per-letter pop instead of falling back to the much weaker {@link #scaleSpline}. */
+    public static float wordScaleSplineStrong(float t) {
+        if (t <= 0.7f) return lerp(0.95f, 1.18f, smoothStep(t / 0.7f));
+        return lerp(1.18f, 1f, smoothStep((t - 0.7f) / 0.3f));
     }
 
     /** Zoom style Y range retained from the original Spicy curve. */
@@ -43,9 +110,12 @@ public final class LyricAnimations {
         return -0.04f * wave * wave;
     }
 
-    /** Apple lift: quarter-sine rise to -0.04em, holding at the top while sung. */
+    /** Apple lift height. 0.04em (~3px at lyric size) was too small to read as a lift at all. */
+    public static final float APPLE_LIFT_EM = 0.07f;
+
+    /** Apple lift: quarter-sine rise to -{@link #APPLE_LIFT_EM}, holding at the top while sung. */
     public static float appleLiftYOffsetSpline(float t) {
-        return -0.04f * (float) Math.sin(clamp01(t) * (Math.PI / 2d));
+        return -APPLE_LIFT_EM * (float) Math.sin(clamp01(t) * (Math.PI / 2d));
     }
 
     /** Spicy 6 GlowRange: 0 -> 0, 0.15 -> 1, 0.6 -> 1, 1 -> 0. */

@@ -175,6 +175,30 @@ public class PanelPolicyTest {
                 .put(Settings.TRACK_INFO_TEXT_SIZE, "Custom").build();
         assertTrue(PanelPolicy.shouldRender(Settings.TRACK_INFO_TEXT_SIZE_CUSTOM, trackCustom));
         assertFalse(PanelPolicy.shouldRender(Settings.TRACK_INFO_TEXT_SIZE_CUSTOM, full()));
+        PanelSnapshot customFont = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.LYRICS_FONT, "custom").build();
+        assertTrue(PanelPolicy.shouldRender(Settings.LYRICS_FONT_CUSTOM_PATH, customFont));
+        assertFalse(PanelPolicy.shouldRender(Settings.LYRICS_FONT_CUSTOM_PATH, full()));
+        PanelSnapshot autoResume = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.AUTO_RESUME_FOLLOW, true).build();
+        assertTrue(PanelPolicy.shouldRender(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS, autoResume));
+        PanelSnapshot noAutoResume = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.AUTO_RESUME_FOLLOW, false).build();
+        assertFalse(PanelPolicy.shouldRender(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS, noAutoResume));
+    }
+
+    @Test
+    public void furiganaDesignRowsNeedFuriganaReadingModeActive() {
+        PanelSnapshot furigana = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.TRANSLITERATION_ENABLED, true)
+                .put(Settings.JAPANESE_READING_MODE, "furigana_only").build();
+        assertTrue(PanelPolicy.shouldRender(Settings.FURIGANA_BRIGHTNESS, furigana));
+        assertTrue(PanelPolicy.shouldRender(Settings.FURIGANA_POSITION_PERCENT, furigana));
+        PanelSnapshot romajiOnly = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.TRANSLITERATION_ENABLED, true)
+                .put(Settings.JAPANESE_READING_MODE, "romaji_only").build();
+        assertFalse(PanelPolicy.shouldRender(Settings.FURIGANA_BRIGHTNESS, romajiOnly));
+        assertFalse(PanelPolicy.shouldRender(Settings.FURIGANA_BRIGHTNESS, full()));
     }
 
     @Test
@@ -258,7 +282,10 @@ public class PanelPolicyTest {
         assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.LYRICS_SOURCE_MODE));
         // UI language takes the full rebuild path (every label changes), not the section path.
         assertFalse(PanelPolicy.shouldRebuildSectionAfterChange(Settings.UI_LANGUAGE));
-        assertFalse(PanelPolicy.shouldRebuildSectionAfterChange(Settings.TAP_SEEK_MODE));
+        // Tap-to-seek and double-tap to like share the double tap: either one changing can switch
+        // the other off and changes the like switch's note, so the Gestures section refreshes.
+        assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.TAP_SEEK_MODE));
+        assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.DOUBLE_TAP_LIKE));
         assertFalse(PanelPolicy.shouldRebuildSectionAfterChange(Settings.CACHE_SIZE));
     }
 
@@ -307,7 +334,6 @@ public class PanelPolicyTest {
         Settings.Setting<?>[] appleRows = {
                 Settings.APPLE_FADE_PASSED_LINES,
                 Settings.APPLE_COMPACT_TEXT,
-                Settings.APPLE_CJK_WRAP_FIX,
                 Settings.LINE_SLIDE_ANIMATION,
                 Settings.APPLE_LIFT
         };

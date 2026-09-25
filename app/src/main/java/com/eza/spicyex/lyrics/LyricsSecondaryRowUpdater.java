@@ -8,6 +8,12 @@ import android.view.ViewGroup;
 public final class LyricsSecondaryRowUpdater {
     private final ViewGroup mountedRowsHost;
     private final LyricsLineViewState.Invalidation invalidation;
+    /** Set by the translation button; the next refresh re-syncs rows to the toggle. */
+    private boolean translationToggled;
+
+    public void markTranslationToggled() {
+        translationToggled = true;
+    }
 
     public LyricsSecondaryRowUpdater(ViewGroup mountedRowsHost, LyricsLineViewState.Invalidation invalidation) {
         this.mountedRowsHost = mountedRowsHost;
@@ -19,12 +25,31 @@ public final class LyricsSecondaryRowUpdater {
             return false;
         }
         boolean structureChanged = false;
+        // Only a press of the translation button remounts rows for it (told explicitly - guessing
+        // from the previous refresh missed the first press after a cached load). Checked on every
+        // refresh instead, any row that looked out of sync was remounted again and again.
+        boolean translationToggled = this.translationToggled;
+        this.translationToggled = false;
         for (AppliedLine row : document.appliedLines) {
             if (row == null || row.dotLine || row.bgLine || row.sourceLine == null) continue;
             String roman = safe(row.sourceLine.romanizedText);
             String translated = safe(row.sourceLine.translatedText);
+            boolean mounted = LyricsLineViewState.isMounted(row, mountedRowsHost);
             RefreshDecision decision = decideRefresh(row, roman, translated, showRomanization, showTranslation,
-                    japaneseReadingMode, LyricsLineViewState.isMounted(row, mountedRowsHost));
+                    japaneseReadingMode, mounted);
+            // Toggling translations with unchanged text used to change nothing here: the faded-out
+            // views stayed in the row (the gap left behind) and, faded, never came back when the
+            // toggle was turned on again. A mounted row whose translation presence no longer
+            // matches the toggle is remounted; the caller's reflow springs the rows to close or
+            // open the space.
+            boolean wantsTranslation = showTranslation && !row.bgLine
+                    && !safe(row.translatedText).trim().isEmpty();
+            boolean hasTranslation = LyricsLineViewState.translationView(row) != null;
+            if (translationToggled && mounted && !decision.hasChanges() && wantsTranslation != hasTranslation) {
+                LyricsLineViewState.clear(row, mountedRowsHost, invalidation);
+                structureChanged = true;
+                continue;
+            }
             if (!decision.hasChanges()) continue;
             row.romanizedText = roman;
             row.translatedText = translated;

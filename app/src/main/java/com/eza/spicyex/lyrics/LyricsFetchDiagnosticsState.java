@@ -92,6 +92,9 @@ public final class LyricsFetchDiagnosticsState {
         if (chosen == null) return "unknown";
         String fetchSource = safeLower(chosen.fetchSource);
         if (fetchSource.contains("lrclib")) return "lrclib";
+        if (fetchSource.contains("netease")) return "netease";
+        if (fetchSource.contains("qq")) return "qq_music";
+        if (fetchSource.contains("musixmatch")) return "musixmatch";
         if (fetchSource.contains("native")) return "native";
         if (fetchSource.contains("apple_music")) return "apple_music";
         // Legacy cached records used the retired Spicy labels for the same remote endpoint.

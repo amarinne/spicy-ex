@@ -39,7 +39,6 @@ public class SettingsDefaultsTest {
         assertEquals("Gradient wash", Settings.ANIMATION_STYLE.coerce("bogus"));
         assertTrue(Settings.APPLE_FADE_PASSED_LINES.defaultValue);
         assertTrue(Settings.APPLE_COMPACT_TEXT.defaultValue);
-        assertTrue(Settings.APPLE_CJK_WRAP_FIX.defaultValue);
         assertFalse(Settings.LINE_SLIDE_ANIMATION.defaultValue);
         assertTrue(Settings.APPLE_LIFT.defaultValue);
         assertEquals(Settings.APPLE, Settings.APPLE_LIFT.section);

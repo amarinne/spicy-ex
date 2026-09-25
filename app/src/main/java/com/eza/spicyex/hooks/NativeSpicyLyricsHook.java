@@ -64,7 +64,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     @Override
     protected void hook() {
         Diagnostics.event("bootstrap", "hook_start",
-                Diagnostics.context("process", Application.getProcessName()));
+                Diagnostics.context("process", processName()));
         dbg("hook", "native Spicy renderer hook enabled version=" + BuildStamp.FULL);
         new NativeLyricsCaptureHook(
                 lpparm.classLoader(),
@@ -74,7 +74,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         ).hook();
         playbackBridge.install(lpparm, symbols);
         activityTakeoverHook.hook();
-        String processName = Application.getProcessName();
+        String processName = processName();
         XpLog.log(TAG + " bridge init package=" + lpparm.packageName()
                 + " appProcess=" + processName);
         if (lpparm.packageName().equals(processName)) {
@@ -88,6 +88,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             bridgeCoordinator = new SpicyLyricBridgeCoordinator(
                     lyricsSessionManager, applicationContext);
             bridgeCoordinator.start();
+            // Ad muting runs process-wide, not per screen: it applies to local playback
+            // everywhere while changing only Spotify's ad AudioTrack.
+            new AdMuteController(this, applicationContext).start();
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "main_process"));
         } else {
@@ -95,6 +98,13 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "secondary_process"));
         }
+    }
+
+    private static String processName() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            return Application.getProcessName();
+        }
+        return "unknown";
     }
 
     public void markExplicitLyricsExit(Activity activity) {
@@ -142,6 +152,11 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     }
 
     @Override
+    public boolean canSeek() {
+        return playbackBridge.canSeek();
+    }
+
+    @Override
     public boolean togglePlayPause() {
         return playbackBridge.togglePlayPause();
     }
@@ -167,6 +182,10 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
 
     public boolean isPlayerActuallyPlaying() {
         return playbackBridge.isPlayerActuallyPlaying();
+    }
+
+    boolean isPlayerStatePaused() {
+        return playbackBridge.isPlayerStatePaused();
     }
 
     @Override

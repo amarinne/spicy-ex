@@ -27,8 +27,10 @@ public class AppleFadePassedTest {
         // Shared targets unchanged.
         assertEquals(0.82f, settledOpacity(false, true, false), 0.01f);
         assertEquals(0.42f, settledOpacity(false, false, false), 0.01f);
-        // Apple fade-passed targets.
-        assertEquals(0.60f, settledOpacity(false, true, true), 0.01f);
+        // Apple fade-passed targets. Passed lines sit at 0.72 rather than the original 0.60: the
+        // point of the mode is that already-sung lines recede, not that they become hard to read
+        // back against a bright album-art wash.
+        assertEquals(0.72f, settledOpacity(false, true, true), 0.01f);
         assertEquals(0.38f, settledOpacity(false, false, true), 0.01f);
         // Active lines stay full under both.
         assertEquals(1f, settledOpacity(true, false, true), 0.01f);
