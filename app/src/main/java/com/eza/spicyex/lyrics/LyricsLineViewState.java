@@ -480,6 +480,15 @@ public final class LyricsLineViewState {
         return !settled;
     }
 
+    /** Its views were reset to a base style: the next full frame path must redraw its state
+     *  (sung fill, brightness, word motion), however settled its springs are. */
+    public static void requestFrame(AppliedLine line) {
+        if (line == null) return;
+        AppliedLineRenderState state = state(line);
+        state.needsRender = true;
+        state.settledExceptFade = false;
+    }
+
     /** The full frame path is about to move this row's springs again. */
     public static void invalidateSettled(AppliedLine line) {
         if (line != null) state(line).settledExceptFade = false;

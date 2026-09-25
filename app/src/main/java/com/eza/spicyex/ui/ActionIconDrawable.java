@@ -63,6 +63,11 @@ public final class ActionIconDrawable extends Drawable {
         paint.setStrokeJoin(Paint.Join.ROUND);
     }
 
+    /** An icon's outline in its 24-unit box, for callers that paint it themselves (shaders). */
+    public static Path pathOf(Kind kind) {
+        return pathFor(kind == null ? Kind.CHECK : kind);
+    }
+
     private static Path pathFor(Kind kind) {
         String key = kind.name();
         Path cached = PARSED.get(key);

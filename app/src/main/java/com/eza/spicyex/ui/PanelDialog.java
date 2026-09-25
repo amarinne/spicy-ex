@@ -390,6 +390,8 @@ public final class PanelDialog {
         public ActionIconDrawable.Kind icon;
         /** Dimmed and not tappable, with the reason carried in {@link #suffix}. */
         public boolean unavailable;
+        /** Smaller second line under the label (a language's own name, for instance). */
+        public String detail = "";
 
         private Option(String value, String label) {
             this.value = value == null ? "" : value;
@@ -629,8 +631,20 @@ public final class PanelDialog {
             label = null;
         } else {
             label = text(option.label + option.suffix, 16f, COL_TITLE);
-            row.addView(label, new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            if (option.detail.isEmpty()) {
+                row.addView(label, new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            } else {
+                LinearLayout texts = new LinearLayout(context);
+                texts.setOrientation(LinearLayout.VERTICAL);
+                texts.addView(label);
+                TextView detail = text(option.detail, 13f, COL_SUMMARY);
+                detail.setSingleLine(true);
+                detail.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                texts.addView(detail);
+                row.addView(texts, new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            }
         }
         if (!option.preview.isEmpty()) {
             TextView preview = text(option.preview, 18f, COL_TITLE);

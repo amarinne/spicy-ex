@@ -57,6 +57,7 @@
     <string name="settings_source_order_title">우선순위</string>
     <string name="settings_source_order_hint"></string>
     <string name="settings_source_drag">끌어서 순서 변경</string>
+    <string name="lyrics_translation_retrying">번역 다시 시도 중…</string>
     <string name="settings_option_lyrics_source_order_spicy_spotify_lrclib">Spicy, Spotify, LRCLIB</string>
     <string name="settings_option_lyrics_source_order_spotify_spicy_lrclib">Spotify, Spicy, LRCLIB</string>
     <string name="settings_option_lyrics_source_order_lrclib_spicy_spotify">LRCLIB, Spicy, Spotify</string>
@@ -527,6 +528,10 @@
     <string name="settings_layout_editor_follow_chip_look">버튼 모양</string>
     <string name="lyrics_ad_position" formatted="false">%2$d개 중 %1$d번째</string>
     <string name="settings_label_lyrics_long_press_share">가사를 길게 눌러 공유</string>
+    <string name="settings_label_lyrics_double_tap_like">두 번 탭해서 좋아요</string>
+    <string name="settings_tap_seek_taken_by_like">꺼짐 · 두 번 탭은 좋아요</string>
+    <string name="settings_tap_seek_double_tap_turns_off_like">선택하면 두 번 탭해서 좋아요가 꺼져요</string>
+    <string name="settings_double_tap_like_note">두 번 탭은 가사 이동에 사용 중이에요. 켜면 그 기능은 꺼져요.</string>
     <string name="settings_label_lyrics_status_bar_hidden_portrait">상태 표시줄 숨기기 (세로)</string>
     <string name="settings_label_lyrics_status_bar_hidden_landscape">상태 표시줄 숨기기 (가로)</string>
 </resources>

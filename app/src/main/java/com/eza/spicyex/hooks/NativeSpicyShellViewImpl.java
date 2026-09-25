@@ -486,15 +486,51 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (hide) hideStatusBar(); else showStatusBar();
         if (hide != statusBarHidden) {
             statusBarHidden = hide;
-            // The chrome header and the lyrics' top clearance were sized for the old state.
-            if (chromeHeader != null) {
-                chromeHeader.setPadding(chromeHeader.getPaddingLeft(), topSystemPadding(activity),
-                        chromeHeader.getPaddingRight(), chromeHeader.getPaddingBottom());
-            }
-            lyricsTopInsetPx = topSystemPadding(activity);
-            applyLyricsScrollPadding();
+            // Showing or hiding moves where the window's content starts; the layout listener
+            // re-pins everything once that relayout lands (see trackContentScreenTop).
+            reapplyTopClearance();
         }
     }
+
+    private final int[] contentLocation = new int[2];
+    private final View.OnLayoutChangeListener contentTopListener =
+            (v, l, t, r, b, ol, ot, or, ob) -> trackContentScreenTop();
+
+    /** Watches where the activity's content area sits on screen, which the status bar moves. */
+    private void watchContentScreenTop(boolean watch) {
+        View content = activity == null ? null : activity.findViewById(android.R.id.content);
+        if (content == null) return;
+        content.removeOnLayoutChangeListener(contentTopListener);
+        if (watch) {
+            content.addOnLayoutChangeListener(contentTopListener);
+            trackContentScreenTop();
+        }
+    }
+
+    private void trackContentScreenTop() {
+        View content = activity == null ? null : activity.findViewById(android.R.id.content);
+        if (content == null || !content.isAttachedToWindow()) return;
+        content.getLocationOnScreen(contentLocation);
+        int top = Math.max(0, contentLocation[1]);
+        if (top == NativeLyricsUtils.contentScreenTop) return;
+        NativeLyricsUtils.contentScreenTop = top;
+        // Posted: this runs inside a layout pass.
+        post(this::reapplyTopClearance);
+    }
+
+    /** Re-pins the header, the lyrics and the track readout below the status bar's place. */
+    private void reapplyTopClearance() {
+        if (chromeHeader != null) {
+            chromeHeader.setPadding(chromeHeader.getPaddingLeft(), topSystemPadding(activity),
+                    chromeHeader.getPaddingRight(), chromeHeader.getPaddingBottom());
+        }
+        lyricsTopInsetPx = Math.max(NativeLyricsUtils.statusBarClearance(activity), cutoutTopPx);
+        applyLyricsScrollPadding();
+        if (trackInfoController != null) trackInfoController.onPreferenceChanged();
+    }
+
+    /** A display cutout reaching lower than the status bar, when there is one. */
+    private int cutoutTopPx;
 
     private void hideStatusBar() {
         android.view.Window window = activity == null ? null : activity.getWindow();
@@ -730,7 +766,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         showTranslation = config.get(Settings.NATIVE_SPICY_TRANSLATION);
         // Seed with a status-bar-height estimate; the WindowInsets listener refines it with the
         // real safe-area top (status bar + display cutout) once insets dispatch on attach.
-        lyricsTopInsetPx = topSystemPadding(activity);
+        lyricsTopInsetPx = NativeLyricsUtils.statusBarClearance(activity);
         lyricsSideInsetPx = sideSystemPadding(activity);
 
         setBackground(ambientController.pageBackground());
@@ -976,6 +1012,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 () -> cycleTransliterationMode(prefs),
                 () -> {
                     if (renderConfig != null && !renderConfig.translationEnabled) return;
+                    if (translationFailedNow()) {
+                        retryTranslation();
+                        return;
+                    }
                     boolean wasVisible = showTranslation();
                     boolean hasDisplayedMeaning = hasLayerOutput(
                             com.eza.spicyex.lyrics.session.LayerKind.MEANING);
@@ -1093,6 +1133,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 followState::setTouching,
                 this::seekNearestLineAt,
                 this::shareLyricLineAt);
+        tapSeekHandler.setDoubleTapCallback((x, y) -> likeFromDoubleTap(lyricsScroll, x, y));
         lyricsScroll.setOnTouchListener((view, event) -> {
             if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN
                     || event.getActionMasked() == android.view.MotionEvent.ACTION_MOVE) {
@@ -1216,9 +1257,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // Refine the lyric top/side insets from real window insets (status bar + cutout) once
         // they dispatch on attach. Returned unconsumed so nothing else is starved of insets.
         setOnApplyWindowInsetsListener((v, insets) -> {
-            int top = computeSafeTopInset(insets);
-            if (top > 0 && top != lyricsTopInsetPx) {
-                lyricsTopInsetPx = top;
+            // The bar's place, not the visible insets: those lose the bar while it is hidden, and
+            // the lyrics used to follow them up. Only a cutout deeper than the bar adds to it.
+            int cutout = 0;
+            if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
+                cutout = insets.getDisplayCutout().getSafeInsetTop();
+            }
+            cutoutTopPx = cutout;
+            int wanted = Math.max(NativeLyricsUtils.statusBarClearance(activity), cutout);
+            if (wanted != lyricsTopInsetPx) {
+                lyricsTopInsetPx = wanted;
                 applyLyricsScrollPadding();
             }
             int side = computeSafeSideInset(insets);
@@ -1302,6 +1350,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         statusBarHidden = NativeLyricsUtils.statusBarHidden(activity);
         applyStatusBarPreference();
         com.eza.spicyex.lyrics.LanguageModelPack.setReadyListener(languageModelReadyListener);
+        watchContentScreenTop(true);
         ambientController.start();
         revealChrome();
         documentGate.start();
@@ -1316,6 +1365,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     void stop() {
         dbgEnter("NativeSpicyShellView.stop");
         running = false;
+        watchContentScreenTop(false);
         showStatusBar();
         com.eza.spicyex.lyrics.LanguageModelPack.clearReadyListener(languageModelReadyListener);
         documentGate.stop();
@@ -1671,6 +1721,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 rowMountController.reset();
                 followState.resetActive();
                 emptyStateController.showAdState(lyricsScroll, lyricsColumn);
+                // The track just changed; don't let the 250ms throttle hand back the song.
+                throttledTrack = track;
+                throttledTrackAtMs = SystemClock.elapsedRealtime();
+                updateToggleVisuals();
             } else {
                 showLoading("Loading lyrics…");
                 loadLyrics(track, id);
@@ -3783,6 +3837,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void styleLine(int index, boolean active) {
         lineVisualController.style(document == null ? null : document.appliedLines, index);
+        // The base style puts the row back to unsung: its real state (a past line's fill) has to
+        // be drawn again, or a settled row stays drained.
+        if (document != null && document.appliedLines != null && index >= 0
+                && index < document.appliedLines.size()) {
+            LyricsLineViewState.requestFrame(document.appliedLines.get(index));
+        }
     }
 
     private void resumeFollowCurrentLine() {
@@ -3886,6 +3946,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean translationAiFailed = !translationAiPending
                 && !aiFailureToken(com.eza.spicyex.lyrics.session.LayerKind.MEANING).isEmpty()
                 && translationToggle.getVisibility() == View.VISIBLE;
+        toggleSpinnerController.setFailed(false, translationFailedNow());
         toggleSpinnerController.update(renderConfig.toggleSpinnerEnabled, romanPending,
                 translationPending,
                 hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.SOUND)
@@ -3893,6 +3954,28 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING)
                         && showTranslation(),
                 romanAiPending, translationAiPending, romanAiFailed, translationAiFailed);
+    }
+
+    /**
+     * The translation did not come and nothing stands in for it (an AI failure has its own red
+     * mark and review path). The chip shows a red "!", and a tap retries instead of toggling.
+     */
+    private boolean translationFailedNow() {
+        return document != null && document.translationFailed && !document.translationPending
+                && showTranslation() && translationToggle.getVisibility() == View.VISIBLE
+                && aiFailureToken(com.eza.spicyex.lyrics.session.LayerKind.MEANING).isEmpty()
+                && !hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+    }
+
+    private void retryTranslation() {
+        // Shown as running at once; the session republishes when the retry settles.
+        document.translationFailed = false;
+        document.translationPending = true;
+        host.refreshLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+        updateToggleSpinners();
+        android.widget.Toast.makeText(activity,
+                uiText("lyrics_translation_retrying", "Retrying translation…"),
+                android.widget.Toast.LENGTH_SHORT).show();
     }
 
     /** Desktop's primary-click policy, applied before the normal visibility toggle. */
@@ -4827,11 +4910,80 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (host.toggleSpotifySaved(likedMode, track)) {
             pendingLikedUri = safe(track.uri);
             applyLikedIconState(!track.saved);
+            animateLikeButton(!track.saved);
         } else {
             android.widget.Toast.makeText(activity,
                     uiText("lyrics_like_unavailable", "Liked Songs action unavailable"),
                     android.widget.Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /**
+     * Instagram-style double tap: a heart (or star, following the like button's style) bursts
+     * where the finger was, and the song is added to Liked Songs. It only ever adds - double
+     * tapping a song already liked just plays the burst again.
+     */
+    private void likeFromDoubleTap(View source, float x, float y) {
+        SpotifyTrack track = currentTrackThrottled();
+        if (track == null || !SpotifyCollectionAction.isSong(track)) return;
+        String mode = SpotifyCollectionAction.enabled(likedMode) ? likedMode : "Heart";
+        boolean star = com.eza.spicyex.ui.ActionIconDrawable.likedSongsKind(mode)
+                == com.eza.spicyex.ui.ActionIconDrawable.Kind.STAR;
+        int[] here = new int[2];
+        int[] from = new int[2];
+        getLocationInWindow(here);
+        source.getLocationInWindow(from);
+        new com.eza.spicyex.ui.LikeBurstView(activity, star, true,
+                from[0] - here[0] + x, from[1] - here[1] + y, dp(92)).play(this);
+        performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK);
+        boolean alreadyLiked = track.saved
+                || (!pendingLikedUri.isEmpty() && pendingLikedUri.equals(safe(track.uri))
+                && Boolean.TRUE.equals(lastLikedSaved));
+        if (alreadyLiked) return;
+        if (host.toggleSpotifySaved(mode, track)) {
+            pendingLikedUri = safe(track.uri);
+            applyLikedIconState(true);
+            animateLikeButton(true);
+        } else {
+            android.widget.Toast.makeText(activity,
+                    uiText("lyrics_like_unavailable", "Liked Songs action unavailable"),
+                    android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * The like button's own answer to a toggle, kept quiet: turning on, a light press and a
+     * gentle spring back while a soft glow breathes out behind it; turning off, a short dip.
+     */
+    private void animateLikeButton(boolean liked) {
+        if (likeButton == null || likeButton.getVisibility() != View.VISIBLE) return;
+        likeButton.animate().cancel();
+        if (!liked) {
+            likeButton.animate().scaleX(0.82f).scaleY(0.82f).setDuration(90)
+                    .setInterpolator(new android.view.animation.AccelerateInterpolator())
+                    .withEndAction(() -> likeButton.animate().scaleX(1f).scaleY(1f).setDuration(180)
+                            .setInterpolator(new android.view.animation.DecelerateInterpolator()).start())
+                    .start();
+            return;
+        }
+        likeButton.setScaleX(1f);
+        likeButton.setScaleY(1f);
+        likeButton.animate().scaleX(0.86f).scaleY(0.86f).setDuration(110)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                .withEndAction(() -> likeButton.animate().scaleX(1f).scaleY(1f).setDuration(380)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(1.4f)).start())
+                .start();
+        boolean star = com.eza.spicyex.ui.ActionIconDrawable.likedSongsKind(likedMode)
+                == com.eza.spicyex.ui.ActionIconDrawable.Kind.STAR;
+        int[] here = new int[2];
+        int[] button = new int[2];
+        getLocationInWindow(here);
+        likeButton.getLocationInWindow(button);
+        float cx = button[0] - here[0] + likeButton.getWidth() / 2f;
+        float cy = button[1] - here[1] + likeButton.getHeight() / 2f;
+        // Starts as the button springs back out, not while it is pressed.
+        postDelayed(() -> new com.eza.spicyex.ui.LikeBurstView(activity, star, false, cx, cy,
+                Math.max(likeButton.getWidth(), dp(36)) * 1.2f).play(this), 90);
     }
 
     private void updateLikedButton(SpotifyTrack track) {
@@ -4890,6 +5042,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void updateToggleVisuals() {
+        // An ad has nothing to read or translate. The toggles used to keep the previous song's
+        // state into the ad, and the reading toggle showed with no document at all whenever an
+        // AI reading lane was configured. (Not while an ordinary song loads: hiding them then
+        // would shift the other buttons on every track change.)
+        if (isAdTrack(currentTrackThrottled())) {
+            romanToggle.setVisibility(View.GONE);
+            translationToggle.setVisibility(View.GONE);
+            updateToggleSpinners();
+            return;
+        }
         boolean jp = documentHasJapanese();
         boolean cn = documentHasChinese();
         boolean romanizable = documentHasRomanizableScript();

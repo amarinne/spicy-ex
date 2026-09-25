@@ -25,6 +25,11 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
     private long scrollDownAtMs;
     private long lastTapAtMs;
     private float lastTapY;
+    private float scrollDownX;
+    private DoubleTapCallback doubleTapCallback;
+    /** A single-tap seek waiting to see whether a second tap makes it a double tap. */
+    private final Runnable pendingSeek = this::runPendingSeek;
+    private float pendingSeekY;
     private boolean longPressFired;
 
     public LyricsTapSeekHandler(
@@ -58,6 +63,7 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             scrollDownY = event.getY();
+            scrollDownX = event.getX();
             scrollDownAtMs = SystemClock.elapsedRealtime();
             longPressFired = false;
             armLongPress();
@@ -69,7 +75,11 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
             // timestamp stale from the start of the gesture, so the moment the finger lifts the
             // cooldown already reads as elapsed and auto-resume can snap back with no grace
             // period at all, which feels like it's fighting an in-progress touch.
-            if (Math.abs(event.getY() - scrollDownY) >= dp(10)) cancelLongPress();
+            if (Math.abs(event.getY() - scrollDownY) >= dp(10)) {
+                cancelLongPress();
+                // A scroll right after a tap is not the tap's seek any more.
+                longPressHandler.removeCallbacks(pendingSeek);
+            }
             if (touchCallback != null) touchCallback.touching(true);
             hold();
         } else if (action == MotionEvent.ACTION_UP) {
@@ -80,7 +90,28 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
             long held = SystemClock.elapsedRealtime() - scrollDownAtMs;
             if (dy < dp(10) && held < 600) {
                 String mode = config == null ? "" : config.get(Settings.TAP_SEEK_MODE);
-                if ("Double tap".equalsIgnoreCase(mode)) {
+                if (doubleTapCallback != null && config != null
+                        && Boolean.TRUE.equals(config.get(Settings.DOUBLE_TAP_LIKE))) {
+                    // Double tap likes. A single tap still seeks in "Single tap" mode; the tap
+                    // that completes a double tap does not seek again.
+                    long now = SystemClock.elapsedRealtime();
+                    long window = ViewConfiguration.getDoubleTapTimeout();
+                    if (now - lastTapAtMs < window && Math.abs(event.getY() - lastTapY) < dp(40)) {
+                        lastTapAtMs = 0;
+                        longPressHandler.removeCallbacks(pendingSeek);
+                        doubleTapCallback.onDoubleTap(event.getX(), event.getY());
+                    } else {
+                        lastTapAtMs = now;
+                        lastTapY = event.getY();
+                        if ("Single tap".equalsIgnoreCase(mode)) {
+                            // Seek only once no second tap came: a double tap likes, it never
+                            // also seeks.
+                            pendingSeekY = event.getY();
+                            longPressHandler.removeCallbacks(pendingSeek);
+                            longPressHandler.postDelayed(pendingSeek, window);
+                        }
+                    }
+                } else if ("Double tap".equalsIgnoreCase(mode)) {
                     long now = SystemClock.elapsedRealtime();
                     if (now - lastTapAtMs < 350 && Math.abs(event.getY() - lastTapY) < dp(20)) {
                         seek(event.getY());
@@ -106,6 +137,11 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
         return longPressFired;
     }
 
+    /** Receives double taps when "Double-tap to like" is on (they no longer seek then). */
+    public void setDoubleTapCallback(DoubleTapCallback callback) {
+        doubleTapCallback = callback;
+    }
+
     private void armLongPress() {
         if (longPressCallback == null) return;
         longPressHandler.removeCallbacks(longPressRunnable);
@@ -119,6 +155,10 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
     private void fireLongPress() {
         longPressFired = true;
         if (longPressCallback != null) longPressCallback.onLongPress(scrollDownY);
+    }
+
+    private void runPendingSeek() {
+        seek(pendingSeekY);
     }
 
     private void hold() {
@@ -144,6 +184,10 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
 
     public interface SeekCallback {
         void seekAt(float y);
+    }
+
+    public interface DoubleTapCallback {
+        void onDoubleTap(float x, float y);
     }
 
     public interface LongPressCallback {

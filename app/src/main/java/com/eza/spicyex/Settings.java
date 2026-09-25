@@ -143,6 +143,14 @@ public final class Settings {
             "lyrics_long_press_share", LYRICS, "Long-press a line to share", false
     );
 
+    // Double-tapping the lyrics adds the song to Liked Songs with a heart (or star) burst where
+    // the finger was, as on Instagram Reels. It never removes a like. While on it owns the
+    // double tap outright: "Tap lyric to seek" on double tap does nothing, and on single tap
+    // the seek waits out the double-tap window so a double tap never also seeks.
+    public static final Setting<Boolean> DOUBLE_TAP_LIKE = boolSetting(
+            "lyrics_double_tap_like", LYRICS, "Double-tap to like", true
+    );
+
     // What to do while a spotify:ad: track plays - see AdMuteController. Mute silences only
     // Spotify's own AudioTrack (the phone's media volume is untouched); music additionally fades
     // in soft generated instrumental music for the length of the ad break.

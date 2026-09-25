@@ -266,6 +266,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         snapshot.put(Settings.LINE_SPACING, store.get(Settings.LINE_SPACING));
         snapshot.put(Settings.LIVE_CARD_TEXT_SIZE, store.get(Settings.LIVE_CARD_TEXT_SIZE));
         snapshot.put(Settings.TRACK_INFO_TEXT_SIZE, store.get(Settings.TRACK_INFO_TEXT_SIZE));
+        snapshot.put(Settings.DOUBLE_TAP_LIKE, store.get(Settings.DOUBLE_TAP_LIKE));
+        snapshot.put(Settings.TAP_SEEK_MODE, store.get(Settings.TAP_SEEK_MODE));
         return snapshot.build();
     }
 
@@ -562,6 +564,11 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     @Override public void onSettingChanged(Settings.Setting<?> setting) {
+        // Double tap is one gesture: turning either use on turns the other off.
+        if (setting == Settings.DOUBLE_TAP_LIKE && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))
+                && "Double tap".equals(store.get(Settings.TAP_SEEK_MODE))) {
+            writer.put(Settings.TAP_SEEK_MODE, "Off");
+        }
         if (setting == Settings.LYRICS_SOURCE_MODE) {
             com.eza.spicyex.lyrics.session.LyricsSourcePreferences.setRankingMode(context,
                     com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode.parse(
@@ -1007,6 +1014,11 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     /** Writes the value and applies immediate side effects (the UI-language swap). */
     @Override public void onOptionChosen(Settings.StringSetting setting, String value) {
         writer.put(setting, value);
+        // Seeking on double tap takes the gesture back from double-tap to like.
+        if (setting == Settings.TAP_SEEK_MODE && "Double tap".equals(value)
+                && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            writer.put(Settings.DOUBLE_TAP_LIKE, false);
+        }
         if (setting == Settings.UI_LANGUAGE) {
             uiStrings = UiLanguage.strings(context, value);
             if (panelTitle != null) panelTitle.setText(uiStrings.appName());
@@ -1018,7 +1030,26 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     }
 
     @Override public String rowSummaryFor(Settings.StringSetting setting, String value) {
-        return setting == Settings.CACHE_SIZE ? cacheSizeSummary() : labelFor(setting, value);
+        return setting == Settings.CACHE_SIZE ? cacheSizeSummary() : selectorSummary(setting, value);
+    }
+
+    /** The shared double tap: warns on the like switch what turning it on turns off. */
+    @Override public String switchNote(Settings.BooleanSetting setting) {
+        if (setting == Settings.DOUBLE_TAP_LIKE && "Double tap".equals(store.get(Settings.TAP_SEEK_MODE))
+                && !Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            return uiStrings.get("settings_double_tap_like_note",
+                    "Double tap already seeks to a line. Turning this on turns that off.");
+        }
+        return null;
+    }
+
+    /** Tap-to-seek on double tap does nothing while double tap likes; the row says so. */
+    @Override public String selectorSummary(Settings.StringSetting setting, String value) {
+        if (setting == Settings.TAP_SEEK_MODE && "Double tap".equals(value)
+                && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            return uiStrings.get("settings_tap_seek_taken_by_like", "Off \u00b7 double tap likes");
+        }
+        return labelFor(setting, value);
     }
 
     @Override public PanelStrings panelStrings() {

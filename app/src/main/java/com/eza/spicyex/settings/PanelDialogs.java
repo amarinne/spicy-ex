@@ -88,6 +88,9 @@ public final class PanelDialogs {
                 option.suffix = "  · " + reason;
             } else if (usageSuffix != null && val.equals(current)) {
                 option.suffix = usageSuffix;
+            } else {
+                String note = PanelPolicy.optionNote(setting, val, snapshot, host.panelStrings());
+                if (!note.isEmpty()) option.detail = note;
             }
             option.preview = SettingLabels.optionPreview(setting.key, val);
             if (setting == Settings.LIKED_SONGS_BUTTON) {

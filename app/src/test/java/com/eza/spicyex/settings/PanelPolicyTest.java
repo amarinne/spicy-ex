@@ -282,7 +282,10 @@ public class PanelPolicyTest {
         assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.LYRICS_SOURCE_MODE));
         // UI language takes the full rebuild path (every label changes), not the section path.
         assertFalse(PanelPolicy.shouldRebuildSectionAfterChange(Settings.UI_LANGUAGE));
-        assertFalse(PanelPolicy.shouldRebuildSectionAfterChange(Settings.TAP_SEEK_MODE));
+        // Tap-to-seek and double-tap to like share the double tap: either one changing can switch
+        // the other off and changes the like switch's note, so the Gestures section refreshes.
+        assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.TAP_SEEK_MODE));
+        assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.DOUBLE_TAP_LIKE));
         assertFalse(PanelPolicy.shouldRebuildSectionAfterChange(Settings.CACHE_SIZE));
     }
 
