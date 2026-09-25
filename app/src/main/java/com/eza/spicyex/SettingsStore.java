@@ -31,6 +31,7 @@ public final class SettingsStore implements TypedStore {
         migrateLikedSongsButton(prefs);
         migrateLineBlurLevel(prefs);
         migratePanelMediaControls(prefs);
+        migrateSourceRankingLabel(prefs);
     }
 
     static synchronized void migrateLikedSongsButton(SharedPreferences prefs) {
@@ -65,12 +66,44 @@ public final class SettingsStore implements TypedStore {
      * Bool-to-enum migration for the blur level: stored {@code true} keeps the legacy look as
      * {@code Slight}, {@code false} becomes {@code Off}. Already-migrated strings pass through.
      */
+    /** The old "Auto-mute ads" switch becomes the Mute choice of the ad mode. */
+    static synchronized void migrateAdMode(SharedPreferences prefs) {
+        if (!prefs.contains(Settings.LEGACY_AUTO_MUTE_ADS)) return;
+        boolean muted = false;
+        try {
+            muted = prefs.getBoolean(Settings.LEGACY_AUTO_MUTE_ADS, false);
+        } catch (ClassCastException ignored) {
+        }
+        SharedPreferences.Editor editor = prefs.edit().remove(Settings.LEGACY_AUTO_MUTE_ADS);
+        if (muted && !prefs.contains(Settings.AD_MODE.key)) {
+            editor.putString(Settings.AD_MODE.key, Settings.AD_MODE_MUTE);
+        }
+        editor.apply();
+    }
+
     static synchronized void migrateLineBlurLevel(SharedPreferences prefs) {
         if (!prefs.contains(Settings.ENABLE_LINE_BLUR.key)) return;
         Object raw = prefs.getAll().get(Settings.ENABLE_LINE_BLUR.key);
         if (raw instanceof String) return;
         boolean on = Boolean.TRUE.equals(raw);
         prefs.edit().putString(Settings.ENABLE_LINE_BLUR.key, on ? "Slight" : "Off").apply();
+    }
+
+    /**
+     * Pre-release builds persisted the source ranking as "Smart"/"UserOrder"; the stored tokens are
+     * "Auto"/"Source order". Unknown values would otherwise silently fall back to Auto.
+     */
+    static synchronized void migrateSourceRankingLabel(SharedPreferences prefs) {
+        String key = Settings.LYRICS_SOURCE_MODE.key;
+        if (!prefs.contains(key)) return;
+        String stored;
+        try {
+            stored = prefs.getString(key, null);
+        } catch (ClassCastException ignored) {
+            return;
+        }
+        if ("Smart".equals(stored)) prefs.edit().putString(key, "Auto").apply();
+        else if ("UserOrder".equals(stored)) prefs.edit().putString(key, "Source order").apply();
     }
 
     public <T> T get(Settings.Setting<T> setting) {
