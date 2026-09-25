@@ -9,20 +9,23 @@ import android.view.ViewGroup;
 
 import java.util.Set;
 
-import static com.eza.spicyex.lyrics.LyricUtils.safe;
-
 /** Applies one fullscreen lyric animation frame to the currently mounted row window. */
 public final class LyricsFrameRenderer {
     private static final int SCROLL_RENDER_MARGIN_ROWS = 8;
+    /** A row this short reads as a visual accent rather than a paragraph, and takes a gentler blur
+     *  curve so it does not dissolve entirely while its neighbours stay legible. */
+    private static final int SHORT_LINE_CODE_POINTS = 12;
     private final FrameStyleBatcher styleBatcher;
     private final LyricsAnimationApplier.StyleSink styleSink;
     private final float scaledDensity;
+    private final float density;
     private int lastActiveIndex = Integer.MIN_VALUE;
     private boolean lastUserScrollHeld;
 
     public LyricsFrameRenderer(Context context, FrameStyleBatcher styleBatcher) {
         this.styleBatcher = styleBatcher;
         scaledDensity = context == null ? 1f : context.getResources().getDisplayMetrics().scaledDensity;
+        density = context == null ? 1f : context.getResources().getDisplayMetrics().density;
         styleSink = new LyricsAnimationApplier.StyleSink() {
             @Override
             public void applyAlpha(View view, float alpha) {
@@ -166,6 +169,7 @@ public final class LyricsFrameRenderer {
                 float blur = LyricsLineViewState.stepLineBlur(line, blurTarget, deltaSeconds);
                 float opacity = LyricsAnimationApplier.stepLineOpacity(line, lineState.active,
                         lineState.sung, deltaSeconds, config.appleDimPassed);
+                LyricsLineViewState.ensureScalePivots(line);
                 LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity, blur);
                 continue;
             }
@@ -181,7 +185,9 @@ public final class LyricsFrameRenderer {
             }
             LyricsLineViewState.applyRowFrame(line, styleBatcher, opacity, blur);
             if (config.appleStyle) {
-                float lineShadowTarget = lineState.active && !line.bgLine ? 1f : 0f;
+                // Let motion and blur carry the transition; do not add a heavier shadow behind
+                // the newly focused line. Drain any legacy shadow state to zero as well.
+                float lineShadowTarget = 0f;
                 float lineShadow = LyricsLineViewState.stepLineShadow(line, lineShadowTarget, deltaSeconds);
                 LyricsLineViewState.applyLineShadow(line, lineShadow);
             }
@@ -189,15 +195,73 @@ public final class LyricsFrameRenderer {
             if (config.appleDimPassed && lineState.active) lineGlowTarget = Math.max(lineGlowTarget, 0.28f);
             float lineGlow = LyricsAnimationApplier.stepLineGlow(line, lineGlowTarget, deltaSeconds);
 
+            boolean appleLineDocument = config.appleStyle
+                    && "Line".equalsIgnoreCase(document.type);
+            // Line-synced Apple rows light as a whole; see LyricsLineViewState#stepLineLit.
+            float litBrightness = appleLineDocument
+                    ? lineState.brightnessTarget * LyricsLineViewState.stepLineLit(
+                            line, lineState.active || lineState.sung, deltaSeconds)
+                    : 1f;
             if (LyricsLineViewState.hasMainView(line)) {
                 float lineScaleTarget = lineLevelBounceEnabled(config, line)
                         ? lineState.scaleTarget : 1f;
                 float scale = LyricsAnimationApplier.stepLineScale(line, lineScaleTarget, deltaSeconds);
                 LyricsLineViewState.updateMainScalePivot(line);
+                scale = LyricsLineViewState.fitScale(LyricsLineViewState.mainViewOf(line),
+                        line.oppositeAligned, scale, scaleEdgeMarginPx());
                 LyricsLineViewState.applyMainScale(line, styleBatcher, scale);
-                LyricsLineViewState.applyLineLevelGradient(
-                        line, lineState.gradient, lineGlow, lineState.brightnessTarget,
-                        config.appleDimPassed && lineState.active ? 64f : Float.NaN);
+                if (appleLineDocument) {
+                    LyricsLineViewState.applyLineLevelGradient(
+                            line, LyricAnimations.GRADIENT_SUNG, 0f, litBrightness);
+                } else {
+                    LyricsLineViewState.applyLineLevelGradient(
+                            line, lineState.gradient, lineGlow, lineState.brightnessTarget);
+                }
+            } else if (line.words != null && !line.words.isEmpty()) {
+                View wordContainer = LyricsSyllableViewState.parentView(line.words.get(0));
+                if (wordContainer != null) {
+                    boolean bounce = lineLevelBounceEnabled(config, line);
+                    float lineScaleTarget = bounce ? lineState.scaleTarget : 1f;
+                    GlowFlexbox flex = wordContainer instanceof GlowFlexbox ? (GlowFlexbox) wordContainer : null;
+                    boolean perVisualLine = flex != null && flex.visualLineCount() > 1;
+                    if (perVisualLine) {
+                        // Wrapped line: the block itself only settles to 1; the zoom goes to the
+                        // visual line being sung (GlowFlexbox#stepLineZoom).
+                        if (lineState.active) lineScaleTarget = Math.min(1f, lineScaleTarget);
+                        float zoomTarget = 1f;
+                        float heldTarget = 1f;
+                        int sungLine = -1;
+                        if (lineState.active && bounce) {
+                            float maxScale = lineState.spotlight ? 1.05f : 1.03f;
+                            // The whole wrapped line zooms as the lyric starts - not following the
+                            // audio line by line, which drifted from the singing - but as a quick
+                            // top-to-bottom ripple: each visual line a moment after the one above.
+                            long intoLyric = positionMs - line.startMs;
+                            sungLine = (int) Math.min(flex.visualLineCount() - 1,
+                                    Math.max(0L, intoLyric) / VISUAL_LINE_STAGGER_MS);
+                            zoomTarget = maxScale;
+                            heldTarget = maxScale;
+                        }
+                        flex.stepLineZoom(sungLine, zoomTarget, heldTarget, deltaSeconds,
+                                line.oppositeAligned, scaleEdgeMarginPx());
+                    } else if (flex != null && flex.hasLineZoom()) {
+                        flex.stepLineZoom(-1, 1f, 1f, deltaSeconds, line.oppositeAligned, scaleEdgeMarginPx());
+                    }
+                    if (flex != null) {
+                        // Held words swell, the rest of their visual line narrows to make room.
+                        SyllableSegment held = lineState.active && bounce ? heldWord(line, positionMs) : null;
+                        flex.stepWordEmphasis(held == null ? null : LyricsSyllableViewState.wordView(held),
+                                held == null ? 0f : heldEmphasis(held, positionMs), deltaSeconds);
+                    }
+                    float scale = LyricsAnimationApplier.stepLineScale(line, lineScaleTarget, deltaSeconds);
+                    if (wordContainer.getWidth() > 0 && wordContainer.getHeight() > 0) {
+                        wordContainer.setPivotX(line.oppositeAligned ? wordContainer.getWidth() : 0f);
+                        wordContainer.setPivotY(wordContainer.getHeight() * 0.5f);
+                    }
+                    scale = LyricsLineViewState.fitScale(wordContainer, line.oppositeAligned, scale,
+                            scaleEdgeMarginPx());
+                    styleBatcher.applyScaleIfChanged(wordContainer, scale, scale);
+                }
             }
             if (line.dotLine) {
                 if (lineState.active) {
@@ -206,6 +270,19 @@ public final class LyricsFrameRenderer {
                     LyricsAnimationApplier.resetInterludeDots(line, styleSink, lineState.sung,
                             config != null && config.appleStyle);
                 }
+            } else if (appleLineDocument) {
+                // Line-synced Apple rows have no real word spans: never animate fabricated words
+                // or sweep them. A row built from word views (reading or furigana attached to
+                // fabricated spans) lights as a whole, exactly like a single-text row - resetting
+                // its words alone left them at the unsung colour, so the line never lit at all.
+                if (!LyricsLineViewState.hasMainView(line) && line.words != null) {
+                    LyricsAnimationApplier.resetSyllables(line, styleSink, false);
+                    for (SyllableSegment word : line.words) {
+                        LyricsSyllableViewState.applyLitFrame(word, litBrightness);
+                    }
+                }
+                LyricsLineViewState.applyLineSecondaryGradient(
+                        line, LyricAnimations.GRADIENT_SUNG, 0f);
             } else {
                 applySecondaryGradient(line, positionMs, lineGlow, config);
                 WordGradientRoute wordGradientRoute = wordGradientRoute(config.lineSyncFillMode);
@@ -307,6 +384,7 @@ public final class LyricsFrameRenderer {
     }
 
     private boolean lineLevelBounceEnabled(LyricsRenderConfig config, AppliedLine line) {
+        if (config != null && config.appleStyle) return true;
         return config != null && config.wordBounceEnabled
                 && "All synced rows".equals(config.wordBounceScope);
     }
@@ -434,23 +512,33 @@ public final class LyricsFrameRenderer {
         if (line == null || Build.VERSION.SDK_INT < 31) return 0f;
         if (!config.lineBlurEnabled) return 0f;
         if (userScrollHeld) return 0f;
+        
+        // Active rows (currently being sung) must always remain sharp.
+        if (lineActive) return 0f;
+        
         float quality = config.blurQuality;
         if (quality <= 0f) return 0f;
         if (active < 0) return 0f;
-        // Apple only: an extended-window active row (index past the active one) never blurs.
-        if (config.appleStyle && lineActive) return 0f;
         int distance = Math.abs(index - active);
         if (distance == 0) return 0f;
-        String lineText = safe(line.text);
+        boolean emphasized = line.dotLine || line.isShortText(SHORT_LINE_CODE_POINTS);
+        if (config.appleStyle) {
+            // Let nearby rows dissolve into the ambient blur as focus advances. The active row
+            // remains sharp; the first neighbour gets a restrained veil and the curve grows
+            // smoothly with distance rather than switching on abruptly at row two.
+            float max = config.lineBlurHeavy
+                    ? (emphasized ? 7.0f : 10.0f)
+                    : (emphasized ? 3.2f : 4.8f);
+            float curved = (float) Math.pow(Math.min(1f, distance / 3.2f), 0.72);
+            return max * curved * quality;
+        }
         if (config.lineBlurHeavy) {
-            boolean emphasized = lineText.codePointCount(0, lineText.length()) <= 12 || line.dotLine;
             float max = emphasized ? 5.0f : 8.0f;
             float curved = (float) Math.pow(Math.min(1f, distance / 4f), 0.75);
             return max * curved * quality;
         }
         if (distance <= 1) return 0f;
-        boolean legacyEmphasized = lineText.codePointCount(0, lineText.length()) <= 12 || line.dotLine;
-        float legacyMax = legacyEmphasized ? 1.0f : 1.8f;
+        float legacyMax = emphasized ? 1.0f : 1.8f;
         float weighted = legacyMax * Math.min(1f, distance / 4f);
         if (distance == 2) weighted *= 0.55f;
         return weighted * quality;
@@ -463,5 +551,76 @@ public final class LyricsFrameRenderer {
 
     private float spToPx(float sp) {
         return sp * scaledDensity;
+    }
+
+    /** The word being sung right now (started, not yet ended), or null. */
+    private static SyllableSegment heldWord(AppliedLine line, long positionMs) {
+        for (SyllableSegment segment : line.words) {
+            if (segment == null) continue;
+            if (segment.startMs <= positionMs && positionMs < segment.endMs) return segment;
+        }
+        return null;
+    }
+
+    /**
+     * 0..1: how much a word swells. Only held words - short ones never swell, so fast passages
+     * stay calm - rising over the first part of the word and holding while it is sustained.
+     */
+    private static float heldEmphasis(SyllableSegment word, long positionMs) {
+        long duration = word.endMs - word.startMs;
+        float slowness = LyricAnimations.clamp01((duration - 380f) / 900f);
+        if (slowness <= 0f) return 0f;
+        float progress = LyricAnimations.clamp01((positionMs - word.startMs) / (float) Math.max(1L, duration));
+        return slowness * LyricAnimations.easeSinOut(Math.min(1f, progress * 2.5f));
+    }
+
+    /** Visual line of the word being sung (the last one started), or -1. */
+    private static int sungVisualLine(GlowFlexbox flex, AppliedLine line, long positionMs) {
+        SyllableSegment current = null;
+        for (SyllableSegment segment : line.words) {
+            if (segment == null) continue;
+            if (segment.startMs <= positionMs) current = segment;
+            else break;
+        }
+        if (current == null) current = line.words.get(0);
+        View view = LyricsSyllableViewState.wordView(current);
+        return view == null ? -1 : flex.visualLineOf(view);
+    }
+
+    private static final long VISUAL_LINE_STAGGER_MS = 110L;
+
+    /** When singing reaches the first word of one visual line. */
+    private static long visualLineStartMs(GlowFlexbox flex, AppliedLine line, int visualLine) {
+        long start = Long.MAX_VALUE;
+        if (visualLine >= 0) {
+            for (SyllableSegment segment : line.words) {
+                if (segment == null) continue;
+                View view = LyricsSyllableViewState.wordView(segment);
+                if (view != null && flex.visualLineOf(view) == visualLine) start = Math.min(start, segment.startMs);
+            }
+        }
+        return start == Long.MAX_VALUE ? line.startMs : start;
+    }
+
+    /** 0..1 through the words on one visual line. */
+    private static float visualLineProgress(GlowFlexbox flex, AppliedLine line, int visualLine,
+                                            long positionMs) {
+        if (visualLine < 0) return 0f;
+        long start = Long.MAX_VALUE;
+        long end = Long.MIN_VALUE;
+        for (SyllableSegment segment : line.words) {
+            if (segment == null) continue;
+            View view = LyricsSyllableViewState.wordView(segment);
+            if (view == null || flex.visualLineOf(view) != visualLine) continue;
+            start = Math.min(start, segment.startMs);
+            end = Math.max(end, segment.endMs);
+        }
+        if (start == Long.MAX_VALUE || end <= start) return 0f;
+        return LyricAnimations.clamp01((positionMs - start) / (float) (end - start));
+    }
+
+    /** Space a zoomed line always keeps from the screen edge. */
+    private float scaleEdgeMarginPx() {
+        return 16f * density;
     }
 }

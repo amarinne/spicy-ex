@@ -39,8 +39,8 @@ import java.util.List;
  */
 public final class SourceOrderEditor {
     /** The two persisted ranking tokens. They are values, not labels; do not localize them. */
-    private static final String MODE_AUTO = "Auto";
-    private static final String MODE_SOURCE_ORDER = "Source order";
+    private static final String MODE_SMART = "Auto";
+    private static final String MODE_USER_ORDER = "Source order";
 
     /** What the editor needs from the panel. */
     public interface Host {
@@ -101,6 +101,9 @@ public final class SourceOrderEditor {
         if (source == Source.SPICY) return "Spicy";
         if (source == Source.SPOTIFY) return "Spotify";
         if (source == Source.AMLL) return "AMLL";
+        if (source == Source.NETEASE) return "NetEase";
+        if (source == Source.QQ_MUSIC) return "QQ Music";
+        if (source == Source.MUSIXMATCH) return "Musixmatch";
         return "LRCLIB";
     }
 
@@ -112,24 +115,22 @@ public final class SourceOrderEditor {
         final String[] ranking = new String[]{rankingValue()};
         final ArrayList<Source> order = new ArrayList<>(LyricsSourcePreferences.sourceOrder(style.context()));
         final EnumMap<Source, GlossyToggle> toggles = new EnumMap<>(Source.class);
+        final ArrayList<ImageView> orderGrips = new ArrayList<>();
 
         PanelDialog dialog = new PanelDialog(style.context(),
                 strings.setting(Settings.LYRICS_SOURCE_OVERRIDE));
 
-        // The order list only takes effect in Source order mode. In Auto, arbitration is by
-        // sync level and quality score, so the reorder UI is hidden to avoid implying priority.
         final LinearLayout orderSection = new LinearLayout(style.context());
         orderSection.setOrientation(LinearLayout.VERTICAL);
-        final Runnable refreshOrderVisibility = () -> orderSection.setVisibility(
-                MODE_SOURCE_ORDER.equals(ranking[0]) ? View.VISIBLE : View.GONE);
 
         dialog.paragraph(strings.get("settings_source_ranking_title", "Ranking"));
         final ArrayList<LinearLayout> rankingRows = new ArrayList<>();
         // The value drives selection; the option label is authored English, as before.
         final String[][] rankingOptions = new String[][]{
-                {MODE_AUTO, MODE_AUTO},
-                {MODE_SOURCE_ORDER, MODE_SOURCE_ORDER + " — "
-                        + strings.get("settings_source_ranking_order_desc", "follow the order below")}
+                {MODE_SMART, "Smart — "
+                        + strings.get("settings_source_ranking_smart_desc", "compares source quality, selects best match")},
+                {MODE_USER_ORDER, "User Order — "
+                        + strings.get("settings_source_ranking_order_desc", "follow your source order below")}
         };
         for (final String[] option : rankingOptions) {
             LinearLayout row = style.radioRow(option[1], option[0].equals(ranking[0]));
@@ -138,12 +139,12 @@ public final class SourceOrderEditor {
             row.setOnClickListener(v -> {
                 ranking[0] = value;
                 refreshRankingRows(rankingRows, ranking[0]);
-                refreshOrderVisibility.run();
+                setOrderGripVisibility(orderGrips, ranking[0]);
             });
             dialog.add(row);
         }
 
-        TextView orderTitle = style.text(strings.get("settings_source_order_title", "Order"),
+        TextView orderTitle = style.text(strings.get("settings_source_enabled_title", "Enabled sources"),
                 15, PanelStyle.COL_SECTION, true);
         orderTitle.setPadding(style.dp(12), style.dp(12), style.dp(8), style.dp(2));
         orderSection.addView(orderTitle);
@@ -151,10 +152,9 @@ public final class SourceOrderEditor {
         list.setOrientation(LinearLayout.VERTICAL);
         orderSection.addView(list);
         dialog.add(orderSection);
-        refreshOrderVisibility.run();
+
         for (Source source : order) {
-            // Spicy's remote path is retired from the user-selectable set. Keep it in the
-            // backing order for old persisted data, but never expose it.
+            // Spicy's remote path is retired from the user-selectable set
             if (source == Source.SPICY) continue;
             LinearLayout row = new LinearLayout(style.context());
             row.setOrientation(LinearLayout.HORIZONTAL);
@@ -173,7 +173,9 @@ public final class SourceOrderEditor {
             row.addView(label, labelParams);
             ImageView grip = style.kindView(Kind.CHEVRONS_UP_DOWN, PanelStyle.COL_SUMMARY, 20);
             grip.setContentDescription(strings.get("settings_source_drag", "Drag to reorder"));
+            grip.setVisibility(MODE_USER_ORDER.equals(ranking[0]) ? View.VISIBLE : View.GONE);
             row.addView(grip, new LinearLayout.LayoutParams(style.dp(40), style.dp(40)));
+            orderGrips.add(grip);
             attachSourceDrag(grip, row, list, order);
             list.addView(row, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -191,20 +193,26 @@ public final class SourceOrderEditor {
         dialog.secondary(strings.get("settings_ai_cancel", "Cancel"), null);
         dialog.show();
         refreshRankingRows(rankingRows, ranking[0]);
+        setOrderGripVisibility(orderGrips, ranking[0]);
     }
 
-    /** Current ranking as a persisted token; anything unrecognized reads as Auto. */
+    /** Current ranking as a persisted token; anything unrecognized reads as Smart. */
     private String rankingValue() {
         String stored = host.store().get(Settings.LYRICS_SOURCE_MODE);
-        return MODE_SOURCE_ORDER.equals(stored) ? MODE_SOURCE_ORDER : MODE_AUTO;
+        return MODE_USER_ORDER.equals(stored) ? MODE_USER_ORDER : MODE_SMART;
     }
 
     /** Repaints radio rows from the persisted value, never from rendered label text. */
     private void refreshRankingRows(List<LinearLayout> rows, String selected) {
         for (int i = 0; i < rows.size(); i++) {
-            boolean isSelected = i == (MODE_SOURCE_ORDER.equals(selected) ? 1 : 0);
+            boolean isSelected = i == (MODE_USER_ORDER.equals(selected) ? 1 : 0);
             host.style().paintRadio(rows.get(i), isSelected);
         }
+    }
+
+    private void setOrderGripVisibility(List<ImageView> grips, String ranking) {
+        int visibility = MODE_USER_ORDER.equals(ranking) ? View.VISIBLE : View.GONE;
+        for (ImageView grip : grips) if (grip != null) grip.setVisibility(visibility);
     }
 
     // --- Drag to reorder ---

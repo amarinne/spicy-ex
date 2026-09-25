@@ -46,6 +46,9 @@ public final class SettingLabels {
         if (setting == Settings.BACKGROUND_RENDER_QUALITY) {
             return value + "%";
         }
+        if (setting == Settings.APPLE_CASCADE_SPEED || setting == Settings.APPLE_SPRING_STRENGTH) {
+            return value + "%";
+        }
         if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM || setting == Settings.LINE_SPACING_CUSTOM
                 || setting == Settings.LIVE_CARD_TEXT_SIZE_CUSTOM
                 || setting == Settings.TRACK_INFO_TEXT_SIZE_CUSTOM) {

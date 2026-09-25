@@ -61,6 +61,9 @@ public final class PanelPolicy {
             // bounce rows would compete, so they stand down while the Apple card is up.
             return !"Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
         }
+        if (setting == Settings.APPLE_SPRING_STRENGTH) {
+            return "Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
+        }
         if (isAppleOwned(setting)) {
             return "Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
         }
@@ -105,7 +108,9 @@ public final class PanelPolicy {
                 || setting == Settings.APPLE_COMPACT_TEXT
                 || setting == Settings.APPLE_CJK_WRAP_FIX
                 || setting == Settings.LINE_SLIDE_ANIMATION
-                || setting == Settings.APPLE_LIFT;
+                || setting == Settings.APPLE_LIFT
+                || setting == Settings.LOAD_LIFT_ANIMATION
+                || setting == Settings.APPLE_CASCADE_SPEED;
     }
 
     public static boolean unavailable(Settings.Setting<?> setting, PanelSnapshot snapshot) {

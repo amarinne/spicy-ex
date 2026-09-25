@@ -54,6 +54,16 @@ public final class LyricQualityRanker {
             return 1000;
         }
 
+        // QQ, NetEase and Musixmatch are peers: each can serve genuine word-level timing (QRC,
+        // YRC and richsync respectively) or fall back to line-level for the same track, so they share a band and
+        // the sync level decides between them rather than the provider name.
+        if (source == Source.QQ_MUSIC || source == Source.NETEASE || source == Source.MUSIXMATCH) {
+            if (sync == Sync.SYLLABLE) return 3500;
+            if (sync == Sync.WORD) return 3450;
+            if (sync == Sync.LINE) return 3400;
+            if (sync == Sync.STATIC) return 2200;
+            return 1000;
+        }
         if (sync == Sync.SYLLABLE) return 1200;
         if (sync == Sync.WORD) return 1150;
         if (sync == Sync.LINE) return 1100;
@@ -80,7 +90,7 @@ public final class LyricQualityRanker {
         return sourceTier(candidate) > sourceTier(currentBest);
     }
 
-    /** Source tiebreak tier: Apple Music (any fetcher) > Spotify > LRCLIB > unknown. */
+    /** Source tiebreak tier: Apple Music (any fetcher) > Spotify > LRCLIB > QQ/NetEase > unknown. */
     static int sourceTier(LyricsDocument doc) {
         if (doc == null) return -1;
         String hay = (LyricsDocument.safe(doc.fetchSource) + " " + LyricsDocument.safe(doc.provider))
@@ -93,7 +103,8 @@ public final class LyricQualityRanker {
             return 2;
         }
         if (hay.contains("lrclib")) return 1;
-        return 0;
+        if (hay.contains("qq") || hay.contains("netease")) return 0;
+        return -1;
     }
 
     /** Sync-level rank: syllable (3) > word (2) > line (1) > static (0) > unknown (-1). */
@@ -124,6 +135,9 @@ public final class LyricQualityRanker {
 
     private static Source sourceOf(String fetchSource, String provider) {
         String source = LyricsDocument.safe(fetchSource).toLowerCase(java.util.Locale.US);
+        // Before the provider check below, which reads "musixmatch" as Spotify's own lyrics
+        // (Spotify licenses them from Musixmatch).
+        if (source.equals("musixmatch")) return Source.MUSIXMATCH;
         if (source.contains("lrclib")) return Source.LRCLIB;
         if (source.contains("spotify_native") || source.contains("native spotify")) return Source.NATIVE;
         if (source.contains("spicy") || source.contains("apple") || source.contains("lenerd")
@@ -136,6 +150,8 @@ public final class LyricQualityRanker {
         }
         if (providerLabel.contains("spicy") || providerLabel.contains("apple") || providerLabel.contains("lenerd")
                 || providerLabel.contains("amll")) return Source.SPICY;
+        if ("qq_music".equals(fetchSource) || "qq music".equals(provider.toLowerCase(java.util.Locale.US))) return Source.QQ_MUSIC;
+        if (source.contains("netease") || providerLabel.contains("netease")) return Source.NETEASE;
         return Source.UNKNOWN;
     }
 
@@ -151,6 +167,9 @@ public final class LyricQualityRanker {
         SPICY,
         NATIVE,
         LRCLIB,
+        QQ_MUSIC,
+        NETEASE,
+        MUSIXMATCH,
         UNKNOWN
     }
 

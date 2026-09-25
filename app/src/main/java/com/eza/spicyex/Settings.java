@@ -93,7 +93,7 @@ public final class Settings {
     /** Experimental strict source switch. "Spicy" is a retired legacy alias for Apple Music. */
     public static final Setting<String> LYRICS_SOURCE_OVERRIDE = enumSetting(
             "lyrics_source_override", LYRICS_SOURCES, "Lyrics source", "Auto",
-            "Auto", "Apple Music", "Spicy", "Spotify", "LRCLIB"
+            "Auto", "Apple Music", "Spicy", "Spotify", "LRCLIB", "NetEase", "QQ Music", "Musixmatch"
     );
 
     /** Optional desktop-captured Spotify token (legacy; the retired Spicy remote is no longer queried). */
@@ -109,6 +109,12 @@ public final class Settings {
     /** Bounded JSON map of spotify track URI to source id; auto is represented by omission. */
     public static final Setting<String> LYRICS_SOURCE_OVERRIDES = internalSetting(
             "lyrics_source_overrides", "Per-track lyric sources", "{}"
+    );
+
+    // Karaoke / off-vocal / instrumental versions have no lyrics of their own; with this on the
+    // text sources are searched for the original song instead (see KaraokeTitles).
+    public static final Setting<Boolean> KARAOKE_ORIGINAL_LYRICS = boolSetting(
+            "lyrics_karaoke_original_lyrics", LYRICS_SOURCES, "Show original lyrics for karaoke versions", false
     );
 
     // Stored values are the exact display labels; allocation is in CacheStoragePolicy.
@@ -261,6 +267,22 @@ public final class Settings {
             "lyrics_fullscreen_controls", TEXT, "Fullscreen controls", "Always on",
             "5 seconds", "10 seconds", "30 seconds", "Always on"
     );
+
+    // Where the active lyric line rests vertically in the viewport. Auto keeps the existing
+    // behavior (raised when the Apple-style line-slide animation is on and the screen is
+    // portrait, center otherwise); Top/Center/Bottom pin it explicitly regardless of that
+    // animation setting; Custom unlocks LYRICS_FOCUS_POSITION_CUSTOM_PERCENT (set by the layout
+    // editor's focus-point drag handle). See LyricsScrollController's anchor fractions.
+    public static final Setting<String> LYRICS_FOCUS_POSITION = enumSetting(
+            "lyrics_focus_position", INTERNAL, "Lyrics focus point", "Auto",
+            "Auto", "Top", "Center", "Bottom", "Custom"
+    );
+
+    // 0 = top edge, 100 = bottom edge, for LYRICS_FOCUS_POSITION == "Custom".
+    public static final IntegerSetting LYRICS_FOCUS_POSITION_CUSTOM_PERCENT = intSetting(
+            "lyrics_focus_position_custom_percent", INTERNAL, "Custom focus point",
+            50, 0, 100, 5
+    );
     // Position of the fullscreen track-info readout (artwork + title/artist). Off hides the
     // readout, its metadata, and its artwork gestures; back, config toggles, and the floating
     // cluster stay. New-feature rule: default Off for all installs, no migration.
@@ -349,6 +371,24 @@ public final class Settings {
     // carries no competing "Apple lift" value; the renderer reads this key under Apple Music.
     public static final Setting<Boolean> APPLE_LIFT = boolSetting(
             "lyric_apple_lift", APPLE, "Apple lift", true
+    );
+
+    // Apple-owned: a one-shot reveal for the first render of a freshly loaded document (opening
+    // the lyrics screen, or a track/source change) - rows rise up from below and fade in instead
+    // of appearing instantly. Distinct from LINE_SLIDE_ANIMATION, which is the per-scroll-step
+    // cascade; this plays once per document, not on every active-line change.
+    public static final Setting<Boolean> LOAD_LIFT_ANIMATION = boolSetting(
+            "lyric_load_lift_animation", APPLE, "Rise in on load", false
+    );
+
+    // Speed multiplier for row cascade and load-lift animations (100 = normal, 50 = half,
+    // 200 = double). Applies to all animation styles.
+    public static final IntegerSetting APPLE_CASCADE_SPEED = intSetting(
+            "apple_cascade_speed", APPLE, "Slide speed", 100, 50, 200, 5
+    );
+
+    public static final IntegerSetting APPLE_SPRING_STRENGTH = intSetting(
+            "apple_spring_strength", APPLE, "Spring strength", 100, 50, 200, 5
     );
 
     // One selector owns both the bounce gate and its scope.

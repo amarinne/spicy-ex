@@ -512,6 +512,7 @@ public final class LyricsRowViewFactory {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         rowLp.topMargin = dp(2);
         row.addView(romanWords, rowLp);
+        LyricsLineViewState.setTimedRomanRow(line, romanWords);
     }
 
     static String romanizedWordText(AppliedLine line, SyllableSegment seg, int wordIndex,
