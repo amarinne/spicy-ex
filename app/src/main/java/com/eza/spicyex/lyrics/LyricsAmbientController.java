@@ -5,6 +5,7 @@ import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
@@ -276,6 +277,17 @@ public final class LyricsAmbientController {
         currentTrackUri = track == null ? "" : safe(track.uri);
         desiredArtImageId = track == null ? "" : safe(track.imageId);
         updateAnimatedBackgroundArt(desiredArtImageId, runningState);
+    }
+
+    /** The lyrics background as a still image, or null when it is not the animated texture. */
+    public android.graphics.Bitmap snapshotBackground(int width, int height) {
+        if (!animatedBackgroundSupported()) return null;
+        return ((AmbientArtworkBackgroundView) animatedBackground).snapshot(width, height);
+    }
+
+    private boolean animatedBackgroundSupported() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && animatedBackground instanceof AmbientArtworkBackgroundView;
     }
 
     private void updateAnimatedBackgroundArt(String imageId, RunningState runningState) {

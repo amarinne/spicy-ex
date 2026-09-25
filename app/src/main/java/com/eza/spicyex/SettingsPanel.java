@@ -763,6 +763,16 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         rows.actionRow(content, Kind.BUG,
                 DiagnosticReportingDialog.reportProblemLabel(context, store),
                 v -> DiagnosticReportingDialog.show(context, store));
+        rows.actionRow(content, null,
+                uiStrings.get("settings_action_ad_music_test", "Play / stop ad replacement music"),
+                v -> {
+                    boolean playing = com.eza.spicyex.hooks.AdMusicPreview.toggle(
+                            store.get(Settings.AD_MUSIC_THEME));
+                    android.widget.Toast.makeText(context, uiStrings.get(playing
+                                    ? "settings_ad_music_test_playing" : "settings_ad_music_test_stopped",
+                            playing ? "Playing a new piece" : "Stopped"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
         clearAction(content, "settings_action_clear_translation_cache",
                 "Clear translation cache", CacheClearKind.TRANSLATION);
         clearAction(content, "settings_action_clear_reading_cache",

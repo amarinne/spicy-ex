@@ -245,13 +245,26 @@ public final class LyricsSyllableViewState {
     }
 
     public static void updateTextPivot(SyllableSegment segment, SyllableSegment focusSegment) {
+        updateTextPivot(segment, focusSegment, 0.5f);
+    }
+
+    /**
+     * Places the transform origin at the currently sung position inside the active word. This
+     * keeps Apple's lift anchored to the karaoke edge instead of scaling the whole word around
+     * its centre (which looks like a generic pop and makes the progress feel disconnected).
+     */
+    public static void updateTextPivot(SyllableSegment segment, SyllableSegment focusSegment,
+                                       float focusProgress) {
         View motion = motionView(segment);
         if (segment == null || !state(segment).motionOwner || motion == null
                 || motion.getHeight() <= 0) return;
         View focus = focusSegment == null ? null : state(focusSegment).view;
         float requestedPivot = motion.getWidth() / 2f;
         if (focus != null && focus != motion && focus.getWidth() > 0) {
-            requestedPivot = offsetWithin(focus, motion) + focus.getWidth() / 2f;
+            requestedPivot = offsetWithin(focus, motion)
+                    + focus.getWidth() * Math.max(0f, Math.min(1f, focusProgress));
+        } else if (focus == motion && motion.getWidth() > 0) {
+            requestedPivot = motion.getWidth() * Math.max(0f, Math.min(1f, focusProgress));
         }
         float pivotX = horizontalMotionPivot(motion.getLeft(), motion.getRight(),
                 motion.getWidth(), motion.getParent() instanceof View
@@ -329,6 +342,18 @@ public final class LyricsSyllableViewState {
         if (segment == null) return;
         applyTextGradient(state(segment).textView, gradient, glow, brightness);
         applyTextGradient(state(segment).romanizedTextView, gradient, glow, brightness);
+    }
+
+    /** Lights a whole word at once, for a line-synced row: fully sung gradient at the given
+     *  brightness on the word and on every letter. */
+    public static void applyLitFrame(SyllableSegment segment, float brightness) {
+        if (segment == null) return;
+        applyWordGradient(segment, LyricAnimations.GRADIENT_SUNG, 0f, brightness);
+        for (AnimatedLetterState letter : state(segment).letters) {
+            if (letter == null || letter.view == null) continue;
+            letter.view.setBrightnessMultiplier(brightness);
+            letter.view.setGradientPosition(LyricAnimations.GRADIENT_SUNG, 0f);
+        }
     }
 
     /** Reset every visual child of a word for an unsynced/static lyric row. */
@@ -461,6 +486,7 @@ public final class LyricsSyllableViewState {
             snapLetterSprings(letter, letterScale, 0f, 0f);
             sink.applyScale(letter.view, letterScale, letterScale);
             sink.applyTranslationY(letter.view, 0f);
+            if (letter.view.getTranslationX() != 0f) letter.view.setTranslationX(0f);
             sink.applyAlpha(letter.view, 1.0f);
             letter.view.setBrightnessMultiplier(1f);
             letter.view.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
