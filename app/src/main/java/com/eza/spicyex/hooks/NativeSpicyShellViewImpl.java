@@ -449,7 +449,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     /** Back closes the lyric share sheet first, like any other sheet over the lyrics. */
     private boolean consumeShareSheetBack() {
         if (shareCardController == null || !shareCardController.isShowing()) return false;
-        shareCardController.dismiss();
+        // The line picker first, then the sheet.
+        if (!shareCardController.closePickerIfOpen()) shareCardController.dismiss();
         return true;
     }
     private boolean isLandscape() {
@@ -528,8 +529,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
+    /** Lyrics frozen under the share sheet: no per-frame lyric work, so no row re-blurs. */
+    private boolean lyricsFrozen;
+    /** The share sheet hides everything: nothing but it is drawn, the background is paused. */
+    private boolean lyricsCovered;
+
     private final VsyncFrameScheduler frameScheduler = new VsyncFrameScheduler(deltaTimeSeconds -> {
         if (!running) return;
+        // The share sheet is up: the lyrics hold still under it (see onShareSheet).
+        if (lyricsFrozen) return;
         float dt = deltaTimeSeconds <= 0d ? (1f / 60f) : (float) Math.max(0.001d, Math.min(0.08d, deltaTimeSeconds));
         // Order matters: the reveal publishes this frame's alpha factor, then updateState() runs
         // the renderer, which reads it. Stepping it after would show every row one frame stale.
@@ -936,6 +944,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 // the user's own motion is never mistaken for the shell's.
                 programmaticScrollUntilMs = 0;
                 revealChrome();
+            }
+            trackPressedLyric(event);
+            int action = event.getActionMasked();
+            if (action != android.view.MotionEvent.ACTION_DOWN && tapSeekHandler.longPressFired()
+                    && shareCardController != null && shareCardController.isShowing()) {
+                // The finger that opened the share sheet is still down: its moves pull the card a
+                // little (the sheet's rubber band) instead of scrolling the lyrics underneath.
+                shareCardController.heldDrag(event);
+                tapSeekHandler.onTouch(view, event);
+                return true;
             }
             return tapSeekHandler.onTouch(view, event);
         });
@@ -2805,7 +2823,91 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return -1;
     }
 
+    /** The lyric row under a finger that may be about to long-press it (share), and where. */
+    private View pressedLyricRow;
+    private float pressedLyricDownY;
+    private final Runnable shrinkPressedLyric = () -> {
+        View row = pressedLyricRow;
+        if (row == null || !row.isAttachedToWindow()) return;
+        // Held down, the line sinks a little, as in Apple Music, until the sheet opens. (No
+        // cancel(): a new scale animation replaces only the scale, not the row's other motion.)
+        row.animate().scaleX(0.94f).scaleY(0.94f)
+                .setDuration(Math.max(160, android.view.ViewConfiguration.getLongPressTimeout() - 60))
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
+    };
+
+    /**
+     * Apple-Music-style press feedback for long-press-to-share: a line held (not scrolled) shrinks
+     * slightly, and springs back when released, scrolled, or when the share sheet opens.
+     */
+    private void trackPressedLyric(android.view.MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case android.view.MotionEvent.ACTION_DOWN: {
+                releasePressedLyric();
+                if (config == null || !Boolean.TRUE.equals(config.get(Settings.LONG_PRESS_SHARE))) return;
+                int index = appliedLineIndexUnder(event.getY());
+                if (index < 0 || document == null) return;
+                AppliedLine line = document.appliedLines.get(index);
+                if (line == null || line.dotLine || line.text == null || line.text.trim().isEmpty()) return;
+                View row = rowMountController.attachedRowView(line);
+                if (row == null || row.getWidth() <= 0) return;
+                row.setPivotX(row.getWidth() / 2f);
+                row.setPivotY(row.getHeight() / 2f);
+                pressedLyricRow = row;
+                pressedLyricDownY = event.getY();
+                // A beat later, so a flick that starts on a line does not pulse it.
+                row.postDelayed(shrinkPressedLyric, 90);
+                break;
+            }
+            case android.view.MotionEvent.ACTION_MOVE:
+                if (pressedLyricRow != null && Math.abs(event.getY() - pressedLyricDownY) >= dp(10)) {
+                    releasePressedLyric();
+                }
+                break;
+            case android.view.MotionEvent.ACTION_UP:
+            case android.view.MotionEvent.ACTION_CANCEL:
+                releasePressedLyric();
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void releasePressedLyric() {
+        View row = pressedLyricRow;
+        pressedLyricRow = null;
+        if (row == null) return;
+        row.removeCallbacks(shrinkPressedLyric);
+        row.animate().scaleX(1f).scaleY(1f).setDuration(460)
+                .setInterpolator(new android.view.animation.OvershootInterpolator(2.2f)).start();
+    }
+
+    /**
+     * The share sheet over the lyrics. Long-pressing while the lyrics were blurred and moving was
+     * heavy: every blurred row kept re-rendering its blur under the sheet as it opened. The
+     * lyrics now hold still from the press until the sheet closes, and once the sheet's backdrop
+     * is opaque neither they nor the animated background are drawn at all.
+     */
+    private void onShareSheet(boolean showing, boolean covering) {
+        lyricsFrozen = showing;
+        if (covering != lyricsCovered) {
+            lyricsCovered = covering;
+            if (covering) ambientController.pauseAnimation();
+            else ambientController.resumeAnimation();
+            invalidate();
+        }
+    }
+
+    @Override
+    protected boolean drawChild(android.graphics.Canvas canvas, View child, long drawingTime) {
+        if (lyricsCovered && shareCardController != null && child != shareCardController.overlayView()) {
+            return false;
+        }
+        return super.drawChild(canvas, child, drawingTime);
+    }
+
     private void shareLyricLineAt(float yInScroll) {
+        releasePressedLyric();
         if (config == null || !Boolean.TRUE.equals(config.get(Settings.LONG_PRESS_SHARE))) return;
         SpotifyTrack track = currentTrackThrottled();
         if (track == null) return;
@@ -2822,6 +2924,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             shareCardController = new LyricsShareCardController(activity);
             shareCardController.setBackgroundSnapshot(
                     (w, h) -> ambientController.snapshotBackground(w, h));
+            shareCardController.setSheetListener(this::onShareSheet);
         }
         Bitmap art = SpotifyArtworkCache.snapshotLarge(track.imageId, track.uri, dp(420));
         int index = appliedLineIndexUnder(yInScroll);

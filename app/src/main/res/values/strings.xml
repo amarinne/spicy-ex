@@ -446,5 +446,27 @@
     <string name="share_saved">Saved to Pictures/SpicyEx</string>
     <string name="share_save_failed">Could not save the card</string>
     <string name="share_chooser">Share lyric</string>
+    <string name="share_design_poster">Poster</string>
+    <string name="share_design_vinyl">Vinyl</string>
+    <string name="share_design_ticket">Ticket</string>
+    <string name="share_design_spotlight">Spotlight</string>
+    <string name="share_translation">Translation</string>
+    <string name="share_close">Close</string>
+    <string name="share_design_label">Design</string>
+    <string name="share_backdrop_label">Background</string>
+    <string name="share_text_label">Text</string>
+    <string name="share_text_align">Align</string>
+    <string name="share_text_position">Position</string>
+    <string name="share_text_auto">Design default</string>
+    <string name="share_instagram_story">Instagram Stories</string>
+    <string name="share_facebook_story">Facebook Stories</string>
+    <string name="share_copy_link">Copy link</string>
+    <string name="share_more">More</string>
+    <string name="share_story_failed">Could not open the app</string>
+    <string name="share_link_copied">Link copied</string>
+    <string name="share_pick_lines">Lyrics</string>
+    <string name="share_pick_title">Choose lyrics</string>
+    <string name="share_pick_count" formatted="false">%1$d selected</string>
+    <string name="share_done">Done</string>
     <string name="settings_label_lyrics_long_press_share">Long-press a line to share</string>
 </resources>

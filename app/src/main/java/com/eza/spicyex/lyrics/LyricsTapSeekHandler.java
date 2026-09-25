@@ -95,6 +95,11 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
         return false;
     }
 
+    /** The current gesture already fired its long press (it is still held, or just lifted). */
+    public boolean longPressFired() {
+        return longPressFired;
+    }
+
     private void armLongPress() {
         if (longPressCallback == null) return;
         longPressHandler.removeCallbacks(longPressRunnable);
