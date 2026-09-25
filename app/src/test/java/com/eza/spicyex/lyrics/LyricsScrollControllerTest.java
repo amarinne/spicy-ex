@@ -19,7 +19,16 @@ public class LyricsScrollControllerTest {
 
     @Test
     public void firstActiveRowUsesInstantPlacementAfterDocumentReset() {
-        assertTrue(LyricsScrollController.shouldScrollInstantly(false, -1));
+        // -2 is LyricsFollowState's "no line has ever been active" sentinel (resetActive()); -1
+        // is the distinct "ordinary in-song gap" sentinel, which should animate through like any
+        // other line change rather than snap - see shouldScrollInstantly's own javadoc.
+        assertTrue(LyricsScrollController.shouldScrollInstantly(false, -2));
+    }
+
+    @Test
+    public void ordinaryGapKeepsRequestedScrollMode() {
+        assertFalse(LyricsScrollController.shouldScrollInstantly(false, -1));
+        assertTrue(LyricsScrollController.shouldScrollInstantly(true, -1));
     }
 
     @Test

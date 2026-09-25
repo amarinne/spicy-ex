@@ -22,9 +22,37 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  */
 public final class FuriganaText {
     static final float RUBY_SIZE_RATIO = 0.46f;
-    static final float RUBY_GAP_RATIO = 0.12f;
+    // Vertical gap between the ruby reading and the kanji it annotates, as a fraction of the base
+    // text size. Was 0.12 - the reading sat noticeably high above the kanji; halved to bring it
+    // down closer while still clearing the base glyphs' ascent. User-scaled by gapRatioScale
+    // (Settings#FURIGANA_POSITION_PERCENT) below.
+    static final float RUBY_GAP_RATIO = 0.06f;
+
+    /** Design knobs, pushed once per settings change from applySettings() rather than threaded
+     *  through every build()/buildWord() call site - see NativeSpicyShellViewImpl#
+     *  applyRenderConfigChanges(). Function (which reading mode is even active) stays a plain
+     *  Settings read elsewhere (JAPANESE_READING_MODE); these two are purely how it looks. */
+    // 0xFF969696 == Color.rgb(150, 150, 150) - written as a literal rather than a Color.rgb() call
+    // because this is a static field initializer: Color.rgb() throws under plain JVM unit tests
+    // (no real Android runtime to back it), and that would fail class-loading for every test that
+    // touches this class at all, not just ones that reach draw().
+    private static volatile int rubyColor = 0xFF969696;
+    private static volatile float gapRatioScale = 1f;
 
     private FuriganaText() {
+    }
+
+    /** @param brightnessPercent 0-100, mapped to a gray level (matches the legacy fixed
+     *  150,150,150 at ~59%). @param positionPercent scales {@link #RUBY_GAP_RATIO} - 100 keeps the
+     *  original fixed spacing, lower pulls the reading closer to the kanji, higher pushes it up. */
+    public static void applySettings(int brightnessPercent, int positionPercent) {
+        int gray = Math.round(255 * Math.max(0, Math.min(100, brightnessPercent)) / 100f);
+        rubyColor = Color.rgb(gray, gray, gray);
+        gapRatioScale = Math.max(0.4f, Math.min(2f, positionPercent / 100f));
+    }
+
+    private static float gapRatio() {
+        return RUBY_GAP_RATIO * gapRatioScale;
     }
 
     static float rubyTextSize(float baseTextSize) {
@@ -32,11 +60,11 @@ public final class FuriganaText {
     }
 
     static int rubyAscentReservationPx(float baseTextSize) {
-        return (int) Math.ceil(rubyTextSize(baseTextSize) + baseTextSize * RUBY_GAP_RATIO);
+        return (int) Math.ceil(rubyTextSize(baseTextSize) + baseTextSize * gapRatio());
     }
 
     static int rubyGapReservationPx(float baseTextSize) {
-        return (int) Math.ceil(baseTextSize * RUBY_GAP_RATIO);
+        return (int) Math.ceil(baseTextSize * gapRatio());
     }
 
     /** Whole-line ruby: spans the line's furigana runs over {@code line.text}. */
@@ -217,7 +245,7 @@ public final class FuriganaText {
         public int getSize(Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
             float baseSize = paint.getTextSize();
             float readingSize = rubyTextSize(baseSize);
-            float gap = baseSize * RUBY_GAP_RATIO;
+            float gap = baseSize * gapRatio();
             float baseWidth = paint.measureText(text, start, end);
             float oldSize = paint.getTextSize();
             paint.setTextSize(readingSize);
@@ -240,7 +268,7 @@ public final class FuriganaText {
             boolean drawReading = consumeToDraw();
             float baseSize = paint.getTextSize();
             float readingSize = rubyTextSize(baseSize);
-            float gap = baseSize * RUBY_GAP_RATIO;
+            float gap = baseSize * gapRatio();
             float baseWidth = paint.measureText(text, start, end);
             int width = spanWidth > 0 ? spanWidth : (int) Math.ceil(baseWidth);
             float baseX = x + (width - baseWidth) / 2f;
@@ -253,7 +281,7 @@ public final class FuriganaText {
             if (drawReading) {
                 paint.setTextSize(readingSize);
                 paint.setTypeface(oldTypeface);
-                paint.setColor(Color.rgb(150, 150, 150));
+                paint.setColor(rubyColor);
                 paint.getFontMetricsInt(readingFm);
             }
             paint.setTextSize(oldSize);
@@ -264,7 +292,7 @@ public final class FuriganaText {
             if (drawReading) {
                 paint.setTextSize(readingSize);
                 paint.setTypeface(oldTypeface);
-                paint.setColor(Color.rgb(150, 150, 150));
+                paint.setColor(rubyColor);
                 float readingWidth = paint.measureText(reading);
                 float readingX = x + (width - readingWidth) / 2f;
                 float readingBaseline = y + baseFm.ascent - gap - readingFm.descent;

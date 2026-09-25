@@ -8,11 +8,18 @@ import org.junit.Test;
 public class LandscapeLayoutRulesTest {
     @Test
     public void twoColumnNeedsAdaptiveWideLandscape() {
-        assertTrue(NativeSpicyShellViewImpl.twoColumnEngaged(true, 2.0f, true));
-        assertTrue(NativeSpicyShellViewImpl.twoColumnEngaged(true, 1.2f, true));
-        assertFalse(NativeSpicyShellViewImpl.twoColumnEngaged(true, 1.19f, true));
-        assertFalse(NativeSpicyShellViewImpl.twoColumnEngaged(false, 2.0f, true));
-        assertFalse(NativeSpicyShellViewImpl.twoColumnEngaged(true, 2.0f, false));
-        assertFalse(NativeSpicyShellViewImpl.twoColumnEngaged(false, 1.0f, false));
+        // Landscape phones.
+        assertTrue(NativeSpicyShellViewImpl.twoColumnEngaged(800f, 400f, true));
+        assertTrue(NativeSpicyShellViewImpl.twoColumnEngaged(480f, 400f, true));
+        assertFalse(NativeSpicyShellViewImpl.twoColumnEngaged(476f, 400f, true));
+        // Portrait phones stay stacked.
+        assertFalse(NativeSpicyShellViewImpl.twoColumnEngaged(400f, 860f, true));
+        // Unfolded foldables are near-square and large: two columns either way round.
+        assertTrue(NativeSpicyShellViewImpl.twoColumnEngaged(840f, 900f, true));
+        assertTrue(NativeSpicyShellViewImpl.twoColumnEngaged(900f, 840f, true));
+        // Tall tablets in portrait stay stacked.
+        assertFalse(NativeSpicyShellViewImpl.twoColumnEngaged(800f, 1280f, true));
+        // The setting still turns it off.
+        assertFalse(NativeSpicyShellViewImpl.twoColumnEngaged(800f, 400f, false));
     }
 }

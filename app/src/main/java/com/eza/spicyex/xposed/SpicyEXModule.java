@@ -105,7 +105,9 @@ public final class SpicyEXModule extends XposedModule {
                     LyricsMemoryPressure.install(context);
                     com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.attachContext(context);
                     Diagnostics.event("bootstrap", "application_attach",
-                            Diagnostics.context("process", Application.getProcessName()));
+                            Diagnostics.context("process",
+                                    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P
+                                            ? Application.getProcessName() : "unknown"));
                     cleanUpCache(context);
                     initSpotifyHook(xpPackage, context);
                 }, Context.class);

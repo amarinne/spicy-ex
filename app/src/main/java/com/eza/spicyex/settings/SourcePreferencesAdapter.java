@@ -33,11 +33,17 @@ public final class SourcePreferencesAdapter {
     /** One merged source Save: ranking label plus working order plus per-source toggles. */
     public static final class Commit {
         public final String rankingLabel;
+        public final String override;
         public final List<Source> order;
         public final Map<Source, Boolean> enabled;
 
         public Commit(String rankingLabel, List<Source> order, Map<Source, Boolean> enabled) {
+            this(rankingLabel, "Auto", order, enabled);
+        }
+
+        public Commit(String rankingLabel, String override, List<Source> order, Map<Source, Boolean> enabled) {
             this.rankingLabel = rankingLabel;
+            this.override = override == null ? "Auto" : override;
             this.order = order == null
                     ? new ArrayList<Source>()
                     : new ArrayList<Source>(order);
@@ -55,10 +61,11 @@ public final class SourcePreferencesAdapter {
     }
 
     public void commit(SettingsWriter writer, Commit commit) {
-        writer.put(Settings.LYRICS_SOURCE_OVERRIDE, "Auto");
+        writer.put(Settings.LYRICS_SOURCE_OVERRIDE, commit.override);
         writer.put(Settings.LYRICS_SOURCE_MODE, commit.rankingLabel);
         sink.setRankingMode(RankingMode.parse(commit.rankingLabel));
         sink.setSourceOrder(commit.order);
+        // Every source: a hand-kept list here silently dropped QQ Music's toggle on save.
         for (Source source : Source.values()) {
             Boolean on = commit.enabled.get(source);
             sink.setSourceEnabled(source, on != null && on);

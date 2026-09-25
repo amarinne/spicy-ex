@@ -78,7 +78,12 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     private final java.util.function.BooleanSupplier isHalfSize;
     private final Runnable onToggleSize;
     private final Runnable onClose;
+    /** Opens the layout editor: {@link #EDITOR_LYRICS} or {@link #EDITOR_CARD}. */
+    private final java.util.function.IntConsumer onOpenLayoutEditor;
+    public static final int EDITOR_LYRICS = 1;
+    public static final int EDITOR_CARD = 2;
     private final java.util.function.Consumer<CacheClearKind> onClearCache;
+    private final Runnable onResyncTiming;
 
     private LinearLayout sectionsContainer;
     private TextView panelTitle;
@@ -114,7 +119,9 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     public SettingsPanel(Context context, SettingsStore store,
                          java.util.function.BooleanSupplier isHalfSize,
                          Runnable onToggleSize, Runnable onClose,
-                         java.util.function.Consumer<CacheClearKind> onClearCache) {
+                         java.util.function.IntConsumer onOpenLayoutEditor,
+                         java.util.function.Consumer<CacheClearKind> onClearCache,
+                         Runnable onResyncTiming) {
         this.context = context;
         this.style = new PanelStyle(context);
         this.store = store;
@@ -125,7 +132,9 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         this.isHalfSize = isHalfSize;
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
+        this.onOpenLayoutEditor = onOpenLayoutEditor;
         this.onClearCache = onClearCache;
+        this.onResyncTiming = onResyncTiming;
         writer.ensureBackgroundStyleMigrated(store.get(Settings.ENABLE_BACKGROUND));
         this.uiStrings = UiLanguage.strings(context, store.get(Settings.UI_LANGUAGE));
     }
@@ -221,6 +230,13 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         if (expandedSections.contains(Settings.DEBUG.id)) appendDebugCard(content, -1);
     }
 
+    /** Closes this dialog (its usual animated exit), then hands off to the shell: the layout
+     *  editor is an overlay on the real lyrics screen, not a separate window. */
+    private void openEditor(int mode) {
+        if (onClose != null) onClose.run();
+        if (onOpenLayoutEditor != null) onOpenLayoutEditor.accept(mode);
+    }
+
     private LinkedHashMap<Settings.Section, List<Settings.Setting<?>>> groupVisibleSettings() {
         PanelSnapshot snapshot = captureSnapshot();
         LinkedHashMap<Settings.Section, List<Settings.Setting<?>>> grouped = new LinkedHashMap<>();
@@ -235,6 +251,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                     grouped.put(section, items);
                 }
                 items.add(setting);
+            }
+            // The lyrics screen section has no rows of its own any more, only the editor entry.
+            if (section == Settings.LYRICS_SCREEN && !grouped.containsKey(section)) {
+                grouped.put(section, new ArrayList<>());
             }
         }
         return grouped;
@@ -263,6 +283,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         snapshot.put(Settings.LINE_SPACING, store.get(Settings.LINE_SPACING));
         snapshot.put(Settings.LIVE_CARD_TEXT_SIZE, store.get(Settings.LIVE_CARD_TEXT_SIZE));
         snapshot.put(Settings.TRACK_INFO_TEXT_SIZE, store.get(Settings.TRACK_INFO_TEXT_SIZE));
+        snapshot.put(Settings.DOUBLE_TAP_LIKE, store.get(Settings.DOUBLE_TAP_LIKE));
+        snapshot.put(Settings.TAP_SEEK_MODE, store.get(Settings.TAP_SEEK_MODE));
         return snapshot.build();
     }
 
@@ -282,6 +304,17 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         LinearLayout card = style.newCard();
         card.setTag(PanelTags.card(section));
         for (Settings.Setting<?> setting : items) renderSetting(card, setting);
+        if (section == Settings.LYRICS_SCREEN) {
+            // Everything about how the lyrics screen looks is edited on the screen itself.
+            rows.actionRow(card, Kind.ALIGN_VERTICAL_DISTRIBUTE_CENTER,
+                    uiStrings.get("settings_layout_editor", "Layout editor…"),
+                    v -> openEditor(EDITOR_LYRICS));
+        }
+        if (section == Settings.NOW_PLAYING) {
+            rows.actionRow(card, Kind.ALIGN_VERTICAL_DISTRIBUTE_CENTER,
+                    uiStrings.get("settings_card_editor", "Now playing card editor…"),
+                    v -> openEditor(EDITOR_CARD));
+        }
         if (section == Settings.AI && aiAvailable()) {
             // Dynamic AI rows churn with setup state; they live in their own tagged block so
             // keyed rebinding refreshes them as a unit without touching ordinary rows.
@@ -374,6 +407,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         }
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             spicyTokenRow(content);
+            return;
+        }
+        if (setting == Settings.LYRICS_FONT_CUSTOM_PATH) {
+            lyricsFontPathRow(content);
             return;
         }
         if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) {
@@ -555,6 +592,11 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     @Override public void onSettingChanged(Settings.Setting<?> setting) {
+        // Double tap is one gesture: turning either use on turns the other off.
+        if (setting == Settings.DOUBLE_TAP_LIKE && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))
+                && "Double tap".equals(store.get(Settings.TAP_SEEK_MODE))) {
+            writer.put(Settings.TAP_SEEK_MODE, "Off");
+        }
         if (setting == Settings.LYRICS_SOURCE_MODE) {
             com.eza.spicyex.lyrics.session.LyricsSourcePreferences.setRankingMode(context,
                     com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode.parse(
@@ -757,12 +799,70 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                 new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
     }
 
+    private void lyricsFontPathRow(LinearLayout content) {
+        String path = store.get(Settings.LYRICS_FONT_CUSTOM_PATH);
+        String display = path == null || path.isEmpty()
+                ? uiStrings.get("settings_lyrics_font_path_absent", "Not set") : path;
+        List<AiSettingsRows.IconAction> actions = new ArrayList<>();
+        actions.add(new AiSettingsRows.IconAction(Kind.EDIT,
+                uiStrings.get("settings_lyrics_font_path_edit", "Edit font path"),
+                v -> dialogs.promptLyricsFontPath()));
+        rows.aiFieldRow(content, uiStrings.setting(Settings.LYRICS_FONT_CUSTOM_PATH),
+                display, false, Settings.LYRICS_FONT_CUSTOM_PATH.key,
+                v -> dialogs.promptLyricsFontPath(),
+                actions.toArray(new AiSettingsRows.IconAction[0]));
+        String coverage = fontCoverageSummaryForPanel(path);
+        if (!coverage.isEmpty()) {
+            TextView cov = style.text(coverage, 12, PanelStyle.COL_SUMMARY, false);
+            cov.setPadding(style.dp(52), 0, style.dp(16), style.dp(12));
+            content.addView(cov, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        }
+    }
+
+    private String fontCoverageSummaryForPanel(String path) {
+        if (path == null || path.isEmpty()) return "";
+        android.graphics.Typeface typeface = null;
+        java.io.File file = new java.io.File(path);
+        if (file.isFile()) {
+            try {
+                typeface = android.graphics.Typeface.createFromFile(file);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (typeface == null) typeface = android.graphics.Typeface.create(path, android.graphics.Typeface.NORMAL);
+        java.util.List<String> missing = com.eza.spicyex.lyrics.LyricsFontValidator.missingScripts(typeface);
+        return missing.isEmpty()
+                ? uiStrings.get("settings_lyrics_font_check_all_covered", "Covers every supported language")
+                : uiStrings.get("settings_lyrics_font_check_missing", "Falls back for") + ": "
+                        + String.join(", ", missing);
+    }
+
     // --- Diagnostics card ---
 
     private void renderActions(LinearLayout content) {
         rows.actionRow(content, Kind.BUG,
                 DiagnosticReportingDialog.reportProblemLabel(context, store),
                 v -> DiagnosticReportingDialog.show(context, store));
+        rows.actionRow(content, null,
+                uiStrings.get("settings_action_resync_timing", "Reset lyrics sync"),
+                v -> {
+                    writer.put(Settings.SYNC_OFFSET_MS, 0);
+                    if (onResyncTiming != null) onResyncTiming.run();
+                    android.widget.Toast.makeText(context,
+                            uiStrings.get("settings_resync_timing_done", "Lyrics sync reset"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
+        rows.actionRow(content, null,
+                uiStrings.get("settings_action_ad_music_test", "Play / stop ad replacement music"),
+                v -> {
+                    boolean playing = com.eza.spicyex.hooks.AdMusicPreview.toggle(
+                            store.get(Settings.AD_MUSIC_THEME));
+                    android.widget.Toast.makeText(context, uiStrings.get(playing
+                                    ? "settings_ad_music_test_playing" : "settings_ad_music_test_stopped",
+                            playing ? "Playing a new piece" : "Stopped"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
         clearAction(content, "settings_action_clear_translation_cache",
                 "Clear translation cache", CacheClearKind.TRANSLATION);
         clearAction(content, "settings_action_clear_reading_cache",
@@ -942,6 +1042,11 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     /** Writes the value and applies immediate side effects (the UI-language swap). */
     @Override public void onOptionChosen(Settings.StringSetting setting, String value) {
         writer.put(setting, value);
+        // Seeking on double tap takes the gesture back from double-tap to like.
+        if (setting == Settings.TAP_SEEK_MODE && "Double tap".equals(value)
+                && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            writer.put(Settings.DOUBLE_TAP_LIKE, false);
+        }
         if (setting == Settings.UI_LANGUAGE) {
             uiStrings = UiLanguage.strings(context, value);
             if (panelTitle != null) panelTitle.setText(uiStrings.appName());
@@ -953,7 +1058,26 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     }
 
     @Override public String rowSummaryFor(Settings.StringSetting setting, String value) {
-        return setting == Settings.CACHE_SIZE ? cacheSizeSummary() : labelFor(setting, value);
+        return setting == Settings.CACHE_SIZE ? cacheSizeSummary() : selectorSummary(setting, value);
+    }
+
+    /** The shared double tap: warns on the like switch what turning it on turns off. */
+    @Override public String switchNote(Settings.BooleanSetting setting) {
+        if (setting == Settings.DOUBLE_TAP_LIKE && "Double tap".equals(store.get(Settings.TAP_SEEK_MODE))
+                && !Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            return uiStrings.get("settings_double_tap_like_note",
+                    "Double tap already seeks to a line. Turning this on turns that off.");
+        }
+        return null;
+    }
+
+    /** Tap-to-seek on double tap does nothing while double tap likes; the row says so. */
+    @Override public String selectorSummary(Settings.StringSetting setting, String value) {
+        if (setting == Settings.TAP_SEEK_MODE && "Double tap".equals(value)
+                && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            return uiStrings.get("settings_tap_seek_taken_by_like", "Off \u00b7 double tap likes");
+        }
+        return labelFor(setting, value);
     }
 
     @Override public PanelStrings panelStrings() {

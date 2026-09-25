@@ -5,6 +5,7 @@ import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
@@ -45,7 +46,7 @@ public final class LyricsAmbientController {
     private final SpotifyPlusConfig config;
     private static final long PAGE_BACKGROUND_TRANSITION_MS = 500L;
 
-    private final android.graphics.drawable.GradientDrawable pageBackground;
+    private final MeshGradientDrawable pageBackground;
     private final ArgbEvaluator argbEvaluator = new ArgbEvaluator();
     private AmbientBackgroundLayer animatedBackground;
     private FrameLayout animatedParent;
@@ -74,12 +75,11 @@ public final class LyricsAmbientController {
         this.http = http;
         this.config = config;
         int[] seed = {Color.rgb(30, 21, 18), Color.rgb(62, 19, 28), Color.rgb(16, 15, 16)};
-        this.pageBackground = new android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TL_BR, seed);
+        this.pageBackground = new MeshGradientDrawable(seed);
         this.currentPageColors = seed.clone();
     }
 
-    public android.graphics.drawable.GradientDrawable pageBackground() {
+    public MeshGradientDrawable pageBackground() {
         return pageBackground;
     }
 
@@ -102,7 +102,7 @@ public final class LyricsAmbientController {
 
     public void setPlaying(boolean playing) {
         this.playing = playing;
-        if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+        if (animatedBackgroundSupported()) {
             ((AmbientArtworkBackgroundView) animatedBackground).setPlaying(playing);
         }
     }
@@ -153,12 +153,12 @@ public final class LyricsAmbientController {
             }
             animatedForceDark = forceDark;
         }
-        if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+        if (animatedBackgroundSupported()) {
             ((AmbientArtworkBackgroundView) animatedBackground).setDarkening(backgroundBrightness, extraDarkFilter);
             ((AmbientArtworkBackgroundView) animatedBackground).setRenderScale(readRenderScale());
         }
         if (animatedBackground == null) return; // not attached this session — applies on next open
-        if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+        if (animatedBackgroundSupported()) {
             ((AmbientArtworkBackgroundView) animatedBackground).setMotionEnabled(animated);
         }
         if (enabled && active) {
@@ -193,7 +193,6 @@ public final class LyricsAmbientController {
 
     /** Scale only the completed background, including the artwork-loading fallback. */
     private void applyExtraDark(boolean enabled, int level) {
-        enabled &= FeatureAvailability.animatedBackgroundAvailable();
         float factor = enabled ? Math.max(0f, Math.min(1f, 1f - level / 100f)) : 1f;
         if (factor == backgroundBrightness) return;
         backgroundBrightness = factor;
@@ -211,6 +210,7 @@ public final class LyricsAmbientController {
         // Guarded here as well as at the call sites: a pref persisted on a newer device (backup
         // restore, shared prefs copy) must not resurrect the layer on hardware that cannot run it.
         if (parent == null || !FeatureAvailability.animatedBackgroundAvailable()) return;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
         try {
             AmbientArtworkBackgroundView background = new AmbientArtworkBackgroundView(activity, forceDark);
             background.setDarkening(backgroundBrightness, extraDarkFilter);
@@ -235,47 +235,62 @@ public final class LyricsAmbientController {
         int seed = LyricVisuals.parseSpotifyExtractedColor(track == null ? "" : track.color);
         boolean forceDark = config == null || config.get(Settings.FORCE_DARK_BACKGROUND);
         int[] colors = LyricVisuals.spicyColorBackgroundColors(seed, forceDark);
-        pageBackground.setOrientation(android.graphics.drawable.GradientDrawable.Orientation.TL_BR);
         animatePageBackgroundColors(colors);
         applyAnimatedPalette(colors);
         updateAnimatedBackgroundArt(track, runningState);
+        if (!textureEnabled && track != null) loadMeshArtworkColors(safe(track.imageId), safe(track.uri), 0);
     }
 
-    // Smoothly cross-fade the page gradient to the new track's colors (ported from codex branch)
-    // instead of snapping, so track changes ease the ambient backdrop.
-    private void animatePageBackgroundColors(int[] targetColors) {
-        if (targetColors == null || targetColors.length == 0) return;
-        if (currentPageColors == null || currentPageColors.length != targetColors.length) {
-            currentPageColors = targetColors.clone();
-            pageBackground.setColors(currentPageColors);
+    /**
+     * The colours background takes its fields from the cover itself once Spotify has it decoded
+     * (retrying briefly, since the cover usually arrives a moment after the track change).
+     */
+    private void loadMeshArtworkColors(String imageId, String trackUri, int attempt) {
+        if (imageId.isEmpty() || !trackUri.equals(currentTrackUri)) return;
+        Bitmap art = SpotifyArtworkCache.snapshot(imageId, trackUri);
+        if (art == null) {
+            if (attempt < 8) main.postDelayed(() -> loadMeshArtworkColors(imageId, trackUri, attempt + 1), 400L);
             return;
         }
-        boolean unchanged = true;
-        for (int i = 0; i < targetColors.length; i++) {
-            if (currentPageColors[i] != targetColors[i]) { unchanged = false; break; }
-        }
-        if (unchanged) return;
-        if (pageColorAnimator != null) pageColorAnimator.cancel();
-        final int[] from = currentPageColors.clone();
-        final int[] to = targetColors.clone();
-        pageColorAnimator = ValueAnimator.ofFloat(0f, 1f);
-        pageColorAnimator.setDuration(PAGE_BACKGROUND_TRANSITION_MS);
-        pageColorAnimator.addUpdateListener(animation -> {
-            float p = (Float) animation.getAnimatedValue();
-            int[] frame = new int[to.length];
-            for (int i = 0; i < to.length; i++) {
-                frame[i] = (Integer) argbEvaluator.evaluate(p, from[i], to[i]);
-            }
-            pageBackground.setColors(frame);
-            currentPageColors = frame;
+        ART_WORKER.execute(() -> {
+            int[] fields = MeshGradientDrawable.extractPalette(art, 4);
+            art.recycle();
+            if (fields == null) return;
+            // A deep shade of the lead colour, not near-black: the fields blend into it.
+            float[] hsv = new float[3];
+            android.graphics.Color.colorToHSV(fields[0], hsv);
+            hsv[1] = Math.min(0.85f, hsv[1] * 0.9f);
+            hsv[2] = 0.24f;
+            int base = android.graphics.Color.HSVToColor(hsv);
+            main.post(() -> {
+                if (!trackUri.equals(currentTrackUri) || textureEnabled) return;
+                pageBackground.setArtworkColors(fields, base);
+            });
         });
-        pageColorAnimator.start();
+    }
+
+    // The mesh crossfades from the previous track's colours by itself.
+    private void animatePageBackgroundColors(int[] targetColors) {
+        if (targetColors == null || targetColors.length == 0) return;
+        currentPageColors = targetColors.clone();
+        pageBackground.setColors(currentPageColors);
     }
 
     private void updateAnimatedBackgroundArt(SpotifyTrack track, RunningState runningState) {
         currentTrackUri = track == null ? "" : safe(track.uri);
         desiredArtImageId = track == null ? "" : safe(track.imageId);
         updateAnimatedBackgroundArt(desiredArtImageId, runningState);
+    }
+
+    /** The lyrics background as a still image, or null when it is not the animated texture. */
+    public android.graphics.Bitmap snapshotBackground(int width, int height) {
+        if (!animatedBackgroundSupported()) return null;
+        return ((AmbientArtworkBackgroundView) animatedBackground).snapshot(width, height);
+    }
+
+    private boolean animatedBackgroundSupported() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && animatedBackground instanceof AmbientArtworkBackgroundView;
     }
 
     private void updateAnimatedBackgroundArt(String imageId, RunningState runningState) {
@@ -390,7 +405,7 @@ public final class LyricsAmbientController {
     }
 
     private void applyAnimatedPalette(int[] colors) {
-        if (animatedBackground instanceof AmbientArtworkBackgroundView) {
+        if (animatedBackgroundSupported()) {
             ((AmbientArtworkBackgroundView) animatedBackground).setPaletteColors(colors);
         }
     }

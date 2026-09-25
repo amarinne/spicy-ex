@@ -21,8 +21,12 @@ public class SpotifyTrack {
         this.color = color;
         this.lastUpdated = lastUpdated;
         if (imageId != null) {
-            String[] parts = imageId.split(":");
-            this.imageId = parts.length > 2 ? parts[2] : imageId;
+            if (imageId.startsWith("http")) {
+                this.imageId = imageId;
+            } else {
+                String[] parts = imageId.split(":");
+                this.imageId = parts.length > 2 ? parts[2] : imageId;
+            }
         } else {
             this.imageId = null;
         }

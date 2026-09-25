@@ -31,6 +31,7 @@ public final class SettingsStore implements TypedStore {
         migrateLikedSongsButton(prefs);
         migrateLineBlurLevel(prefs);
         migratePanelMediaControls(prefs);
+        migrateSourceRankingLabel(prefs);
     }
 
     static synchronized void migrateLikedSongsButton(SharedPreferences prefs) {
@@ -65,6 +66,21 @@ public final class SettingsStore implements TypedStore {
      * Bool-to-enum migration for the blur level: stored {@code true} keeps the legacy look as
      * {@code Slight}, {@code false} becomes {@code Off}. Already-migrated strings pass through.
      */
+    /** The old "Auto-mute ads" switch becomes the Mute choice of the ad mode. */
+    static synchronized void migrateAdMode(SharedPreferences prefs) {
+        if (!prefs.contains(Settings.LEGACY_AUTO_MUTE_ADS)) return;
+        boolean muted = false;
+        try {
+            muted = prefs.getBoolean(Settings.LEGACY_AUTO_MUTE_ADS, false);
+        } catch (ClassCastException ignored) {
+        }
+        SharedPreferences.Editor editor = prefs.edit().remove(Settings.LEGACY_AUTO_MUTE_ADS);
+        if (muted && !prefs.contains(Settings.AD_MODE.key)) {
+            editor.putString(Settings.AD_MODE.key, Settings.AD_MODE_MUTE);
+        }
+        editor.apply();
+    }
+
     static synchronized void migrateLineBlurLevel(SharedPreferences prefs) {
         if (!prefs.contains(Settings.ENABLE_LINE_BLUR.key)) return;
         Object raw = prefs.getAll().get(Settings.ENABLE_LINE_BLUR.key);
@@ -73,21 +89,43 @@ public final class SettingsStore implements TypedStore {
         prefs.edit().putString(Settings.ENABLE_LINE_BLUR.key, on ? "Slight" : "Off").apply();
     }
 
+    /**
+     * Pre-release builds persisted the source ranking as "Smart"/"UserOrder"; the stored tokens are
+     * "Auto"/"Source order". Unknown values would otherwise silently fall back to Auto.
+     */
+    static synchronized void migrateSourceRankingLabel(SharedPreferences prefs) {
+        String key = Settings.LYRICS_SOURCE_MODE.key;
+        if (!prefs.contains(key)) return;
+        String stored;
+        try {
+            stored = prefs.getString(key, null);
+        } catch (ClassCastException ignored) {
+            return;
+        }
+        if ("Smart".equals(stored)) prefs.edit().putString(key, "Auto").apply();
+        else if ("UserOrder".equals(stored)) prefs.edit().putString(key, "Source order").apply();
+    }
+
     public <T> T get(Settings.Setting<T> setting) {
         try {
-            Object value;
-            if (setting instanceof Settings.BooleanSetting) {
-                value = prefs.getBoolean(setting.key, (Boolean) setting.defaultValue);
-            } else if (setting instanceof Settings.StringSetting) {
-                value = prefs.getString(setting.key, (String) setting.defaultValue);
-            } else if (setting instanceof Settings.IntegerSetting) {
-                value = prefs.getInt(setting.key, (Integer) setting.defaultValue);
-            } else {
-                value = prefs.getAll().get(setting.key);
-            }
-            return setting.coerce(value);
+            String landscapeKey = Settings.landscapeKey(context, setting);
+            String key = landscapeKey != null && prefs.contains(landscapeKey)
+                    ? landscapeKey : setting.key;
+            return setting.coerce(readRaw(key, setting));
         } catch (ClassCastException | IllegalArgumentException invalidStoredValue) {
             return setting.defaultValue;
+        }
+    }
+
+    private Object readRaw(String key, Settings.Setting<?> setting) {
+        if (setting instanceof Settings.BooleanSetting) {
+            return prefs.getBoolean(key, (Boolean) setting.defaultValue);
+        } else if (setting instanceof Settings.StringSetting) {
+            return prefs.getString(key, (String) setting.defaultValue);
+        } else if (setting instanceof Settings.IntegerSetting) {
+            return prefs.getInt(key, (Integer) setting.defaultValue);
+        } else {
+            return prefs.getAll().get(key);
         }
     }
 
@@ -101,29 +139,36 @@ public final class SettingsStore implements TypedStore {
             // The row is intentionally a tap-to-download action rather than a persisted toggle.
             return;
         }
-        prefs.edit().putBoolean(setting.key, value).apply();
+        prefs.edit().putBoolean(storageKey(setting), value).apply();
     }
 
     @Override
     public void putString(Settings.StringSetting setting, String value) {
-        prefs.edit().putString(setting.key, value).apply();
+        prefs.edit().putString(storageKey(setting), value).apply();
     }
 
     @Override
     public void putInt(Settings.IntegerSetting setting, int value) {
-        prefs.edit().putInt(setting.key, value).apply();
+        prefs.edit().putInt(storageKey(setting), value).apply();
+    }
+
+    /** Landscape edits of a layout-fit setting land on its landscape key; see Settings. */
+    private String storageKey(Settings.Setting<?> setting) {
+        String landscapeKey = Settings.landscapeKey(context, setting);
+        return landscapeKey != null ? landscapeKey : setting.key;
     }
 
     public <T> void put(Settings.Setting<T> setting, T value) {
+        String key = storageKey(setting);
         SharedPreferences.Editor editor = prefs.edit();
         if (value instanceof Boolean) {
-            editor.putBoolean(setting.key, (Boolean) value);
+            editor.putBoolean(key, (Boolean) value);
         } else if (value instanceof String) {
-            editor.putString(setting.key, (String) value);
+            editor.putString(key, (String) value);
         } else if (value instanceof Integer) {
-            editor.putInt(setting.key, (Integer) value);
+            editor.putInt(key, (Integer) value);
         } else if (value instanceof Long) {
-            editor.putLong(setting.key, (Long) value);
+            editor.putLong(key, (Long) value);
         }
         editor.apply();
     }

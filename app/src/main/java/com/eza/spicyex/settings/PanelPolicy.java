@@ -16,6 +16,17 @@ public final class PanelPolicy {
     }
 
     public static boolean shouldRender(Settings.Setting<?> setting, PanelSnapshot snapshot) {
+        if (setting == Settings.FORCE_DARK_BACKGROUND) {
+            return snapshot.animatedBackgroundAvailable()
+                    && LyricsBackgroundStyle.usesTexture(snapshot.get(Settings.BACKGROUND_STYLE));
+        }
+        if (setting == Settings.EXTRA_DARK_BACKGROUND) {
+            return shouldRenderForceDark(snapshot)
+                    && Boolean.TRUE.equals(snapshot.get(Settings.FORCE_DARK_BACKGROUND));
+        }
+        if (isLayoutEditorOnly(setting)) {
+            return false;
+        }
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             return snapshot.spicySourceEnabled();
         }
@@ -41,17 +52,15 @@ public final class PanelPolicy {
             return snapshot.transliterationAvailable()
                     && Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED));
         }
-        if (setting == Settings.FORCE_DARK_BACKGROUND) {
-            return snapshot.animatedBackgroundAvailable()
-                    && LyricsBackgroundStyle.usesTexture(snapshot.get(Settings.BACKGROUND_STYLE));
-        }
-        if (setting == Settings.EXTRA_DARK_BACKGROUND) {
-            return shouldRenderForceDark(snapshot)
-                    && Boolean.TRUE.equals(snapshot.get(Settings.FORCE_DARK_BACKGROUND));
-        }
         if (setting == Settings.BACKGROUND_RENDER_QUALITY) {
             return snapshot.animatedBackgroundAvailable()
                     && LyricsBackgroundStyle.isAnimated(snapshot.get(Settings.BACKGROUND_STYLE));
+        }
+        if (setting == Settings.AD_MUSIC_THEME) {
+            return Settings.AD_MODE_MUSIC.equals(snapshot.get(Settings.AD_MODE));
+        }
+        if (setting == Settings.LYRICS_BLUR_INTENSITY) {
+            return !"Off".equals(snapshot.get(Settings.ENABLE_LINE_BLUR));
         }
         if (setting == Settings.LINE_SYNC_FILL) {
             return "Gradient wash".equals(snapshot.get(Settings.ANIMATION_STYLE));
@@ -60,6 +69,9 @@ public final class PanelPolicy {
             // Apple motion is owned by the Apple section under Apple Music; the shared
             // bounce rows would compete, so they stand down while the Apple card is up.
             return !"Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
+        }
+        if (setting == Settings.APPLE_SPRING_STRENGTH) {
+            return "Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
         }
         if (isAppleOwned(setting)) {
             return "Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
@@ -82,7 +94,38 @@ public final class PanelPolicy {
         if (setting == Settings.TRACK_INFO_TEXT_SIZE_CUSTOM) {
             return "Custom".equals(snapshot.get(Settings.TRACK_INFO_TEXT_SIZE));
         }
+        if (setting == Settings.LYRICS_FONT_CUSTOM_PATH) {
+            return "custom".equals(snapshot.get(Settings.LYRICS_FONT));
+        }
+        if (setting == Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS) {
+            return Boolean.TRUE.equals(snapshot.get(Settings.AUTO_RESUME_FOLLOW));
+        }
+        if (setting == Settings.FURIGANA_BRIGHTNESS || setting == Settings.FURIGANA_POSITION_PERCENT) {
+            String reading = snapshot.get(Settings.JAPANESE_READING_MODE);
+            return snapshot.transliterationAvailable()
+                    && Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED))
+                    && ("furigana_only".equals(reading) || "furigana_romaji".equals(reading));
+        }
         return true;
+    }
+
+    private static boolean isLayoutEditorOnly(Settings.Setting<?> setting) {
+        return setting == Settings.TRACK_INFO_POSITION
+                || setting == Settings.BACKGROUND_STYLE
+                || setting == Settings.BACKGROUND_RENDER_QUALITY
+                || setting == Settings.FORCE_DARK_BACKGROUND
+                || setting == Settings.EXTRA_DARK_BACKGROUND
+                || setting == Settings.ANIMATION_STYLE
+                || setting == Settings.LOAD_LIFT_ANIMATION
+                || setting == Settings.APPLE_CASCADE_SPEED
+                || setting == Settings.APPLE_SPRING_STRENGTH
+                || setting == Settings.CHROME_CLUSTER_POSITION
+                || setting == Settings.FULLSCREEN_CONTROLS
+                || setting == Settings.LIKED_SONGS_BUTTON
+                || setting == Settings.SKIP_CHIP_POSITION
+                || setting == Settings.FOLLOW_CHIP_POSITION
+                || setting == Settings.SKIP_CHIP_STYLE
+                || setting == Settings.FOLLOW_CHIP_STYLE;
     }
 
     private static boolean shouldRenderForceDark(PanelSnapshot snapshot) {
@@ -103,9 +146,10 @@ public final class PanelPolicy {
     public static boolean isAppleOwned(Settings.Setting<?> setting) {
         return setting == Settings.APPLE_FADE_PASSED_LINES
                 || setting == Settings.APPLE_COMPACT_TEXT
-                || setting == Settings.APPLE_CJK_WRAP_FIX
                 || setting == Settings.LINE_SLIDE_ANIMATION
-                || setting == Settings.APPLE_LIFT;
+                || setting == Settings.APPLE_LIFT
+                || setting == Settings.LOAD_LIFT_ANIMATION
+                || setting == Settings.APPLE_CASCADE_SPEED;
     }
 
     public static boolean unavailable(Settings.Setting<?> setting, PanelSnapshot snapshot) {
@@ -117,11 +161,6 @@ public final class PanelPolicy {
     /** Why one option is dimmed; empty means selectable. Locale-resolved, never hardcoded. */
     public static String optionUnavailableReason(Settings.StringSetting setting, String value,
                                                  PanelSnapshot snapshot, PanelStrings strings) {
-        if (setting == Settings.BACKGROUND_STYLE
-                && LyricsBackgroundStyle.usesTexture(value)
-                && !snapshot.animatedBackgroundAvailable()) {
-            return strings.get("settings_unavailable_android_13", "Android 13+ required");
-        }
         if (setting != Settings.LIVE_CARD_SECONDARY_MODE) return "";
         boolean needsTransliteration = "Transliteration".equals(value) || "Both".equals(value);
         boolean needsTranslation = "Translation".equals(value) || "Both".equals(value);
@@ -139,6 +178,21 @@ public final class PanelPolicy {
         }
         if (needsTranslation && !Boolean.TRUE.equals(snapshot.get(Settings.TRANSLATION_ENABLED))) {
             return strings.get("settings_enable_translation", "Enable translation");
+        }
+        return "";
+    }
+
+    /**
+     * A non-blocking note for an option: picking it is allowed, the note says what it changes.
+     * Tap-to-seek on double tap and double-tap to like share the gesture, so choosing one turns
+     * the other off.
+     */
+    public static String optionNote(Settings.StringSetting setting, String value,
+                                    PanelSnapshot snapshot, PanelStrings strings) {
+        if (setting == Settings.TAP_SEEK_MODE && "Double tap".equals(value)
+                && Boolean.TRUE.equals(snapshot.get(Settings.DOUBLE_TAP_LIKE))) {
+            return strings.get("settings_tap_seek_double_tap_turns_off_like",
+                    "Turns off double-tap to like");
         }
         return "";
     }
@@ -178,6 +232,8 @@ public final class PanelPolicy {
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     public static boolean shouldRebuildSectionAfterChange(Settings.Setting<?> setting) {
         return setting == Settings.AI_ENABLED
+                || setting == Settings.DOUBLE_TAP_LIKE
+                || setting == Settings.TAP_SEEK_MODE
                 || setting == Settings.AI_PROVIDER
                 || setting == Settings.TRANSLATION_ENABLED
                 || setting == Settings.TRANSLITERATION_ENABLED
@@ -186,6 +242,8 @@ public final class PanelPolicy {
                 || setting == Settings.ANIMATION_STYLE
                 || setting == Settings.LIVE_CARD_ANIMATION
                 || setting == Settings.LYRICS_TEXT_SIZE
+                || setting == Settings.LYRICS_FONT
+                || setting == Settings.LYRICS_FONT_CUSTOM_PATH
                 || setting == Settings.LINE_SPACING
                 || setting == Settings.LIVE_CARD_TEXT_SIZE
                 || setting == Settings.TRACK_INFO_TEXT_SIZE

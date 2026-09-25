@@ -61,11 +61,30 @@ public class BlurredRowLayout extends LinearLayout {
      * at full resolution all the rows changing together were the stutter when blur came and went.
      */
     static int downscaleFor(float radiusPx) {
-        if (radiusPx < 3f) return 1;
-        if (radiusPx < 8f) return 2;
-        if (radiusPx < 16f) return 3;
+        // Even a light blur softens away single-pixel detail, so it is blurred at half size: a
+        // full-resolution layer per lightly blurred row was most of the blur's memory.
+        if (radiusPx < 6f) return 2;
+        if (radiusPx < 12f) return 3;
         return 4;
     }
+
+    /** Below this the blur is imperceptible: the row draws sharp, with no layer at all. */
+    static final float SHARP_BELOW_PX = 1.2f;
+
+    /**
+     * The radius actually rendered: in steps of half a pixel of the downscaled layer, finer
+     * than the eye can tell apart at that blur. A radius easing in or out used to re-run the blur
+     * on every frame for every row changing together - the stutter when the focus moved.
+     */
+    static float renderedRadius(float radiusPx) {
+        int scale = downscaleFor(radiusPx);
+        return Math.round(radiusPx / scale * 2f) / 2f * scale;
+    }
+
+    /** A heavily blurred row whose content keeps changing re-blurs at most this often. */
+    private static final long HEAVY_REBLUR_MS = 33L;
+    private static final float HEAVY_BLUR_PX = 6f;
+    private long lastBlurRenderMs;
 
     // Every dimmed row carries alpha < 1. With overlapping rendering, HWUI draws each such row into
     // its own offscreen buffer and composites it - one render-target switch per row per frame, the
@@ -81,8 +100,30 @@ public class BlurredRowLayout extends LinearLayout {
     public void setContentBlur(float radiusPx) {
         float radius = Math.max(0f, radiusPx);
         if (Math.abs(radius - blurRadiusPx) < 0.01f) return;
+        boolean wasBlurred = blurRadiusPx >= SHARP_BELOW_PX;
         blurRadiusPx = radius;
-        invalidate();
+        if (radius < SHARP_BELOW_PX) {
+            // Sharp now (the line in focus): its blur layer is let go instead of held in GPU
+            // memory for as long as the row exists.
+            if (wasBlurred) {
+                releaseLayers();
+                invalidate();
+            }
+            return;
+        }
+        // Only a change the rendered blur would show redraws the row.
+        if (renderedRadius(radius) != recordedRadius || !wasBlurred) invalidate();
+    }
+
+    private void releaseLayers() {
+        if (content != null && Build.VERSION.SDK_INT >= 31) {
+            content.discardDisplayList();
+            effect.discardDisplayList();
+            cache.discardDisplayList();
+        }
+        contentDirty = true;
+        recordedOutset = -1;
+        recordedRadius = -1f;
     }
 
     public float contentBlur() {
@@ -93,7 +134,7 @@ public class BlurredRowLayout extends LinearLayout {
     protected void dispatchDraw(Canvas canvas) {
         int width = getWidth();
         int height = getHeight();
-        if (blurRadiusPx <= 0f || Build.VERSION.SDK_INT < 31 || width <= 0 || height <= 0
+        if (blurRadiusPx < SHARP_BELOW_PX || Build.VERSION.SDK_INT < 31 || width <= 0 || height <= 0
                 || !(canvas instanceof RecordingCanvas) || !canvas.isHardwareAccelerated()) {
             super.dispatchDraw(canvas);
             return;
@@ -106,7 +147,17 @@ public class BlurredRowLayout extends LinearLayout {
             cache.setPivotX(0f);
             cache.setPivotY(0f);
         }
-        float radius = blurRadiusPx;
+        float radius = renderedRadius(blurRadiusPx);
+        // A heavily blurred row whose children changed again within a frame or two keeps its
+        // last blur a moment longer and catches up just after: under that much blur the change
+        // cannot be seen at full rate, and re-blurring every frame was the cost.
+        long now = android.os.SystemClock.uptimeMillis();
+        if (contentDirty && radius == recordedRadius && radius >= HEAVY_BLUR_PX && cache.hasDisplayList()
+                && now - lastBlurRenderMs < HEAVY_REBLUR_MS) {
+            postInvalidateDelayed(HEAVY_REBLUR_MS - (now - lastBlurRenderMs));
+            ((RecordingCanvas) canvas).drawRenderNode(cache);
+            return;
+        }
         // Gaussian reach: sigma ~ 0.577r + 0.5, visible to ~3 sigma. Only grows, so the content
         // recording is reused while a blur eases down.
         int outset = Math.max(recordedOutset, (int) Math.ceil(radius * 1.8f) + 2);
@@ -152,6 +203,7 @@ public class BlurredRowLayout extends LinearLayout {
             }
             recordedRadius = radius;
             recordedScale = scale;
+            lastBlurRenderMs = now;
         }
         ((RecordingCanvas) canvas).drawRenderNode(cache);
     }
@@ -187,13 +239,7 @@ public class BlurredRowLayout extends LinearLayout {
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        if (content != null) {
-            content.discardDisplayList();
-            effect.discardDisplayList();
-            cache.discardDisplayList();
-        }
-        contentDirty = true;
-        recordedOutset = -1;
-        recordedRadius = -1f;
+        // The nodes exist only on 31+ (see above); the check also tells lint so.
+        releaseLayers();
     }
 }
