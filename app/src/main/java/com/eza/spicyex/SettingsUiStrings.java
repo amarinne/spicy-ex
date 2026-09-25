@@ -117,6 +117,31 @@ public final class SettingsUiStrings {
         return new ArrayList<>(languages);
     }
 
+    private List<Resources> everyLanguage;
+
+    /**
+     * One string as every available UI language has it - distinct, non-empty - for the settings
+     * search, so a setting is found by its name in any language the module ships. A language
+     * added later is picked up with no code change: its strings file is all it takes.
+     */
+    public List<String> inEveryLanguage(String name) {
+        if (everyLanguage == null) {
+            everyLanguage = new ArrayList<>();
+            if (resources != null) everyLanguage.add(resources);
+            if (englishResources != null) everyLanguage.add(englishResources);
+            for (String language : availableUiLanguages()) {
+                Resources localized = localizedModuleResources(hostContext, language);
+                if (localized != null) everyLanguage.add(localized);
+            }
+        }
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (Resources localized : everyLanguage) {
+            String value = stringFrom(localized, name);
+            if (!value.isEmpty()) out.add(value);
+        }
+        return new ArrayList<>(out);
+    }
+
     private int id(String name) {
         if (resources == null || name == null || name.isEmpty()) return 0;
         Integer cached = ids.get(name);

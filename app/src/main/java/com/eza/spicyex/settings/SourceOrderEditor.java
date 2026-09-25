@@ -70,33 +70,262 @@ public final class SourceOrderEditor {
         return (Settings.StringSetting) Settings.LYRICS_SOURCE_MODE;
     }
 
-    // --- Collapsed row ---
+    // --- Inline block ---
 
-    /** Single merged "Lyrics source" row: ranking mode plus the enabled order summary. */
-    public void mergedRow(LinearLayout content) {
-        PanelStyle style = host.style();
-        SettingsUiStrings strings = host.strings();
-        String ranking = host.store().get(Settings.LYRICS_SOURCE_MODE);
-        StringBuilder order = new StringBuilder();
-        for (Source source : LyricsSourcePreferences.enabledSourceOrder(style.context())) {
-            if (order.length() > 0) order.append(" · ");
-            order.append(sourceLabel(source));
+    /**
+     * The sources, right on the Lyrics sources page: how the source is chosen (Smart or My
+     * order) as a two-way switch with a line saying what it does, then every source with its
+     * switch, a line about it, and - in My order - its rank and a drag handle. Changes apply at
+     * once. (This used to be one summary row opening a dialog with a Save button.)
+     */
+    public void inlineBlock(LinearLayout content) {
+        final PanelStyle style = host.style();
+        final SettingsUiStrings strings = host.strings();
+        final android.content.Context context = style.context();
+        final String ranking = rankingValue();
+        final boolean byOrder = MODE_USER_ORDER.equals(ranking);
+        final ArrayList<Source> order = new ArrayList<>(LyricsSourcePreferences.sourceOrder(context));
+
+        LinearLayout block = new LinearLayout(context);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setTag(PanelTags.row(Settings.LYRICS_SOURCE_MODE));
+        block.setPadding(style.dp(4), style.dp(6), style.dp(4), style.dp(6));
+
+        // How the source is chosen.
+        block.addView(caption(strings.get("settings_source_ranking_title", "Ranking")));
+        LinearLayout segments = new LinearLayout(context);
+        segments.setPadding(style.dp(3), style.dp(3), style.dp(3), style.dp(3));
+        android.graphics.drawable.GradientDrawable segBg = new android.graphics.drawable.GradientDrawable();
+        segBg.setCornerRadius(style.dp(20));
+        segBg.setColor(0x1AFFFFFF);
+        segments.setBackground(segBg);
+        String[][] modes = {
+                {MODE_SMART, strings.get("settings_source_rank_smart", "Smart")},
+                {MODE_USER_ORDER, strings.get("settings_source_rank_order", "My order")}};
+        for (String[] mode : modes) {
+            boolean on = mode[0].equals(ranking);
+            TextView segment = style.text(mode[1], 14, on ? 0xFF000000 : 0xCCFFFFFF, on);
+            segment.setGravity(android.view.Gravity.CENTER);
+            segment.setPadding(style.dp(8), style.dp(8), style.dp(8), style.dp(8));
+            if (on) {
+                android.graphics.drawable.GradientDrawable pill = new android.graphics.drawable.GradientDrawable();
+                pill.setCornerRadius(style.dp(17));
+                pill.setColor(0xFFFFFFFF);
+                segment.setBackground(pill);
+            }
+            final String value = mode[0];
+            segment.setOnClickListener(v -> {
+                if (!value.equals(rankingValue())) commit(value, order, currentEnabled());
+            });
+            segments.addView(segment, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         }
-        String rankLabel = strings.option(modeSetting(), ranking);
-        String summary = order.length() == 0
-                ? rankLabel + " · " + strings.get("settings_source_none_enabled", "None enabled")
-                : rankLabel + " · " + order;
-        LinearLayout row = style.newRow(content);
-        row.setTag(PanelTags.row(Settings.LYRICS_SOURCE_MODE));
-        TextView value = style.titleColumn(row, strings.setting(Settings.LYRICS_SOURCE_OVERRIDE), summary);
-        value.setTextColor(PanelStyle.COL_ACCENT);
-        row.addView(style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 18),
-                new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
-        row.setOnClickListener(v -> showDialog());
+        block.addView(segments, matchWrap(style, 6));
+        TextView modeLine = style.text(byOrder
+                        ? capitalized(strings.get("settings_source_ranking_order_desc", "follow the order below"))
+                        : capitalized(strings.get("settings_source_ranking_smart_desc",
+                                "compares source quality, selects best match")),
+                13, PanelStyle.COL_SUMMARY, false);
+        block.addView(modeLine, matchWrap(style, 16));
+
+        // The sources.
+        int total = 0;
+        int on = 0;
+        for (Source source : order) {
+            if (source == Source.SPICY) continue;
+            total++;
+            if (LyricsSourcePreferences.sourceEnabled(context, source)) on++;
+        }
+        LinearLayout head = new LinearLayout(context);
+        head.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        head.addView(caption(strings.get("settings_source_list_title", "Sources")),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        head.addView(style.text(String.format(java.util.Locale.ROOT,
+                strings.get("settings_source_count", "%1$d of %2$d on"), on, total),
+                12, PanelStyle.COL_SUMMARY, false));
+        block.addView(head);
+
+        LinearLayout list = new LinearLayout(context);
+        list.setOrientation(LinearLayout.VERTICAL);
+        block.addView(list, matchWrap(style, 0));
+        int rank = 0;
+        for (final Source source : order) {
+            // Spicy's remote path is retired from the user-selectable set
+            if (source == Source.SPICY) continue;
+            boolean enabled = LyricsSourcePreferences.sourceEnabled(context, source);
+            if (enabled) rank++;
+            LinearLayout row = new LinearLayout(context);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setPadding(style.dp(10), style.dp(10), style.dp(6), style.dp(10));
+            row.setTag(source);
+            android.graphics.drawable.GradientDrawable rowBg = new android.graphics.drawable.GradientDrawable();
+            rowBg.setCornerRadius(style.dp(14));
+            rowBg.setColor(enabled ? 0x14FFFFFF : 0x08FFFFFF);
+            row.setBackground(rowBg);
+
+            if (byOrder) {
+                TextView badge = style.text(enabled ? String.valueOf(rank) : "–", 13,
+                        enabled ? 0xFF000000 : PanelStyle.COL_SUMMARY, true);
+                badge.setGravity(android.view.Gravity.CENTER);
+                android.graphics.drawable.GradientDrawable badgeBg = new android.graphics.drawable.GradientDrawable();
+                badgeBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+                badgeBg.setColor(enabled ? PanelStyle.COL_ACCENT : 0x1AFFFFFF);
+                badge.setBackground(badgeBg);
+                LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(style.dp(24), style.dp(24));
+                badgeLp.rightMargin = style.dp(12);
+                row.addView(badge, badgeLp);
+            }
+
+            LinearLayout texts = new LinearLayout(context);
+            texts.setOrientation(LinearLayout.VERTICAL);
+            texts.addView(style.text(sourceLabel(source), 16,
+                    enabled ? PanelStyle.COL_TITLE : PanelStyle.COL_SUMMARY, true));
+            TextView about = style.text(sourceDescription(source), 12, PanelStyle.COL_SUMMARY, false);
+            LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            aboutLp.topMargin = style.dp(1);
+            texts.addView(about, aboutLp);
+            row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            GlossyToggle toggle = new GlossyToggle(context);
+            toggle.setAccent(PanelStyle.COL_ACCENT);
+            toggle.setChecked(enabled, false);
+            toggle.setOnChangeListener(() -> {
+                EnumMap<Source, Boolean> next = currentEnabled();
+                next.put(source, toggle.isChecked());
+                // After the switch's own slide: the block re-renders on commit.
+                toggle.postDelayed(() -> commit(rankingValue(), order, next), 180);
+            });
+            row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked(), true));
+            row.addView(toggle, new LinearLayout.LayoutParams(style.dp(44), style.dp(30)));
+
+            if (byOrder) {
+                ImageView grip = style.kindView(Kind.CHEVRONS_UP_DOWN, PanelStyle.COL_SUMMARY, 20);
+                grip.setContentDescription(strings.get("settings_source_drag", "Drag to reorder"));
+                grip.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+                LinearLayout.LayoutParams gripLp = new LinearLayout.LayoutParams(style.dp(36), style.dp(40));
+                gripLp.leftMargin = style.dp(4);
+                row.addView(grip, gripLp);
+                attachSourceDrag(grip, row, list, order,
+                        () -> commit(rankingValue(), order, currentEnabled()));
+            }
+            list.addView(row, matchWrap(style, 6));
+        }
+        content.addView(block, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /**
+     * The Lyrics sources tile's second line: how the source is picked as a small pill, then the
+     * providers that are on, in their order - "[Smart]  Apple Music › Musixmatch › LRCLIB +2".
+     */
+    public View tileLine() {
+        final PanelStyle style = host.style();
+        final SettingsUiStrings strings = host.strings();
+        final android.content.Context context = style.context();
+        boolean byOrder = MODE_USER_ORDER.equals(rankingValue());
+
+        LinearLayout line = new LinearLayout(context);
+        line.setOrientation(LinearLayout.HORIZONTAL);
+        line.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
+        TextView pill = style.text(byOrder
+                        ? strings.get("settings_source_rank_order", "My order")
+                        : strings.get("settings_source_rank_smart", "Smart"),
+                11, PanelStyle.COL_ACCENT, true);
+        pill.setSingleLine(true);
+        pill.setPadding(style.dp(7), style.dp(1), style.dp(7), style.dp(2));
+        android.graphics.drawable.GradientDrawable pillBg = new android.graphics.drawable.GradientDrawable();
+        pillBg.setCornerRadius(style.dp(8));
+        pillBg.setColor(0x261ED760);
+        pill.setBackground(pillBg);
+        LinearLayout.LayoutParams pillLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pillLp.rightMargin = style.dp(8);
+        line.addView(pill, pillLp);
+
+        ArrayList<String> names = new ArrayList<>();
+        for (Source source : LyricsSourcePreferences.sourceOrder(context)) {
+            if (source == Source.SPICY) continue;
+            if (LyricsSourcePreferences.sourceEnabled(context, source)) names.add(sourceLabel(source));
+        }
+        StringBuilder text = new StringBuilder();
+        if (names.isEmpty()) {
+            text.append(strings.get("settings_source_none_on", "No sources on"));
+        } else {
+            // Smart has no fixed order, so its providers read as a set rather than a chain.
+            String join = byOrder ? "  \u203a  " : ", ";
+            int shown = Math.min(3, names.size());
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) text.append(join);
+                text.append(names.get(i));
+            }
+            if (names.size() > shown) text.append("  +").append(names.size() - shown);
+        }
+        TextView list = style.text(text.toString(), 13, PanelStyle.COL_SUMMARY, false);
+        list.setSingleLine(true);
+        list.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        line.addView(list, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        return line;
+    }
+
+    private TextView caption(String label) {
+        PanelStyle style = host.style();
+        TextView view = style.text(label, 13, PanelStyle.COL_SECTION, true);
+        view.setPadding(style.dp(2), 0, 0, style.dp(8));
+        return view;
+    }
+
+    private static LinearLayout.LayoutParams matchWrap(PanelStyle style, int bottomDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = style.dp(bottomDp);
+        return lp;
+    }
+
+    private static String capitalized(String text) {
+        if (text == null || text.isEmpty()) return "";
+        return Character.toUpperCase(text.charAt(0)) + text.substring(1);
+    }
+
+    private EnumMap<Source, Boolean> currentEnabled() {
+        EnumMap<Source, Boolean> enabled = new EnumMap<>(Source.class);
+        for (Source source : Source.values()) {
+            enabled.put(source, LyricsSourcePreferences.sourceEnabled(host.style().context(), source));
+        }
+        return enabled;
+    }
+
+    /** Applies at once and re-renders the block (through the owning section). */
+    private void commit(String ranking, List<Source> order, EnumMap<Source, Boolean> enabled) {
+        sourceAdapter().commit(host.writer(), new SourcePreferencesAdapter.Commit(
+                ranking, new ArrayList<>(order), enabled));
+        host.onSourcesCommitted();
+    }
+
+    /** One line about what each source is good for. */
+    public String sourceDescription(Source source) {
+        SettingsUiStrings strings = host.strings();
+        switch (source) {
+            case APPLE_MUSIC:
+                return strings.get("settings_source_desc_apple", "Apple Music's lyrics, often word by word");
+            case SPOTIFY:
+                return strings.get("settings_source_desc_spotify", "Spotify's own lyrics");
+            case MUSIXMATCH:
+                return strings.get("settings_source_desc_musixmatch", "Musixmatch's large catalog");
+            case NETEASE:
+                return strings.get("settings_source_desc_netease", "NetEase Cloud Music - strong for Chinese songs");
+            case QQ_MUSIC:
+                return strings.get("settings_source_desc_qq", "QQ Music - strong for Chinese songs");
+            case LRCLIB:
+                return strings.get("settings_source_desc_lrclib", "Community-made synced lyrics");
+            default:
+                return "";
+        }
     }
 
     /** Provider names are brands and stay as authored; only the surrounding copy localizes. */
-    public String sourceLabel(Source source) {
+    public static String sourceLabel(Source source) {
         if (source == Source.APPLE_MUSIC) return "Apple Music";
         if (source == Source.SPICY) return "Spicy";
         if (source == Source.SPOTIFY) return "Spotify";
@@ -107,112 +336,10 @@ public final class SourceOrderEditor {
         return "LRCLIB";
     }
 
-    // --- Dialog ---
-
-    public void showDialog() {
-        final PanelStyle style = host.style();
-        final SettingsUiStrings strings = host.strings();
-        final String[] ranking = new String[]{rankingValue()};
-        final ArrayList<Source> order = new ArrayList<>(LyricsSourcePreferences.sourceOrder(style.context()));
-        final EnumMap<Source, GlossyToggle> toggles = new EnumMap<>(Source.class);
-        final ArrayList<ImageView> orderGrips = new ArrayList<>();
-
-        PanelDialog dialog = new PanelDialog(style.context(),
-                strings.setting(Settings.LYRICS_SOURCE_OVERRIDE));
-
-        final LinearLayout orderSection = new LinearLayout(style.context());
-        orderSection.setOrientation(LinearLayout.VERTICAL);
-
-        dialog.paragraph(strings.get("settings_source_ranking_title", "Ranking"));
-        final ArrayList<LinearLayout> rankingRows = new ArrayList<>();
-        // The value drives selection; the option label is authored English, as before.
-        final String[][] rankingOptions = new String[][]{
-                {MODE_SMART, "Smart — "
-                        + strings.get("settings_source_ranking_smart_desc", "compares source quality, selects best match")},
-                {MODE_USER_ORDER, "User Order — "
-                        + strings.get("settings_source_ranking_order_desc", "follow your source order below")}
-        };
-        for (final String[] option : rankingOptions) {
-            LinearLayout row = style.radioRow(option[1], option[0].equals(ranking[0]));
-            rankingRows.add(row);
-            final String value = option[0];
-            row.setOnClickListener(v -> {
-                ranking[0] = value;
-                refreshRankingRows(rankingRows, ranking[0]);
-                setOrderGripVisibility(orderGrips, ranking[0]);
-            });
-            dialog.add(row);
-        }
-
-        TextView orderTitle = style.text(strings.get("settings_source_enabled_title", "Enabled sources"),
-                15, PanelStyle.COL_SECTION, true);
-        orderTitle.setPadding(style.dp(12), style.dp(12), style.dp(8), style.dp(2));
-        orderSection.addView(orderTitle);
-        LinearLayout list = new LinearLayout(style.context());
-        list.setOrientation(LinearLayout.VERTICAL);
-        orderSection.addView(list);
-        dialog.add(orderSection);
-
-        for (Source source : order) {
-            // Spicy's remote path is retired from the user-selectable set
-            if (source == Source.SPICY) continue;
-            LinearLayout row = new LinearLayout(style.context());
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            row.setPadding(style.dp(12), style.dp(8), style.dp(8), style.dp(8));
-            row.setTag(source);
-            GlossyToggle toggle = new GlossyToggle(style.context());
-            toggle.setAccent(PanelStyle.COL_ACCENT);
-            toggle.setChecked(LyricsSourcePreferences.sourceEnabled(style.context(), source), false);
-            toggles.put(source, toggle);
-            row.addView(toggle, new LinearLayout.LayoutParams(style.dp(44), style.dp(30)));
-            TextView label = style.text(sourceLabel(source), 16, PanelStyle.COL_TITLE, false);
-            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            labelParams.leftMargin = style.dp(12);
-            row.addView(label, labelParams);
-            ImageView grip = style.kindView(Kind.CHEVRONS_UP_DOWN, PanelStyle.COL_SUMMARY, 20);
-            grip.setContentDescription(strings.get("settings_source_drag", "Drag to reorder"));
-            grip.setVisibility(MODE_USER_ORDER.equals(ranking[0]) ? View.VISIBLE : View.GONE);
-            row.addView(grip, new LinearLayout.LayoutParams(style.dp(40), style.dp(40)));
-            orderGrips.add(grip);
-            attachSourceDrag(grip, row, list, order);
-            list.addView(row, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        }
-        dialog.primary(strings.get("settings_ai_save", "Save"), () -> {
-            EnumMap<Source, Boolean> enabled = new EnumMap<>(Source.class);
-            for (Source source : Source.values()) {
-                GlossyToggle toggle = toggles.get(source);
-                enabled.put(source, toggle != null && toggle.isChecked());
-            }
-            sourceAdapter().commit(host.writer(), new SourcePreferencesAdapter.Commit(
-                    ranking[0], order, enabled));
-            host.onSourcesCommitted();
-        });
-        dialog.secondary(strings.get("settings_ai_cancel", "Cancel"), null);
-        dialog.show();
-        refreshRankingRows(rankingRows, ranking[0]);
-        setOrderGripVisibility(orderGrips, ranking[0]);
-    }
-
     /** Current ranking as a persisted token; anything unrecognized reads as Smart. */
     private String rankingValue() {
         String stored = host.store().get(Settings.LYRICS_SOURCE_MODE);
         return MODE_USER_ORDER.equals(stored) ? MODE_USER_ORDER : MODE_SMART;
-    }
-
-    /** Repaints radio rows from the persisted value, never from rendered label text. */
-    private void refreshRankingRows(List<LinearLayout> rows, String selected) {
-        for (int i = 0; i < rows.size(); i++) {
-            boolean isSelected = i == (MODE_USER_ORDER.equals(selected) ? 1 : 0);
-            host.style().paintRadio(rows.get(i), isSelected);
-        }
-    }
-
-    private void setOrderGripVisibility(List<ImageView> grips, String ranking) {
-        int visibility = MODE_USER_ORDER.equals(ranking) ? View.VISIBLE : View.GONE;
-        for (ImageView grip : grips) if (grip != null) grip.setVisibility(visibility);
     }
 
     // --- Drag to reorder ---
@@ -222,7 +349,7 @@ public final class SourceOrderEditor {
      * while the rows it passes slide out of the way. Order commits on release.
      */
     private void attachSourceDrag(View handle, LinearLayout row, final LinearLayout list,
-                                  final ArrayList<Source> order) {
+                                  final ArrayList<Source> order, final Runnable onDropped) {
         final PanelStyle style = host.style();
         final float[] startRawY = new float[1];
         final int[] fromIndex = new int[1];
@@ -283,6 +410,10 @@ public final class SourceOrderEditor {
                     row.setAlpha(1f);
                     settleTranslations(list);
                     disallowIntercept(list, false);
+                    if (commit && target != from && onDropped != null) {
+                        // After the settle, so the re-rendered list does not cut it short.
+                        list.postDelayed(onDropped, 140);
+                    }
                     return true;
                 }
                 default:

@@ -7,12 +7,9 @@ import android.widget.TextView;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.SettingsUiStrings;
-import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.lyrics.CacheStoragePolicy;
 import com.eza.spicyex.lyrics.LyricsFontValidator;
 import com.eza.spicyex.lyrics.SpicyManualTokenStore;
-import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
-import com.eza.spicyex.lyrics.session.CanonicalSourceCache;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.PanelDialog;
 
@@ -66,6 +63,10 @@ public final class PanelDialogs {
 
     /** Ordinary single-select option dialog; confirming settings route to their own path. */
     public void openSelector(Settings.StringSetting setting, List<String> values, TextView valueView) {
+        if (setting == Settings.TRANSLATION_TARGET) {
+            openLanguageSelector(setting, values, valueView);
+            return;
+        }
         if (PanelPolicy.commitPolicyFor(setting) == CommitPolicy.CONFIRMING) {
             openConfirmingSelector(setting, values, valueView);
             return;
@@ -99,11 +100,6 @@ public final class PanelDialogs {
             options.add(option);
         }
         PanelDialog dialog = new PanelDialog(style.context(), strings.setting(setting));
-        if (setting == Settings.CACHE_SIZE) {
-            dialog.headerAction(ActionIconDrawable.Kind.CIRCLE_HELP,
-                    strings.get("settings_cache_details_action", "Show cache details"),
-                    this::showCacheInfo);
-        }
         dialog.listOptions(options, current, value -> {
             // Selecting the already-applied value is a true no-op. In particular,
             // opening and dismissing the language picker must not rebuild the panel.
@@ -142,21 +138,56 @@ public final class PanelDialogs {
                 .show();
     }
 
-    public void showCacheInfo() {
+    /**
+     * The translation target: 34 languages, so it gets a search field, the current and the
+     * phone's languages on top, then everything alphabetically by its name in the UI language,
+     * each with the language's own name underneath ("Spanish" / "Español · es").
+     */
+    public void openLanguageSelector(Settings.StringSetting setting, List<String> values,
+                                     TextView valueView) {
         PanelStyle style = host.style();
         SettingsUiStrings strings = host.strings();
-        long aiBytes = AIPaidArtifactCache.usageBytes(style.context());
-        new PanelDialog(style.context(), strings.get("settings_cache_details_title", "Cache details"))
-                .infoRow(strings.get("settings_cache_details_songs", "Cached songs"),
-                        String.valueOf(Math.max(
-                                CanonicalSourceCache.entryCount(style.context()),
-                                LyricsResponseCache.entryCount(style.context()))))
-                .infoRow(strings.get("settings_cache_details_lyrics", "Lyric data cached"),
-                        CacheStoragePolicy.formatBytes(
-                                CacheStoragePolicy.storedTotal(style.context()) - aiBytes))
-                .infoRow(strings.get("settings_cache_details_ai", "AI data cached"),
-                        CacheStoragePolicy.formatBytes(aiBytes))
-                .secondary(strings.get("settings_cache_details_close", "Close"), null)
+        final String initial = host.store().get(setting);
+        java.util.Locale uiLocale = java.util.Locale.forLanguageTag(
+                strings.selectedLanguage().replace('_', '-').replace("-r", "-"));
+        List<PanelDialog.Option> options = new ArrayList<>();
+        for (String val : values) {
+            PanelDialog.Option option = PanelDialog.Option.of(val, SettingLabels.withoutCode(host.labelFor(setting, val)));
+            java.util.Locale own = java.util.Locale.forLanguageTag(val);
+            String native_ = SettingLabels.capitalized(own.getDisplayName(own), own);
+            option.detail = native_.isEmpty() || native_.equalsIgnoreCase(option.label)
+                    ? val : native_ + " \u00b7 " + val;
+            // English names too, so "spanish" finds it whatever the UI language is.
+            option.keywords = own.getDisplayName(java.util.Locale.ENGLISH);
+            options.add(option);
+        }
+        final java.text.Collator collator = java.text.Collator.getInstance(uiLocale);
+        options.sort((a, b) -> collator.compare(a.label, b.label));
+
+        List<String> pinned = new ArrayList<>();
+        pinned.add(initial);
+        android.os.LocaleList phone = android.os.LocaleList.getDefault();
+        for (int i = 0; i < phone.size(); i++) {
+            String match = SettingLabels.translationTargetFor(phone.get(i), values);
+            if (match != null && !pinned.contains(match)) pinned.add(match);
+        }
+        String uiMatch = SettingLabels.translationTargetFor(uiLocale, values);
+        if (uiMatch != null && !pinned.contains(uiMatch)) pinned.add(uiMatch);
+        while (pinned.size() > 4) pinned.remove(pinned.size() - 1);
+
+        new PanelDialog(style.context(), strings.setting(setting))
+                .searchableOptions(options, pinned, initial, selected -> {
+                    if (selected != null && !selected.equals(initial)) {
+                        host.onOptionChosen(setting, selected);
+                        valueView.setText(host.rowSummaryFor(setting, selected));
+                        host.afterSettingChosen(setting);
+                    }
+                }, strings.get("settings_ai_save", "Save"),
+                        strings.get("settings_ai_cancel", "Cancel"),
+                        strings.get("settings_language_search", "Search languages"),
+                        strings.get("settings_language_suggested", "Suggested"),
+                        strings.get("settings_language_all", "All languages"),
+                        strings.get("settings_language_no_match", "No language matches"))
                 .show();
     }
 

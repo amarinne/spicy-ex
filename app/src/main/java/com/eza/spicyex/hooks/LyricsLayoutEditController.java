@@ -149,6 +149,18 @@ final class LyricsLayoutEditController {
 
     /** One editor invocation's mutable state - a plain instance instead of a pile of one-element
      *  arrays now that there's real state (selected element, snapshot, current drag) to carry. */
+    /** A setting the next editor session should open on (a settings-search result); one-shot. */
+    private static volatile Settings.Setting<?> pendingFocus;
+
+    static void requestFocus(Settings.Setting<?> setting) {
+        pendingFocus = setting;
+    }
+
+    /** The settings the editor covers, for the settings search (see LayoutEditorSettings). */
+    static Settings.Setting<?>[] coveredSettings() {
+        return Session.TOUCHED_SETTINGS.clone();
+    }
+
     private static final class Session implements EditorHandle {
         private static final Settings.Setting<?>[] TOUCHED_SETTINGS = {
                 Settings.TRACK_INFO_POSITION, Settings.TRACK_INFO_ART_RADIUS,
@@ -618,6 +630,9 @@ final class LyricsLayoutEditController {
                 refreshDock();
                 refreshBackButton();
                 if (startInCardMode) setCardMode(true);
+                Settings.Setting<?> focus = pendingFocus;
+                pendingFocus = null;
+                if (focus != null) openOn(focus);
             });
             startCaptureSync();
         }
@@ -1457,6 +1472,92 @@ final class LyricsLayoutEditController {
                     skipLayer, followLayer, dockLayer};
         }
 
+        /**
+         * Opens straight on what a settings search found: the element that owns the setting,
+         * the tab it is on, and its sheet open - so the result lands on the control, not on the
+         * editor's front page.
+         */
+        private void openOn(Settings.Setting<?> setting) {
+            Element element = elementFor(setting);
+            if (element == null) return;
+            if (element == Element.CARD) {
+                cardTab = CARD_ANIMATION_SETTINGS.contains(setting) ? 1 : 0;
+                if (!cardMode) setCardMode(true);
+            } else if (element == Element.TEXT) {
+                textTab = TEXT_ANIMATION_SETTINGS.contains(setting) ? TAB_ANIMATION
+                        : TEXT_EFFECT_SETTINGS.contains(setting) ? TAB_EFFECTS : TAB_STYLE;
+            }
+            selectElement(element, false);
+            revealSheet();
+        }
+
+        private static final java.util.Set<Settings.Setting<?>> CARD_ANIMATION_SETTINGS =
+                new java.util.HashSet<>(java.util.Arrays.asList(Settings.LIVE_CARD_ANIMATION,
+                        Settings.LIVE_CARD_GLOW, Settings.LIVE_CARD_LINE_SYNC_FILL, Settings.LIVE_CARD_TRANSITION));
+        private static final java.util.Set<Settings.Setting<?>> TEXT_ANIMATION_SETTINGS =
+                new java.util.HashSet<>(java.util.Arrays.asList(Settings.ANIMATION_STYLE,
+                        Settings.APPLE_CASCADE_SPEED, Settings.APPLE_FADE_PASSED_LINES, Settings.APPLE_LIFT,
+                        Settings.APPLE_SPRING_STRENGTH, Settings.LINE_SLIDE_ANIMATION, Settings.LINE_SYNC_FILL,
+                        Settings.LOAD_LIFT_ANIMATION, Settings.WORD_BOUNCE, Settings.WORD_BOUNCE_STYLE));
+        private static final java.util.Set<Settings.Setting<?>> TEXT_EFFECT_SETTINGS =
+                new java.util.HashSet<>(java.util.Arrays.asList(Settings.ENABLE_GLOW_BLUR,
+                        Settings.ENABLE_LINE_BLUR, Settings.INTERLUDE_ICON, Settings.LYRICS_BLUR_INTENSITY));
+
+        /** Which element's sheet carries a setting. */
+        private static Element elementFor(Settings.Setting<?> s) {
+            if (s == null) return null;
+            if (s.key != null && s.key.startsWith("lyrics_live_card")) return Element.CARD;
+            if (s == Settings.TRACK_INFO_POSITION || s == Settings.TRACK_INFO_ART_RADIUS
+                    || s == Settings.TRACK_INFO_ART_SIZE || s == Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP
+                    || s == Settings.ADAPTIVE_LANDSCAPE_LAYOUT || s == Settings.PANEL_MEDIA_CONTROLS) {
+                return Element.ARTWORK;
+            }
+            if (s == Settings.TRACK_INFO_BACKGROUND || s == Settings.TRACK_INFO_SHOW_ALBUM
+                    || s == Settings.TRACK_INFO_SHOW_ARTIST || s == Settings.TRACK_INFO_SHOW_TITLE
+                    || s == Settings.TRACK_INFO_TEXT_ALIGN || s == Settings.TRACK_INFO_TEXT_OVERFLOW
+                    || s == Settings.TRACK_INFO_TEXT_SIZE || s == Settings.TRACK_INFO_TEXT_SIZE_ADAPTIVE
+                    || s == Settings.TRACK_INFO_TEXT_SIZE_CUSTOM) {
+                return Element.TRACK_TEXT;
+            }
+            if (s == Settings.LYRICS_FOCUS_POSITION || s == Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT) {
+                return Element.FOCUS;
+            }
+            if (s == Settings.BACKGROUND_RENDER_QUALITY || s == Settings.BACKGROUND_STYLE
+                    || s == Settings.EXTRA_DARK_BACKGROUND || s == Settings.FORCE_DARK_BACKGROUND) {
+                return Element.BACKGROUND;
+            }
+            if (s == Settings.SKIP_CHIP_POSITION || s == Settings.SKIP_CHIP_STYLE) return Element.SKIP;
+            if (s == Settings.FOLLOW_CHIP_ANIMATION || s == Settings.FOLLOW_CHIP_POSITION
+                    || s == Settings.FOLLOW_CHIP_PROGRESS || s == Settings.FOLLOW_CHIP_STYLE) {
+                return Element.FOLLOW;
+            }
+            if (s == Settings.CHROME_CLUSTER_POSITION || s == Settings.FULLSCREEN_CONTROLS
+                    || s == Settings.LIKED_SONGS_BUTTON) {
+                return Element.DOCK;
+            }
+            return Element.TEXT;
+        }
+
+        /**
+         * Opens the sheet and makes sure it really is open once layout settles: on a slow first
+         * frame the sheet can still be unmeasured when it is asked to show, and would animate
+         * from a zero offset to nowhere. Checked again after the next layout, and once more a
+         * little later, it ends up fully open either way.
+         */
+        private void revealSheet() {
+            showPanelSheet(true);
+            Runnable settle = () -> {
+                if (overlay.getParent() == null) return;
+                if (!panelVisible || panelContainer.getVisibility() != View.VISIBLE) {
+                    showPanelSheet(true);
+                } else if (Math.abs(panelContainer.getTranslationY()) > 1f) {
+                    animateSheetTo(0f, 0f, true, null);
+                }
+            };
+            afterNextLayout(settle);
+            overlay.postDelayed(settle, 450);
+        }
+
         private void setCardMode(boolean enabled) {
             if (enabled == cardMode && (!enabled || cardLayer != null)) return;
             cardMode = enabled;
@@ -1487,7 +1588,14 @@ final class LyricsLayoutEditController {
                 selectElement(Element.TEXT, false);
                 afterNextLayout(this::refreshAllCaptures);
             }
-            hidePanelSheet(false);
+            // The card has one element and one sheet: nothing to pick first, so it opens by itself
+            // (once the stage is laid out). The lyrics screen starts closed, for picking.
+            if (enabled) {
+                hidePanelSheet(false);
+                afterNextLayout(this::revealSheet);
+            } else {
+                hidePanelSheet(false);
+            }
             refreshBackButton();
         }
 

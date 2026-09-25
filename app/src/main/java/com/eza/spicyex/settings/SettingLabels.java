@@ -90,4 +90,38 @@ public final class SettingLabels {
         return strings.format("settings_cache_size_usage_suffix", "%1$s · %2$s used",
                 optionLabel, usageText);
     }
+
+    /** "Spanish (es)" → "Spanish": the picker shows the code on its own line instead. */
+    public static String withoutCode(String label) {
+        if (label == null) return "";
+        return label.replaceFirst("\\s*\\([A-Za-z]{2,3}(-[A-Za-z0-9]+)?\\)\\s*$", "").trim();
+    }
+
+    /** Locale display names come lower case in many languages ("español"); a list reads better capitalized. */
+    public static String capitalized(String value, java.util.Locale locale) {
+        if (value == null || value.isEmpty()) return "";
+        int first = value.codePointAt(0);
+        return new String(Character.toChars(Character.toUpperCase(first)))
+                + value.substring(Character.charCount(first));
+    }
+
+    /**
+     * The translation target that serves a phone or UI locale, or null. Chinese splits by
+     * script (Taiwan, Hong Kong and Macau read Traditional), and Android's legacy codes map to
+     * the ones the list uses.
+     */
+    public static String translationTargetFor(java.util.Locale locale, java.util.List<String> targets) {
+        if (locale == null || targets == null) return null;
+        String language = locale.getLanguage();
+        if ("iw".equals(language)) language = "he";
+        else if ("in".equals(language)) language = "id";
+        else if ("nb".equals(language) || "nn".equals(language)) language = "no";
+        if ("zh".equals(language)) {
+            String region = locale.getCountry();
+            boolean traditional = "Hant".equals(locale.getScript())
+                    || "TW".equals(region) || "HK".equals(region) || "MO".equals(region);
+            if (traditional && targets.contains("zh-TW")) return "zh-TW";
+        }
+        return targets.contains(language) ? language : null;
+    }
 }

@@ -45,7 +45,10 @@ public final class PanelStyle {
     private static final Map<String, Kind> SECTION_ICONS = new HashMap<>();
 
     static {
+        SECTION_ICONS.put("general", Kind.SETTINGS);
         SECTION_ICONS.put("lyrics", Kind.AUDIO_LINES);
+        SECTION_ICONS.put("gestures", Kind.POINTER);
+        SECTION_ICONS.put("ads", Kind.VOLUME_OFF);
         SECTION_ICONS.put("transliteration", Kind.BOOK_OPEN_TEXT);
         SECTION_ICONS.put("translation", Kind.LANGUAGES);
         SECTION_ICONS.put("now_playing", Kind.DISC_3);

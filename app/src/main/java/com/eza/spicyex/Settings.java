@@ -17,7 +17,11 @@ public final class Settings {
     public static final List<Setting<?>> ALL = new ArrayList<>();
 
     // --- Sections ---
-    public static final Section LYRICS = new Section("Behavior", "lyrics");
+    // Behavior used to hold everything that was not a look; it is split by what a setting is about.
+    public static final Section GENERAL = new Section("General", "general");
+    public static final Section LYRICS = new Section("Lyrics playback", "lyrics");
+    public static final Section GESTURES = new Section("Gestures", "gestures");
+    public static final Section ADS = new Section("Ads", "ads");
     public static final Section LYRICS_SOURCES = new Section("Lyrics Sources", "lyrics_sources");
     public static final Section TRANSLITERATION = new Section("Reading & Transliteration", "transliteration");
     public static final Section ROMANIZATION = TRANSLITERATION;
@@ -40,12 +44,12 @@ public final class Settings {
 
     // --- Lyrics ---
     public static final Setting<String> UI_LANGUAGE = stringSetting(
-            "settings_ui_language", LYRICS, "Interface language",
+            "settings_ui_language", GENERAL, "Interface language",
             "en"
     );
 
     public static final Setting<String> TAP_SEEK_MODE = enumSetting(
-            "lyric_tap_seek_mode", LYRICS, "Tap lyric to seek",
+            "lyric_tap_seek_mode", GESTURES, "Tap lyric to seek",
             "Double tap",
             "Off", "Single tap", "Double tap"
     );
@@ -123,24 +127,24 @@ public final class Settings {
     // Adds a button to Spotify's persistent mini player (every non-lyrics screen) that jumps
     // straight to the native fullscreen lyrics - see LyricsActivityTakeoverHook.
     public static final Setting<Boolean> MINI_PLAYER_LYRICS_ICON = boolSetting(
-            "mini_player_lyrics_icon", LYRICS, "Show lyrics icon on mini player", false
+            "mini_player_lyrics_icon", GENERAL, "Show lyrics icon on mini player", false
     );
 
     // Whether the lyrics screen keeps the status bar hidden, per orientation. A swipe from the
     // edge still shows it for a moment.
     public static final Setting<Boolean> STATUS_BAR_HIDDEN_PORTRAIT = boolSetting(
-            "lyrics_status_bar_hidden_portrait", LYRICS, "Hide status bar (portrait)", false
+            "lyrics_status_bar_hidden_portrait", GENERAL, "Hide status bar (portrait)", false
     );
 
     public static final Setting<Boolean> STATUS_BAR_HIDDEN_LANDSCAPE = boolSetting(
-            "lyrics_status_bar_hidden_landscape", LYRICS, "Hide status bar (landscape)", false
+            "lyrics_status_bar_hidden_landscape", GENERAL, "Hide status bar (landscape)", false
     );
 
     // Holding a lyric line opens a share card for it (see LyricsShareCardController). Off by
     // default: long-pressing the lyrics did nothing before, and a held finger while reading
     // should not start throwing up sheets unexpectedly.
     public static final Setting<Boolean> LONG_PRESS_SHARE = boolSetting(
-            "lyrics_long_press_share", LYRICS, "Long-press a line to share", false
+            "lyrics_long_press_share", GESTURES, "Long-press a line to share", false
     );
 
     // Double-tapping the lyrics adds the song to Liked Songs with a heart (or star) burst where
@@ -148,7 +152,7 @@ public final class Settings {
     // double tap outright: "Tap lyric to seek" on double tap does nothing, and on single tap
     // the seek waits out the double-tap window so a double tap never also seeks.
     public static final Setting<Boolean> DOUBLE_TAP_LIKE = boolSetting(
-            "lyrics_double_tap_like", LYRICS, "Double-tap to like", true
+            "lyrics_double_tap_like", GESTURES, "Double-tap to like", true
     );
 
     // What to do while a spotify:ad: track plays - see AdMuteController. Mute silences only
@@ -158,12 +162,12 @@ public final class Settings {
     public static final String AD_MODE_MUTE = "Mute";
     public static final String AD_MODE_MUSIC = "Play music instead";
     public static final Setting<String> AD_MODE = enumSetting(
-            "ad_mode", LYRICS, "Ads", AD_MODE_OFF,
+            "ad_mode", ADS, "Ads", AD_MODE_OFF,
             AD_MODE_OFF, AD_MODE_MUTE, AD_MODE_MUSIC
     );
     // Style of the music that replaces ads (AD_MODE_MUSIC); Random picks one per ad break.
     public static final Setting<String> AD_MUSIC_THEME = enumSetting(
-            "ad_music_theme", LYRICS, "Ad music style", "Random",
+            "ad_music_theme", ADS, "Ad music style", "Random",
             "Random", "Lofi", "Cafe jazz", "Bossa nova", "Ambient"
     );
     /** Pre-AD_MODE boolean; read once by SettingsStore#migrateAdMode. */
@@ -175,7 +179,7 @@ public final class Settings {
     );
 
     public static final Setting<Boolean> HYPERGLOW_ENABLED = boolSetting(
-            "lyrics_hyper_aod_lyrics_enabled", LYRICS, "Publish lyrics to HyperGlow", false
+            "lyrics_hyper_aod_lyrics_enabled", GENERAL, "Publish lyrics to HyperGlow", false
     );
 
     /** Automatic lyric source arbitration mode shared by fullscreen and now-playing. */
@@ -219,14 +223,16 @@ public final class Settings {
             );
 
     // --- Now Playing ---
+    // Listed under Gestures: the Now Playing section itself is only the entry to the card
+    // editor now. (Moving a setting between sections keeps its stored value.)
     public static final Setting<String> LIVE_CARD_TAP_MODE = enumSetting(
-            "lyrics_live_card_tap_mode", NOW_PLAYING, "Tap card to open lyrics",
+            "lyrics_live_card_tap_mode", GESTURES, "Tap card to open lyrics",
             "Double tap",
             "Off", "Single tap", "Double tap"
     );
 
     public static final Setting<String> LIVE_CARD_TAP_TARGET = enumSetting(
-            "lyrics_live_card_tap_target", NOW_PLAYING, "Card tap target",
+            "lyrics_live_card_tap_target", GESTURES, "Card tap target",
             "Fullscreen",
             "Fullscreen", "Artwork"
     );

@@ -60,13 +60,21 @@ public final class CanonicalSourceCache {
     /** Saves canonical lyrics together with the source-selection identity that produced them. */
     public static boolean save(Context context, String trackUri, LyricsDocument document,
                                int sourceRevision, String canonicalDigest, String selectionIdentity) {
+        return save(context, trackUri, document, sourceRevision, canonicalDigest, selectionIdentity,
+                "", "");
+    }
+
+    /** As above, recording the song's title and artist for the cache browser. */
+    public static boolean save(Context context, String trackUri, LyricsDocument document,
+                               int sourceRevision, String canonicalDigest, String selectionIdentity,
+                               String title, String artist) {
         if (context == null || trackUri == null || trackUri.isEmpty() || document == null
                 || document.lines.isEmpty()) {
             return false;
         }
         try {
             String value = CanonicalSourceCodec.encode(document, sourceRevision, canonicalDigest,
-                    System.currentTimeMillis(), selectionIdentity);
+                    System.currentTimeMillis(), selectionIdentity, title, artist, trackUri);
             if (value.isEmpty()) return false;
             // Byte quota from the shared "Cache size" budget. Eviction is least-recently-used
             // inside the store; there is no entry-count bound and no age expiry.
@@ -96,6 +104,123 @@ public final class CanonicalSourceCache {
 
     public static int entryCount(Context context) {
         return com.eza.spicyex.lyrics.SpicyCacheStore.entryCount(context, PREFS);
+    }
+
+    /** One cached song as the settings panel lists it. */
+    public static final class Entry {
+        public final String key;
+        public final String trackUri;
+        public final String trackId;
+        /** Empty for songs saved before titles were recorded; {@link #firstLine} stands in. */
+        public final String title;
+        public final String artist;
+        /** Where the lyrics came from, as the document named it ("LRCLIB", "Apple Music"...). */
+        public final String source;
+        public final String firstLine;
+        public final long bytes;
+        public final long savedAtMs;
+
+        Entry(String key, String trackUri, String trackId, String title, String artist,
+              String source, String firstLine, long bytes, long savedAtMs) {
+            this.key = key;
+            this.trackUri = trackUri;
+            this.trackId = trackId;
+            this.title = title;
+            this.artist = artist;
+            this.source = source;
+            this.firstLine = firstLine;
+            this.bytes = bytes;
+            this.savedAtMs = savedAtMs;
+        }
+    }
+
+    /** Every cached song, newest first. Reads the whole store: call off the main thread. */
+    public static java.util.List<Entry> entries(Context context) {
+        final java.util.List<Entry> out = new java.util.ArrayList<>();
+        com.eza.spicyex.lyrics.SpicyCacheStore.scan(context, PREFS, (key, value, bytes, updatedAt) -> {
+            Entry entry = summarize(key, value, bytes, updatedAt);
+            if (entry != null) out.add(entry);
+        });
+        return out;
+    }
+
+    /**
+     * Drops one listed song: its canonical record and the raw provider responses kept for the
+     * same track, so a replay really fetches again.
+     */
+    public static void remove(Context context, Entry entry) {
+        if (context == null || entry == null) return;
+        com.eza.spicyex.lyrics.SpicyCacheStore.remove(context, PREFS, entry.key);
+        String trackId = entry.trackId;
+        if (trackId.isEmpty() && !entry.trackUri.isEmpty()) {
+            trackId = com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(entry.trackUri);
+        }
+        if (trackId != null && !trackId.isEmpty()) {
+            com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache.remove(context, trackId);
+            com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache.remove(context, "lrclib:" + trackId);
+        }
+    }
+
+    /**
+     * The top-level fields and the first line's text, streamed: the rest of the lyrics (the bulk
+     * of every record) is skipped rather than parsed.
+     */
+    static Entry summarize(String key, String raw, long bytes, long updatedAt) {
+        if (raw == null || raw.isEmpty()) return null;
+        String trackUri = "";
+        String trackId = "";
+        String title = "";
+        String artist = "";
+        String provider = "";
+        String selected = "";
+        String firstLine = "";
+        long savedAt = updatedAt;
+        try (com.google.gson.stream.JsonReader reader =
+                     new com.google.gson.stream.JsonReader(new java.io.StringReader(raw))) {
+            reader.beginObject();
+            while (reader.hasNext()) {
+                String name = reader.nextName();
+                if (reader.peek() == com.google.gson.stream.JsonToken.NULL) {
+                    reader.skipValue();
+                    continue;
+                }
+                switch (name) {
+                    case "trackUri": trackUri = reader.nextString(); break;
+                    case "trackId": trackId = reader.nextString(); break;
+                    case "title": title = reader.nextString(); break;
+                    case "artist": artist = reader.nextString(); break;
+                    case "provider": provider = reader.nextString(); break;
+                    case "selectedSource": selected = reader.nextString(); break;
+                    case "savedAtMs": savedAt = (long) reader.nextDouble(); break;
+                    case "lines":
+                        reader.beginArray();
+                        while (reader.hasNext()) {
+                            if (firstLine.isEmpty() && reader.peek() == com.google.gson.stream.JsonToken.BEGIN_OBJECT) {
+                                reader.beginObject();
+                                while (reader.hasNext()) {
+                                    String field = reader.nextName();
+                                    if ("text".equals(field) && reader.peek() == com.google.gson.stream.JsonToken.STRING) {
+                                        firstLine = reader.nextString().trim();
+                                    } else {
+                                        reader.skipValue();
+                                    }
+                                }
+                                reader.endObject();
+                            } else {
+                                reader.skipValue();
+                            }
+                        }
+                        reader.endArray();
+                        break;
+                    default:
+                        reader.skipValue();
+                }
+            }
+        } catch (Throwable t) {
+            return null;
+        }
+        String source = selected.isEmpty() ? provider : selected;
+        return new Entry(key, trackUri, trackId, title, artist, source, firstLine, bytes, savedAt);
     }
 
     private static String entryKey(String trackUri) {

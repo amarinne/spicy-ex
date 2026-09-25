@@ -50,7 +50,18 @@ final class LyricsSettingsDialogController {
 
     void show() {
         try {
-            Dialog dialog = new Dialog(activity);
+            // Back is handled in onBackPressed, not a key listener: when the app opts into
+            // Android 13+ back gestures, back never arrives as a KEYCODE_BACK event - the
+            // dialog's own OnBackInvokedCallback calls onBackPressed(), whose default dismissed
+            // the whole panel even from a section's page.
+            final Runnable[] backHandler = new Runnable[1];
+            Dialog dialog = new Dialog(activity) {
+                @Override
+                public void onBackPressed() {
+                    if (backHandler[0] != null) backHandler[0].run();
+                    else super.onBackPressed();
+                }
+            };
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
             Window window = dialog.getWindow();
             final View[] panelRef = new View[1];
@@ -71,14 +82,12 @@ final class LyricsSettingsDialogController {
             panelRef[0] = panelView;
             // Back routes through the animated exit; outside-tap keeps platform behavior
             // (cancelability untouched, per motion-audit lifecycle contract).
-            dialog.setOnKeyListener((d, keyCode, event) -> {
-                if (keyCode == android.view.KeyEvent.KEYCODE_BACK
-                        && event.getAction() == android.view.KeyEvent.ACTION_UP) {
+            backHandler[0] = () -> {
+                // From a section's page, back goes to the section list first.
+                if (!panel.handleBack()) {
                     Motion.exitCardThen(panelView, dialog::isShowing, dialog::dismiss);
-                    return true;
                 }
-                return false;
-            });
+            };
             // Re-fit when the window changes shape while open (rotation, fold/unfold, split
             // screen); the dialog outlives those changes, and a size fitted to the old shape
             // is wrong in the new one.

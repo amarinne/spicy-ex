@@ -499,15 +499,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      *  LyricsLayoutEditController. Called from the settings panel's "Layout editor…" row via
      *  LyricsSettingsDialogController, after that dialog has already closed itself. */
     private void enterLayoutEditMode() {
-        enterLayoutEditMode(false);
+        enterLayoutEditMode(false, false);
     }
 
-    private void enterLayoutEditMode(boolean cardMode) {
+    /** @param fromSettings opened from the settings panel: closing the editor goes back there. */
+    private void enterLayoutEditMode(boolean cardMode, boolean fromSettings) {
         // When the settings dialog dismisses, its window-teardown can momentarily detach the
         // shell's content parent. If the shell is not yet attached, defer so the overlay gets
         // a proper layout pass instead of being silently added to an invisible subtree.
         if (!isAttachedToWindow()) {
-            post(() -> enterLayoutEditMode(cardMode));
+            post(() -> enterLayoutEditMode(cardMode, fromSettings));
             return;
         }
         // Suppliers, not captured Views: which real frame is "current" can change (a position
@@ -536,7 +537,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 .landscape(isLandscape())
                 .applyPreferences(this::refreshPreferences)
                 .onChromeReveal(this::revealChrome)
-                .onClosed(() -> layoutEditorHandle = null)
+                .onClosed(() -> {
+                    layoutEditorHandle = null;
+                    // Back where the editor was opened from: the settings panel, as it was.
+                    if (fromSettings) {
+                        post(() -> {
+                            if (isAttachedToWindow() && !activity.isFinishing()) settingsDialogController.show();
+                        });
+                    }
+                })
                 .enableDemoData(this::enableDemoMode)
                 .disableDemoData(this::disableDemoMode)
                 .skipChip(skipChip)
@@ -879,7 +888,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         this.ambientController = new LyricsAmbientController(activity, HTTP, config);
         this.settingsDialogController = new LyricsSettingsDialogController(
                 activity, frameScheduler, ambientController, host, this::onSettingsClosed,
-                mode -> enterLayoutEditMode(mode == com.eza.spicyex.SettingsPanel.EDITOR_CARD),
+                mode -> enterLayoutEditMode(mode == com.eza.spicyex.SettingsPanel.EDITOR_CARD, true),
                 this::resyncLyricsTiming, TAG);
         this.emptyStateController = new LyricsShellEmptyStateController(activity, config, textFactory);
         this.shellLifecycle = new LyricsShellLifecycle(activity, () -> {

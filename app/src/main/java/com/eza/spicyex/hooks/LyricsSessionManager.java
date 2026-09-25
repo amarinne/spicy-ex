@@ -432,7 +432,7 @@ final class LyricsSessionManager {
         if (outcome == CanonicalBaseAdoption.Outcome.UNCHANGED) {
             // Same canonical source arrived again. Nothing changed, so nothing republishes and no
             // derived artifact is invalidated.
-            persistCanonicalBase(requestedUri, result,
+            persistCanonicalBase(requestedTrack, requestedUri, result,
                     session == null ? 1 : session.identity.sourceRevision, incoming.digest);
             return;
         }
@@ -448,8 +448,8 @@ final class LyricsSessionManager {
         if (outcome == CanonicalBaseAdoption.Outcome.REPLACE) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOURCE_REPLACED);
         }
-        persistCanonicalBase(requestedUri, canonicalSource, session.identity.sourceRevision,
-                incoming.digest);
+        persistCanonicalBase(requestedTrack, requestedUri, canonicalSource,
+                session.identity.sourceRevision, incoming.digest);
         Snapshot snapshot = snapshot();
         List<RequestRecord> pending = takeRequests(requestedGeneration);
         for (RequestRecord request : pending) {
@@ -459,14 +459,17 @@ final class LyricsSessionManager {
         startDetection(requestedTrack, result, requestedGeneration);
     }
 
-    private void persistCanonicalBase(String requestedUri, LyricsDocument snapshot, int revision,
-                                      String digest) {
+    private void persistCanonicalBase(SpotifyTrack requestedTrack, String requestedUri,
+                                      LyricsDocument snapshot, int revision, String digest) {
+        final String title = requestedTrack == null || requestedTrack.title == null ? "" : requestedTrack.title;
+        final String artist = requestedTrack == null || requestedTrack.artist == null ? "" : requestedTrack.artist;
         // The caller owns this snapshot and must not mutate it after handoff: the IO thread reads
         // it without a further whole-document copy.
         final LyricsDocument toPersist = snapshot;
         NativeRuntime.LYRICS_IO.execute(
                 () -> CanonicalSourceCache.save(context, requestedUri, toPersist, revision, digest,
-                        LyricsSourcePreferences.selectionIdentity(context, requestedUri)));
+                        LyricsSourcePreferences.selectionIdentity(context, requestedUri),
+                        title, artist));
     }
 
     private void acceptError(String requestedUri, int requestedGeneration, String error) {
