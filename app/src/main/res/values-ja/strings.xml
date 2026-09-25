@@ -206,6 +206,10 @@
     <string name="settings_layout_editor_element_track_text">トラック情報</string>
     <string name="settings_layout_editor_element_focus">フォーカス</string>
     <string name="settings_layout_editor_element_lyrics">歌詞</string>
+    <string name="settings_layout_editor_tab_style">スタイル</string>
+    <string name="settings_layout_editor_tab_animation">アニメーション</string>
+    <string name="settings_layout_editor_tab_effects">エフェクト</string>
+    <string name="settings_layout_editor_tab_text">テキスト</string>
     <string name="settings_layout_editor_element_skip">スキップ</string>
     <string name="settings_layout_editor_element_follow">追従</string>
     <string name="settings_layout_editor_element_top_bar">上部バー</string>

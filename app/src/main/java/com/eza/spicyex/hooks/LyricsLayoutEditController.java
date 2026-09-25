@@ -605,6 +605,13 @@ final class LyricsLayoutEditController {
             refreshFollowChip();
             refreshDock();
             refreshBackButton();
+            if (startInCardMode) {
+                // Opened for the card: the lyrics-screen editor never shows, not even for the
+                // frame before the card stage can be laid out.
+                for (View view : lyricsModeViews()) {
+                    if (view != null) view.setVisibility(View.GONE);
+                }
+            }
             afterNextLayout(() -> {
                 refreshSkipChip();
                 refreshFollowChip();
@@ -1139,6 +1146,8 @@ final class LyricsLayoutEditController {
                 @Override
                 public void onScaleEnd(android.view.ScaleGestureDetector detector) {
                     hideValueBubble();
+                    // The size just pinched lives on the Style tab: show it there.
+                    textTab = TAB_STYLE;
                     if (selected == Element.TEXT) selectElement(Element.TEXT, false);
                 }
             });
@@ -1438,6 +1447,9 @@ final class LyricsLayoutEditController {
         private long cardLastFrameMs;
         private int cardLastIndex = -1;
         private final Runnable cardFrame = this::stepCardPreview;
+        private float sheetFractionBeforeCard;
+        /** The card sheet's tabs: Text (size, weight, secondary line, overflow) and Animation. */
+        private int cardTab;
 
         /** Layers that belong to the lyrics-screen elements; hidden while editing the card. */
         private View[] lyricsModeViews() {
@@ -1452,6 +1464,13 @@ final class LyricsLayoutEditController {
                 if (view != null) view.setVisibility(enabled ? View.GONE : View.VISIBLE);
             }
             overlay.setBackgroundColor(enabled ? 0xD9000000 : 0x4D000000);
+            // The card sits in the top part of its stage; the sheet stays below it.
+            if (enabled) {
+                sheetFractionBeforeCard = optionsScroll.maxHeightFraction;
+                optionsScroll.maxHeightFraction = Math.min(sheetFractionBeforeCard, 0.5f);
+            } else if (sheetFractionBeforeCard > 0f) {
+                optionsScroll.maxHeightFraction = sheetFractionBeforeCard;
+            }
             if (enabled) {
                 buildCardPreview();
                 cardLayer.setVisibility(View.VISIBLE);
@@ -1478,6 +1497,11 @@ final class LyricsLayoutEditController {
             if (cardLayer != null) return;
             cardLayer = new FrameLayout(activity);
             cardLayer.setClipChildren(false);
+            // Its own stage, opaque: the lyrics screen (and its editor) no longer show through,
+            // dimmed, behind the card being edited.
+            cardLayer.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                    new int[]{0xFF2B2B31, 0xFF16161A, 0xFF0E0E10}));
+            cardLayer.setClickable(true);
             FrameLayout card = new FrameLayout(activity);
             GradientDrawable bg = new GradientDrawable();
             bg.setColor(0xFF2A2A2E);
@@ -1488,22 +1512,32 @@ final class LyricsLayoutEditController {
             card.addView(cardPreview, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             card.setOnClickListener(v -> selectElement(Element.CARD));
+            // In the top part of the stage, under the editor's buttons, where the options sheet
+            // (capped to half the height) never reaches it; beside the side sheet when wide.
+            android.content.res.Configuration screen = activity.getResources().getConfiguration();
+            boolean sideSheet = screen.screenWidthDp > screen.screenHeightDp || screen.screenWidthDp >= 600;
+            int width = overlay.getWidth() > 0 ? overlay.getWidth()
+                    : activity.getResources().getDisplayMetrics().widthPixels;
+            int sheetWidth = sideSheet ? Math.min(dp(420), Math.round(width * 0.46f)) + dp(24) : 0;
+            int room = width - sheetWidth;
+            int side = Math.max(dp(16), (room - dp(560)) / 2);
             FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER);
-            int side = Math.max(dp(16), (overlay.getWidth() - dp(560)) / 2);
+                    sideSheet ? Gravity.START | Gravity.CENTER_VERTICAL : Gravity.TOP);
             cardLp.leftMargin = side;
-            cardLp.rightMargin = side;
+            cardLp.rightMargin = side + sheetWidth;
+            if (!sideSheet) cardLp.topMargin = dp(150);
             cardLayer.addView(card, cardLp);
             cardCapture = card;
             TextView caption = text(s("card_caption", "Now playing card"), 13, 0x99FFFFFF, true);
             FrameLayout.LayoutParams captionLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER_HORIZONTAL | Gravity.TOP);
-            captionLp.topMargin = dp(120);
+                    Gravity.START | Gravity.TOP);
+            captionLp.leftMargin = side + dp(4);
+            captionLp.topMargin = sideSheet ? dp(72) : dp(122);
             cardLayer.addView(caption, captionLp);
-            // Below the sheet (added before it) so the sheet still covers the preview.
-            overlay.addView(cardLayer, overlay.indexOfChild(panelContainer), new FrameLayout.LayoutParams(
+            // Above the lyrics-screen layers, below the editor's own buttons and the sheet.
+            overlay.addView(cardLayer, overlay.indexOfChild(backLayer), new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             cardDocument = DemoLyricsContent.demoDocument();
             com.eza.spicyex.lyrics.LyricTimeline.applySyncedRows(cardDocument);
@@ -1544,22 +1578,30 @@ final class LyricsLayoutEditController {
         }
 
         private void buildCardOptions() {
-            beginGroup(strings.setting(Settings.LIVE_CARD_TEXT_SIZE));
-            addOption(presetSliderRow(Settings.LIVE_CARD_TEXT_SIZE, Settings.LIVE_CARD_TEXT_SIZE_CUSTOM,
-                    "custom", new String[]{"small", "normal", "large", "xlarge"},
-                    new int[]{90, 100, 120, 150}, this::markCardDirty), matchWrap(12));
-            cardChips(Settings.LIVE_CARD_WEIGHT, new String[]{"Regular", "Medium", "Bold"});
-            cardChips(Settings.LIVE_CARD_SECONDARY_MODE,
-                    new String[]{"Main only", "Transliteration", "Translation", "Both"});
-            cardChips(Settings.LIVE_CARD_ANIMATION, new String[]{"Minimal", "Karaoke fill", "Spotlight word"});
-            cardChips(Settings.LIVE_CARD_GLOW, new String[]{"Off", "Word only", "Subtle line"});
-            cardChips(Settings.LIVE_CARD_LINE_SYNC_FILL,
-                    new String[]{"Top to bottom", "Left to right (block)", "Left to right (sentence)"});
-            cardChips(Settings.LIVE_CARD_OVERFLOW, new String[]{"Wrap", "Scroll with lyric", "Clip"});
-            if ("Scroll with lyric".equals(store.get(Settings.LIVE_CARD_OVERFLOW))) {
-                cardChips(Settings.LIVE_CARD_SCROLL_SCOPE, new String[]{"Grouped", "Individual lines"});
+            addOption(tabBar(new String[]{s("tab_text", "Text"), s("tab_animation", "Animation")},
+                    cardTab, index -> {
+                        cardTab = index;
+                        selectElement(Element.CARD);
+                    }), matchWrap(12));
+            if (cardTab == 0) {
+                beginGroup(strings.setting(Settings.LIVE_CARD_TEXT_SIZE));
+                addOption(presetSliderRow(Settings.LIVE_CARD_TEXT_SIZE, Settings.LIVE_CARD_TEXT_SIZE_CUSTOM,
+                        "custom", new String[]{"small", "normal", "large", "xlarge"},
+                        new int[]{90, 100, 120, 150}, this::markCardDirty), matchWrap(12));
+                cardChips(Settings.LIVE_CARD_WEIGHT, new String[]{"Regular", "Medium", "Bold"});
+                cardChips(Settings.LIVE_CARD_SECONDARY_MODE,
+                        new String[]{"Main only", "Transliteration", "Translation", "Both"});
+                cardChips(Settings.LIVE_CARD_OVERFLOW, new String[]{"Wrap", "Scroll with lyric", "Clip"});
+                if ("Scroll with lyric".equals(store.get(Settings.LIVE_CARD_OVERFLOW))) {
+                    cardChips(Settings.LIVE_CARD_SCROLL_SCOPE, new String[]{"Grouped", "Individual lines"});
+                }
+            } else {
+                cardChips(Settings.LIVE_CARD_ANIMATION, new String[]{"Minimal", "Karaoke fill", "Spotlight word"});
+                cardChips(Settings.LIVE_CARD_GLOW, new String[]{"Off", "Word only", "Subtle line"});
+                cardChips(Settings.LIVE_CARD_LINE_SYNC_FILL,
+                        new String[]{"Top to bottom", "Left to right (block)", "Left to right (sentence)"});
+                cardChips(Settings.LIVE_CARD_TRANSITION, new String[]{"Fade up", "Crossfade", "None"});
             }
-            cardChips(Settings.LIVE_CARD_TRANSITION, new String[]{"Fade up", "Crossfade", "None"});
             endGroup();
         }
 
@@ -2079,12 +2121,74 @@ final class LyricsLayoutEditController {
 
         private static final int FILE_PICKER_REQUEST_CODE = 10234;
 
-        private void buildTextOptions() {
-            // Animation style first: it decides which of the groups below exist, so changing it
-            // must only ever change what is under the finger, never what is above it.
-            buildAnimationOptions();
+        /**
+         * The lyrics sheet is split into tabs - Style, Animation, Effects - instead of one scroll
+         * of ten option cards, which was hard to read and to find anything in. The tab survives
+         * the in-place rebuilds option changes trigger.
+         */
+        private int textTab;
+        private static final int TAB_STYLE = 0;
+        private static final int TAB_ANIMATION = 1;
+        private static final int TAB_EFFECTS = 2;
 
-            addDivider();
+        private void buildTextOptions() {
+            addOption(textTabs(), matchWrap(12));
+            switch (textTab) {
+                case TAB_ANIMATION:
+                    buildAnimationOptions();
+                    break;
+                case TAB_EFFECTS:
+                    buildTextEffectOptions();
+                    break;
+                default:
+                    buildTextStyleOptions();
+                    break;
+            }
+            endGroup();
+        }
+
+        /** One pill holding the three tabs; the current one is a white segment. */
+        private View textTabs() {
+            return tabBar(new String[]{s("tab_style", "Style"), s("tab_animation", "Animation"),
+                    s("tab_effects", "Effects")}, textTab, index -> {
+                textTab = index;
+                selectElement(Element.TEXT);
+            });
+        }
+
+        /** A sheet's tab bar: one pill, the current tab a white segment; picking one rebuilds the
+         *  sheet (through {@code onPick}) and shows it from the top. */
+        private View tabBar(String[] labels, int current, java.util.function.IntConsumer onPick) {
+            LinearLayout bar = new LinearLayout(activity);
+            bar.setPadding(dp(3), dp(3), dp(3), dp(3));
+            GradientDrawable barBg = new GradientDrawable();
+            barBg.setCornerRadius(dp(20));
+            barBg.setColor(0x1AFFFFFF);
+            bar.setBackground(barBg);
+            for (int i = 0; i < labels.length; i++) {
+                TextView tab = text(labels[i], 14, i == current ? Color.BLACK : 0xCCFFFFFF, i == current);
+                tab.setGravity(Gravity.CENTER);
+                tab.setSingleLine(true);
+                tab.setPadding(dp(8), dp(8), dp(8), dp(8));
+                if (i == current) {
+                    GradientDrawable on = new GradientDrawable();
+                    on.setCornerRadius(dp(17));
+                    on.setColor(Color.WHITE);
+                    tab.setBackground(on);
+                }
+                final int index = i;
+                tab.setOnClickListener(v -> {
+                    if (current == index) return;
+                    onPick.accept(index);
+                    optionsScroll.scrollTo(0, 0);
+                });
+                bar.addView(tab, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            }
+            return bar;
+        }
+
+        /** Style: size, font, weight, line spacing. */
+        private void buildTextStyleOptions() {
             addSectionLabel(Settings.LYRICS_TEXT_SIZE, 10);
             addOption(presetSliderRow(Settings.LYRICS_TEXT_SIZE, Settings.LYRICS_TEXT_SIZE_CUSTOM,
                     "custom", new String[]{"small", "normal", "large", "xlarge"},
@@ -2120,7 +2224,11 @@ final class LyricsLayoutEditController {
                     "custom", new String[]{"compact", "default", "spacious", "more", "max"},
                     new int[]{80, 110, 150, 200, 250}, null), matchWrap(14));
 
-            addDivider();
+            endGroup();
+        }
+
+        /** Effects: interlude icon, glow, line blur. */
+        private void buildTextEffectOptions() {
             addSectionLabel(Settings.INTERLUDE_ICON, 10);
             addOption(chipRow(Settings.INTERLUDE_ICON,
                     new String[]{"dots", "note"}, null), matchWrap(14));

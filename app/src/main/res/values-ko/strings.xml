@@ -205,6 +205,10 @@
     <string name="settings_layout_editor_element_track_text">곡 정보</string>
     <string name="settings_layout_editor_element_focus">현재 가사 위치</string>
     <string name="settings_layout_editor_element_lyrics">가사</string>
+    <string name="settings_layout_editor_tab_style">스타일</string>
+    <string name="settings_layout_editor_tab_animation">애니메이션</string>
+    <string name="settings_layout_editor_tab_effects">효과</string>
+    <string name="settings_layout_editor_tab_text">텍스트</string>
     <string name="settings_layout_editor_element_skip">건너뛰기</string>
     <string name="settings_layout_editor_element_follow">현재 가사로</string>
     <string name="settings_layout_editor_element_top_bar">상단 버튼</string>

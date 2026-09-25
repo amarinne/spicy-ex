@@ -521,6 +521,10 @@
     <string name="settings_layout_editor_element_track_text">Track text</string>
     <string name="settings_layout_editor_element_focus">Focus</string>
     <string name="settings_layout_editor_element_lyrics">Lyrics</string>
+    <string name="settings_layout_editor_tab_style">Style</string>
+    <string name="settings_layout_editor_tab_animation">Animation</string>
+    <string name="settings_layout_editor_tab_effects">Effects</string>
+    <string name="settings_layout_editor_tab_text">Text</string>
     <string name="settings_layout_editor_element_skip">Skip</string>
     <string name="settings_layout_editor_element_follow">Follow</string>
     <string name="settings_layout_editor_element_top_bar">Top bar</string>
