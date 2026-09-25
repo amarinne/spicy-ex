@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.ai.AiCancelledException;
@@ -61,7 +62,10 @@ public final class LyricsSoundLane {
     private final ExecutorService aiExecutor;
     /** Cancels the AI pass in flight, if one was started. */
     private volatile AiSignal aiSignal;
-    private final Handler handler;
+    private final Poster poster;
+    /** Elapsed-realtime source for run metrics; injectable so JVM tests control time. */
+    private final LongSupplier clock;
+    private final AiSettingsSource settingsSource;
     private final int processingVersion;
     /** Retires earlier runs of this lane: only the newest sequence may publish. */
     private final AtomicLong laneSequence = new AtomicLong();
@@ -71,13 +75,38 @@ public final class LyricsSoundLane {
     public LyricsSoundLane(Context context, OkHttpClient http, ExecutorService laneExecutor,
                            ExecutorService networkWorkers, ExecutorService aiExecutor,
                            Handler handler, int processingVersion) {
+        this(context, http, laneExecutor, networkWorkers, aiExecutor, processingVersion,
+                handler == null ? null : handler::post, SystemClock::elapsedRealtime, AiSettings::new);
+    }
+
+    /**
+     * Test seam: an explicit surface dispatcher and clock, so a JVM test can publish callbacks
+     * without a Looper and read deterministic durations, plus a configuration source so a JVM test
+     * can offer a credential the Android Keystore cannot mint off-device. Production uses the
+     * constructor above, which supplies the real Handler, {@link SystemClock}, and {@link AiSettings}.
+     */
+    LyricsSoundLane(Context context, OkHttpClient http, ExecutorService laneExecutor,
+                    ExecutorService networkWorkers, ExecutorService aiExecutor, int processingVersion,
+                    Poster poster, LongSupplier clock, AiSettingsSource settingsSource) {
         this.context = context;
         this.http = http;
         this.laneExecutor = laneExecutor;
         this.networkWorkers = networkWorkers;
         this.aiExecutor = aiExecutor == null ? networkWorkers : aiExecutor;
-        this.handler = handler;
+        this.poster = poster;
+        this.clock = clock;
+        this.settingsSource = settingsSource;
         this.processingVersion = processingVersion;
+    }
+
+    /** Dispatches a lane callback onto the owning surface. */
+    interface Poster {
+        void post(Runnable action);
+    }
+
+    /** Where the lane reads AI configuration from; one source per lane instance. */
+    interface AiSettingsSource {
+        AiSettings create(Context context);
     }
 
     /**
@@ -124,7 +153,7 @@ public final class LyricsSoundLane {
         retirePrevious(run);
 
         if (localWork.isEmpty() && networkWork.isEmpty()) {
-            AiSettings settings = new AiSettings(context);
+            AiSettings settings = settingsSource.create(context);
             boolean aiConfigured = settings.soundLayerEnabled() && settings.isConfigured();
             if (aiConfigured) {
                 startAiGapFill(run, id, generation, snapshot, displayedSound, displayedSound, settings,
@@ -136,7 +165,7 @@ public final class LyricsSoundLane {
             return false;
         }
 
-        final long startedAtMs = SystemClock.elapsedRealtime();
+        final long startedAtMs = clock.getAsLong();
         laneExecutor.execute(() -> {
             AtomicInteger changed = new AtomicInteger();
             Set<Integer> locallyRomanized = new HashSet<>();
@@ -295,9 +324,9 @@ public final class LyricsSoundLane {
                         int changed, long startedAtMs, boolean explicitAiRequest) {
         LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOUND_PROCESSED);
         LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.SOUND_PROCESSING,
-                SystemClock.elapsedRealtime() - startedAtMs);
+                clock.getAsLong() - startedAtMs);
         final SoundArtifact local = artifactOf(run, entries, false);
-        AiSettings settings = new AiSettings(context);
+        AiSettings settings = settingsSource.create(context);
         boolean aiConfigured = settings.soundLayerEnabled() && settings.isConfigured();
         if (!aiConfigured) {
             post(run, id, generation, snapshot, currentGuard,
@@ -423,7 +452,7 @@ public final class LyricsSoundLane {
      */
     private void recordAiOutcome(String operation, String result, String reason, int httpStatus) {
         Diagnostics.event(AI_COMPONENT, operation, Diagnostics.context(
-                "provider", new AiSettings(context).providerId(),
+                "provider", settingsSource.create(context).providerId(),
                 "result", result,
                 "reason", AiText.nz(reason),
                 "status", httpStatus > 0 ? String.valueOf(httpStatus) : ""));
@@ -480,7 +509,7 @@ public final class LyricsSoundLane {
                 XpLog.log(TAG + " local mode reprocess failed: " + t.getClass().getSimpleName());
             }
             patch.changed = changed.get();
-            handler.post(() -> {
+            poster.post(() -> {
                 boolean current = run.isNewest()
                         && (currentGuard == null || currentGuard.isCurrent("", 0, snapshot));
                 if (current) {
@@ -521,7 +550,7 @@ public final class LyricsSoundLane {
 
     private void post(DerivedLayerRun run, String id, int generation, LyricsDocument snapshot,
                       LyricsSecondaryProcessor.CurrentGuard guard, Runnable action) {
-        handler.post(() -> {
+        poster.post(() -> {
             if (!run.accepts(guard, id, generation, snapshot)) return;
             action.run();
         });

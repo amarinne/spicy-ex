@@ -45,12 +45,35 @@ public final class LyricsFrameRenderer {
     // couple of rows beyond the estimated viewport.
     private static final int OFFSCREEN_MARGIN_ROWS = 2;
 
-    /** True while a mounted row still has a renderer-owned spring to drain. */
+    /**
+     * The one culling rule, shared by the frame pass and the pending-animation probe.
+     *
+     * <p>A row outside this window keeps only its cheap row-level fade/blur, so its scale, glow
+     * and syllable springs are left mid-flight by design. Counting such a row as pending would
+     * pin the frame scheduler on forever: a paused player with one animating row scrolled out of
+     * view would never go idle.
+     *
+     * @param visibleEnd {@link Integer#MAX_VALUE} for "no viewport known" (all lines visible)
+     */
+    static boolean isCulledOffscreen(int index, int activeIndex, int visibleStart, int visibleEnd) {
+        return index != activeIndex && visibleEnd != Integer.MAX_VALUE
+                && (index < visibleStart - OFFSCREEN_MARGIN_ROWS
+                    || index > visibleEnd + OFFSCREEN_MARGIN_ROWS);
+    }
+
+    /**
+     * True while a mounted row the renderer would actually draw still has a spring to drain.
+     *
+     * <p>Culling has to match {@link #applySynced}: rows that pass culled cannot settle while
+     * they are off screen, so they must not hold the scheduler open either.
+     */
     public boolean hasPendingAnimation(LyricsDocument document, Set<Integer> mountedIndices,
-                                       ViewGroup mountedRowsHost) {
+                                       ViewGroup mountedRowsHost, int activeIndex,
+                                       int visibleStart, int visibleEnd) {
         if (document == null || document.appliedLines == null || mountedIndices == null) return false;
         for (int i : mountedIndices) {
             if (i < 0 || i >= document.appliedLines.size()) continue;
+            if (isCulledOffscreen(i, activeIndex, visibleStart, visibleEnd)) continue;
             AppliedLine line = document.appliedLines.get(i);
             if (LyricsLineViewState.isMounted(line, mountedRowsHost)
                     && !LyricsLineViewState.isSettled(line)) return true;
@@ -123,8 +146,7 @@ public final class LyricsFrameRenderer {
             // Off screen (mounted ahead of the viewport, or already scrolled past): nobody sees its
             // per-syllable motion, so it keeps only its cheap row-level fade/blur. When it scrolls
             // into view its springs are still unsettled and it gets the full pass from then on.
-            boolean offscreen = i != activeIndex && visibleEnd != Integer.MAX_VALUE
-                    && (i < visibleStart - OFFSCREEN_MARGIN_ROWS || i > visibleEnd + OFFSCREEN_MARGIN_ROWS);
+            boolean offscreen = isCulledOffscreen(i, activeIndex, visibleStart, visibleEnd);
             LyricsLineAnimationState lineState = LyricsLineAnimationState.forLine(
                     line, positionMs, config.spotlight, config.lineGradientEnabled,
                     config.appleDimPassed);

@@ -96,7 +96,7 @@ public final class AiSoundRun {
         AiLayerRunner.Args args = new AiLayerRunner.Args();
         args.config = config;
         args.provider = settings.provider();
-        args.store = new AiPaidRecords(context);
+        args.store = AiRecordStores.forRun(context);
         args.rows = rows;
         args.signal = signal;
         args.monitor = monitor;

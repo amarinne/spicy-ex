@@ -9,6 +9,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.SystemClock;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.os.Build;
@@ -27,11 +28,15 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 
 import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.WeakHashMap;
 
 import com.eza.spicyex.xposed.XpHooks;
 import com.eza.spicyex.xposed.XpLog;
+import com.eza.spicyex.xposed.XpReflect;
 
 /** Owns Spotify activity takeover, entry injection, keepalive, and native shell root mount. */
 final class LyricsActivityTakeoverHook {
@@ -48,6 +53,16 @@ final class LyricsActivityTakeoverHook {
 
     private static final WeakHashMap<Activity, Long> EXPLICIT_LYRICS_EXIT_UNTIL_MS = new WeakHashMap<>();
     private static final WeakHashMap<Activity, Long> KEEP_LYRICS_ACTIVITY_UNTIL_MS = new WeakHashMap<>();
+    // Exact-class method lookups bypass subclass overrides, so one Activity-level
+    // back hook is not enough (see ensureLegacyBackCoverage). Each declaring
+    // class+method pair is covered once per process.
+    private static final Set<String> LEGACY_BACK_COVERED =
+            Collections.synchronizedSet(new HashSet<>());
+    // A back key observed at dispatch means a shortly-following finish is
+    // user-initiated even when no onBackPressed override ran (a view consumed
+    // the key and finished directly). Consumed-without-finish presses expire.
+    private static final WeakHashMap<Activity, Long> BACK_PRESS_UNTIL_MS = new WeakHashMap<>();
+    private static final long BACK_PRESS_EXIT_WINDOW_MS = 2500L;
     // Armed by our own entry button right before launching the lyrics activity; consumed when we mount.
     // Spotify's native lyric card launches the same activity without arming this, so it stays native.
     private static volatile boolean takeoverArmed = false;
@@ -88,7 +103,10 @@ final class LyricsActivityTakeoverHook {
             Activity activity = (Activity) param.thisObject;
             References.setCurrentActivity(activity);
             if (isLyricsFullscreenActivity(activity)) {
-                if (activateNativeTakeover(activity)) ensureSystemBackCallback(activity);
+                if (activateNativeTakeover(activity)) {
+                    ensureSystemBackCallback(activity);
+                    ensureLegacyBackCoverage(activity);
+                }
                 // else: native lyric card opened Spotify's own screen - do not take over.
             } else {
                 scheduleExtraLyricsButtonInjection(activity);
@@ -108,6 +126,7 @@ final class LyricsActivityTakeoverHook {
                     }
                     if (activateNativeTakeover(activity)) {
                         ensureSystemBackCallback(activity);
+                        ensureLegacyBackCoverage(activity);
                         mountNativeSpicyRoot(activity);
                     }
                 }, boolean.class);
@@ -131,22 +150,24 @@ final class LyricsActivityTakeoverHook {
         });
 
         XpHooks.findBefore(Activity.class, "onBackPressed", "takeover:Activity#onBackPressed", param -> {
-            Activity activity = (Activity) param.thisObject;
-            if (!isLyricsFullscreenActivity(activity)) {
-                if (nowPlayingInjector.consumeArtworkBack(activity)) param.setResult(null);
-                return;
-            }
-            // Legacy path (API <33, or predictive back off): the dispatcher callback never
-            // runs, so finish explicitly instead of relying on Spotify's onBackPressed to
-            // finish. Inactive native screens fall through untouched.
-            if (!shouldInterceptLyricsBack(nativeLyricsSessionActive, hasNativeSpicyRoot(activity))) return;
-            markExplicitLyricsExit(activity);
-            activity.finish();
-            param.setResult(null);
+            handleLegacyActivityBack((Activity) param.thisObject, param);
         });
+
+        // Back keys reach views before any onBackPressed override runs: a view that
+        // consumes KEYCODE_BACK and finishes directly would otherwise bypass the
+        // explicit-exit marking while still hitting the finish suppression below.
+        // Record only; Spotify's handling runs untouched.
+        XpHooks.findBefore(Activity.class, "dispatchKeyEvent", "takeover:Activity#dispatchKeyEvent", param -> {
+            handleActivityKeyForBack((Activity) param.thisObject, param);
+        }, KeyEvent.class);
 
         XpHooks.findBefore(Activity.class, "finish", "takeover:Activity#finish", param -> {
             Activity activity = (Activity) param.thisObject;
+            // A back press observed at dispatch promotes this finish to an
+            // explicit exit (clearing the session) instead of suppressing it.
+            if (isLyricsFullscreenActivity(activity) && consumeRecentBackPress(activity)) {
+                markExplicitLyricsExit(activity);
+            }
             if (!shouldKeepLyricsActivityOpen(activity)) return;
             XpLog.log(NativeSpicyLyricsHook.TAG
                     + " suppressed non-explicit lyrics activity finish to keep native renderer open");
@@ -181,8 +202,93 @@ final class LyricsActivityTakeoverHook {
         }
     }
 
-    // Owned-overlay back only: registered after takeover ownership is established
-    // (active session), never on native Spotify screens. No host-dispatch fallback:
+    // Legacy back path shared by every onBackPressed declaring class (see
+    // ensureLegacyBackCoverage). Legacy path (API <33, or predictive back
+    // off): the dispatcher callback never runs, so finish explicitly instead
+    // of relying on Spotify's onBackPressed to finish. Inactive native
+    // screens fall through untouched.
+    private void handleLegacyActivityBack(Activity activity, XpHooks.XpParam param) {
+        if (activity == null) return;
+        if (!isLyricsFullscreenActivity(activity)) {
+            if (nowPlayingInjector.consumeArtworkBack(activity)) param.setResult(null);
+            return;
+        }
+        // An override that calls super would otherwise exit twice; the first
+        // firing already marked the exit and finished.
+        if (isExplicitLyricsExit(activity)) {
+            param.setResult(null);
+            return;
+        }
+        if (!shouldInterceptLyricsBack(nativeLyricsSessionActive, hasNativeSpicyRoot(activity))) return;
+        markExplicitLyricsExit(activity);
+        activity.finish();
+        param.setResult(null);
+    }
+
+    // getDeclaredMethod lookups are exact-class only, so an onBackPressed
+    // override in the concrete lyrics activity (or its androidx base) bypasses
+    // the Activity-level hook while its finish() still hits our suppression:
+    // back then does nothing and the screen looks stuck. Cover each declaring
+    // class once, lazily, from an activity instance that carries the host
+    // classloader. Misses fail silent and keep the old behavior.
+    private void ensureLegacyBackCoverage(Activity activity) {
+        if (activity == null || !isLyricsFullscreenActivity(activity)) return;
+        coverHostMethod(activity.getClass(), "onBackPressed");
+        coverHostMethod(activity.getClass(), "dispatchKeyEvent");
+        Class<?> component = XpReflect.findClassIfExists(
+                "androidx.activity.ComponentActivity", activity.getClass().getClassLoader());
+        coverHostMethod(component, "onBackPressed");
+        coverHostMethod(component, "dispatchKeyEvent");
+    }
+
+    private void coverHostMethod(Class<?> clazz, String method) {
+        if (clazz == null || clazz == Activity.class) return;
+        String key = clazz.getName() + "#" + method;
+        synchronized (LEGACY_BACK_COVERED) {
+            if (!LEGACY_BACK_COVERED.add(key)) return;
+        }
+        try {
+            Class<?>[] params = "dispatchKeyEvent".equals(method)
+                    ? new Class<?>[]{KeyEvent.class} : new Class<?>[0];
+            clazz.getDeclaredMethod(method, params);
+        } catch (NoSuchMethodException missing) {
+            return;
+        }
+        XpLog.log(NativeSpicyLyricsHook.TAG + " covering " + method + " override in " + clazz.getName());
+        try {
+            if ("dispatchKeyEvent".equals(method)) {
+                XpHooks.hookAllMethods(clazz, method, "takeover:Activity#dispatchKeyEvent-override",
+                        (XpHooks.Before) param -> handleActivityKeyForBack(
+                                (Activity) param.thisObject, param));
+            } else {
+                XpHooks.hookAllMethods(clazz, method, "takeover:Activity#onBackPressed-override",
+                        (XpHooks.Before) param -> handleLegacyActivityBack(
+                                (Activity) param.thisObject, param));
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void handleActivityKeyForBack(Activity activity, XpHooks.XpParam param) {
+        if (activity == null || !isLyricsFullscreenActivity(activity)) return;
+        if (param.args == null || param.args.length == 0 || !(param.args[0] instanceof KeyEvent)) return;
+        KeyEvent event = (KeyEvent) param.args[0];
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_DOWN) {
+            synchronized (BACK_PRESS_UNTIL_MS) {
+                BACK_PRESS_UNTIL_MS.put(activity, SystemClock.elapsedRealtime() + BACK_PRESS_EXIT_WINDOW_MS);
+            }
+        }
+    }
+
+    private static boolean consumeRecentBackPress(Activity activity) {
+        if (activity == null) return false;
+        synchronized (BACK_PRESS_UNTIL_MS) {
+            Long until = BACK_PRESS_UNTIL_MS.remove(activity);
+            return until != null && SystemClock.elapsedRealtime() <= until;
+        }
+    }
+
+    // Owned-overlay back only: registered after takeover ownership is established    // (active session), never on native Spotify screens. No host-dispatch fallback:
     // unregistered screens keep normal host handling untouched.
     private void ensureSystemBackCallback(Activity activity) {
         if (activity == null || Build.VERSION.SDK_INT < 33) return;

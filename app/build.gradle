@@ -10,7 +10,7 @@ android {
     // intentionally additive: the narrower lyrics-ai and lyrics-session groups sit inside the
     // broad lyrics group, while corpus names identify the golden language fixtures.
     def unitTestGroups = [
-            settings: ['com.eza.spicyex.Settings*'],
+            settings: ['com.eza.spicyex.Settings*', 'com.eza.spicyex.settings.*'],
             diagnostics: ['com.eza.spicyex.diagnostics.*'],
             hooks: ['com.eza.spicyex.hooks.*'],
             lyrics: ['com.eza.spicyex.lyrics.*'],
@@ -30,10 +30,26 @@ android {
                     'com.eza.spicyex.lyrics.KoreanRomanizerTest'
             ]
     ]
+    // Exporters and the billed model survey are evaluation tools, not regression tests: they
+    // write files or call paid providers and assert nothing. They are excluded from every
+    // default and grouped test run, and only execute with -PtestTools=<name>.
+    def optInTestTools = [
+            'jp-export': [
+                    'com.eza.spicyex.lyrics.JapaneseSnapshotExporterTest',
+                    'com.eza.spicyex.lyrics.JapaneseReadingPolicyResultExporterTest',
+                    'com.eza.spicyex.lyrics.JapaneseRomajiProjectionResultExporterTest'
+            ],
+            'model-survey': ['com.eza.spicyex.lyrics.ai.OpenRouterModelSurveyTest']
+    ]
     def requestedTestGroup = providers.gradleProperty('testGroup').orNull
     if (requestedTestGroup != null && !unitTestGroups.containsKey(requestedTestGroup)) {
         throw new GradleException("Unknown testGroup '${requestedTestGroup}'. Choose one of: "
                 + unitTestGroups.keySet().join(', '))
+    }
+    def requestedTestTools = providers.gradleProperty('testTools').orNull
+    if (requestedTestTools != null && !optInTestTools.containsKey(requestedTestTools)) {
+        throw new GradleException("Unknown testTools '${requestedTestTools}'. Choose one of: "
+                + optInTestTools.keySet().join(', '))
     }
 
     def keystorePath = System.getenv("SIGNING_KEYSTORE_FILE")
@@ -77,8 +93,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 769
-        versionName "1.58.487+B769-20260924T1806Z"
+        versionCode 773
+        versionName "1.58.491+B773-20260925T0851Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
@@ -87,10 +103,10 @@ android {
         buildConfigField "boolean", "TRANSLATION_AVAILABLE", "true"
         buildConfigField "boolean", "APPLE_FONT_AVAILABLE", "true"
         def modelPackUrl = providers.gradleProperty("LANGUAGE_MODEL_PACK_URL")
-            .orElse("https://github.com/wnsdn517/spicy-ex/releases/download/v1/spicyex-language-models-v1.zip")
+            .orElse("https://github.com/amarinne/spicy-ex/releases/download/v1/spicyex-language-models-v1.zip")
             .get()
         def modelPackSha256 = providers.gradleProperty("LANGUAGE_MODEL_PACK_SHA256")
-            .orElse("10e880601c90097417cf57bef2a3098c90e9aa4efa4e34f7c5211087b19cc9fd")
+            .orElse("fab585db878657fb124e49722f4579aaeb994b902b1dbf288b4b17700f90eb37")
             .get()
         buildConfigField "String", "LANGUAGE_MODEL_PACK_URL", "\"${modelPackUrl}\""
         buildConfigField "String", "LANGUAGE_MODEL_PACK_SHA256", "\"${modelPackSha256}\""
@@ -131,9 +147,14 @@ android {
 
     testOptions {
         unitTests.all {
-            if (requestedTestGroup != null) {
-                filter {
-                    unitTestGroups[requestedTestGroup].each { includeTestsMatching(it) }
+            filter {
+                if (requestedTestTools != null) {
+                    optInTestTools[requestedTestTools].each { includeTestsMatching(it) }
+                } else {
+                    optInTestTools.values().flatten().each { excludeTestsMatching(it) }
+                    if (requestedTestGroup != null) {
+                        unitTestGroups[requestedTestGroup].each { includeTestsMatching(it) }
+                    }
                 }
             }
         }

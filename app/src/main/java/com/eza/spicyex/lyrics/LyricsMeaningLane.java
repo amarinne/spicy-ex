@@ -14,6 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.ai.AiCancelledException;
@@ -119,9 +120,12 @@ public final class LyricsMeaningLane {
     private final ExecutorService laneExecutor;
     /** AI generation runs here so a 60s call never occupies a translation worker. */
     private final ExecutorService aiExecutor;
-    private final Handler handler;
+    private final Poster poster;
+    /** Elapsed-realtime source for run metrics; injectable so JVM tests control time. */
+    private final LongSupplier clock;
     private final int processingVersion;
     private final MeaningProvider provider;
+    private final AiSettingsSource settingsSource;
     /** Retires earlier runs of this lane: only the newest sequence may publish. */
     private final AtomicLong laneSequence = new AtomicLong();
     /** Call tag of the run currently allowed to publish; empty when the lane is idle. */
@@ -138,13 +142,41 @@ public final class LyricsMeaningLane {
     public LyricsMeaningLane(Context context, OkHttpClient http, ExecutorService laneExecutor,
                              ExecutorService aiExecutor, Handler handler, int processingVersion,
                              MeaningProvider provider) {
+        this(context, http, laneExecutor, aiExecutor, processingVersion, provider,
+                handler == null ? null : handler::post, SystemClock::elapsedRealtime,
+                AiSettings::new);
+    }
+
+    /**
+     * Test seam: an explicit surface dispatcher and clock, so a JVM test can publish callbacks
+     * without a Looper and read deterministic durations, plus a configuration source so a JVM test
+     * can offer a credential the Android Keystore cannot mint off-device. Production uses the two
+     * constructors above, which supply the real Handler, {@link SystemClock}, and the device's
+     * {@link AiSettings}.
+     */
+    LyricsMeaningLane(Context context, OkHttpClient http, ExecutorService laneExecutor,
+                      ExecutorService aiExecutor, int processingVersion,
+                      MeaningProvider provider, Poster poster, LongSupplier clock,
+                      AiSettingsSource settingsSource) {
         this.context = context;
         this.http = http;
         this.laneExecutor = laneExecutor;
         this.aiExecutor = aiExecutor == null ? laneExecutor : aiExecutor;
-        this.handler = handler;
+        this.poster = poster;
+        this.clock = clock;
         this.processingVersion = processingVersion;
         this.provider = provider;
+        this.settingsSource = settingsSource;
+    }
+
+    /** Dispatches a lane callback onto the owning surface. */
+    interface Poster {
+        void post(Runnable action);
+    }
+
+    /** Where the lane reads AI configuration from; one source per lane instance. */
+    interface AiSettingsSource {
+        AiSettings create(Context context);
     }
 
     /** @return true when a run was started; false when the layer is disabled or already satisfied */
@@ -161,7 +193,7 @@ public final class LyricsMeaningLane {
             LyricsSecondaryProcessor.Callback callback
     ) {
         if (snapshot == null || snapshot.lines.isEmpty()) return false;
-        final AiSettings aiSettings = new AiSettings(context);
+        final AiSettings aiSettings = settingsSource.create(context);
         final boolean aiAutomatic = aiSettings.translationAutomatic() && aiSettings.canRequest();
         final boolean wanted = snapshot.translationPending && provider.handles(backend);
         LyricsDocument workerSnapshot = LyricsDocument.copyOf(snapshot);
@@ -225,11 +257,11 @@ public final class LyricsMeaningLane {
             return false;
         }
 
-        final long startedAtMs = SystemClock.elapsedRealtime();
+        final long startedAtMs = clock.getAsLong();
         laneExecutor.execute(() -> {
             AtomicInteger changed = new AtomicInteger();
             Set<Integer> translated = new HashSet<>();
-            GoogleRunStats googleStats = new GoogleRunStats(work == null ? 0 : work.size());
+            GoogleRunStats googleStats = new GoogleRunStats(work == null ? 0 : work.size(), clock.getAsLong());
             // Collected as the lane works rather than read back off the document. Provider-supplied
             // translations are deliberately absent: they are canonical source data carried by the
             // base, not something this layer produced.
@@ -261,13 +293,13 @@ public final class LyricsMeaningLane {
 
             boolean complete = translated.containsAll(work);
             logGoogleSettlement(googleStats, translated.size(), complete,
-                    SystemClock.elapsedRealtime() - startedAtMs);
+                    clock.getAsLong() - startedAtMs);
             boolean includes = complete
                     && (LyricsDocumentProcessor.hasDisplayedTranslation(workerSnapshot) || !translated.isEmpty());
             int finalChanged = changed.get();
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.MEANING_PROCESSED);
             LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.MEANING_PROCESSING,
-                    SystemClock.elapsedRealtime() - startedAtMs);
+                    clock.getAsLong() - startedAtMs);
             post(run, id, generation, snapshot, currentGuard,
                     () -> callback.complete(LayerKind.MEANING, artifactOf(run, entries, complete),
                             googleStats.failure(),
@@ -328,7 +360,7 @@ public final class LyricsMeaningLane {
         final AiRunMonitor monitor = allowProviderRequest
                 ? new AiLiveMonitor(LayerKind.MEANING, run.canonicalDigest(), run.tag)
                 : null;
-        final long startedAtMs = SystemClock.elapsedRealtime();
+        final long startedAtMs = clock.getAsLong();
         // The coalescer key is claimed above, on this thread. If the executor refuses the task
         // nothing would ever release it, and every later request for this song would be told the
         // work is already in flight — forever, with no owner.
@@ -341,7 +373,7 @@ public final class LyricsMeaningLane {
                 boolean refineGoogle = false;
                 try {
                     if (!run.accepts(currentGuard, id, generation, snapshot)) return;
-                    AiSettings settings = new AiSettings(context);
+                    AiSettings settings = settingsSource.create(context);
                     // Only Google draft refines. AI-only runs raw by contract; the preview flow
                     // never enters this path.
                     refineGoogle = settings.meaningFlow() == AiSettings.MeaningFlow.GOOGLE_DRAFT;
@@ -431,7 +463,7 @@ public final class LyricsMeaningLane {
                 final int changed = finalArtifact == null ? 0 : finalArtifact.size();
                 LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.MEANING_PROCESSED);
                 LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.MEANING_PROCESSING,
-                        SystemClock.elapsedRealtime() - startedAtMs);
+                        clock.getAsLong() - startedAtMs);
                 post(run, id, generation, snapshot, currentGuard, new Runnable() {
                     @Override public void run() {
                         callback.complete(LayerKind.MEANING, finalArtifact, finalFailure,
@@ -500,7 +532,7 @@ public final class LyricsMeaningLane {
         final AiRunMonitor monitor = allowProviderRequest
                 ? new AiLiveMonitor(LayerKind.MEANING, run.canonicalDigest(), run.tag)
                 : null;
-        final long startedAtMs = SystemClock.elapsedRealtime();
+        final long startedAtMs = clock.getAsLong();
         // Preview means Google reaches the display before a new or cached AI answer can replace it.
         final CountDownLatch previewReadyForAi = new CountDownLatch(1);
 
@@ -535,7 +567,7 @@ public final class LyricsMeaningLane {
                     }
                     if (googleOutcome.preliminary) {
                         final MeaningArtifact preliminary = googleOutcome.artifact;
-                        handler.post(new Runnable() {
+                        poster.post(new Runnable() {
                             @Override public void run() {
                                 try {
                                     if (run.accepts(currentGuard, id, generation, snapshot)
@@ -593,7 +625,7 @@ public final class LyricsMeaningLane {
                         }
                         // Raw lyrics only. Preview never sends a baseline and never reports
                         // baseline_unavailable: Google here is display, not request input.
-                        result = AiMeaningRun.run(context, new AiSettings(context), run.base,
+                        result = AiMeaningRun.run(context, settingsSource.create(context), run.base,
                                 workerSnapshot, null, false, targetLang,
                                 allowProviderRequest, signal, monitor);
                         if (result != null && result.outcome != null
@@ -645,7 +677,7 @@ public final class LyricsMeaningLane {
                             aiFailure);
                     LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.MEANING_PROCESSED);
                     LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.MEANING_PROCESSING,
-                            SystemClock.elapsedRealtime() - startedAtMs);
+                            clock.getAsLong() - startedAtMs);
                     completePreviewRun(run, id, generation, snapshot, currentGuard, callback,
                             runIdentity, outcome);
                 }
@@ -697,7 +729,7 @@ public final class LyricsMeaningLane {
     }
 
     private String aiProviderId() {
-        return new AiSettings(context).providerId();
+        return settingsSource.create(context).providerId();
     }
 
     private GoogleFallbackResult googleFallback(DerivedLayerRun run, String id,
@@ -718,7 +750,7 @@ public final class LyricsMeaningLane {
                 : new ArrayList<>(work);
         Set<Integer> translated = new HashSet<>();
         AtomicInteger changed = new AtomicInteger();
-        GoogleRunStats stats = new GoogleRunStats(missing.size());
+        GoogleRunStats stats = new GoogleRunStats(missing.size(), clock.getAsLong());
         if (!missing.isEmpty()) {
             try {
                 List<Integer> retry = translateBatchPass(id, effectiveSourceLang, targetLang,
@@ -741,7 +773,7 @@ public final class LyricsMeaningLane {
         }
         boolean complete = missing.isEmpty() || translated.containsAll(missing);
         logGoogleSettlement(stats, translated.size(), complete,
-                SystemClock.elapsedRealtime() - stats.startedAtMs);
+                clock.getAsLong() - stats.startedAtMs);
         MeaningArtifact artifact = entries.isEmpty() ? null : new MeaningArtifact(
                 run.canonicalDigest(), run.configId(),
                 new LayerProvenance(LayerAuthority.MACHINE, "google_unofficial", run.configId(),
@@ -893,14 +925,15 @@ public final class LyricsMeaningLane {
 
     private static final class GoogleRunStats {
         final int requested;
-        final long startedAtMs = SystemClock.elapsedRealtime();
+        final long startedAtMs;
         final Set<Integer> cacheHits = new HashSet<>();
         int networkAttempts;
         int lastStatus;
         String lastReason = "";
 
-        GoogleRunStats(int requested) {
+        GoogleRunStats(int requested, long startedAtMs) {
             this.requested = Math.max(0, requested);
+            this.startedAtMs = startedAtMs;
         }
 
         void record(GoogleEnhancer.BatchResult result) {
@@ -999,7 +1032,7 @@ public final class LyricsMeaningLane {
 
     private void post(DerivedLayerRun run, String id, int generation, LyricsDocument snapshot,
                       LyricsSecondaryProcessor.CurrentGuard guard, Runnable action) {
-        handler.post(() -> {
+        poster.post(() -> {
             if (!run.accepts(guard, id, generation, snapshot)) return;
             action.run();
         });

@@ -86,6 +86,70 @@ public class JapaneseReadingEngineTest {
         assertTrue(activeAtTokenize.get() > 0);
     }
 
+    /**
+     * The bootstrap hook hands this an Application base context that has no application context
+     * yet. Losing it would put the tokenizer on the packaged dictionaries the on-demand pack
+     * replaced, so an uncached now-playing reading must still reach the downloaded models.
+     */
+    @Test
+    public void attachContextKeepsTheSuppliedContextWhenThereIsNoApplicationContext() throws Exception {
+        Field appContext = field("appContext");
+        Object previouslyAttached = appContext.get(null);
+        android.content.Context bootstrap = bootstrapWithoutApplicationContext();
+        try {
+            JapaneseReadingEngine.attachContext(bootstrap);
+
+            assertSame(bootstrap, appContext.get(null));
+        } finally {
+            appContext.set(null, previouslyAttached);
+        }
+    }
+
+    @Test
+    public void attachContextPrefersTheApplicationContextWhenOneExists() throws Exception {
+        Field appContext = field("appContext");
+        Object previouslyAttached = appContext.get(null);
+        final android.content.Context application = new android.content.ContextWrapper(null);
+        android.content.Context bootstrap = new android.content.ContextWrapper(null) {
+            @Override
+            public android.content.Context getApplicationContext() {
+                return application;
+            }
+        };
+        try {
+            JapaneseReadingEngine.attachContext(bootstrap);
+
+            assertSame(application, appContext.get(null));
+        } finally {
+            appContext.set(null, previouslyAttached);
+        }
+    }
+
+    @Test
+    public void attachContextIgnoresNullSoAnUnrelatedHookCannotDropTheModels() throws Exception {
+        Field appContext = field("appContext");
+        Object previouslyAttached = appContext.get(null);
+        android.content.Context bootstrap = bootstrapWithoutApplicationContext();
+        try {
+            JapaneseReadingEngine.attachContext(bootstrap);
+            JapaneseReadingEngine.attachContext(null);
+
+            assertSame(bootstrap, appContext.get(null));
+        } finally {
+            appContext.set(null, previouslyAttached);
+        }
+    }
+
+    /** The bootstrap-hook shape: a base context that cannot offer an application context. */
+    private static android.content.Context bootstrapWithoutApplicationContext() {
+        return new android.content.ContextWrapper(null) {
+            @Override
+            public android.content.Context getApplicationContext() {
+                return null;
+            }
+        };
+    }
+
     private static Field field(String name) throws Exception {
         Field field = JapaneseReadingEngine.class.getDeclaredField(name);
         field.setAccessible(true);

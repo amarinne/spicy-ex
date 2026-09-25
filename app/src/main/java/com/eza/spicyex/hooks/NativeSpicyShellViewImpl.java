@@ -199,6 +199,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private float columnArtDownRawX;
     private float columnArtDownRawY;
     private float columnArtDragBoundPx;
+    /** Slow second tap while the overlay is up dismisses it without toggling (readout parity). */
+    private boolean columnCancelArmed;
     private Bitmap columnArtwork;
     private String lastColumnArtImageId = "";
     /** Image id actually on screen; lags the track while the new cover is still fetching. */
@@ -568,7 +570,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             columnScrimBg.setCornerRadius(columnArtRadiusPx);
             columnScrim.setBackground(columnScrimBg);
             columnScrim.setVisibility(GONE);
-            columnScrim.setOnClickListener(v -> hideColumnOverlay());
+            // No click listener: the scrim must stay non-clickable so taps fall through
+            // to the art touch handler below. A clickable scrim would swallow the second
+            // tap (hiding the overlay instead of toggling) and break Single-tap mode.
             columnArtFrame.addView(columnScrim, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             float columnDensity = activity.getResources().getDisplayMetrics().density;
@@ -613,6 +617,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             columnArt.setOnTouchListener((v, event) -> {
                 if (event.getPointerCount() > 1) {
                     columnArtArbiter.onCancel();
+                    columnCancelArmed = false;
                     columnArtFrame.setTranslationX(0f);
                     return true;
                 }
@@ -625,7 +630,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     columnArtDownRawX = event.getRawX();
                     columnArtDownRawY = event.getRawY();
                     columnArtDragBoundPx = columnArtFrame.getWidth();
-                    columnArtArbiter.onDown(android.os.SystemClock.elapsedRealtime());
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    if (columnOverlayVisible() && !columnArtArbiter.isDoubleTapCandidate(now)) {
+                        // Tap around the button dismisses the overlay; it must not toggle.
+                        columnArtArbiter.reset();
+                        columnCancelArmed = true;
+                    } else {
+                        columnArtArbiter.onDown(now);
+                    }
                     return true;
                 }
                 if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) return true;
@@ -634,17 +646,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                             event.getRawX() - columnArtDownRawX,
                             event.getRawY() - columnArtDownRawY);
                     if (out == ArtGestureArbiter.Output.DRAG_UPDATE) {
+                        columnCancelArmed = false;
                         hideColumnOverlay();
                         columnArtFrame.setTranslationX(clampedColumnDrag(columnArtArbiter.dragDxPx()));
                     }
                     return true;
                 }
                 if (action == MotionEvent.ACTION_UP) {
+                    if (columnCancelArmed) {
+                        columnCancelArmed = false;
+                        hideColumnOverlay();
+                        return true;
+                    }
                     handleColumnArtUp(columnArtArbiter.onUp());
                     return true;
                 }
                 if (action == MotionEvent.ACTION_CANCEL) {
                     columnArtArbiter.onCancel();
+                    columnCancelArmed = false;
                     columnArtFrame.setTranslationX(0f);
                     return true;
                 }
@@ -687,12 +706,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                             com.eza.spicyex.lyrics.session.LayerKind.MEANING);
                     boolean requestedOutput = shouldGenerateAi(
                             com.eza.spicyex.lyrics.session.LayerKind.MEANING);
-                    if (requestedOutput && !requestAiLayerWithFeedback(
-                            com.eza.spicyex.lyrics.session.LayerKind.MEANING)) {
-                        return;
-                    }
-                    if (transliterationSession.keepVisibleForRequestedOutput(
-                            requestedOutput, wasVisible, hasDisplayedMeaning)) {
+                    boolean requestStarted = !requestedOutput || requestAiLayerWithFeedback(
+                            com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+                    boolean keepVisible = transliterationSession.keepVisibleForRequestedOutput(
+                            requestedOutput, wasVisible, hasDisplayedMeaning);
+                    if (TranslationVisibilityPolicy.onTap(requestedOutput, requestStarted,
+                            keepVisible) != TranslationVisibilityPolicy.TapAction.TOGGLE) {
                         return;
                     }
                     showTranslation = !showTranslation;
@@ -711,13 +730,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         likeButton = chrome.likeButton;
         refreshLikedButton(null);
         romanToggle.setOnClickListener(v -> {
-            // Sound tap belongs to the local reading pipeline. In cycle mode it must advance
-            // Pinyin/Jyutping (or the equivalent local language modes), never start a paid AI run.
-            // Automatic AI can still fill local-language gaps, and long press owns explicit AI.
-            cycleTransliterationMode(prefs);
+            if (SoundToggleRouter.forGesture(false)
+                    == SoundToggleRouter.Action.CYCLE_LOCAL_MODE) cycleTransliterationMode(prefs);
         });
         romanToggle.setOnLongClickListener(v -> {
-            openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind.SOUND);
+            if (SoundToggleRouter.forGesture(true)
+                    == SoundToggleRouter.Action.OPEN_AI_PANEL) {
+                openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind.SOUND);
+            }
             return true;
         });
         translationToggle.setOnLongClickListener(v -> {
@@ -1003,6 +1023,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 columnArtFrame.setTranslationX(0f);
             }
             if (columnArtArbiter != null) columnArtArbiter.reset();
+            columnCancelArmed = false;
             if (imageId.isEmpty()) {
                 displayedColumnArtImageId = "";
                 clearColumnArtwork();
@@ -1057,20 +1078,20 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     /** Panel art gestures share the readout's arbitration: single tap reveals the
-     * play/pause overlay in Single-tap mode, double-tap toggles immediately with a brief
+     * play/pause overlay in Single-tap mode (a slow second tap on the art dismisses it,
+     * a quick second tap or a button tap toggles), double-tap toggles immediately with a brief
      * icon pulse, horizontal drag past ~32dp commits prev/next with follow-through,
      * release inside snaps back. Off disables gestures and swipe entirely. */
     private void handleColumnArtUp(ArtGestureArbiter.Output out) {
         if (columnArtFrame == null) return;
         switch (out) {
             case REVEAL:
-                columnArtFrame.setTranslationX(0f);
                 if (PanelMediaMode.revealOnSingleTap(panelMediaMode)) showColumnOverlay();
+                else springBackColumnArt();
                 break;
             case TOGGLE:
                 columnArtFrame.setTranslationX(0f);
-                host.togglePlayPause();
-                flashColumnIcon();
+                if (toggleColumnTransport()) flashColumnIcon();
                 break;
             case COMMIT_NEXT:
                 if (!commitColumnTrack(true)) {
@@ -1170,6 +1191,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         columnOverlayButton.setImageDrawable(playing ? columnPauseIcon : columnPlayIcon);
     }
 
+    private boolean columnOverlayVisible() {
+        return columnScrim != null && columnScrim.getVisibility() == VISIBLE;
+    }
+
+    private boolean toggleColumnTransport() {
+        try {
+            return host.togglePlayPause();
+        } catch (Throwable ignored) {
+            return false;
+        }
+        // No optimistic icon flip; updateState() applies observed playing state.
+    }
+
     private boolean commitColumnTrack(boolean next) {
         try {
             return next ? host.skipToNextTrack() : host.skipToPreviousTrack();
@@ -1197,7 +1231,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             setTextIfChanged(progress, "--:--");
             setTextIfChanged(status, "Native Spicy renderer mounted. Waiting for player state.");
             skipGapController.update(false);
-            updateFrameDemand(false);
+            updateFrameDemand(false, false);
             return;
         }
 
@@ -1264,6 +1298,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             setTextIfChanged(progress, formatMs(pos));
         }
 
+        boolean rendererPending = false;
         if (document != null) {
             if (staticDoc) {
                 // Reassert static styling after remounts and late secondary-text updates. Static
@@ -1285,10 +1320,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 long visibleRange = scrollController != null
                         ? scrollController.visibleLineRange(rowHeightPrefix(), document.appliedLines.size())
                         : LyricsScrollController.ALL_LINES;
+                int visibleStart = LyricsScrollController.rangeStart(visibleRange);
+                int visibleEnd = LyricsScrollController.rangeEnd(visibleRange);
                 frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
                         renderConfig, lyricPos, nextActive, deltaSeconds, userScrollHeld,
-                        LyricsScrollController.rangeStart(visibleRange),
-                        LyricsScrollController.rangeEnd(visibleRange));
+                        visibleStart, visibleEnd);
+                // Asked with the same viewport the frame pass just used, so a row the pass culled
+                // cannot keep the scheduler rendering a paused player.
+                rendererPending = frameRenderer.hasPendingAnimation(document,
+                        rowMountController.mountedIndices(), mountedRowsHost,
+                        nextActive, visibleStart, visibleEnd);
             }
             if (status.getVisibility() == View.VISIBLE) {
                 String processingStatus = "";
@@ -1308,13 +1349,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         } else if (!loadingTrackId.isEmpty() && status.getVisibility() == View.VISIBLE) {
             setTextIfChanged(status, (playingNow ? "Playing" : "Paused") + " • fetching lyrics for " + shortTrackId(uri));
         }
-        updateFrameDemand(playingNow);
+        updateFrameDemand(playingNow, rendererPending);
     }
 
-    private void updateFrameDemand(boolean playingNow) {
+    /**
+     * @param rendererPending rows the frame pass just drew that still have a spring to drain;
+     *                         computed by the caller so it sees the same viewport as the pass
+     */
+    private void updateFrameDemand(boolean playingNow, boolean rendererPending) {
         boolean processing = document != null && document.processingPending;
-        boolean rendererPending = !staticDoc && frameRenderer.hasPendingAnimation(
-                document, rowMountController.mountedIndices(), mountedRowsHost);
         boolean continuous = (playingNow && document != null && !staticDoc)
                 || !loadingTrackId.isEmpty()
                 || processing
@@ -2508,15 +2551,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private boolean requestAiLayerWithFeedback(
             com.eza.spicyex.lyrics.session.LayerKind layer) {
-        if (layer == com.eza.spicyex.lyrics.session.LayerKind.SOUND
-                && !showRomanization()) {
+        TranslationVisibilityPolicy.RevealAction reveal =
+                TranslationVisibilityPolicy.revealFor(layer, showRomanization(), showTranslation());
+        if (reveal == TranslationVisibilityPolicy.RevealAction.REVEAL_ROMANIZATION) {
             transliterationSession.setShowRomanization(true);
             preferences.edit()
                     .putBoolean(Settings.NATIVE_SPICY_ROMANIZATION.key, true)
                     .apply();
             refreshSecondaryRows("");
-        } else if (layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING
-                && !showTranslation()) {
+        } else if (reveal == TranslationVisibilityPolicy.RevealAction.REVEAL_TRANSLATION) {
             showTranslation = true;
             preferences.edit()
                     .putBoolean(Settings.NATIVE_SPICY_TRANSLATION.key, true)
@@ -2752,12 +2795,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void cycleTransliterationMode(SharedPreferences prefs) {
-        if (renderConfig != null && !renderConfig.transliterationEnabled) return;
-        // A local mode cycle replaces any previously accepted AI reading. Clear the old Sound
-        // authority before repainting, otherwise the chip briefly shows the green AI marker while
-        // the local Pinyin/Jyutping pass is still running.
-        if (document != null && (document.readingFromAi || document.readingAiPending
-                || !safe(document.readingAiFailureToken).isEmpty())) {
+        if (!SoundModeCyclePolicy.mayCycle(renderConfig == null
+                || renderConfig.transliterationEnabled)) return;
+        if (SoundModeCyclePolicy.clearsStaleAiReading(document)) {
             LyricsDocumentProcessor.resetSoundLayer(activity.getApplicationContext(), document);
             updateToggleVisuals();
         }

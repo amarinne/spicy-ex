@@ -45,7 +45,13 @@ public final class JapaneseReadingEngine {
      * always did.
      */
     public static void attachContext(android.content.Context context) {
-        if (context != null) appContext = context.getApplicationContext();
+        if (context == null) return;
+        // Application#attach reaches this hook before the process has an application context, so
+        // getApplicationContext() can be null. Storing that null would make MappedTokenizerBuilder
+        // fall back to the packaged dictionaries the on-demand pack replaced, so keep the supplied
+        // context instead — the same rule LanguageModelPack.attachContext already follows.
+        android.content.Context applicationContext = context.getApplicationContext();
+        appContext = applicationContext == null ? context : applicationContext;
     }
 
     public static JapaneseReadingEngine shared() {

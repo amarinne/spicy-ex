@@ -1085,12 +1085,72 @@ public final class LyricsRepository {
 
     private void fetchLrclib(Context context, SpotifyTrack track, int generation, ResultCallback callback,
                              String reason, LyricsProviderChain chain, boolean tokenPresent) {
+        // A replay of a track that already resolved through LRCLIB answers from the raw search
+        // response it left behind; only an absent or unusable entry costs the network again.
+        if (deliverCachedLrclib(context, track, generation, callback, chain, tokenPresent)) return;
         // Remaster-suffixed titles miss synced originals when queried verbatim, and single
         // responses mix duplicate durations (including junk). Query raw, then normalized, then
         // free-text, merging candidates in provenance order; stop early once a usable synced
         // record is in hand so popular tracks still cost one request.
         fetchLrclibVariant(context, track, generation, callback, reason, chain, tokenPresent,
                 lrclibQueryUrls(track), 0, new JsonArray());
+    }
+
+    /**
+     * @return true when the stored response produced lines and the callback already fired;
+     *         false means the caller has to go to the network
+     */
+    private boolean deliverCachedLrclib(Context context, SpotifyTrack track, int generation,
+                                        ResultCallback callback,
+                                        LyricsProviderChain chain, boolean tokenPresent) {
+        if (context == null) return false;
+        String trackId = trackIdFromUri(track == null ? "" : track.uri);
+        if (trackId.isEmpty()) return false;
+        LyricsDocument doc = parseCachedLrclibRaw(parser, context, track,
+                LyricsResponseCache.getLrclib(context, trackId));
+        if (doc == null) return false;
+        doc.generation = generation;
+        chain.acceptLrclib(doc);
+        LyricsFetchDiagnosticsState.record("lrclib", chain.candidatesSeen(), doc, tokenPresent, false);
+        XpLog.log(TAG + " LRCLIB cached raw hit lines=" + doc.lines.size());
+        callback.onSuccess(doc);
+        return true;
+    }
+
+    /**
+     * Parses a stored LRCLIB raw payload into a deliverable document.
+     *
+     * <p>Usability is decided here rather than by trusting the cache: a missing, corrupt, or
+     * line-less entry returns null so the network path still runs underneath it instead of
+     * reporting an LRCLIB failure for data the provider no longer stands behind.
+     */
+    static LyricsDocument parseCachedLrclibRaw(Parser parser, Context context,
+                                               SpotifyTrack track, String raw) {
+        if (parser == null || isBlank(raw)) return null;
+        try {
+            JsonElement root = JsonParser.parseString(raw);
+            if (!root.isJsonArray() || root.getAsJsonArray().size() == 0) return null;
+            LyricsDocument doc = parser.parseLrclibLyrics(context, track, raw);
+            if (doc == null || doc.lines == null || doc.lines.isEmpty()) return null;
+            return doc;
+        } catch (Throwable t) {
+            XpLog.log(TAG + " LRCLIB cached raw unusable", t);
+            return null;
+        }
+    }
+
+    /** Writes the merged search response that LRCLIB answered this track with. Never throws. */
+    private static void cacheLrclibRaw(Context context, SpotifyTrack track, JsonArray merged) {
+        if (context == null || merged == null) return;
+        String trackId = trackIdFromUri(track == null ? "" : track.uri);
+        if (trackId.isEmpty()) return;
+        try {
+            LyricsResponseCache.putLrclib(context, trackId, merged.toString());
+        } catch (Throwable t) {
+            // A cache miss only costs the network again; it must not discard a document that
+            // has already parsed.
+            XpLog.log(TAG + " LRCLIB raw cache write failed", t);
+        }
     }
 
     private static List<String> lrclibQueryUrls(SpotifyTrack track) {
@@ -1211,30 +1271,54 @@ public final class LyricsRepository {
         return pick >= 0 && !isBlank(Json.optString(candidates.get(pick), "syncedLyrics"));
     }
 
-    private void deliverMergedLrclib(Context context, SpotifyTrack track, int generation,
-                                     ResultCallback callback, String reason,
-                                     LyricsProviderChain chain, boolean tokenPresent, JsonArray merged) {
+    /** Package-private so the one-request-one-callback contract is testable. */
+    void deliverMergedLrclib(Context context, SpotifyTrack track, int generation,
+                             ResultCallback callback, String reason,
+                             LyricsProviderChain chain, boolean tokenPresent, JsonArray merged) {
+        // One request, one callback. Parsing decides success vs error; consumer delivery happens
+        // outside the parsing catch so a throwing consumer can never trigger a second callback,
+        // nor let its exception escape as a parse failure.
+        LyricsDocument doc;
         try {
-            LyricsDocument doc = parser.parseLrclibLyrics(context, track, merged.toString());
+            doc = parser.parseLrclibLyrics(context, track, merged.toString());
             doc.generation = generation;
             if (doc.lines.isEmpty()) {
                 reportLrclibError(chain, callback, reason + "; LRCLIB empty");
                 return;
             }
+            cacheLrclibRaw(context, track, merged);
             chain.acceptLrclib(doc);
+        } catch (Throwable t) {
+            XpLog.log(TAG + " LRCLIB delivery failed: " + t);
+            reportLrclibError(chain, callback, reason + "; LRCLIB parse failed: " + t.getMessage());
+            return;
+        }
+        try {
             LyricsFetchDiagnosticsState.record("lrclib", chain.candidatesSeen(), doc, tokenPresent, false);
+        } catch (Throwable ignored) {
+        }
+        try {
             callback.onSuccess(doc);
         } catch (Throwable t) {
-            reportLrclibError(chain, callback, reason + "; LRCLIB parse failed: " + t.getMessage());
-            XpLog.log(TAG + " LRCLIB parse failed: " + t);
+            XpLog.log(TAG + " LRCLIB success consumer threw: " + t);
         }
     }
 
     private static void reportLrclibError(LyricsProviderChain chain, ResultCallback callback, String error) {
-        if (chain != null && !chain.hasPendingStatic()) {
-            chain.acceptLrclibError(error);
+        try {
+            if (chain != null && !chain.hasPendingStatic()) {
+                try {
+                    chain.acceptLrclibError(error);
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
         }
-        callback.onError(error);
+        try {
+            callback.onError(error);
+        } catch (Throwable t) {
+            XpLog.log(TAG + " LRCLIB error consumer threw: " + t);
+        }
     }
 
     private static final boolean WIRE_DEBUG_CAPTURE = false;

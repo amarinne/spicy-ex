@@ -75,6 +75,7 @@ public final class AiSettingsRows {
     private final SettingsStore store;
     private final SettingsWriter writer;
     private final AiSettings settings;
+    private final ApiKeyRowState keyRow;
 
     AiSettingsRows(Context context, Host host, SettingsStore store) {
         this.context = context;
@@ -82,6 +83,7 @@ public final class AiSettingsRows {
         this.store = store;
         this.writer = new SettingsWriter(store);
         this.settings = new AiSettings(store, AiCredentialStore.create(context));
+        this.keyRow = new ApiKeyRowState(settings);
     }
 
     void render(LinearLayout content) {
@@ -117,9 +119,8 @@ public final class AiSettingsRows {
                     }));
         }
         host.field(content, host.string("settings_ai_api_key", "API key"),
-                settings.hasCredential()
-                        ? AiCredentialStore.mask(
-                        settings.credentials().load(settings.credentialScope()))
+                keyRow.hasCredential()
+                        ? keyRow.displayed()
                         : host.string("settings_ai_key_absent", "Not set"),
                 v -> promptForKey(), keyActions.toArray(new IconAction[0]));
 
@@ -196,7 +197,7 @@ public final class AiSettingsRows {
 
     /** Plaintext exists only in a secure, non-selectable, accessibility-hidden transient dialog. */
     private void revealKeySecurely() {
-        String secret = settings.credentials().load(settings.credentialScope());
+        String secret = keyRow.revealedSecret();
         if (secret.isEmpty()) return;
         PanelDialog dialog = new PanelDialog(context,
                 host.string("settings_ai_api_key", "API key"))

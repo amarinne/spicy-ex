@@ -47,6 +47,11 @@ public final class ProcessedLyricsCache {
     /**
      * Reading-plan/cache identity.
      *
+     * <p>v8 drops Sound artifacts cached while JapaneseReadingEngine skipped the downloaded
+     * UniDic pack (null application context at Application#attach), storing provider-ruby-only
+     * fallback readings. The tokenizer now keeps the supplied context, so those rows must be
+     * recomputed. The bump rides the Sound config ID, so Meaning and paid AI records are kept.
+     *
      * <p>v7 drops parse-time Japanese analysis of Han-only lines and inherits unresolved Han
      * from the document majority, so v6 artifacts carrying stale furigana or blank Chinese
      * rows must be recomputed.
@@ -58,7 +63,7 @@ public final class ProcessedLyricsCache {
      * v3 stored both as {@code line-fallback}, so keeping it would let cached Russian/Greek local
      * readings be billed and overwritten by Sound AI after upgrade.
      */
-    public static final int READING_SCHEMA_VERSION = 7;
+    public static final int READING_SCHEMA_VERSION = 8;
     private static final int RECORD_SCHEMA_VERSION = 1;
     private static final Gson GSON = new Gson();
 

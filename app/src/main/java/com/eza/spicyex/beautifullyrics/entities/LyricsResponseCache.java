@@ -51,10 +51,12 @@ public final class LyricsResponseCache {
         com.eza.spicyex.lyrics.SpicyCacheStore.clear(context, PREFS_CACHE);
     }
 
-    /** Drops only one track's raw response, keeping every other song. */
+    /** Drops both raws one track stored (canonical and LRCLIB), keeping every other song. */
     public static synchronized void remove(Context context, String trackId) {
         if (context == null || trackId == null || trackId.isEmpty()) return;
         com.eza.spicyex.lyrics.SpicyCacheStore.remove(context, PREFS_CACHE, key(trackId));
+        com.eza.spicyex.lyrics.SpicyCacheStore.remove(context, PREFS_CACHE,
+                LRCLIB_PREFIX + key(trackId));
     }
 
     /** Combined logical-payload usage of the raw response store, for the settings panel. */

@@ -11,7 +11,7 @@ import static org.junit.Assert.assertTrue;
 public class LyricCachesTest {
     @Test
     public void localWholeLineAuthorityBumpsTheReadingCacheIdentity() {
-        assertEquals(7, ProcessedLyricsCache.READING_SCHEMA_VERSION);
+        assertEquals(8, ProcessedLyricsCache.READING_SCHEMA_VERSION);
         String options = RomanizationOptions.DEFAULTS.cacheKey();
         String old = LayerConfigIds.sound(true, options, "ru", 3);
         String current = LayerConfigIds.sound(true, options, "ru",
@@ -48,7 +48,7 @@ public class LyricCachesTest {
     }
 
     @Test
-    public void eachReadingStyleKeepsItsOwnRecordSoSwitchingBackIsInstant() {
+    public void readingStyleArtifactKeysSeparateByModeAndDigest() {
         String rr = LayerConfigIds.sound(true,
                 new RomanizationOptions("pinyin", KoreanDisplayMode.RR_STANDARD.value, false, "Russian", false)
                         .cacheKey(), "ko", 3);
@@ -58,8 +58,6 @@ public class LyricCachesTest {
 
         assertFalse(LyricCaches.soundArtifactKey("digest-a", rr)
                 .equals(LyricCaches.soundArtifactKey("digest-a", vn)));
-        assertEquals(LyricCaches.soundArtifactKey("digest-a", rr),
-                LyricCaches.soundArtifactKey("digest-a", rr));
         assertFalse(LyricCaches.soundArtifactKey("digest-a", rr)
                 .equals(LyricCaches.soundArtifactKey("digest-b", rr)));
     }
@@ -83,24 +81,13 @@ public class LyricCachesTest {
     }
 
     @Test
-    public void translationTargetChangeLeavesTheSoundKeyIntact() {
-        String english = LyricCaches.meaningArtifactKey("digest-a",
-                LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto", "google_draft"));
-        String spanish = LyricCaches.meaningArtifactKey("digest-a",
-                LayerConfigIds.meaning(true, "google_unofficial", "es", "auto", "auto", "google_draft"));
-
-        String soundConfig = LayerConfigIds.sound(true, RomanizationOptions.DEFAULTS.cacheKey(), "hin", 3);
-        assertTrue(!english.equals(spanish));
-        assertEquals(LyricCaches.soundArtifactKey("digest-a", soundConfig),
-                LyricCaches.soundArtifactKey("digest-a", soundConfig));
-    }
-
-    @Test
     public void meaningKeyTracksBackendTargetAndSourceModeOnly() {
         String autoGoogle = LayerConfigIds.meaning(true, "google_unofficial", "en", "auto", "auto", "google_draft");
+        String spanishGoogle = LayerConfigIds.meaning(true, "google_unofficial", "es", "auto", "auto", "google_draft");
         String manualGoogle = LayerConfigIds.meaning(true, "google_unofficial", "en", "manual", "hi", "google_draft");
         String disabled = LayerConfigIds.meaning(false, "disabled", "en", "auto", "auto", "google_draft");
 
+        assertTrue(!autoGoogle.equals(spanishGoogle));
         assertTrue(!autoGoogle.equals(manualGoogle));
         assertTrue(!autoGoogle.equals(disabled));
     }

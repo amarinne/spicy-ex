@@ -18,6 +18,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import com.eza.spicyex.lyrics.reading.CodePointRanges;
+import com.eza.spicyex.lyrics.reading.CanonicalValidator;
 import com.eza.spicyex.lyrics.reading.DefaultCanonicalLineBuilder;
 import com.eza.spicyex.lyrics.reading.DefaultScriptPartitioner;
 import com.eza.spicyex.lyrics.reading.KoreanReadingProcessor;
@@ -31,6 +32,7 @@ import com.eza.spicyex.lyrics.reading.ReadingModels.ReadingUnit;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ScriptRun;
 import com.eza.spicyex.lyrics.reading.ReadingModels.SourceSpan;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TextRange;
+import com.eza.spicyex.lyrics.reading.ReadingModels.ValidationResult;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
@@ -127,6 +129,9 @@ public class ReadingContractTest {
                 assertEquals(id, e.get(1).getAsInt(), runs.get(r).canonicalRange.endCp);
                 assertEquals(id, e.get(2).getAsString(), runs.get(r).script);
             }
+
+            ValidationResult validation = CanonicalValidator.validate(canonical, runs);
+            assertTrue(id + " " + validation.errors, validation.valid);
 
             if (expected.has("readingMode")) {
                 KoreanDisplayMode mode = KoreanDisplayMode.fromSetting(expected.get("readingMode").getAsString());

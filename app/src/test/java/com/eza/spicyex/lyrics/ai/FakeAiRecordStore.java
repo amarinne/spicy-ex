@@ -60,6 +60,11 @@ public final class FakeAiRecordStore implements AiRecordStore {
         return payloads.isEmpty();
     }
 
+    /** Every identity written so far; two runs of one document share a key when they share a plan. */
+    public java.util.Set<String> keys() {
+        return new java.util.LinkedHashSet<>(payloads.keySet());
+    }
+
     /** The stored record as it would come back after a process restart. */
     public AiPaidRecord peek(AiRunConfig config) {
         return AiPaidRecordCodec.decode(payloads.get(key(config)));
