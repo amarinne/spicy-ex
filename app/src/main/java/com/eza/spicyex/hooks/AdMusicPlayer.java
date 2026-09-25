@@ -392,11 +392,12 @@ final class AdMusicPlayer {
         private float snareAge = 99f, snareVel, snareAmp, snareBody, snareToneP, snareDecay;
         private float snareLow, snareBand;
         private float hatAge = 99f, hatVel, hatAmp, hatDecay, hatLow;
-        private float rideAge = 99f, rideVel, rideAmp, ridePhase;
+        private float rideAge = 99f, rideVel, rideAmp;
         private float rimAge = 99f, rimVel, rimAmp, rimPhase;
 
         private final Reverb reverb = new Reverb();
         private float wowPhase, tremPhase, crackle, toneL, toneR;
+        private float leadLp, keysLpL, keysLpR;
         private int noiseState = 0x2545F491;
 
         // Events for the current bar.
@@ -548,8 +549,9 @@ final class AdMusicPlayer {
                 }
                 pitch = best;
             }
-            while (pitch > 86) pitch -= 12;
-            while (pitch < 67) pitch += 12;
+            // Kept in the voice's own register: up around D6 every melody note read as a bell.
+            while (pitch > 79) pitch -= 12;
+            while (pitch < 62) pitch += 12;
             return pitch;
         }
 
@@ -734,7 +736,7 @@ final class AdMusicPlayer {
                 add(resolve, EV_KICK, 0, 0.7f);
                 add(resolve, EV_HAT, 2, 0.5f);
             }
-            add(resolve + samplesPerBeat / 2, EV_LEAD, keyRoot + 24, 0.55f);
+            add(resolve + samplesPerBeat / 2, EV_LEAD, keyRoot + 12, 0.45f);
             add(resolve, EV_OUTRO_END, 0, 0);
             pendingTonic = tonic;
         }
@@ -825,8 +827,10 @@ final class AdMusicPlayer {
                 float f = kFreq[v] * wow;
                 kCar[v] += f * DT;
                 kMod[v] += f * (bright ? 2f : 1f) * DT;
-                float index = (bright ? 0.8f : 1.1f) * kIndex[v] + (bright ? 0.35f : 0.2f);
-                float env = kAmp[v] * Math.min(1f, age * 350f);
+                // Low FM index: enough for a warm electric-piano bark on the attack, not the
+                // metallic "tine" a higher index gives.
+                float index = (bright ? 0.5f : 0.75f) * kIndex[v] + (bright ? 0.18f : 0.12f);
+                float env = kAmp[v] * Math.min(1f, age * 160f);
                 float out = sin(kCar[v] + index * sin(kMod[v])) * env * kVel[v] * 0.13f;
                 kAmp[v] *= bright ? BRIGHT_AMP_DECAY : PIANO_AMP_DECAY;
                 kIndex[v] *= bright ? BRIGHT_INDEX_DECAY : PIANO_INDEX_DECAY;
@@ -864,15 +868,24 @@ final class AdMusicPlayer {
                     lead += (sin(lPhase[v]) + 0.18f * sin(lPhase[v] * 2f)) * breath * lVel[v] * 0.1f;
                     lAmp[v] *= FLUTE_DECAY;
                 } else {
+                    // 1:1 FM (a harmonic, mellow mallet) with a few ms of attack. The old 1:4
+                    // ratio and 2ms attack struck every note like a glockenspiel.
                     lPhase[v] += f * DT;
-                    lMod[v] += f * 4f * DT;
-                    float env = lAmp[v] * Math.min(1f, age * 500f);
-                    lead += sin(lPhase[v] + 0.9f * lIndex[v] * sin(lMod[v])) * env * lVel[v] * 0.11f;
+                    lMod[v] += f * DT;
+                    float env = lAmp[v] * Math.min(1f, age * 90f);
+                    lead += sin(lPhase[v] + 0.55f * lIndex[v] * sin(lMod[v])) * env * lVel[v] * 0.09f;
                     lAmp[v] *= LEAD_AMP_DECAY;
                     lIndex[v] *= LEAD_INDEX_DECAY;
                 }
             }
             lead *= theme.leadLevel / 0.11f;
+            // Round off what is left of the top end on the melodic voices (about 2.6 kHz).
+            leadLp += 0.31f * (lead - leadLp);
+            lead = leadLp;
+            keysLpL += 0.38f * (keysL - keysLpL);
+            keysLpR += 0.38f * (keysR - keysLpR);
+            keysL = keysLpL;
+            keysR = keysLpR;
 
             // Pad.
             float padL = 0f, padR = 0f;
@@ -929,16 +942,15 @@ final class AdMusicPlayer {
             }
             float ride = 0f;
             if (rideAmp > 0.002f) {
-                ridePhase += 5100f * DT;
-                if (ridePhase >= 1f) ridePhase -= 1f;
-                ride = ((noise - hatLow) * 0.5f + sin(ridePhase) * 0.35f) * rideAmp * rideVel * 0.05f;
+                // Filtered noise only: the 5.1 kHz sine that used to sit in it rang on every beat.
+                ride = (noise - hatLow) * 0.45f * rideAmp * rideVel * 0.045f;
                 rideAmp *= RIDE_DECAY;
             }
             float rim = 0f;
             if (rimAmp > 0.002f) {
-                rimPhase += 1700f * DT;
+                rimPhase += 820f * DT;
                 if (rimPhase >= 1f) rimPhase -= 1f;
-                rim = (sin(rimPhase) + noise * 0.3f) * rimAmp * rimVel * 0.09f;
+                rim = (sin(rimPhase) + noise * 0.25f) * rimAmp * rimVel * 0.07f;
                 rimAmp *= RIM_DECAY;
             }
             if (theme.crackle > 0f && (noiseState & 0x3FFF) == 7) crackle = noise() * theme.crackle;
@@ -975,13 +987,12 @@ final class AdMusicPlayer {
                     if (pendingTonic != null) voiceLead(pendingTonic);
                     outroFinalHit = true;
                     for (int n = 0; n < 4; n++) strikeOrPluck(voicing[n], vel, n * 0.07f, 0.25f + 0.17f * n);
-                    strikeOrPluck(voicing[3] + 12, vel * 0.6f, 0.3f, 0.7f);
                     break;
                 case EV_LEAD: {
                     int note = (int) arg;
                     if (note < 0) {
-                        // Ambient: a random chord tone, an octave up.
-                        note = voicing[random.nextInt(4)] + 12;
+                        // Ambient: a random chord tone, in the chord's own octave.
+                        note = voicing[random.nextInt(4)];
                     }
                     int v = lNext;
                     lNext = (lNext + 1) % LEAD_VOICES;
