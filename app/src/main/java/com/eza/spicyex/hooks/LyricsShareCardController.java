@@ -461,17 +461,36 @@ final class LyricsShareCardController {
                 int pieceStart = Math.max(start, run.quoteStart);
                 int pieceEnd = Math.min(end, run.quoteStart + run.length);
                 if (pieceEnd <= pieceStart) continue;
-                FlyingWord w = flyingPiece(run, quote, pieceStart, pieceEnd, drawn, overlayLoc,
-                        target, cardPaint, cardMetrics, targetSize, box, quoteTop, cardScale, cardLoc, settle);
-                if (w == null) continue;
-                w.order = order;
-                flying.add(w);
-                any = true;
+                // A word can wrap mid-way - on the card or in the lyric row (CJK breaks between
+                // any two characters): each side-of-a-break part flies on its own, from its own
+                // line to its own line, still together with the rest of its word. Flown whole, it
+                // landed on one line and then jumped to two when the card's text took over.
+                android.text.Layout from = run.view.getLayout();
+                int partStart = pieceStart;
+                for (int k = pieceStart + 1; k <= pieceEnd; k++) {
+                    boolean split = k == pieceEnd
+                            || target.getLineForOffset(k) != target.getLineForOffset(k - 1)
+                            || from.getLineForOffset(run.viewStart + (k - run.quoteStart))
+                                != from.getLineForOffset(run.viewStart + (k - 1 - run.quoteStart));
+                    if (!split) continue;
+                    String part = quote.substring(partStart, k);
+                    if (!part.trim().isEmpty()) {
+                        FlyingWord w = flyingPiece(run, quote, partStart, k, drawn, overlayLoc,
+                                target, cardPaint, cardMetrics, targetSize, box, quoteTop, cardScale, cardLoc, settle);
+                        if (w != null) {
+                            w.order = order;
+                            flying.add(w);
+                            any = true;
+                        }
+                    }
+                    partStart = k;
+                }
             }
             if (any) order++;
         }
         for (Bitmap whole : drawn.values()) whole.recycle();
         if (flying.isEmpty()) return false;
+        orderAlongTravel(flying);
 
         FlightView flight = new FlightView(activity, flying, dp(14));
         flight.setElevation(dp(70));
@@ -514,6 +533,55 @@ final class LyricsShareCardController {
         return true;
     }
 
+    /**
+     * The line nearest the card leaves first. Travelling up to the card, that is the top line:
+     * plain reading order. Travelling down (the card below the pressed line), the bottom line of
+     * a wrapped lyric leads, then the one above it - each still left to right - so the words
+     * with furthest to go do not cut across those still waiting.
+     */
+    private static void orderAlongTravel(List<FlyingWord> flying) {
+        float travel = 0f;
+        for (FlyingWord w : flying) travel += w.toBaseline - w.fromBaseline;
+        if (travel <= 0f) return;
+        // Each word by where it starts: its first part's line and x, plus its text height.
+        Map<Integer, float[]> starts = new java.util.HashMap<>();
+        for (FlyingWord w : flying) {
+            float[] at = starts.get(w.order);
+            if (at == null || w.fromBaseline < at[0] - 1f
+                    || (Math.abs(w.fromBaseline - at[0]) <= 1f && w.fromX < at[1])) {
+                starts.put(w.order, new float[]{w.fromBaseline, w.fromX, w.fromScreenSize});
+            }
+        }
+        // Words share a line when their baselines are within about half the text height. A
+        // karaoke row lifts the words already sung by a few pixels, and the old 4px test split
+        // a one-line lyric into "lines" - the unsung, lower words then led from the right.
+        List<Integer> byHeight = new ArrayList<>(starts.keySet());
+        java.util.Collections.sort(byHeight, (a, b) -> Float.compare(starts.get(a)[0], starts.get(b)[0]));
+        Map<Integer, Integer> lineOf = new java.util.HashMap<>();
+        int line = -1;
+        float lineBaseline = Float.NaN;
+        for (int word : byHeight) {
+            float[] at = starts.get(word);
+            float tolerance = Math.max(4f, at[2] * 0.5f);
+            if (line < 0 || at[0] - lineBaseline > tolerance) {
+                line++;
+                lineBaseline = at[0];
+            }
+            lineOf.put(word, line);
+        }
+        List<Integer> words = new ArrayList<>(starts.keySet());
+        java.util.Collections.sort(words, (a, b) -> {
+            int la = lineOf.get(a);
+            int lb = lineOf.get(b);
+            // Bottom line first; within a line, left to right.
+            if (la != lb) return Integer.compare(lb, la);
+            return Float.compare(starts.get(a)[1], starts.get(b)[1]);
+        });
+        Map<Integer, Integer> rank = new java.util.HashMap<>();
+        for (int i = 0; i < words.size(); i++) rank.put(words.get(i), i);
+        for (FlyingWord w : flying) w.order = rank.get(w.order);
+    }
+
     /** One run's share of a word: cut from the row as seen, and set as the card sets it. */
     private FlyingWord flyingPiece(SourceRun run, String quote, int pieceStart, int pieceEnd,
                                    Map<TextView, Bitmap> drawn, int[] overlayLoc, StaticLayout target,
@@ -525,7 +593,11 @@ final class LyricsShareCardController {
         int s1 = run.viewStart + (pieceEnd - run.quoteStart);
         int line = from.getLineForOffset(s0);
         float left = from.getPrimaryHorizontal(s0);
-        float right = from.getLineForOffset(Math.max(s0, s1 - 1)) == line && s1 < view.getText().length()
+        // The part's right edge: where its end is, when that is still on its line; at a line
+        // break the end offset belongs to the next line (x back at its start), so the line's own
+        // right edge. The old check looked at the last character instead, and a part ending at a
+        // break came out zero-wide and was dropped.
+        float right = s1 < view.getText().length() && from.getLineForOffset(s1) == line
                 ? from.getPrimaryHorizontal(s1) : from.getLineRight(line);
         if (right <= left) return null;
         Bitmap whole = drawn.get(view);
@@ -799,74 +871,154 @@ final class LyricsShareCardController {
         java.util.TreeSet<Integer> candidate = new java.util.TreeSet<>(picked);
         candidate.add(next);
         if (!selectionFits(candidate)) return;
-        FrameLayout carousel = (FrameLayout) cardHost.getParent();
+        if (!(overlay instanceof FrameLayout)) return;
+        FrameLayout host = (FrameLayout) overlay;
 
-        // The next line waits just under the card's foot, a small arrow over it.
-        LinearLayout pill = new LinearLayout(activity);
-        pill.setGravity(Gravity.CENTER_VERTICAL);
-        pill.setPadding(dp(12), dp(8), dp(16), dp(8));
-        android.graphics.drawable.GradientDrawable bg = glass(dp(20), 0, 40);
-        bg.setColor(Color.argb(170, 18, 18, 22));
-        pill.setBackground(bg);
-        pill.setElevation(dp(24));
+        // A chip under the card (outside it, where the hint text sits): the next line, with an
+        // arrow pointing up into the card.
+        LinearLayout chip = new LinearLayout(activity);
+        chip.setGravity(Gravity.CENTER_VERTICAL);
+        chip.setPadding(dp(12), dp(7), dp(16), dp(7));
+        android.graphics.drawable.GradientDrawable bg = glass(dp(18), 0, 50);
+        bg.setColor(Color.argb(190, 22, 22, 26));
+        chip.setBackground(bg);
+        chip.setElevation(dp(30));
         ImageView arrow = new ImageView(activity);
         arrow.setImageDrawable(new LineIcon(LineIcon.Kind.ARROW_UP, Color.WHITE));
-        LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(dp(16), dp(16));
+        LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(dp(15), dp(15));
         arrowLp.rightMargin = dp(8);
-        pill.addView(arrow, arrowLp);
+        chip.addView(arrow, arrowLp);
         TextView text = new TextView(activity);
         text.setText(safe(document.appliedLines.get(next).text));
         text.setTextColor(Color.WHITE);
-        text.setTextSize(14);
+        text.setTextSize(13);
         text.setTypeface(Typeface.DEFAULT_BOLD);
         text.setSingleLine(true);
         text.setEllipsize(TextUtils.TruncateAt.END);
-        text.setMaxWidth(Math.max(dp(100), cardHost.getWidth() - dp(90)));
-        pill.addView(text);
+        text.setMaxWidth(Math.max(dp(100), cardHost.getWidth() - dp(60)));
+        chip.addView(text);
+        int[] hostAt = new int[2];
+        int[] cardAt = new int[2];
+        host.getLocationOnScreen(hostAt);
+        cardHost.getLocationOnScreen(cardAt);
+        float cardBottom = cardAt[1] - hostAt[1] + cardHost.getHeight() - cardHost.getTranslationY();
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        lp.bottomMargin = dp(14);
-        carousel.addView(pill, lp);
-        teasePill = pill;
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        lp.topMargin = Math.round(cardBottom + dp(10));
+        host.addView(chip, lp);
+        teasePill = chip;
 
-        // In: the card lifts a touch as if to make room, and the line rises into view with it.
-        PathInterpolator glide = new PathInterpolator(0.2f, 0.9f, 0.2f, 1f);
-        pill.setAlpha(0f);
-        pill.setTranslationY(dp(22));
-        pill.setScaleX(0.94f);
-        pill.setScaleY(0.94f);
-        cardHost.animate().translationY(-dp(12)).setDuration(560).setInterpolator(glide).start();
-        pill.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(560)
-                .setInterpolator(glide).start();
-        // While it waits, the arrow beckons upward twice.
-        android.animation.ObjectAnimator bob = android.animation.ObjectAnimator.ofFloat(arrow,
-                View.TRANSLATION_Y, 0f, -dp(3), 0f);
-        bob.setDuration(520);
-        bob.setRepeatCount(1);
-        bob.setStartDelay(560);
-        bob.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
-        bob.start();
-        // Out: the line is drawn up toward the card and dissolves; the card settles back.
-        pill.postDelayed(() -> endTease(pill, true), 1700);
+        View card = cardHost;
+        card.setPivotX(card.getWidth() / 2f);
+        card.setPivotY(card.getHeight());
+        card.setCameraDistance(8000f * activity.getResources().getDisplayMetrics().density);
+        float lift = dp(20);
+        float tug = dp(4);
+        float tilt = 4f;
+        chip.setAlpha(0f);
+        TextView hintText = hint;
+        // One clock for the card and the chip: the card lifts (tipping back a touch, as if being
+        // pulled up), gives an extra small tug, then is let go and springs home with a damped
+        // bounce; the chip rises in under it, beckons, and is drawn up into the card.
+        android.animation.ValueAnimator clock = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        long total = 1750L;
+        clock.setDuration(total);
+        clock.setInterpolator(null);
+        clock.addUpdateListener(a -> {
+            float t = a.getAnimatedFraction() * total;
+            float y;
+            float rot;
+            if (t < 480f) {
+                float p = 1f - (float) Math.pow(1f - t / 480f, 3);
+                y = -lift * p;
+                rot = tilt * p;
+            } else if (t < 1000f) {
+                float k = (float) Math.sin(Math.PI * (t - 480f) / 520f);
+                y = -lift - tug * k;
+                rot = tilt + 1.5f * k;
+            } else {
+                float u = t - 1000f;
+                float spring = (float) (Math.exp(-u / 120f) * Math.cos(u / 68f));
+                y = -lift * spring;
+                rot = tilt * spring;
+            }
+            card.setTranslationY(y);
+            card.setRotationX(rot);
+            float scale = 1f - 0.012f * Math.min(1f, Math.abs(y) / lift);
+            card.setScaleX(scale);
+            card.setScaleY(scale);
+            // The chip.
+            if (t < 120f) {
+                chip.setAlpha(0f);
+            } else if (t < 620f) {
+                float p = (t - 120f) / 500f;
+                float e = 1f - (float) Math.pow(1f - p, 3);
+                chip.setAlpha(Math.min(1f, p * 1.6f));
+                chip.setTranslationY(dp(18) * (1f - e));
+                float cs = 0.9f + 0.1f * e;
+                chip.setScaleX(cs);
+                chip.setScaleY(cs);
+            } else if (t < 1000f) {
+                chip.setAlpha(1f);
+                chip.setTranslationY(0f);
+                chip.setScaleX(1f);
+                chip.setScaleY(1f);
+                // The arrow beckons upward.
+                arrow.setTranslationY(-dp(3) * (float) Math.sin(Math.PI * (t - 620f) / 190f) * (t < 1000f ? 1f : 0f));
+            } else {
+                float p = Math.min(1f, (t - 1000f) / 380f);
+                float e = p * p;
+                arrow.setTranslationY(0f);
+                chip.setTranslationY(-dp(16) * e);
+                float cs = 1f - 0.15f * e;
+                chip.setScaleX(cs);
+                chip.setScaleY(cs);
+                chip.setAlpha(1f - p);
+            }
+            if (hintText != null) {
+                float hidden = t < 1000f ? Math.min(1f, t / 200f) : Math.max(0f, 1f - (t - 1150f) / 300f);
+                hintText.setAlpha(1f - Math.max(0f, Math.min(1f, hidden)));
+            }
+        });
+        clock.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                if (teasePill == chip) teasePill = null;
+                if (teaseClock == animation) teaseClock = null;
+                card.setTranslationY(0f);
+                card.setRotationX(0f);
+                card.setScaleX(1f);
+                card.setScaleY(1f);
+                if (chip.getParent() instanceof ViewGroup) ((ViewGroup) chip.getParent()).removeView(chip);
+                if (hintText != null) hintText.setAlpha(1f);
+            }
+        });
+        teaseClock = clock;
+        clock.start();
     }
 
     /** The swipe-up hint on screen, if any: a touch on the card ends it early. */
     private View teasePill;
+    private android.animation.ValueAnimator teaseClock;
 
-    private void endTease(View pill, boolean gently) {
-        if (pill == null || pill.getParent() == null) return;
-        if (teasePill == pill) teasePill = null;
-        pill.animate().cancel();
-        if (cardHost != null) {
-            cardHost.animate().translationY(0f).setDuration(gently ? 620 : 240)
-                    .setInterpolator(gently ? new android.view.animation.OvershootInterpolator(1.1f)
-                            : new PathInterpolator(0.2f, 0.9f, 0.2f, 1f)).start();
+    private void endTease(View chip, boolean gently) {
+        android.animation.ValueAnimator clock = teaseClock;
+        teaseClock = null;
+        if (clock != null) {
+            clock.removeAllListeners();
+            clock.cancel();
         }
-        pill.animate().alpha(0f).translationY(gently ? -dp(16) : 0f).scaleX(0.9f).scaleY(0.9f)
-                .setDuration(gently ? 440 : 160).setInterpolator(new PathInterpolator(0.4f, 0f, 0.2f, 1f))
+        if (teasePill == chip) teasePill = null;
+        if (cardHost != null) {
+            cardHost.animate().translationY(0f).rotationX(0f).scaleX(1f).scaleY(1f).setDuration(260)
+                    .setInterpolator(new PathInterpolator(0.2f, 0.9f, 0.2f, 1f)).start();
+        }
+        if (hint != null) hint.animate().alpha(1f).setDuration(200).start();
+        if (chip == null || chip.getParent() == null) return;
+        chip.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f).setDuration(160)
                 .withEndAction(() -> {
-                    if (pill.getParent() instanceof ViewGroup) ((ViewGroup) pill.getParent()).removeView(pill);
+                    if (chip.getParent() instanceof ViewGroup) ((ViewGroup) chip.getParent()).removeView(chip);
                 }).start();
     }
 
@@ -922,6 +1074,12 @@ final class LyricsShareCardController {
         currentCode = null;
         currentCodeView = null;
         lineSlides.clear();
+        if (teaseClock != null) {
+            teaseClock.removeAllListeners();
+            teaseClock.cancel();
+            teaseClock = null;
+        }
+        teasePill = null;
         // Full-size bitmaps kept only for the open sheet: the frozen lyrics background and the
         // shareable card (drawn at most twice, 5-6 MB each) go with it.
         lyricsBackground = null;
@@ -1333,7 +1491,7 @@ final class LyricsShareCardController {
         codeChip.setOnClickListener(v -> {
             spotifyCode = !spotifyCode;
             prefs.edit().putBoolean(PREF_CODE, spotifyCode).apply();
-            styleToggle(codeChip, spotifyCode);
+            styleToggle(codeChip, spotifyCode, spotifyCode);
             if (spotifyCode) {
                 // Switched on: the code starts building at once, whether or not it has loaded.
                 codePlayed = false;
@@ -2031,7 +2189,7 @@ final class LyricsShareCardController {
     private void toggleTranslation() {
         if (document == null) return;
         showTranslation = !showTranslation;
-        if (translationChip != null) styleToggle(translationChip, showTranslation);
+        if (translationChip != null) styleToggle(translationChip, showTranslation, showTranslation);
         render(Transition.TEXT);
     }
 
@@ -2084,18 +2242,38 @@ final class LyricsShareCardController {
         return chip;
     }
 
-    /** On: Spotify green with a check; off: glass with the feature's own icon. */
     private void styleToggle(TextView chip, boolean on) {
+        styleToggle(chip, on, false);
+    }
+
+    /**
+     * On: Spotify green; off: glass. Either way the chip keeps the feature's own icon - no check
+     * mark - and switching it on plays that icon once: the code's bars pulse like a song
+     * playing, the globe turns.
+     */
+    private void styleToggle(TextView chip, boolean on, boolean play) {
         android.graphics.drawable.GradientDrawable bg = glass(dp(20), on ? 255 : 30, 0);
         if (on) bg.setColor(Color.rgb(30, 215, 96));
         chip.setBackground(bg);
         int color = on ? Color.BLACK : Color.argb(220, 255, 255, 255);
-        LineIcon icon = new LineIcon(on ? LineIcon.Kind.CHECK : (LineIcon.Kind) chip.getTag(), color);
+        final LineIcon icon = new LineIcon((LineIcon.Kind) chip.getTag(), color);
         icon.setBounds(0, 0, dp(16), dp(16));
         chip.setCompoundDrawablesRelative(icon, null, null, null);
         chip.setTextColor(color);
         chip.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        Object running = chip.getTag(R_ICON_ANIMATOR);
+        if (running instanceof android.animation.Animator) ((android.animation.Animator) running).cancel();
+        if (!play) return;
+        android.animation.ValueAnimator motion = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        motion.setDuration(icon.kind == LineIcon.Kind.GLOBE ? 1100 : 1300);
+        motion.setInterpolator(new android.view.animation.LinearInterpolator());
+        motion.addUpdateListener(a -> icon.setPhase((float) a.getAnimatedValue()));
+        chip.setTag(R_ICON_ANIMATOR, motion);
+        motion.start();
     }
+
+    /** View tag key for a chip's running icon animation (any id unique to this class works). */
+    private static final int R_ICON_ANIMATOR = 0x7F5EC0DE;
 
     private android.graphics.drawable.Drawable appIcon(String pkg) {
         try {
@@ -2160,8 +2338,15 @@ final class LyricsShareCardController {
         enum Kind { CLOSE, LINK, DOWNLOAD, MORE, CHECK, ALIGN_START, ALIGN_CENTER, ALIGN_END,
             POS_TOP, POS_MIDDLE, POS_BOTTOM, CODE, GLOBE, LYRICS, ARROW_UP }
 
-        private final Kind kind;
+        final Kind kind;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        /** 0..1 through a one-shot motion (CODE, GLOBE); 0 and 1 both draw the still icon. */
+        private float phase;
+
+        void setPhase(float value) {
+            phase = value;
+            invalidateSelf();
+        }
 
         LineIcon(Kind kind, int color) {
             this.kind = kind;
@@ -2254,9 +2439,20 @@ final class LyricsShareCardController {
                     c.drawCircle(5, 12, 2.6f, p);
                     p.setStyle(Paint.Style.STROKE);
                     float[] heights = {5, 10, 6, 12, 7, 4};
+                    // While playing, each bar bounces like a level meter, eased in and out of
+                    // the still shape so the motion starts and ends on the icon itself.
+                    float blend = phase <= 0f || phase >= 1f ? 0f
+                            : (float) Math.sin(Math.PI * phase);
                     for (int i = 0; i < heights.length; i++) {
                         float x = 10 + i * 2.2f;
-                        c.drawLine(x, 12 - heights[i] / 2f, x, 12 + heights[i] / 2f, p);
+                        float h = heights[i];
+                        if (blend > 0f) {
+                            double beat = phase * 5.5 + i * 0.37;
+                            float level = 3f + 10f * (float) Math.abs(Math.sin(Math.PI * beat)
+                                    * (0.65 + 0.35 * Math.sin(2.3 * Math.PI * beat + i)));
+                            h = h + (level - h) * blend;
+                        }
+                        c.drawLine(x, 12 - h / 2f, x, 12 + h / 2f, p);
                     }
                     break;
                 }
@@ -2281,8 +2477,31 @@ final class LyricsShareCardController {
                 case GLOBE:
                     p.setStrokeWidth(1.7f);
                     c.drawCircle(12, 12, 9, p);
-                    c.drawOval(new RectF(8, 3, 16, 21), p);
                     c.drawLine(3, 12, 21, 12, p);
+                    if (phase <= 0f || phase >= 1f) {
+                        c.drawOval(new RectF(8, 3, 16, 21), p);
+                    } else {
+                        // One eased turn: meridians sweep across, narrowing toward the rim, the
+                        // way a spinning globe's lines of longitude do.
+                        float e = phase < 0.5f ? 4f * phase * phase * phase
+                                : 1f - (float) Math.pow(-2f * phase + 2f, 3) / 2f;
+                        double base = Math.asin(4.0 / 9.0) + e * Math.PI;
+                        int alpha = p.getAlpha();
+                        float presence = (float) Math.sin(Math.PI * phase);
+                        for (int k = 0; k < 2; k++) {
+                            double a = base + k * Math.PI / 2;
+                            float half = 9f * (float) Math.abs(Math.sin(a));
+                            // The second meridian fades in and out with the turn, so the first
+                            // and last frames are the still icon.
+                            if (k == 1) p.setAlpha(Math.round(alpha * presence));
+                            if (half < 0.4f) {
+                                c.drawLine(12, 3, 12, 21, p);
+                            } else {
+                                c.drawOval(new RectF(12 - half, 3, 12 + half, 21), p);
+                            }
+                        }
+                        p.setAlpha(alpha);
+                    }
                     break;
                 default:
                     break;
@@ -3522,11 +3741,18 @@ final class LyricsShareCardController {
     }
 
     private static StaticLayout layout(String text, TextPaint paint, int width, Layout.Alignment align) {
-        return StaticLayout.Builder.obtain(text, 0, text.length(), paint, width)
+        StaticLayout.Builder builder = StaticLayout.Builder.obtain(text, 0, text.length(), paint, width)
                 .setAlignment(align)
                 .setLineSpacing(0f, 1.08f)
-                .setBreakStrategy(Layout.BREAK_STRATEGY_BALANCED)
-                .build();
+                .setBreakStrategy(Layout.BREAK_STRATEGY_BALANCED);
+        if (Build.VERSION.SDK_INT >= 33) {
+            // Korean wraps between words and Japanese between phrases, as they are read, rather
+            // than between any two characters - a word split across the card's lines reads badly.
+            builder.setLineBreakConfig(new android.graphics.text.LineBreakConfig.Builder()
+                    .setLineBreakWordStyle(android.graphics.text.LineBreakConfig.LINE_BREAK_WORD_STYLE_PHRASE)
+                    .build());
+        }
+        return builder.build();
     }
 
     private static Bitmap renderCard(Design design, TextStyle style, Backdrop backdrop, Bitmap code,
