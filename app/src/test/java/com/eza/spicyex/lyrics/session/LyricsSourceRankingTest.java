@@ -1,6 +1,8 @@
 package com.eza.spicyex.lyrics.session;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import com.eza.spicyex.lyrics.LyricsCandidateSelector;
 import com.eza.spicyex.lyrics.LyricsDocument;
@@ -30,6 +32,25 @@ public class LyricsSourceRankingTest {
                 LyricsSourcePreferences.RankingMode.parse("Source order"));
         assertEquals(LyricsSourcePreferences.RankingMode.SOURCE_ORDER,
                 LyricsSourcePreferences.RankingMode.parse("order"));
+    }
+
+    @Test
+    public void searchProvidersAreOptInWhileEstablishedSourcesKeepTheirDefaults() {
+        assertFalse(LyricsSourcePreferences.enabledByDefault(null));
+        assertFalse(LyricsSourcePreferences.enabledByDefault(
+                LyricsSourcePreferences.Source.SPICY));
+        assertFalse(LyricsSourcePreferences.enabledByDefault(
+                LyricsSourcePreferences.Source.QQ));
+        assertFalse(LyricsSourcePreferences.enabledByDefault(
+                LyricsSourcePreferences.Source.NETEASE));
+        assertTrue(LyricsSourcePreferences.enabledByDefault(
+                LyricsSourcePreferences.Source.APPLE_MUSIC));
+        assertTrue(LyricsSourcePreferences.enabledByDefault(
+                LyricsSourcePreferences.Source.SPOTIFY));
+        assertTrue(LyricsSourcePreferences.enabledByDefault(
+                LyricsSourcePreferences.Source.AMLL));
+        assertTrue(LyricsSourcePreferences.enabledByDefault(
+                LyricsSourcePreferences.Source.LRCLIB));
     }
 
     @Test

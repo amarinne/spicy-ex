@@ -472,22 +472,59 @@ final class LyricsActivityTakeoverHook {
                 return true;
             }
             View bar = findViewByResourceEntryName(content, "now_playing_bar_layout");
+            boolean barLaidOut = bar != null && bar.isShown() && bar.getWidth() > 0;
+            // Landscape case: wide screens replace the bottom bar with a persistent left-rail
+            // side panel (now_playing_mini_container). Same button, toggle, and fullscreen
+            // launch — only the anchor changes: left of the player header's + button
+            // (animated_heart_button) instead of left of the bar's device icon. Gated on
+            // landscape so the portrait path below pays no extra tree walk.
+            View sidebar = null;
+            View heart = null;
+            if (!barLaidOut && isLandscape(activity)) {
+                sidebar = findViewByResourceEntryName(content, "now_playing_mini_container");
+                if (sidebar != null && sidebar.isShown() && sidebar.getWidth() > 0) {
+                    heart = findViewByResourceEntryName(sidebar, "animated_heart_button");
+                }
+            }
+            boolean sidebarLaidOut = heart != null && heart.isShown() && heart.getWidth() > 0;
             if (existingButton != null) {
                 // Safety-net re-sync at the steady poll's cadence (seconds, not frames): the bar's
                 // own OnLayoutChangeListener below does not fire for every reason the button can
                 // end up stale relative to the bar (e.g. screen off/on with unchanged bar bounds).
-                if (bar != null && bar.isShown() && bar.getWidth() > 0) {
+                if (barLaidOut) {
                     repositionMiniPlayerButton(existingButton, bar, content, dp(PLAY_PAUSE_BUTTON_DP),
                             findViewByResourceEntryName(bar, "connect_destination_button"),
                             findViewByResourceEntryName(bar, "tracks_carousel_view"));
+                } else if (sidebarLaidOut) {
+                    repositionMiniPlayerSidebarButton(existingButton, content,
+                            dp(PLAY_PAUSE_BUTTON_DP), heart);
                 }
                 return true;
             }
-            if (bar == null || !bar.isShown() || bar.getWidth() == 0) {
+            if (!barLaidOut && !sidebarLaidOut) {
                 XpLog.log(NativeSpicyLyricsHook.TAG
                         + " mini player: now_playing_bar_layout not laid out yet in "
                         + activity.getClass().getName());
                 return false;
+            }
+            if (sidebarLaidOut) {
+                int side = dp(PLAY_PAUSE_BUTTON_DP);
+                View button = createMiniPlayerLyricsButton(activity);
+                content.addView(button, new FrameLayout.LayoutParams(side, side));
+                button.bringToFront();
+                View[] heartRef = {heart};
+                View sidebarRef = sidebar;
+                Runnable reposition = () -> repositionMiniPlayerSidebarButton(
+                        button, content, side, heartRef[0]);
+                reposition.run();
+                sidebarRef.addOnLayoutChangeListener((v, l, t, r, b2, ol, ot, or_, ob) -> {
+                    heartRef[0] = findViewByResourceEntryName(sidebarRef, "animated_heart_button");
+                    startMiniPlayerFollowBurst(activity, button, reposition);
+                });
+                XpLog.log(NativeSpicyLyricsHook.TAG
+                        + " inserted mini player lyrics button (sidebar) in "
+                        + activity.getClass().getName());
+                return true;
             }
             // Presence (not shown/width) confirms the bar's content actually finished inflating,
             // without depending on this view-stub's own unreliable measured size.
@@ -620,6 +657,37 @@ final class LyricsActivityTakeoverHook {
         button.setFocusable(true);
         button.setOnClickListener(v -> launchNativeLyricsFullscreen(activity));
         return button;
+    }
+
+    private static boolean isLandscape(Activity activity) {
+        try {
+            return activity.getResources().getConfiguration().orientation
+                    == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * Landscape anchor for the same mini-player button: pins it left of the side panel's +
+     * button in screen coordinates derived from +'s live location (the panel is a plain
+     * container, so the floating-overlay trick applies here exactly as on the portrait
+     * bar). Observed Fold 3 landscape geometry: side panel 552px at 480dpi, header + at
+     * [384,1140][552,1308]. Pure overlay — long titles may slide under the mic's space
+     * rather than mutating the panel's unproven layout params.
+     */
+    private void repositionMiniPlayerSidebarButton(View button, View content, int side, View heart) {
+        try {
+            if (heart == null || !heart.isShown() || heart.getWidth() == 0) return;
+            int[] heartLoc = new int[2];
+            int[] contentLoc = new int[2];
+            heart.getLocationOnScreen(heartLoc);
+            content.getLocationOnScreen(contentLoc);
+            button.setX((heartLoc[0] - contentLoc[0]) - dp(4) - side);
+            button.setY((heartLoc[1] - contentLoc[1]) + (heart.getHeight() - side) / 2f);
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " reposition sidebar button failed: " + t);
+        }
     }
 
     private View createExtraLyricsRowButton(Activity activity) {

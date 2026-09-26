@@ -22,6 +22,15 @@ public class LyricCachesTest {
     }
 
     @Test
+    public void catalogArtifactsAreFiledUnderTheLyricBodyTheirKeyNames() {
+        assertEquals("abc", LyricCaches.digestOf(LyricCaches.soundArtifactKey("abc", "cfg|x")));
+        assertEquals("abc", LyricCaches.digestOf(LyricCaches.meaningArtifactKey("abc", "en")));
+        assertEquals("abc", LyricCaches.digestOf(LyricCaches.detectionArtifactKey("abc", 4)));
+        assertEquals("", LyricCaches.digestOf(LyricCaches.providerDetectionKey("hello")));
+        assertEquals("", LyricCaches.digestOf(null));
+    }
+
+    @Test
     public void cacheKeysNormalizeUnknownLanguageToAuto() {
         assertEquals("auto", LyricCaches.sourceLanguageForCache(null));
         assertEquals("auto", LyricCaches.sourceLanguageForCache("unknown"));

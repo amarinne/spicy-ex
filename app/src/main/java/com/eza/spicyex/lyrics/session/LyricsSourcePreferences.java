@@ -12,7 +12,8 @@ import java.util.Locale;
 /** Shared source-selection preferences used by fullscreen and now-playing lyrics. */
 public final class LyricsSourcePreferences {
     public enum Source {
-        APPLE_MUSIC("apple"), SPICY("spicy"), SPOTIFY("spotify"), AMLL("amll"), LRCLIB("lrclib");
+        APPLE_MUSIC("apple"), SPICY("spicy"), SPOTIFY("spotify"), AMLL("amll"), LRCLIB("lrclib"),
+        QQ("qq"), NETEASE("netease");
         public final String id;
         Source(String id) { this.id = id; }
         public static Source parse(String value) {
@@ -51,7 +52,8 @@ public final class LyricsSourcePreferences {
     private static final String OVERRIDE_ORDER = "override_order";
     private static final int MAX_OVERRIDES = 200;
     private static final List<Source> DEFAULT_ORDER = Collections.unmodifiableList(
-            java.util.Arrays.asList(Source.APPLE_MUSIC, Source.SPICY, Source.SPOTIFY, Source.AMLL, Source.LRCLIB));
+            java.util.Arrays.asList(Source.APPLE_MUSIC, Source.SPICY, Source.SPOTIFY, Source.AMLL,
+                    Source.LRCLIB, Source.QQ, Source.NETEASE));
 
     private LyricsSourcePreferences() {}
 
@@ -81,9 +83,15 @@ public final class LyricsSourcePreferences {
 
     public static boolean sourceEnabled(Context context, Source source) {
         if (source == null || source == Source.SPICY) return false;
-        if (context == null) return true;
+        if (context == null) return enabledByDefault(source);
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(ENABLED_PREFIX + source.id, true);
+                .getBoolean(ENABLED_PREFIX + source.id, enabledByDefault(source));
+    }
+
+    /** Network search sources are opt-in; established ID-based sources retain their defaults. */
+    public static boolean enabledByDefault(Source source) {
+        return source != null && source != Source.SPICY
+                && source != Source.QQ && source != Source.NETEASE;
     }
 
     public static void setSourceEnabled(Context context, Source source, boolean enabled) {
@@ -131,49 +139,6 @@ public final class LyricsSourcePreferences {
     /** String convenience overload used by settings/UI adapters; "auto" clears the override. */
     public static void setTrackOverride(Context context, String trackId, String source) {
         setTrackOverride(context, trackId, Source.parse(source));
-    }
-
-    /** Effective source request: an override is strict, otherwise automatic ranking applies. */
-    public static Source effectiveOverride(Context context, String trackId) {
-        return trackOverride(context, trackId);
-    }
-
-    public static Source sourceForTrack(Context context, String trackId) {
-        return trackOverride(context, trackId);
-    }
-
-    public static String selectionIdentity(Context context, String trackId) {
-        RankingMode mode = rankingMode(context);
-        List<Source> order = sourceOrder(context);
-        Source override = trackOverride(context, trackId);
-        StringBuilder raw = new StringBuilder(mode.id).append('|');
-        for (Source source : order) raw.append(source.id).append(',');
-        raw.append('|');
-        for (Source source : Source.values()) raw.append(source.id).append('=').append(sourceEnabled(context, source)).append(',');
-        raw.append('|').append(override == null ? "auto" : override.id);
-        if (context != null) {
-            try {
-                com.eza.spicyex.SpotifyPlusConfig config = com.eza.spicyex.SpotifyPlusConfig.from(context);
-                String strict = config.get(com.eza.spicyex.Settings.LYRICS_SOURCE_OVERRIDE);
-                String token = com.eza.spicyex.lyrics.SpicyManualTokenStore.load(context);
-                raw.append("|strict=").append(strict == null ? "Auto" : strict);
-                raw.append("|token=").append(token == null || token.isEmpty() ? "none" : Integer.toHexString(token.hashCode()));
-            } catch (Throwable ignored) { }
-        }
-        return Digests.sha256(raw.toString());
-    }
-
-    public static boolean cacheCompatible(String cachedIdentity, String currentIdentity) {
-        return cachedIdentity != null && currentIdentity != null && cachedIdentity.equals(currentIdentity);
-    }
-
-    /** True when the user has explicitly configured source selection in the dedicated store. */
-    public static boolean hasExplicitSelection(Context context) {
-        if (context == null) return false;
-        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (p.contains(MODE) || p.contains(ORDER) || !p.getString(OVERRIDE_ORDER, "").isEmpty()) return true;
-        for (Source source : Source.values()) if (p.contains(ENABLED_PREFIX + source.id)) return true;
-        return false;
     }
 
     public static List<Source> defaultOrder() { return DEFAULT_ORDER; }

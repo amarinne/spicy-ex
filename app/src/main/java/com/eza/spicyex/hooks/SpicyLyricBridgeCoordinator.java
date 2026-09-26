@@ -106,8 +106,17 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
 
     @Override
     public void onDocumentChanged(LyricsSessionManager.Snapshot snapshot, LyricsDocument nextDocument) {
-        if (!enabled || snapshot == null || nextDocument == null
+        if (!enabled || snapshot == null
                 || lastSnapshot == null || snapshot.generation != lastSnapshot.generation) return;
+        if (nextDocument == null) {
+            document = null;
+            documentRevision++;
+            publishedFingerprint = "";
+            lastLineIndex = Integer.MIN_VALUE;
+            lastPublishAtMs = 0L;
+            publisher.clear(producerId, snapshot.generation);
+            return;
+        }
         document = nextDocument;
         publishDocument(snapshot, nextDocument);
         lastLineIndex = Integer.MIN_VALUE;

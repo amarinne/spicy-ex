@@ -105,14 +105,39 @@ final class NowPlayingLyricController {
         @Override public void onSessionChanged(LyricsSessionManager.Snapshot snapshot) {
             if (!running || snapshot == null) return;
             if (snapshot.generation != observedGeneration) observedGeneration = snapshot.generation;
+            if ("no_lyrics".equals(snapshot.status) && cardDocument == null) {
+                String id = NativeLyricsUtils.trackIdFromUri(snapshot.trackUri);
+                if (id.equals(currentId)) {
+                    loadingId = "";
+                    failedId = id;
+                }
+            }
         }
 
         @Override public void onDocumentChanged(LyricsSessionManager.Snapshot snapshot,
                                                 LyricsDocument nextDocument) {
-            if (!running || snapshot == null || snapshot.track == null || nextDocument == null) return;
+            if (!running || snapshot == null || snapshot.track == null) return;
+            if (nextDocument == null) {
+                retireSessionDocument(snapshot);
+                return;
+            }
             acceptSessionDocument(snapshot, nextDocument);
         }
     };
+
+    private void retireSessionDocument(LyricsSessionManager.Snapshot snapshot) {
+        String id = NativeLyricsUtils.trackIdFromUri(snapshot.trackUri);
+        if (!id.equals(currentId)) return;
+        projectionRevision.incrementAndGet();
+        loadedId = "";
+        cardDocument = null;
+        artworkDocument = null;
+        card.clear();
+        artworkOverlay.clearDocument();
+        lastIdx = Integer.MIN_VALUE;
+        placeholderShown = false;
+        failedId = "no_lyrics".equals(snapshot.status) ? id : "";
+    }
 
     private final Choreographer.FrameCallback frame = new Choreographer.FrameCallback() {
         @Override

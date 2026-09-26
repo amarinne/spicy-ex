@@ -88,6 +88,8 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             bridgeCoordinator = new SpicyLyricBridgeCoordinator(
                     lyricsSessionManager, applicationContext);
             bridgeCoordinator.start();
+            // Debug builds only, and inert until the arm file exists. See AgentCommandChannel.
+            AgentCommandChannel.start(this, applicationContext);
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "main_process"));
         } else {
@@ -200,6 +202,58 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     @Override
     public void clearLyricsCache(CacheClearKind kind) {
         lyricsSessionManager.clearCache(kind);
+    }
+
+    @Override
+    public void loadCatalogPickerRows(CatalogPickerRowsCallback callback) {
+        lyricsSessionManager.pickerRows(callback);
+    }
+
+    @Override
+    public void selectCatalogCandidate(String candidateId, CatalogActionCallback callback) {
+        lyricsSessionManager.selectCatalogCandidate(candidateId, callback);
+    }
+
+    @Override
+    public void resetCatalogToAuto(CatalogActionCallback callback) {
+        lyricsSessionManager.resetCatalogToAuto(callback);
+    }
+
+    @Override
+    public void refreshCatalogSource(
+            com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId sourceId,
+            CatalogActionCallback callback) {
+        lyricsSessionManager.refreshCatalogSource(sourceId, callback);
+    }
+
+    @Override
+    public void checkOtherCatalogSources(CatalogActionCallback callback) {
+        lyricsSessionManager.checkOtherCatalogSources(callback);
+    }
+
+    @Override
+    public void refreshAllCatalogSourcesInOrder(CatalogActionCallback callback) {
+        lyricsSessionManager.refreshAllCatalogSourcesInOrder(callback);
+    }
+
+    @Override
+    public void rejectCatalogCandidate(String candidateId, CatalogActionCallback callback) {
+        lyricsSessionManager.rejectCatalogCandidate(candidateId, callback);
+    }
+
+    @Override
+    public void removeCatalogCandidate(String candidateId, CatalogActionCallback callback) {
+        lyricsSessionManager.removeCatalogCandidate(candidateId, callback);
+    }
+
+    @Override
+    public void deleteCatalogTrack(CatalogActionCallback callback) {
+        lyricsSessionManager.deleteCatalogTrack(callback);
+    }
+
+    @Override
+    public void reconcileLyricsSources() {
+        lyricsSessionManager.reconcileSources();
     }
 
 

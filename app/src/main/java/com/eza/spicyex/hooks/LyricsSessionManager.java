@@ -7,6 +7,7 @@ import android.os.SystemClock;
 
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
@@ -24,7 +25,6 @@ import com.eza.spicyex.lyrics.session.LyricsMemoryPressure;
 import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
 import com.eza.spicyex.lyrics.CacheClearKind;
 import com.eza.spicyex.lyrics.LyricCaches;
-import com.eza.spicyex.lyrics.session.CanonicalSourceCodec;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.session.DerivedLayerArtifact;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
@@ -33,9 +33,20 @@ import com.eza.spicyex.lyrics.session.LayerState;
 import com.eza.spicyex.lyrics.session.LayerStatus;
 import com.eza.spicyex.lyrics.session.LegacyDocumentComposer;
 import com.eza.spicyex.lyrics.session.LyricSession;
-import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
+import com.eza.spicyex.lyrics.NativeLyricsSource;
+import com.eza.spicyex.lyrics.catalog.AcquisitionPlanner;
+import com.eza.spicyex.lyrics.catalog.AcquisitionScope;
+import com.eza.spicyex.lyrics.catalog.CatalogAdapters;
+import com.eza.spicyex.lyrics.catalog.CatalogDecisions;
+import com.eza.spicyex.lyrics.catalog.CatalogPickerModel;
+import com.eza.spicyex.lyrics.catalog.CatalogPolicy;
+import com.eza.spicyex.lyrics.catalog.CatalogResolver;
+import com.eza.spicyex.lyrics.catalog.CatalogSource;
+import com.eza.spicyex.lyrics.catalog.CatalogState;
+import com.eza.spicyex.lyrics.catalog.CatalogStore;
+import com.eza.spicyex.lyrics.catalog.LyricsCatalog;
 import com.eza.spicyex.lyrics.ai.AiRequestStartResult;
 import com.eza.spicyex.lyrics.ai.AiSettings;
 
@@ -50,6 +61,7 @@ final class LyricsSessionManager {
 
     interface Listener {
         void onSessionChanged(Snapshot snapshot);
+        /** A null document withdraws the rendered base for this same track and generation. */
         void onDocumentChanged(Snapshot snapshot, LyricsDocument document);
     }
 
@@ -119,9 +131,22 @@ final class LyricsSessionManager {
      * reads from the session, this is the base and the mutable document goes away.
      */
     private LyricsDocument canonicalSource;
-    /** Set when the source policy asked for a probe on top of an already-rendered cached base. */
-    private boolean refreshRequested;
-    private boolean sourceProbed;
+    /** Candidate currently rendered; empty for a delivery the catalog could not store. */
+    private String displayedCandidateId = "";
+    /** Newest catalog view applied here; views read earlier on another IO thread are stale. */
+    private long appliedViewSequence;
+    /** Source policy the applied view was planned under; Save reconciles only on a change. */
+    private CatalogPolicy loadedPolicy;
+    /** This visit's next automatic fetch; null once the catalog plan settled the visit. */
+    private AcquisitionPlanner.Plan pendingPlan;
+    private boolean replanning;
+    /** Spotify native (local, free) was already tried during this visit. */
+    private boolean localTried;
+    private int autoAttempts;
+    /** Why the current visit shows no lyrics; answers new requests without another fetch. */
+    private String noLyricsReason = "";
+    /** Hard cap on automatic fetches per visit, whatever the stored outcomes say. */
+    static final int MAX_AUTO_ATTEMPTS = 3;
     private String canonicalLoadingUri = "";
     /** Last completed detection for the current base, for diagnostics and status. */
     private DetectionArtifact detectionArtifact;
@@ -153,6 +178,29 @@ final class LyricsSessionManager {
     void start() {
         if (started) return;
         started = true;
+        // Native-first: a hook capture for the current track publishes without waiting for a
+        // poll or a fetch retry window. Stale-track captures stay in the native memory cache;
+        // generation and adoption guards below drop them from the screen.
+        try {
+            fetchCoordinator.nativeLyricsSource().addNativeListener(nativeCaptureListener);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private final NativeLyricsSource.NativeListener nativeCaptureListener = (trackId, captured) -> {
+        try {
+            handler.post(() -> acceptNativeCapture(trackId, captured));
+        } catch (Throwable ignored) {
+        }
+    };
+
+    /** Commits a native capture for the current track, then publishes the seat it produces. */
+    private void acceptNativeCapture(String trackId, LyricsDocument captured) {
+        SpotifyTrack current = track;
+        if (current == null || captured == null || trackId == null || trackId.isEmpty()) return;
+        String bare = CatalogSource.bareTrackId(current.uri);
+        if (bare.isEmpty() || !bare.equals(trackId)) return;
+        acceptProviderResult(current, policy.trackUri(), policy.generation(), captured, null);
     }
 
     SessionSubscription subscribe(Listener listener) {
@@ -188,6 +236,13 @@ final class LyricsSessionManager {
         adoptTrack(requestedTrack);
         if (document != null) {
             callback.onSuccess(publishedProjection(document));
+            return () -> {};
+        }
+        if ("no_lyrics".equals(status) && canonicalLoadingUri.isEmpty()
+                && !policy.trackUri().equals(loadingUri)
+                && (pendingPlan == null || !pendingPlan.fetches())) {
+            // The visit already settled without lyrics; a new surface gets the same answer.
+            callback.onError(noLyricsReason);
             return () -> {};
         }
         RequestRecord request = new RequestRecord(policy.generation(), callback);
@@ -238,8 +293,12 @@ final class LyricsSessionManager {
         nextFetchAtMs = 0L;
         missingTrackSinceMs = 0L;
         session = null;
-        refreshRequested = false;
-        sourceProbed = false;
+        displayedCandidateId = "";
+        pendingPlan = null;
+        replanning = false;
+        localTried = false;
+        autoAttempts = 0;
+        noLyricsReason = "";
         canonicalLoadingUri = "";
         detectionArtifact = null;
         awaitingDetection = false;
@@ -251,33 +310,10 @@ final class LyricsSessionManager {
         loadCanonicalBase(uri, policy.generation());
     }
 
-    /** True when a legacy cached record survives an explicit per-track source override. */
-    private static boolean overrideAcceptsRecord(LyricsSourcePreferences.Source override,
-                                                 LyricsDocument record) {
-        if (override == null || record == null) return true;
-        String hay = (nz(record.fetchSource) + " " + nz(record.provider))
-                .toLowerCase(java.util.Locale.ROOT);
-        switch (override) {
-            case LRCLIB:
-                return hay.contains("lrclib");
-            case SPOTIFY:
-                return hay.contains("native") || hay.contains("musixmatch") || hay.contains("spotify");
-            case SPICY:
-            case APPLE_MUSIC:
-                return hay.contains("spicy") || hay.contains("apple") || hay.contains("aml")
-                        || hay.contains("lenerd");
-            default:
-                return true;
-        }
-    }
-
-    private static String nz(String value) {
-        return value == null ? "" : value;
-    }
-
     /**
-     * Cache-first entry point: a durable canonical base renders before any derived processing and
-     * without a source request. Only a miss, or an explicit policy probe, reaches the network.
+     * Catalog-first entry point. The stored seat renders before any derived processing and without
+     * a source request; the acquisition plan read from the same committed state then decides
+     * whether any provider is asked during this visit.
      */
     private void loadCanonicalBase(String requestedUri, int requestedGeneration) {
         if (requestedUri.isEmpty() || requestedUri.equals(canonicalLoadingUri)) return;
@@ -285,74 +321,139 @@ final class LyricsSessionManager {
         final SpotifyTrack requestedTrack = track;
         final long startedAtMs = SystemClock.elapsedRealtime();
         NativeRuntime.LYRICS_IO.execute(() -> {
-            CanonicalSourceCodec.Record record = null;
+            LyricsCatalog.View view = null;
             try {
-                String selectionIdentity = LyricsSourcePreferences.selectionIdentity(context, requestedUri);
-                record = CanonicalSourceCache.load(context, requestedUri, selectionIdentity);
-                if (record == null) {
-                    // Migration: a record orphaned by a retired source (or any identity change)
-                    // stays display-authoritative. Serve it unless an explicit per-track override
-                    // rejects its source; the refresh policy still probes when the base leaves
-                    // room for better, and the adoption gate refuses any lower-quality replace.
-                    CanonicalSourceCodec.Record legacy =
-                            CanonicalSourceCache.load(context, requestedUri);
-                    if (legacy != null && legacy.document != null && overrideAcceptsRecord(
-                            LyricsSourcePreferences.trackOverride(context,
-                                    com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(requestedUri)),
-                            legacy.document)) {
-                        record = legacy;
-                    }
-                }
-                if (record != null) {
-                    // Reproduce exactly what a fresh parse produces: timeline repair, provider
-                    // translations, compatible cached derived values, and pending flags.
-                    LyricsDocumentProcessor.finalizeParsedDocument(context, record.document,
-                            NativeRuntime.GOOGLE_PROCESSING_VERSION);
-                }
+                probeNativeLyrics(requestedTrack);
+                view = LyricsCatalog.load(context, requestedTrack, true);
+                finalizeSeat(view);
             } catch (Throwable t) {
-                // A bad cache record must never strand the session: fall through to the network.
-                record = null;
+                // An unreadable record must never strand the session: the fetch path still runs.
+                view = null;
             }
-            final CanonicalSourceCodec.Record loaded = record;
-            handler.post(() -> acceptCachedBase(requestedTrack, requestedUri, requestedGeneration,
+            final LyricsCatalog.View loaded = view;
+            handler.post(() -> acceptCatalogLoad(requestedTrack, requestedUri, requestedGeneration,
                     loaded, startedAtMs));
         });
     }
 
-    private void acceptCachedBase(SpotifyTrack requestedTrack, String requestedUri,
-                                  int requestedGeneration, CanonicalSourceCodec.Record record,
-                                  long startedAtMs) {
+    /**
+     * Visit-time native probe. Spotify's own lyrics for the track are free local data
+     * (captured model or lyrics_db, zero requests), so each visit records what is there:
+     * a hit commits the candidate, a miss records NOT_FOUND. Manual pins never move; the
+     * seat is recomputed by the load that follows. Globally-disabled Spotify stays
+     * untouched here — automatic acquisition still skips it; only an explicit picker tap
+     * checks it as a track-scoped exception.
+     */
+    private void probeNativeLyrics(SpotifyTrack track) {
+        if (track == null || context == null || fetchCoordinator == null) return;
+        try {
+            if (!CatalogPolicy.read(context).enabled(CatalogSource.SourceId.SPOTIFY_NATIVE)) {
+                return;
+            }
+            LyricsDocument nativeDoc =
+                    fetchCoordinator.nativeLyricsSource().getNativeLyricsDocument(track);
+            if (nativeDoc != null && nativeDoc.lines != null && !nativeDoc.lines.isEmpty()) {
+                CatalogAdapters.recordSuccess(context, CatalogSource.SourceId.SPOTIFY_NATIVE,
+                        track, nativeDoc, CatalogSource.MatchMethod.EXACT_SPOTIFY_ID,
+                        com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(
+                                track == null ? "" : track.uri),
+                        "", CatalogAdapters.SPOTIFY_NATIVE_ADAPTER_REVISION);
+            } else {
+                CatalogAdapters.recordError(context, CatalogSource.SourceId.SPOTIFY_NATIVE,
+                        track, "Spotify has no lyrics for this track");
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Reproduces exactly what a fresh parse produces for a stored seat document. */
+    private void finalizeSeat(LyricsCatalog.View view) {
+        if (view == null || view.document == null) return;
+        LyricsDocumentProcessor.finalizeParsedDocument(context, view.document,
+                NativeRuntime.GOOGLE_PROCESSING_VERSION);
+    }
+
+    private void acceptCatalogLoad(SpotifyTrack requestedTrack, String requestedUri,
+                                   int requestedGeneration, LyricsCatalog.View view,
+                                   long startedAtMs) {
         if (!requestedUri.equals(canonicalLoadingUri)) return;
         canonicalLoadingUri = "";
         if (!policy.accepts(requestedGeneration, requestedUri)) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
             return;
         }
-        if (record == null || document != null) {
-            maybeFetch();
+        if (view != null && !applyView(view)) {
+            // A delivery (a native capture, usually) committed and published while this load was
+            // reading; plan from the newer state instead of this snapshot.
+            replan();
             return;
         }
-        document = record.document;
-        canonicalSource = LyricsDocument.copyOf(record.document);
-        session = LyricSession.of(CanonicalBase.fromDocument(requestedUri, record.document),
-                requestedGeneration, record.sourceRevision);
-        status = "ready";
-        LyricsFetchDiagnosticsState.recordCached(record.document);
-        LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.CACHED_ORIGINAL_RENDER);
-        LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.CACHED_ORIGINAL_RENDER,
-                SystemClock.elapsedRealtime() - startedAtMs);
-        Snapshot snapshot = snapshot();
-        for (RequestRecord request : takeRequests(requestedGeneration)) {
-            request.callback.onSuccess(LyricsDocument.copyOf(record.document));
+        if (view != null && view.document != null
+                && publishSeat(requestedTrack, requestedUri, requestedGeneration, view.document,
+                view.sourceRevision)) {
+            LyricsFetchDiagnosticsState.recordCached(view.document);
+            LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.CACHED_ORIGINAL_RENDER);
+            LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.CACHED_ORIGINAL_RENDER,
+                    SystemClock.elapsedRealtime() - startedAtMs);
         }
-        notifyDocument(snapshot, record.document);
-        startDetection(requestedTrack, record.document, requestedGeneration);
+        schedule(view, false);
+        if (document == null && (pendingPlan == null || !pendingPlan.fetches())) {
+            // Nothing stored renders and the plan asks nobody now: answer waiting surfaces.
+            reportNoLyrics(requestedGeneration, view == null ? "Lyrics unavailable"
+                    : settledReason(view.plan));
+        }
+        maybeFetch();
+    }
 
-        LyricsSourcePolicy.Decision decision = LyricsSourcePolicy.decide(true,
-                LyricsSourcePolicy.isSynced(record.document.type), sourceProbed, false);
-        if (decision == LyricsSourcePolicy.Decision.REFRESH_AFTER_CACHED_BASE) {
-            refreshRequested = true;
-            maybeFetch();
+    private void reportNoLyrics(int requestedGeneration, String reason) {
+        status = "no_lyrics";
+        noLyricsReason = reason == null ? "Lyrics unavailable" : reason;
+        for (RequestRecord request : takeRequests(requestedGeneration)) {
+            request.callback.onError(reason);
+        }
+        notifyState(snapshot());
+    }
+
+    private static String settledReason(AcquisitionPlanner.Plan plan) {
+        if (plan != null && "all-sources-disabled".equals(plan.reason)) {
+            return "All lyric sources disabled";
+        }
+        // "cached no-result" classifies as a durable miss, so surfaces stop re-asking.
+        return "Lyrics unavailable (cached no-result)";
+    }
+
+    /** Drops catalog views read before one already applied: IO threads can post out of order. */
+    private boolean applyView(LyricsCatalog.View view) {
+        if (view == null || view.sequence < appliedViewSequence) return false;
+        appliedViewSequence = view.sequence;
+        loadedPolicy = view.policy;
+        return true;
+    }
+
+    /**
+     * Arms this visit's next automatic fetch from a catalog plan. After an attempt, a source that
+     * is still due waits the transient base delay, so an outcome no adapter recorded cannot loop.
+     * Tracks without a catalog identity (episodes, local files) get one attempt; the repository
+     * reports why they have no lyrics.
+     */
+    private void schedule(LyricsCatalog.View view, boolean afterAttempt) {
+        long now = SystemClock.elapsedRealtime();
+        if (view == null) {
+            pendingPlan = afterAttempt || localTried ? null
+                    : AcquisitionPlanner.refreshAll(CatalogPolicy.read(context));
+            nextFetchAtMs = now;
+            return;
+        }
+        AcquisitionPlanner.Plan plan = view.plan;
+        if (plan.fetches()) {
+            pendingPlan = plan;
+            nextFetchAtMs = afterAttempt ? now + AcquisitionPlanner.TRANSIENT_BASE_RETRY_MS : now;
+        } else if (plan.retryAtMs > 0L) {
+            // Nothing is due yet: re-plan from stored state once the earliest source is.
+            pendingPlan = plan;
+            nextFetchAtMs = now + Math.max(0L, plan.retryAtMs - System.currentTimeMillis());
+        } else {
+            pendingPlan = null;
         }
     }
 
@@ -363,31 +464,44 @@ final class LyricsSessionManager {
     private void maybeFetch() {
         if (track == null || policy.trackUri().isEmpty()
                 || policy.trackUri().equals(loadingUri)
-                // The durable canonical base may still resolve; never race it to the network.
+                // The stored seat may still resolve; never race it to the network.
                 || !canonicalLoadingUri.isEmpty()
-                // A rendered base is display authority. Only an explicit policy probe refreshes it.
-                || (document != null && !refreshRequested)
+                // The plan settled this visit: no source is due.
+                || pendingPlan == null
                 || SystemClock.elapsedRealtime() < nextFetchAtMs) return;
+        if (!pendingPlan.fetches()) {
+            replan();
+            return;
+        }
+        if (autoAttempts >= MAX_AUTO_ATTEMPTS) {
+            pendingPlan = null;
+            return;
+        }
+        final AcquisitionScope scope = pendingPlan.scope;
+        final AcquisitionPlanner.Plan launched = pendingPlan;
         final SpotifyTrack requestedTrack = track;
         final String requestedUri = policy.trackUri();
         final int requestedGeneration = policy.generation();
+        pendingPlan = null;
+        autoAttempts++;
+        localTried = true;
         loadingUri = requestedUri;
-        refreshRequested = false;
-        sourceProbed = true;
         LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOURCE_FETCH_CALL);
         if (document == null) {
             status = "loading";
             notifyState(snapshot());
         }
         try {
-            fetchCoordinator.fetchLyrics(context, requestedTrack, requestedGeneration,
+            fetchCoordinator.fetchLyrics(context, requestedTrack, requestedGeneration, scope,
                     new NativeSpicyLyricsHook.LyricsResultCallback() {
                         @Override public void onSuccess(LyricsDocument result) {
-                            handler.post(() -> acceptDocument(requestedTrack, requestedUri, requestedGeneration, result));
+                            acceptProviderResult(requestedTrack, requestedUri,
+                                    requestedGeneration, result, null);
                         }
 
                         @Override public void onError(String error) {
-                            handler.post(() -> acceptError(requestedUri, requestedGeneration, error));
+                            handler.post(() -> acceptError(requestedTrack, requestedUri,
+                                    requestedGeneration, error));
                         }
                     });
         } catch (Throwable launchFailed) {
@@ -396,50 +510,76 @@ final class LyricsSessionManager {
             NativeSpicyLyricsHook.dbg("maybeFetch",
                     "fetch launch failed: " + launchFailed.getClass().getSimpleName());
             loadingUri = "";
+            pendingPlan = launched;
             nextFetchAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
         }
     }
 
-    private void acceptDocument(SpotifyTrack requestedTrack, String requestedUri,
-                                 int requestedGeneration, LyricsDocument result) {
-        if (result == null || result.lines.isEmpty()) {
-            // An empty success is a failed fetch, not a document: release the fetch gate so a
-            // later poll can retry instead of stranding the session on stale rows forever.
-            NativeSpicyLyricsHook.dbg("acceptDocument", "empty result; releasing fetch gate");
-            loadingUri = "";
-            nextFetchAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
-            if (document != null) return;
-            status = "no_lyrics";
-            notifyState(snapshot());
-            return;
-        }
+    /** Re-reads the stored state once a held-back source becomes due, then plans again. */
+    private void replan() {
+        if (replanning || track == null) return;
+        replanning = true;
+        final SpotifyTrack requestedTrack = track;
+        final String requestedUri = policy.trackUri();
+        final int requestedGeneration = policy.generation();
+        final boolean includeLocal = !localTried;
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            LyricsCatalog.View view = null;
+            try {
+                view = LyricsCatalog.current(context, requestedTrack, includeLocal);
+            } catch (Throwable ignored) {
+            }
+            final LyricsCatalog.View planned = view;
+            handler.post(() -> {
+                replanning = false;
+                if (!policy.accepts(requestedGeneration, requestedUri)) return;
+                if (planned == null) {
+                    pendingPlan = null;
+                    return;
+                }
+                schedule(planned, false);
+                maybeFetch();
+            });
+        });
+    }
+
+    /**
+     * Publishes the catalog seat. The catalog already decided it, so there is no quality gate
+     * here: a manual pick, an Auto upgrade, and a restart all render exactly what the seat names.
+     * Canonical identity still decides invalidation: an equal digest keeps every derived artifact.
+     *
+     * @return false when nothing changed on screen (same candidate, stale track, or empty rows)
+     */
+    private boolean publishSeat(SpotifyTrack requestedTrack, String requestedUri,
+                                int requestedGeneration, LyricsDocument result, int sourceRevision) {
+        if (result == null || result.lines.isEmpty()) return false;
         if (!policy.accepts(requestedGeneration, requestedUri)) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
-            return;
+            return false;
         }
-        if (!CanonicalBaseAdoption.shouldSupersede(document, result)) {
-            // A lower-quality refetch never overwrites the better base, on screen or in the
-            // cache. Release the fetch gate so later polls are not stranded behind it.
-            NativeSpicyLyricsHook.dbg("acceptDocument", "keeping higher-quality base");
-            loadingUri = "";
-            return;
+        String candidateId = result.catalogCandidateId == null ? "" : result.catalogCandidateId;
+        if (document != null && !candidateId.isEmpty() && candidateId.equals(displayedCandidateId)) {
+            return false;
         }
-        loadingUri = "";
+        displayedCandidateId = candidateId;
         CanonicalBase incoming = CanonicalBase.fromDocument(requestedUri, result);
         CanonicalBaseAdoption.Outcome outcome = CanonicalBaseAdoption.evaluate(
                 session != null, session == null ? "" : session.identity.canonicalDigest,
                 incoming.digest);
-        if (outcome == CanonicalBaseAdoption.Outcome.UNCHANGED) {
-            // Same canonical source arrived again. Nothing changed, so nothing republishes and no
-            // derived artifact is invalidated.
-            persistCanonicalBase(requestedUri, result,
-                    session == null ? 1 : session.identity.sourceRevision, incoming.digest);
-            return;
+        if (outcome == CanonicalBaseAdoption.Outcome.UNCHANGED && document != null) {
+            // Another candidate with identical canonical content: publish its provider metadata
+            // but keep the source revision and every digest-bound derived artifact.
+            document = result;
+            canonicalSource = LyricsDocument.copyOf(result);
+            status = "ready";
+            syncDocumentLayerFlags();
+            notifyDocument(snapshot(), result);
+            return true;
         }
         // withReplacedBase increments the source revision and drops artifacts tied to the old
         // digest, which is the whole invalidation axis for a source change.
         session = session == null
-                ? LyricSession.of(incoming, requestedGeneration)
+                ? LyricSession.of(incoming, requestedGeneration, sourceRevision)
                 : session.withReplacedBase(incoming);
         document = result;
         canonicalSource = LyricsDocument.copyOf(result);
@@ -448,39 +588,424 @@ final class LyricsSessionManager {
         if (outcome == CanonicalBaseAdoption.Outcome.REPLACE) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOURCE_REPLACED);
         }
-        persistCanonicalBase(requestedUri, canonicalSource, session.identity.sourceRevision,
-                incoming.digest);
         Snapshot snapshot = snapshot();
-        List<RequestRecord> pending = takeRequests(requestedGeneration);
-        for (RequestRecord request : pending) {
+        for (RequestRecord request : takeRequests(requestedGeneration)) {
             request.callback.onSuccess(LyricsDocument.copyOf(result));
         }
         notifyDocument(snapshot, result);
         startDetection(requestedTrack, result, requestedGeneration);
+        return true;
     }
 
-    private void persistCanonicalBase(String requestedUri, LyricsDocument snapshot, int revision,
-                                      String digest) {
-        // The caller owns this snapshot and must not mutate it after handoff: the IO thread reads
-        // it without a further whole-document copy.
-        final LyricsDocument toPersist = snapshot;
-        NativeRuntime.LYRICS_IO.execute(
-                () -> CanonicalSourceCache.save(context, requestedUri, toPersist, revision, digest,
-                        LyricsSourcePreferences.selectionIdentity(context, requestedUri)));
-    }
-
-    private void acceptError(String requestedUri, int requestedGeneration, String error) {
-        if (!policy.accepts(requestedGeneration, requestedUri)) return;
-        loadingUri = "";
-        nextFetchAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
-        // A failed optional refresh must not replace the cached base with an error state.
-        if (document != null) return;
-        status = "no_lyrics";
-        List<RequestRecord> pending = takeRequests(requestedGeneration);
-        for (RequestRecord request : pending) {
-            request.callback.onError(error);
+    /**
+     * Provider deliveries are outcomes, not display decisions. Each is committed to the catalog
+     * (adapters stamp what they stored; anything else is committed here), then the seat is re-read
+     * and published only when it changed. A manual pin therefore never moves, and callback order
+     * cannot flip an equal-ranked incumbent.
+     */
+    private void acceptProviderResult(SpotifyTrack requestedTrack, String requestedUri,
+                                      int requestedGeneration, LyricsDocument result,
+                                      LyricsHost.CatalogActionCallback callback) {
+        if (result == null || result.lines.isEmpty()) {
+            // An empty success is a failed fetch, not a document.
+            handler.post(() -> {
+                acceptError(requestedTrack, requestedUri, requestedGeneration, "empty result");
+                completeCatalogAction(callback, false, "No lyrics returned");
+            });
+            return;
         }
-        notifyState(snapshot());
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            boolean stored = false;
+            LyricsCatalog.View view = null;
+            try {
+                stored = CatalogAdapters.commitDelivered(context, requestedTrack, result);
+                view = LyricsCatalog.current(context, requestedTrack, false);
+                finalizeSeat(view);
+            } catch (Throwable error) {
+                NativeSpicyLyricsHook.dbg("acceptProviderResult",
+                        "catalog commit failed: " + error.getClass().getSimpleName());
+            }
+            final boolean durable = stored;
+            final LyricsCatalog.View seated = view;
+            handler.post(() -> {
+                if (!policy.accepts(requestedGeneration, requestedUri)) {
+                    LyricPipelineMetrics.increment(
+                            LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
+                    completeCatalogAction(callback, false, "Track changed");
+                    return;
+                }
+                if (requestedUri.equals(loadingUri)) loadingUri = "";
+                if (seated != null && seated.document != null) {
+                    if (applyView(seated)) {
+                        publishSeat(requestedTrack, requestedUri, requestedGeneration,
+                                seated.document, seated.sourceRevision);
+                    }
+                } else if (document == null) {
+                    // Nothing renders from the catalog (a failed write, or a source Auto may not
+                    // use): show the delivery for this visit without claiming it is stored.
+                    publishSeat(requestedTrack, requestedUri, requestedGeneration, result, 1);
+                }
+                completeCatalogAction(callback, durable || document != null,
+                        durable ? "Source checked" : "Source checked; not saved");
+            });
+        });
+    }
+
+    // --- Catalog source-picker operations ---
+    //
+    // Every op is one catalog command: selecting stored data makes zero requests, and every render
+    // publishes the committed seat so Sound/Meaning invalidation and all surfaces stay consistent.
+    // Results post back to the handler thread.
+
+    /** Picker rows for the current track, resolved off-thread and posted back. */
+    void pickerRows(LyricsHost.CatalogPickerRowsCallback callback) {
+        String uri = policy.trackUri();
+        if (track == null || uri.isEmpty() || callback == null) return;
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            try {
+                String bare = CatalogSource.bareTrackId(uri);
+                CatalogState state = CatalogStore.state(context, bare);
+                CatalogPolicy sources = CatalogPolicy.read(context);
+                CatalogResolver.Resolution auto = state.candidates.isEmpty() ? null
+                        : CatalogDecisions.autoResolution(state, sources);
+                java.util.List<CatalogPickerModel.Row> rows = CatalogPickerModel.build(
+                        state.candidates, state.statuses(), state.selection, auto);
+                long trackBytes = bare.isEmpty() ? 0L
+                        : CatalogStore.payloadBytesForTrack(context, bare);
+                java.util.List<CatalogPickerModel.Row> displayed = new java.util.ArrayList<>();
+                for (CatalogPickerModel.Row row : rows) {
+                    displayed.add(row.kind == CatalogPickerModel.RowKind.ACTION_DELETE_TRACK
+                            ? row.withSubtitle(com.eza.spicyex.lyrics.catalog.CatalogStorage
+                                    .formatBytes(trackBytes) + " stored on device")
+                            : row);
+                }
+                handler.post(() -> {
+                    try {
+                        callback.onRows(java.util.Collections.unmodifiableList(displayed));
+                    } catch (Throwable ignored) {
+                    }
+                });
+            } catch (Throwable ignored) {
+            }
+        });
+    }
+
+    /** Pins one stored candidate as this track's manual selection and renders it. */
+    void selectCatalogCandidate(String candidateId, LyricsHost.CatalogActionCallback callback) {
+        if (candidateId == null || candidateId.isEmpty()) {
+            completeCatalogAction(callback, false, "No current track or candidate");
+            return;
+        }
+        runCatalogCommand(LyricsCatalog.select(candidateId), callback, "Source selected");
+    }
+
+    /** Drops the manual pin and re-elects the automatic winner from stored candidates. */
+    void resetCatalogToAuto(LyricsHost.CatalogActionCallback callback) {
+        runCatalogCommand(LyricsCatalog.resetAuto(), callback, "Source selected");
+    }
+
+    /** Rejects a wrong match: that provider item is removed and refused from now on. */
+    void rejectCatalogCandidate(String candidateId, LyricsHost.CatalogActionCallback callback) {
+        if (candidateId == null || candidateId.isEmpty()) {
+            completeCatalogAction(callback, false, "Missing candidate");
+            return;
+        }
+        runCatalogCommand(LyricsCatalog.reject(candidateId), callback, "Rejected match");
+    }
+
+    /** Deletes one saved candidate; a deleted pin returns the track to Auto in the same commit. */
+    void removeCatalogCandidate(String candidateId, LyricsHost.CatalogActionCallback callback) {
+        if (candidateId == null || candidateId.isEmpty()) {
+            completeCatalogAction(callback, false, "Missing candidate");
+            return;
+        }
+        runCatalogCommand(LyricsCatalog.remove(candidateId), callback,
+                "Removed saved candidate");
+    }
+
+    /**
+     * Runs one user command as one catalog transaction, then publishes the committed seat. When
+     * the command leaves nothing to render, the track re-enters acquisition from the new state.
+     */
+    private void runCatalogCommand(LyricsCatalog.Command command,
+                                   LyricsHost.CatalogActionCallback callback, String success) {
+        SpotifyTrack current = track;
+        String uri = policy.trackUri();
+        int generation = policy.generation();
+        if (current == null || uri.isEmpty()) {
+            completeCatalogAction(callback, false, "No current track");
+            return;
+        }
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            LyricsCatalog.View view = null;
+            try {
+                view = LyricsCatalog.command(context, current, command);
+                finalizeSeat(view);
+            } catch (Throwable error) {
+                NativeSpicyLyricsHook.dbg("runCatalogCommand",
+                        "failed: " + error.getClass().getSimpleName());
+            }
+            final LyricsCatalog.View committed = view;
+            handler.post(() -> {
+                if (committed == null || !committed.durable) {
+                    completeCatalogAction(callback, false, commandFailure(committed));
+                    return;
+                }
+                if (!policy.accepts(generation, uri)) {
+                    completeCatalogAction(callback, true, success);
+                    return;
+                }
+                if (committed.document != null) {
+                    if (applyView(committed)) {
+                        publishSeat(current, uri, generation, committed.document,
+                                committed.sourceRevision);
+                    }
+                } else {
+                    clearCurrent();
+                    adoptTrack(current);
+                }
+                completeCatalogAction(callback, true, success);
+            });
+        });
+    }
+
+    private static String commandFailure(LyricsCatalog.View view) {
+        if (view == null) return "Unsupported track";
+        switch (view.outcome) {
+            case "missing-candidate":
+                return "Saved source is unavailable";
+            case "storage-failed":
+                return "Could not save source selection";
+            default:
+                return view.outcome.isEmpty() ? "Could not save source selection" : view.outcome;
+        }
+    }
+
+    /** Explicit per-source check. The selected row never falls through to another provider. */
+    void refreshCatalogSource(CatalogSource.SourceId source,
+                              LyricsHost.CatalogActionCallback callback) {
+        SpotifyTrack current = track;
+        String uri = policy.trackUri();
+        int generation = policy.generation();
+        if (current == null || uri.isEmpty() || source == null) {
+            completeCatalogAction(callback, false, "No current track or source");
+            return;
+        }
+        try {
+            fetchCoordinator.fetchCatalogSource(context, current, generation, source,
+                    new NativeSpicyLyricsHook.LyricsResultCallback() {
+                        @Override public void onSuccess(LyricsDocument result) {
+                            acceptProviderResult(current, uri, generation, result, callback);
+                        }
+
+                        @Override public void onError(String error) {
+                            CatalogAdapters.recordError(context, source, current, error);
+                            completeCatalogAction(callback, false, error);
+                        }
+                    });
+        } catch (Throwable t) {
+            CatalogAdapters.recordError(context, source, current, t.getMessage());
+            completeCatalogAction(callback, false, t.getMessage());
+        }
+    }
+
+    /**
+     * Owner-requested re-ask of the whole quality chain, in order.
+     *
+     * <p>Reached from the picker's "Check all sources in order" action and from the agent command
+     * channel. The automatic visit now keeps searching while the seat is only line-timed or unsynced,
+     * but it will not spend a network round-trip on a track whose seat it already trusts. This walks
+     * the chain sequentially rather than racing it, so the result reflects the built-in preference
+     * instead of arrival order.
+     *
+     * <p>A preference walk, not a quality escalation: the ordered fetch stops at the first source
+     * that returns any lyrics. Reaching word or syllable timing for a line-timed seat is the
+     * automatic visit's job.
+     */
+    void refreshAllCatalogSourcesInOrder(LyricsHost.CatalogActionCallback callback) {
+        SpotifyTrack current = track;
+        String uri = policy.trackUri();
+        if (current == null || uri.isEmpty()) {
+            completeCatalogAction(callback, false, "No current track");
+            return;
+        }
+        fetchCoordinator.invalidate(current);
+        loadingUri = "";
+        // An owner request bypasses the error backoff and the upgrade horizon.
+        nextFetchAtMs = 0L;
+        autoAttempts = 0;
+        pendingPlan = AcquisitionPlanner.refreshAllInOrder(CatalogPolicy.read(context));
+        maybeFetch();
+        // The climb is asynchronous and ends by electing a seat; report the request as taken so the
+        // panel can rerender, rather than claiming a document that has not arrived yet.
+        completeCatalogAction(callback, true, "Checking all sources in order");
+    }
+
+    /** Runs both explicit-check adapters; each commits and the seat decides what renders. */
+    void checkOtherCatalogSources(LyricsHost.CatalogActionCallback callback) {
+        if (track == null || policy.trackUri().isEmpty()) {
+            completeCatalogAction(callback, false, "No current track");
+            return;
+        }
+        java.util.concurrent.atomic.AtomicInteger remaining =
+                new java.util.concurrent.atomic.AtomicInteger(2);
+        java.util.concurrent.atomic.AtomicBoolean anySuccess =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        LyricsHost.CatalogActionCallback one = (success, detail) -> {
+            if (success) anySuccess.set(true);
+            if (remaining.decrementAndGet() == 0) {
+                completeCatalogAction(callback, anySuccess.get(),
+                        anySuccess.get() ? "Other sources checked" : detail);
+            }
+        };
+        refreshCatalogSource(CatalogSource.SourceId.QQ, one);
+        refreshCatalogSource(CatalogSource.SourceId.NETEASE, one);
+    }
+
+    /**
+     * Deletes every saved row for the current track, including the public release's record and
+     * per-track override it would otherwise re-import, then re-enters the miss flow.
+     */
+    void deleteCatalogTrack(LyricsHost.CatalogActionCallback callback) {
+        SpotifyTrack current = track;
+        String uri = policy.trackUri();
+        int generation = policy.generation();
+        if (current == null || uri.isEmpty()) {
+            completeCatalogAction(callback, false, "No current track");
+            return;
+        }
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            boolean deleted = false;
+            try {
+                String bare = CatalogSource.bareTrackId(uri);
+                if (!bare.isEmpty()) {
+                    deleted = CatalogStore.deleteTrack(context, bare) >= 0L;
+                    CanonicalSourceCache.remove(context, uri);
+                    LyricsSourcePreferences.setTrackOverride(context, bare,
+                            (LyricsSourcePreferences.Source) null);
+                }
+            } catch (Throwable ignored) {
+            }
+            final boolean ok = deleted;
+            handler.post(() -> {
+                if (ok && policy.accepts(generation, uri)) {
+                    clearCurrent();
+                    adoptTrack(current);
+                }
+                completeCatalogAction(callback, ok,
+                        ok ? "Deleted saved lyrics" : "Could not delete saved lyrics");
+            });
+        });
+    }
+
+    /**
+     * Settings Save: when the source policy changed, re-seat the current track from stored
+     * candidates immediately and plan acquisition under the new policy. No request is made for
+     * a seat that already satisfies it.
+     */
+    void reconcileSources() {
+        if (track == null || policy.trackUri().isEmpty() || !canonicalLoadingUri.isEmpty()) return;
+        if (CatalogPolicy.read(context).equals(loadedPolicy)) return;
+        final SpotifyTrack requestedTrack = track;
+        final String requestedUri = policy.trackUri();
+        final int requestedGeneration = policy.generation();
+        final boolean includeLocal = !localTried;
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            LyricsCatalog.View view = null;
+            try {
+                view = LyricsCatalog.load(context, requestedTrack, includeLocal);
+                finalizeSeat(view);
+            } catch (Throwable ignored) {
+            }
+            final LyricsCatalog.View reconciled = view;
+            handler.post(() -> {
+                if (reconciled == null || !policy.accepts(requestedGeneration, requestedUri)
+                        || !applyView(reconciled)) {
+                    return;
+                }
+                autoAttempts = 0;
+                schedule(reconciled, false);
+                LyricsSessionSeatTransition.Action action = LyricsSessionSeatTransition.reconcile(
+                        document != null, reconciled.document != null, pendingPlan != null);
+                if (action == LyricsSessionSeatTransition.Action.PUBLISH_SEAT) {
+                    publishSeat(requestedTrack, requestedUri, requestedGeneration,
+                            reconciled.document, reconciled.sourceRevision);
+                } else if (action == LyricsSessionSeatTransition.Action.RETIRE_LOADING
+                        || action == LyricsSessionSeatTransition.Action.RETIRE_NO_LYRICS) {
+                    retireDisplayedBase(action == LyricsSessionSeatTransition.Action.RETIRE_LOADING,
+                            requestedGeneration, settledReason(reconciled.plan));
+                }
+                maybeFetch();
+            });
+        });
+    }
+
+    /** Withdraws an ineligible Auto base while keeping the current track and generation alive. */
+    private void retireDisplayedBase(boolean acquisitionPlanned, int requestedGeneration,
+                                     String settledReason) {
+        document = null;
+        canonicalSource = null;
+        session = null;
+        displayedCandidateId = "";
+        detectionArtifact = null;
+        awaitingDetection = false;
+        secondaryProcessing.cancelActive();
+        detectionSession.cancelActive();
+        status = acquisitionPlanned ? "loading" : "no_lyrics";
+        noLyricsReason = acquisitionPlanned ? ""
+                : settledReason == null ? "Lyrics unavailable" : settledReason;
+        Snapshot retired = snapshot();
+        notifyDocument(retired, null);
+        if (!acquisitionPlanned) {
+            for (RequestRecord request : takeRequests(requestedGeneration)) {
+                request.callback.onError(noLyricsReason);
+            }
+        }
+        notifyState(retired);
+    }
+
+    private void completeCatalogAction(LyricsHost.CatalogActionCallback callback,
+                                       boolean success, String detail) {
+        if (callback == null) return;
+        handler.post(() -> {
+            try {
+                callback.onComplete(success, detail == null ? "" : detail);
+            } catch (Throwable error) {
+                Diagnostics.warn("LyricsSessionManager", "catalogActionCallback", error);
+            }
+        });
+    }
+
+    /**
+     * An automatic fetch ended without a delivery. Adapters already committed each source's
+     * outcome, so the next attempt (if any) is planned from stored state. A failed optional
+     * refresh never replaces a rendered base with an error state.
+     */
+    private void acceptError(SpotifyTrack requestedTrack, String requestedUri,
+                             int requestedGeneration, String error) {
+        if (!policy.accepts(requestedGeneration, requestedUri)) return;
+        if (requestedUri.equals(loadingUri)) loadingUri = "";
+        planAfterAttempt(requestedTrack, requestedUri, requestedGeneration);
+        if (!LyricsSessionSeatTransition.fetchFailureNeedsNoLyrics(document != null)) return;
+        reportNoLyrics(requestedGeneration, error);
+    }
+
+    private void planAfterAttempt(SpotifyTrack requestedTrack, String requestedUri,
+                                  int requestedGeneration) {
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            LyricsCatalog.View view = null;
+            try {
+                view = LyricsCatalog.current(context, requestedTrack, false);
+            } catch (Throwable ignored) {
+            }
+            final LyricsCatalog.View planned = view;
+            handler.post(() -> {
+                if (!policy.accepts(requestedGeneration, requestedUri)) return;
+                // Another attempt may already be armed or running; never double-book one.
+                if (pendingPlan != null || requestedUri.equals(loadingUri)) return;
+                schedule(planned, true);
+            });
+        });
     }
 
     /**
@@ -594,34 +1119,33 @@ final class LyricsSessionManager {
                 }
                 break;
             case LYRICS_RESPONSE:
+                // Transport cache only: saved song data in the catalog is never a cache.
                 String currentUri = policy.trackUri();
                 if (!currentUri.isEmpty()) {
                     LyricsResponseCache.remove(context,
                             com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(currentUri));
-                    CanonicalSourceCache.remove(context, currentUri);
                 }
                 reloadCurrentSource();
                 break;
         }
     }
 
+    /**
+     * Owner-requested reload: every automatic source is asked again regardless of stored
+     * outcomes. The rendered seat stays until a commit elects a different one.
+     */
     private void reloadCurrentSource() {
         if (track == null || policy.trackUri().isEmpty()) return;
         fetchCoordinator.invalidate(track);
         loadingUri = "";
-        canonicalLoadingUri = "";
         // An explicit reload bypasses the error backoff: the owner just asked for this track now.
         nextFetchAtMs = 0L;
-        document = null;
-        canonicalSource = null;
-        session = null;
-        sourceProbed = false;
-        refreshRequested = true;
-        detectionArtifact = null;
-        awaitingDetection = false;
-        detectionSession.cancelActive();
-        status = "loading";
-        notifyState(snapshot());
+        autoAttempts = 0;
+        pendingPlan = AcquisitionPlanner.refreshAll(CatalogPolicy.read(context));
+        if (document == null) {
+            status = "loading";
+            notifyState(snapshot());
+        }
         maybeFetch();
     }
 

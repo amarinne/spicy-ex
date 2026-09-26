@@ -1,6 +1,8 @@
 package com.eza.spicyex.hooks;
 
 import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId;
+import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -63,9 +65,20 @@ public class LyricsFetchCoordinatorIdentityTest {
     public void tokenlessIdentityIsSharedAndGenerationFree() {
         SpotifyTokenState.Authorized authorized = authorized(SECRET);
 
-        String expected = "spotify:track:abc|tokenGen=none";
+        String expected = "abc|tokenGen=none";
         assertEquals(expected, LyricsFetchCoordinator.fetchKey(track("spotify:track:abc"), false, authorized));
         assertEquals(expected, LyricsFetchCoordinator.fetchKey(track("spotify:track:abc"), true, null));
+    }
+
+    @Test
+    public void fullUriAndBareIdCoalesceOntoOneOperation() {
+        SpotifyTokenState.Authorized authorized = authorized(SECRET);
+
+        assertEquals(LyricsFetchCoordinator.fetchKey(track("spotify:track:abc"), true, authorized),
+                LyricsFetchCoordinator.fetchKey(track("abc"), true, authorized));
+        assertEquals("abc", LyricsFetchCoordinator.fetchTrackKey(track("spotify:track:abc")));
+        assertEquals("abc", LyricsFetchCoordinator.fetchTrackKey(track("abc")));
+        assertEquals("", LyricsFetchCoordinator.fetchTrackKey(null));
     }
 
     @Test
@@ -74,8 +87,7 @@ public class LyricsFetchCoordinatorIdentityTest {
         SpotifyTokenState.Authorized fresh = authorized("other-secret-value");
 
         String key = LyricsFetchCoordinator.fetchKey(track("spotify:track:abc"), true, authorized);
-        assertTrue(key.contains("spotify:track:abc"));
-        assertTrue(key.contains("tokenGen=" + authorized.generation()));
+        assertTrue(key.startsWith("abc|tokenGen=" + authorized.generation()));
         assertFalse(key.contains(SECRET));
         assertFalse(key.contains("other-secret-value"));
         assertFalse(LyricsFetchCoordinator.fetchKey(null, true, fresh).contains("other-secret-value"));
@@ -124,6 +136,32 @@ public class LyricsFetchCoordinatorIdentityTest {
         assertNull(state.authorization(NOW + 2L));
         assertFalse(state.capture("newer-token-value", NOW + 3L, 0L));
         assertNull(state.authorization(NOW + 3L));
+    }
+
+    @Test
+    public void pickerSourceMappingIsExactForEveryCatalogProvider() {
+        assertEquals(Source.APPLE_MUSIC,
+                LyricsFetchCoordinator.repositorySource(SourceId.APPLE));
+        assertEquals(Source.SPOTIFY,
+                LyricsFetchCoordinator.repositorySource(SourceId.SPOTIFY_NATIVE));
+        assertEquals(Source.AMLL, LyricsFetchCoordinator.repositorySource(SourceId.AMLL));
+        assertEquals(Source.LRCLIB, LyricsFetchCoordinator.repositorySource(SourceId.LRCLIB));
+        assertEquals(Source.QQ, LyricsFetchCoordinator.repositorySource(SourceId.QQ));
+        assertEquals(Source.NETEASE,
+                LyricsFetchCoordinator.repositorySource(SourceId.NETEASE));
+        assertNull(LyricsFetchCoordinator.repositorySource(null));
+    }
+
+    @Test
+    public void pickerIdentitySeparatesOppositeKaraokeSearchPolicies() {
+        String verbatim = LyricsFetchCoordinator.pickerKey("abc", SourceId.QQ, false);
+        String original = LyricsFetchCoordinator.pickerKey("abc", SourceId.QQ, true);
+
+        assertNotEquals(verbatim, original);
+        assertTrue(verbatim.endsWith("|karaoke-verbatim"));
+        assertTrue(original.endsWith("|karaoke-original"));
+        assertEquals("", LyricsFetchCoordinator.pickerKey("", SourceId.QQ, true));
+        assertEquals("", LyricsFetchCoordinator.pickerKey("abc", null, true));
     }
 
     private static void assertSame(Object expected, Object actual) {

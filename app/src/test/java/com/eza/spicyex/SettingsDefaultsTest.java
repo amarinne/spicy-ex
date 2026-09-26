@@ -24,6 +24,7 @@ public class SettingsDefaultsTest {
         assertEquals("Auto", Settings.AUTO_SKIP_INTRO_OUTRO.coerce("Auto"));
         assertEquals("Off", Settings.AUTO_SKIP_INTRO_OUTRO.coerce("bogus"));
         assertFalse(Settings.MINI_PLAYER_LYRICS_ICON.defaultValue);
+        assertFalse(Settings.KARAOKE_ORIGINAL_LYRICS.defaultValue);
         assertEquals("Single tap", Settings.PANEL_MEDIA_CONTROLS.defaultValue);
         assertEquals(java.util.Arrays.asList("Off", "Single tap", "Double tap"),
                 Settings.PANEL_MEDIA_CONTROLS.allowedValues);

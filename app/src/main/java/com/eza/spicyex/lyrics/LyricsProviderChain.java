@@ -18,6 +18,9 @@ final class LyricsProviderChain {
      */
     private final boolean syncFirst;
     private final List<String> candidatesSeen = new ArrayList<>();
+    /** Fallback stages the acquisition plan allows for this fetch. */
+    boolean amllAllowed = true;
+    boolean lrclibAllowed = true;
 
     private LyricsDocument pendingStatic;
     private Source pendingStaticSource;

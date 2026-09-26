@@ -55,6 +55,7 @@ public final class SettingsUiSchema {
             Settings.LYRICS_SOURCE_OVERRIDE,
             Settings.SPICY_MANUAL_TOKEN,
             Settings.LYRICS_SOURCE_ORDER,
+            Settings.KARAOKE_ORIGINAL_LYRICS,
             Settings.CACHE_SIZE,
             // Now playing card
             Settings.LIVE_CARD_TAP_MODE,

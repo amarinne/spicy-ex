@@ -46,6 +46,7 @@
     <string name="settings_label_lyrics_spicy_manual_token">Spicy manual token</string>
     <string name="settings_label_lyrics_source_order">Lyrics source order</string>
     <string name="settings_label_lyrics_source_overrides">Per-track lyric sources</string>
+    <string name="settings_label_lyrics_karaoke_original_lyrics">Show original lyrics for karaoke versions</string>
     <string name="settings_option_lyrics_source_selection_mode_auto">Auto</string>
     <string name="settings_option_lyrics_source_selection_mode_source_order">Source order</string>
     <string name="settings_option_auto">Auto</string>
@@ -479,4 +480,13 @@
     <string name="settings_language_model_delete_desc">Delete the downloaded language model pack? This frees about %1$s MB.</string>
     <string name="settings_language_model_tap_to_delete_size">Tap to delete · %1$s MB</string>
     <string name="settings_label_lyric_background_render_quality">Background render quality</string>
+    <string name="source_picker_title">Choose lyrics source</string>
+    <string name="source_picker_delete">Clear saved lyrics</string>
+    <string name="source_picker_confirm_delete">Tap again to delete</string>
+    <string name="source_picker_rejected">Rejected match</string>
+    <string name="source_picker_removed">Removed saved candidate</string>
+    <string name="source_picker_selected">Source selected</string>
+    <string name="source_picker_checking">Checking</string>
+    <string name="settings_source_track_title">Current song lyrics</string>
+    <string name="settings_source_track_idle">Nothing playing</string>
 </resources>

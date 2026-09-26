@@ -79,6 +79,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     private final Runnable onToggleSize;
     private final Runnable onClose;
     private final java.util.function.Consumer<CacheClearKind> onClearCache;
+    private com.eza.spicyex.hooks.LyricsHost lyricsHost;
 
     private LinearLayout sectionsContainer;
     private TextView panelTitle;
@@ -365,7 +366,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     private void renderSetting(LinearLayout content, Settings.Setting<?> setting) {
         if (setting == Settings.LYRICS_SOURCE_MODE) {
-            sources.mergedRow(content);
+            sources.rows(content);
             return;
         }
         if (setting == Settings.LYRICS_SOURCE_OVERRIDE
@@ -968,6 +969,31 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     @Override public void onSourcesCommitted() {
         onSettingChanged(Settings.LYRICS_SOURCE_MODE);
-        rebuildSection(Settings.LYRICS_SOURCES);
+    }
+
+    /** Session access for the current-song lyrics item; unset when hosted without a hook. */
+    public void setLyricsHost(com.eza.spicyex.hooks.LyricsHost host) {
+        lyricsHost = host;
+    }
+
+    @Override public com.eza.spicyex.SpotifyTrack currentTrack() {
+        try {
+            return lyricsHost == null ? null : lyricsHost.getCurrentTrackSafely();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    @Override public void manageCurrentTrackLyrics() {
+        try {
+            if (!(context instanceof android.app.Activity) || lyricsHost == null) return;
+            com.eza.spicyex.SpotifyTrack current = lyricsHost.getCurrentTrackSafely();
+            if (current == null || current.uri == null || current.uri.isEmpty()) return;
+            com.eza.spicyex.hooks.LyricsSourcePickerDialog.show(
+                    (android.app.Activity) context, lyricsHost, uiStrings,
+                    message -> android.widget.Toast.makeText(context, message,
+                            android.widget.Toast.LENGTH_SHORT).show());
+        } catch (Throwable ignored) {
+        }
     }
 }

@@ -54,6 +54,7 @@ final class LyricsSettingsDialogController {
                         applySize(window);
                     }, () -> Motion.exitCardThen(panelRef[0], dialog::isShowing, dialog::dismiss),
                     host::clearLyricsCache);
+            panel.setLyricsHost(host);
             final View panelView = panel.build();
             panelRef[0] = panelView;
             // Back routes through the animated exit; outside-tap keeps platform behavior
@@ -73,6 +74,9 @@ final class LyricsSettingsDialogController {
             }
             dialog.setOnDismissListener(d -> {
                 frameScheduler.start();
+                // Source toggles and order are saved inside the panel; the session re-seats the
+                // current track from stored candidates instead of waiting for the next track.
+                host.reconcileLyricsSources();
                 onClosed.run();
             });
             dialog.show();

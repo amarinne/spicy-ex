@@ -19,6 +19,11 @@ public class LyricsDocument {
     public String selectedSource = "";
     public String selectionMode = "smart";
     public String selectionOverride = "auto";
+    /**
+     * Catalog candidate this delivery was committed as; empty until a catalog transaction stored
+     * it. The session renders catalog seats, so a delivery without an ID is committed first.
+     */
+    public String catalogCandidateId = "";
     public boolean spicyPackedPayload;
     public boolean spicyEnvelopeNoticePresent;
     public Integer spicyQueryStatus;
@@ -72,6 +77,7 @@ public class LyricsDocument {
         copy.selectedSource = safe(source.selectedSource);
         copy.selectionMode = safe(source.selectionMode);
         copy.selectionOverride = safe(source.selectionOverride);
+        copy.catalogCandidateId = safe(source.catalogCandidateId);
         copy.spicyPackedPayload = source.spicyPackedPayload;
         copy.spicyEnvelopeNoticePresent = source.spicyEnvelopeNoticePresent;
         copy.spicyQueryStatus = source.spicyQueryStatus;

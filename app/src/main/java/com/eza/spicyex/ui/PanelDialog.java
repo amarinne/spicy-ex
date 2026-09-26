@@ -664,7 +664,8 @@ public final class PanelDialog {
         dismissThen(null);
     }
 
-    private void dismissThen(Runnable action) {
+    /** Dismisses completely before running a replacement-dialog or rebuild action. */
+    public void dismissThen(Runnable action) {
         Motion.exitCardThen(root, dialog::isShowing, () -> {
             dialog.dismiss();
             if (action != null) action.run();

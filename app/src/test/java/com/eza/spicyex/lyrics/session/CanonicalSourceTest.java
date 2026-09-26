@@ -13,40 +13,10 @@ import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.SyllableSegment;
 
-/** Phase 1: cache-first canonical base — durability, source policy, and replacement identity. */
+/** Canonical base codec, source shape, and replacement identity. */
 public class CanonicalSourceTest {
 
-    // --- source policy ------------------------------------------------------
-
-    @Test
-    public void cachedSyncedBaseNeedsNoNetworkCall() {
-        assertEquals(LyricsSourcePolicy.Decision.USE_CACHED_BASE,
-                LyricsSourcePolicy.decide(true, true, false, false));
-        assertEquals(LyricsSourcePolicy.Decision.USE_CACHED_BASE,
-                LyricsSourcePolicy.decide(true, true, true, false));
-    }
-
-    @Test
-    public void missingBaseIsTheOnlyCaseThatBlocksOnTheNetwork() {
-        assertEquals(LyricsSourcePolicy.Decision.FETCH_REQUIRED,
-                LyricsSourcePolicy.decide(false, false, false, false));
-        assertEquals(LyricsSourcePolicy.Decision.FETCH_REQUIRED,
-                LyricsSourcePolicy.decide(false, true, true, true));
-    }
-
-    @Test
-    public void staticCachedBaseProbesOnceThenStopsAsking() {
-        assertEquals(LyricsSourcePolicy.Decision.REFRESH_AFTER_CACHED_BASE,
-                LyricsSourcePolicy.decide(true, false, false, false));
-        assertEquals(LyricsSourcePolicy.Decision.USE_CACHED_BASE,
-                LyricsSourcePolicy.decide(true, false, true, false));
-    }
-
-    @Test
-    public void explicitRefreshAlwaysProbesButStillRendersTheCachedBaseFirst() {
-        assertEquals(LyricsSourcePolicy.Decision.REFRESH_AFTER_CACHED_BASE,
-                LyricsSourcePolicy.decide(true, true, true, true));
-    }
+    // --- source shape -------------------------------------------------------
 
     @Test
     public void syncedDetectionCoversTheTimingTypesTheParsersEmit() {
@@ -243,101 +213,6 @@ public class CanonicalSourceTest {
         assertNull(CanonicalSourceCodec.decode("{\"schema\":999,\"lines\":[]}"));
         assertNull(CanonicalSourceCodec.decode(
                 CanonicalSourceCodec.encode(new LyricsDocument(), 1, "d", 0L)));
-    }
-
-    // --- durable bound (no TTL) ---------------------------------------------
-
-    @Test
-    public void canonicalEntriesEvictOnlyByCountAndBytesNeverByAge() {
-        CanonicalSourceCache.Bound first = CanonicalSourceCache.plan("", "a", 10L, 2, 1000L);
-        CanonicalSourceCache.Bound second = CanonicalSourceCache.plan(first.nextOrder, "b", 10L, 2, 1000L);
-        CanonicalSourceCache.Bound third = CanonicalSourceCache.plan(second.nextOrder, "c", 10L, 2, 1000L);
-
-        assertTrue(first.evicted.isEmpty());
-        assertTrue(second.evicted.isEmpty());
-        assertEquals(1, third.evicted.size());
-        assertTrue(third.evicted.contains("a"));
-        assertTrue(third.nextOrder.contains("b"));
-        assertTrue(third.nextOrder.contains("c"));
-    }
-
-    @Test
-    public void rewritingAnEntryRefreshesItsPlaceRatherThanEvictingIt() {
-        CanonicalSourceCache.Bound first = CanonicalSourceCache.plan("", "a", 10L, 2, 1000L);
-        CanonicalSourceCache.Bound second = CanonicalSourceCache.plan(first.nextOrder, "b", 10L, 2, 1000L);
-        CanonicalSourceCache.Bound rewriteA =
-                CanonicalSourceCache.plan(second.nextOrder, "a", 10L, 2, 1000L);
-        CanonicalSourceCache.Bound third =
-                CanonicalSourceCache.plan(rewriteA.nextOrder, "c", 10L, 2, 1000L);
-
-        assertTrue(rewriteA.evicted.isEmpty());
-        assertTrue(third.evicted.contains("b"));
-        assertFalse(third.evicted.contains("a"));
-    }
-
-    @Test
-    public void anOversizedRecordIsRejectedRatherThanEvictingEverythingElse() {
-        CanonicalSourceCache.Bound seeded = CanonicalSourceCache.plan("", "a", 10L, 4, 100L);
-        CanonicalSourceCache.Bound huge = CanonicalSourceCache.plan(seeded.nextOrder, "big", 500L, 4, 100L);
-
-        assertTrue(huge.rejectedWrite);
-        assertTrue(huge.nextOrder.contains("a"));
-        assertFalse(huge.nextOrder.contains("big"));
-    }
-
-    @Test
-    public void byteBoundEvictsOldestUntilTheNewRecordFits() {
-        CanonicalSourceCache.Bound a = CanonicalSourceCache.plan("", "a", 60L, 10, 100L);
-        CanonicalSourceCache.Bound b = CanonicalSourceCache.plan(a.nextOrder, "b", 60L, 10, 100L);
-
-        assertTrue(b.evicted.contains("a"));
-        assertFalse(b.rejectedWrite);
-        assertTrue(b.nextOrder.contains("b"));
-    }
-
-    // --- quality-gated supersede ------------------------------------------------
-
-    private static LyricsDocument scoredDoc(String type, String fetchSource, String provider) {
-        LyricsDocument doc = document("hello");
-        doc.type = type;
-        doc.fetchSource = fetchSource;
-        doc.provider = provider;
-        return doc;
-    }
-
-    @Test
-    public void anythingSupersedesNoBaseButNothingSupersedesOnEmptyResult() {
-        LyricsDocument incoming = scoredDoc("Static", "lrclib", "LRCLIB");
-        assertTrue(CanonicalBaseAdoption.shouldSupersede(null, incoming));
-        assertFalse(CanonicalBaseAdoption.shouldSupersede(null, null));
-        assertFalse(CanonicalBaseAdoption.shouldSupersede(null, new LyricsDocument()));
-    }
-
-    @Test
-    public void emptyResultsNeverSupersedeAnExistingBase() {
-        LyricsDocument current = scoredDoc("Static", "lrclib", "LRCLIB");
-        assertFalse(CanonicalBaseAdoption.shouldSupersede(current, null));
-        assertFalse(CanonicalBaseAdoption.shouldSupersede(current, new LyricsDocument()));
-    }
-
-    @Test
-    public void lowerQualityRefetchNeverOverwritesABetterBase() {
-        LyricsDocument spicySynced = scoredDoc("Syllable", "spicy_api_cache", "Spicy Lyrics");
-        LyricsDocument nativeStatic = scoredDoc("Static", "spotify_native_model", "Musixmatch");
-        assertFalse(CanonicalBaseAdoption.shouldSupersede(spicySynced, nativeStatic));
-        assertFalse(CanonicalBaseAdoption.shouldSupersede(
-                scoredDoc("Line", "lrclib", "LRCLIB"), nativeStatic));
-    }
-
-    @Test
-    public void equalOrBetterQualitySupersedes() {
-        LyricsDocument lrclibStatic = scoredDoc("Static", "lrclib", "LRCLIB");
-        LyricsDocument nativeStatic = scoredDoc("Static", "spotify_native_model", "Musixmatch");
-        assertTrue(CanonicalBaseAdoption.shouldSupersede(lrclibStatic, nativeStatic));
-        assertTrue(CanonicalBaseAdoption.shouldSupersede(lrclibStatic,
-                scoredDoc("Static", "lrclib", "LRCLIB")));
-        assertTrue(CanonicalBaseAdoption.shouldSupersede(lrclibStatic,
-                scoredDoc("Line", "lrclib", "LRCLIB")));
     }
 
     // --- helpers ------------------------------------------------------------

@@ -24,6 +24,7 @@
     <string name="settings_label_lyric_sync_offset_ms">Смещение синхронизации (мс)</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">Публиковать текста в HyperGlow</string>
     <string name="settings_label_lyrics_source_selection_mode">Оценка источника</string>
+    <string name="settings_label_lyrics_karaoke_original_lyrics">Показывать оригинальный текст для караоке-версий</string>
     <string name="settings_label_lyrics_source_override">Источник текстов</string>
     <string name="settings_label_lyrics_spicy_manual_token">Токен Spicy вручную</string>
     <string name="settings_label_lyrics_source_order">Порядок источников текста</string>

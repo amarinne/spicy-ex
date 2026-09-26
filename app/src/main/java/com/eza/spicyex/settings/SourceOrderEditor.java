@@ -54,6 +54,12 @@ public final class SourceOrderEditor {
 
         /** Ranking/order/enabled were saved; refresh the owning section. */
         void onSourcesCommitted();
+
+        /** Currently playing track, or null when the hook cannot see one. */
+        com.eza.spicyex.SpotifyTrack currentTrack();
+
+        /** Opens the lyrics manager scoped to the current song. */
+        void manageCurrentTrackLyrics();
     }
 
     private final Host host;
@@ -72,8 +78,25 @@ public final class SourceOrderEditor {
 
     // --- Collapsed row ---
 
+    /**
+     * One keyed composite for every source control shown in the settings card.
+     *
+     * <p>The panel's keyed rebuild owns one direct child per setting. Keep the two visible rows
+     * inside that child so a rebuild can replace them atomically instead of leaving an untagged
+     * current-song row behind.
+     */
+    public void rows(LinearLayout content) {
+        LinearLayout group = new LinearLayout(host.style().context());
+        group.setOrientation(LinearLayout.VERTICAL);
+        group.setTag(PanelTags.row(Settings.LYRICS_SOURCE_MODE));
+        content.addView(group, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        mergedRow(group);
+        trackRow(group);
+    }
+
     /** Single merged "Lyrics source" row: ranking mode plus the enabled order summary. */
-    public void mergedRow(LinearLayout content) {
+    private void mergedRow(LinearLayout content) {
         PanelStyle style = host.style();
         SettingsUiStrings strings = host.strings();
         String ranking = host.store().get(Settings.LYRICS_SOURCE_MODE);
@@ -87,12 +110,42 @@ public final class SourceOrderEditor {
                 ? rankLabel + " · " + strings.get("settings_source_none_enabled", "None enabled")
                 : rankLabel + " · " + order;
         LinearLayout row = style.newRow(content);
-        row.setTag(PanelTags.row(Settings.LYRICS_SOURCE_MODE));
         TextView value = style.titleColumn(row, strings.setting(Settings.LYRICS_SOURCE_OVERRIDE), summary);
         value.setTextColor(PanelStyle.COL_ACCENT);
         row.addView(style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 18),
                 new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
         row.setOnClickListener(v -> showDialog());
+    }
+
+    /** Separate management item scoped to the current song: opens its lyrics picker. */
+    private void trackRow(LinearLayout content) {
+        PanelStyle style = host.style();
+        SettingsUiStrings strings = host.strings();
+        com.eza.spicyex.SpotifyTrack current = null;
+        try {
+            current = host.currentTrack();
+        } catch (Throwable ignored) {
+        }
+        String subtitle;
+        if (current == null || current.title == null || current.title.trim().isEmpty()) {
+            subtitle = strings.get("settings_source_track_idle", "Nothing playing");
+        } else {
+            String artist = current.artist == null ? "" : current.artist.trim();
+            subtitle = artist.isEmpty() ? current.title.trim()
+                    : current.title.trim() + " — " + artist;
+        }
+        LinearLayout row = style.newRow(content);
+        TextView value = style.titleColumn(row,
+                strings.get("settings_source_track_title", "Current song lyrics"), subtitle);
+        value.setTextColor(PanelStyle.COL_ACCENT);
+        row.addView(style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 18),
+                new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
+        row.setOnClickListener(v -> {
+            try {
+                host.manageCurrentTrackLyrics();
+            } catch (Throwable ignored) {
+            }
+        });
     }
 
     /** Provider names are brands and stay as authored; only the surrounding copy localizes. */
@@ -101,6 +154,8 @@ public final class SourceOrderEditor {
         if (source == Source.SPICY) return "Spicy";
         if (source == Source.SPOTIFY) return "Spotify";
         if (source == Source.AMLL) return "AMLL";
+        if (source == Source.QQ) return "QQ Music";
+        if (source == Source.NETEASE) return "NetEase";
         return "LRCLIB";
     }
 
@@ -116,12 +171,18 @@ public final class SourceOrderEditor {
         PanelDialog dialog = new PanelDialog(style.context(),
                 strings.setting(Settings.LYRICS_SOURCE_OVERRIDE));
 
-        // The order list only takes effect in Source order mode. In Auto, arbitration is by
-        // sync level and quality score, so the reorder UI is hidden to avoid implying priority.
+        // The source list is always visible: in Source order mode it edits priority with
+        // drag grips; in Auto it edits the allow-list with toggles only, since order does
+        // not arbitrate there. Hiding it in Auto implied the toggles did nothing.
         final LinearLayout orderSection = new LinearLayout(style.context());
         orderSection.setOrientation(LinearLayout.VERTICAL);
-        final Runnable refreshOrderVisibility = () -> orderSection.setVisibility(
-                MODE_SOURCE_ORDER.equals(ranking[0]) ? View.VISIBLE : View.GONE);
+        final ArrayList<ImageView> grips = new ArrayList<>();
+        final Runnable refreshOrderVisibility = () -> {
+            boolean ordered = MODE_SOURCE_ORDER.equals(ranking[0]);
+            for (ImageView grip : grips) {
+                grip.setVisibility(ordered ? View.VISIBLE : View.GONE);
+            }
+        };
 
         dialog.paragraph(strings.get("settings_source_ranking_title", "Ranking"));
         final ArrayList<LinearLayout> rankingRows = new ArrayList<>();
@@ -173,6 +234,8 @@ public final class SourceOrderEditor {
             row.addView(label, labelParams);
             ImageView grip = style.kindView(Kind.CHEVRONS_UP_DOWN, PanelStyle.COL_SUMMARY, 20);
             grip.setContentDescription(strings.get("settings_source_drag", "Drag to reorder"));
+            grip.setVisibility(MODE_SOURCE_ORDER.equals(ranking[0]) ? View.VISIBLE : View.GONE);
+            grips.add(grip);
             row.addView(grip, new LinearLayout.LayoutParams(style.dp(40), style.dp(40)));
             attachSourceDrag(grip, row, list, order);
             list.addView(row, new LinearLayout.LayoutParams(

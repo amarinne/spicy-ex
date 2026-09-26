@@ -1,6 +1,7 @@
 package com.eza.spicyex.hooks;
 
 import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
+import static com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri;
 
 import android.content.Context;
 
@@ -14,6 +15,7 @@ import com.eza.spicyex.lyrics.LyricsParser;
 import com.eza.spicyex.lyrics.LyricsRepository;
 import com.eza.spicyex.lyrics.NativeLyricsSource;
 import com.eza.spicyex.lyrics.SpicyManualTokenStore;
+import com.eza.spicyex.lyrics.catalog.CatalogRequestIdentity;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -50,10 +52,10 @@ final class LyricsFetchCoordinator {
 
     /** Retires any replayable provider operation for this track before an explicit source reload. */
     void invalidate(SpotifyTrack track) {
-        String uri = track == null ? "" : safe(track.uri);
+        String prefix = fetchTrackKey(track) + "|";
         synchronized (inFlightLock) {
             for (Map.Entry<String, InFlightFetch> entry : new ArrayList<>(inFlight.entrySet())) {
-                if (!entry.getKey().startsWith(uri + "|")) continue;
+                if (!entry.getKey().startsWith(prefix)) continue;
                 InFlightFetch operation = entry.getValue();
                 inFlight.remove(entry.getKey());
                 if (operation.expiry != null) operation.expiry.cancel(false);
@@ -68,6 +70,7 @@ final class LyricsFetchCoordinator {
             Context context,
             SpotifyTrack track,
             int generation,
+            com.eza.spicyex.lyrics.catalog.AcquisitionScope scope,
             NativeSpicyLyricsHook.LyricsResultCallback callback
     ) {
         Diagnostics.event("lyrics_fetch", "request_started",
@@ -95,7 +98,7 @@ final class LyricsFetchCoordinator {
                 : null;
         String operationKey = fetchKey(track, sendToken, authorized)
                 + "|source=" + sourceOverride
-                + "|sel=" + selectionIdentity(context, track)
+                + "|scope=" + (scope == null ? "none" : scope.key())
                 + "|manual=" + (manualSpicyToken == null || manualSpicyToken.trim().isEmpty()
                 ? "none" : Integer.toHexString(manualSpicyToken.hashCode()));
         InFlightFetch existing;
@@ -108,7 +111,13 @@ final class LyricsFetchCoordinator {
                 existing.callbacks.add(callback);
                 if (existing.latest != null) replay = LyricsDocument.copyOf(existing.latest);
             } else {
-                existing = new InFlightFetch(operationKey, authorized != null);
+                // The upgrade window follows Apple availability, never Spotify token presence: a
+                // credential-free Apple request can still upgrade a native baseline, so a
+                // tokenless fetch must stay open for it the same way a token-bound one does.
+                boolean appleEnabled = scope != null && scope.allows(
+                        com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId.APPLE);
+                existing = new InFlightFetch(operationKey,
+                        CatalogRequestIdentity.upgradeExpected(authorized != null, appleEnabled));
                 existing.callbacks.add(callback);
                 inFlight.put(operationKey, existing);
             }
@@ -138,6 +147,7 @@ final class LyricsFetchCoordinator {
                 requestAccessToken,
                 tokenGeneration,
                 authRecovery,
+                scope,
                 new LyricsRepository.ResultCallback() {
                     @Override
                     public void onSuccess(LyricsDocument document) {
@@ -149,6 +159,85 @@ final class LyricsFetchCoordinator {
                         deliverError(operation, error);
                     }
                 }));
+    }
+
+    /** One strict provider request shared by every picker/surface caller for this track. */
+    void fetchCatalogSource(Context context, SpotifyTrack track, int generation,
+                            com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source,
+                            NativeSpicyLyricsHook.LyricsResultCallback callback) {
+        com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source repositorySource =
+                repositorySource(source);
+        boolean karaokeOriginalLyrics = com.eza.spicyex.lyrics.catalog.CatalogPolicy.read(context)
+                .karaokeOriginalLyrics;
+        String bare = fetchTrackKey(track);
+        String key = pickerKey(bare, source, karaokeOriginalLyrics);
+        if (repositorySource == null || key.isEmpty() || callback == null) {
+            if (callback != null) callback.onError("Unknown lyrics source");
+            return;
+        }
+        InFlightFetch operation;
+        LyricsDocument replay = null;
+        boolean joined;
+        synchronized (inFlightLock) {
+            operation = inFlight.get(key);
+            if (operation != null) {
+                joined = true;
+                operation.callbacks.add(callback);
+                if (operation.latest != null) replay = LyricsDocument.copyOf(operation.latest);
+            } else {
+                joined = false;
+                operation = new InFlightFetch(key, false);
+                operation.callbacks.add(callback);
+                inFlight.put(key, operation);
+            }
+        }
+        if (replay != null) callback.onSuccess(replay);
+        if (joined) return;
+        final InFlightFetch started = operation;
+        LyricsRepository repository = new LyricsRepository(
+                http, lyricsParser, nativeLyricsSource, NativeRuntime.LYRICS_IO);
+        started.fetchFuture = NativeRuntime.LYRICS_IO.submit(() -> repository.fetchSource(
+                context, track, generation, repositorySource, karaokeOriginalLyrics,
+                new LyricsRepository.ResultCallback() {
+                    @Override public void onSuccess(LyricsDocument document) {
+                        deliverSuccess(started, document);
+                    }
+
+                    @Override public void onError(String error) {
+                        deliverError(started, error);
+                    }
+                }));
+    }
+
+    static String pickerKey(String bareTrackId,
+                            com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source,
+                            boolean karaokeOriginalLyrics) {
+        String base = CatalogRequestIdentity.key(bareTrackId, source, "picker-v1",
+                CatalogRequestIdentity.authEpoch(source,
+                        CatalogRequestIdentity.TOKEN_GENERATION_NONE));
+        if (base.isEmpty()) return "";
+        return base + (karaokeOriginalLyrics ? "|karaoke-original" : "|karaoke-verbatim");
+    }
+
+    static com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source repositorySource(
+            com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source) {
+        if (source == null) return null;
+        switch (source) {
+            case APPLE:
+                return com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.APPLE_MUSIC;
+            case SPOTIFY_NATIVE:
+                return com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPOTIFY;
+            case AMLL:
+                return com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.AMLL;
+            case LRCLIB:
+                return com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.LRCLIB;
+            case QQ:
+                return com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.QQ;
+            case NETEASE:
+                return com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.NETEASE;
+            default:
+                return null;
+        }
     }
 
     private void deliverSuccess(InFlightFetch operation, LyricsDocument document) {
@@ -236,22 +325,22 @@ final class LyricsFetchCoordinator {
     }
 
     /**
-     * Non-secret in-flight identity: track URI plus the token generation actually bound to the
-     * request (or {@code none} when no usable token is sent). Token text never participates.
+     * Non-secret in-flight identity: bare track ID plus the token generation actually bound to
+     * the request (or {@code none} when no usable token is sent). Token text never participates.
+     * Bare IDs standardize the key: callers pass full URIs and bare IDs interchangeably and
+     * still coalesce onto one operation.
      */
-    static String selectionIdentity(Context context, com.eza.spicyex.SpotifyTrack track) {
-        try {
-            String trackId = track == null || track.uri == null ? "" : track.uri;
-            return com.eza.spicyex.lyrics.session.LyricsSourcePreferences
-                    .selectionIdentity(context, trackId);
-        } catch (Throwable ignored) {
-            return "unknown";
-        }
-    }
     static String fetchKey(SpotifyTrack track, boolean sendToken, SpotifyTokenState.Authorized authorized) {
-        String uri = track == null ? "" : safe(track.uri);
+        String key = fetchTrackKey(track);
         boolean tokenUsable = sendToken && authorized != null;
-        return uri + "|tokenGen=" + (tokenUsable ? String.valueOf(authorized.generation()) : "none");
+        return key + "|tokenGen=" + (tokenUsable ? String.valueOf(authorized.generation()) : "none");
+    }
+
+    /** Bare track ID for in-flight keys, falling back to the raw URI when it has no track ID. */
+    static String fetchTrackKey(SpotifyTrack track) {
+        String uri = track == null ? "" : safe(track.uri);
+        String bare = trackIdFromUri(uri);
+        return bare.isEmpty() ? uri : bare;
     }
 
     private static final class InFlightFetch {

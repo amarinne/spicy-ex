@@ -106,6 +106,12 @@ public final class Settings {
             "lyrics_source_order", LYRICS_SOURCES, "Lyrics source order", "managed"
     );
 
+    /** Search the original song title for karaoke/off-vocal releases on search-based sources. */
+    public static final Setting<Boolean> KARAOKE_ORIGINAL_LYRICS = boolSetting(
+            "lyrics_karaoke_original_lyrics", LYRICS_SOURCES,
+            "Show original lyrics for karaoke versions", false
+    );
+
     /** Bounded JSON map of spotify track URI to source id; auto is represented by omission. */
     public static final Setting<String> LYRICS_SOURCE_OVERRIDES = internalSetting(
             "lyrics_source_overrides", "Per-track lyric sources", "{}"

@@ -35,4 +35,15 @@ public class LyricsSurfaceDocumentGateTest {
 
         assertFalse(gate.accepts(candidate, "track-a"));
     }
+
+    @Test
+    public void documentRetirementRejectsPendingSameTrackProjection() {
+        LyricsSurfaceDocumentGate gate = new LyricsSurfaceDocumentGate();
+        gate.start();
+        LyricsSurfaceDocumentGate.Candidate candidate = gate.offer("track-a");
+
+        gate.invalidate();
+
+        assertFalse(gate.accepts(candidate, "track-a"));
+    }
 }

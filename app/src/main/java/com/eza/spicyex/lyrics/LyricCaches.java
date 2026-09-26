@@ -3,6 +3,8 @@ package com.eza.spicyex.lyrics;
 import android.content.Context;
 
 import com.eza.spicyex.Diagnostics;
+import com.eza.spicyex.lyrics.catalog.ArtifactKind;
+import com.eza.spicyex.lyrics.catalog.CatalogStore;
 import com.eza.spicyex.lyrics.session.Digests;
 
 import java.nio.charset.StandardCharsets;
@@ -31,23 +33,11 @@ public final class LyricCaches {
     private LyricCaches() {
     }
     /**
-     * Byte quotas for the preference-backed stores, derived from the shared "Cache size" budget.
+     * Byte quota for the Google processing cache, derived from the shared "Cache size" budget.
      * {@code Long.MAX_VALUE} (CacheStoragePolicy.UNLIMITED) means no byte or entry-count eviction.
      */
-    public static long soundQuotaBytes(Context context) {
-        return CacheStoragePolicy.soundQuota(CacheStoragePolicy.totalBudget(context));
-    }
-
-    public static long meaningQuotaBytes(Context context) {
-        return CacheStoragePolicy.meaningQuota(CacheStoragePolicy.totalBudget(context));
-    }
-
     public static long googleQuotaBytes(Context context) {
         return CacheStoragePolicy.googleQuota(CacheStoragePolicy.totalBudget(context));
-    }
-
-    public static long detectionQuotaBytes(Context context) {
-        return CacheStoragePolicy.detectionQuota(CacheStoragePolicy.totalBudget(context));
     }
 
     public static int googleStoreEntryCount(Context context) {
@@ -81,47 +71,89 @@ public final class LyricCaches {
         SpicyCacheStore.clear(context, PREFS_DETECTION_CACHE);
     }
 
-    /** Drops detection rows only. A detector or gate change must not touch readings/translations. */
+    /**
+     * Explicit settings action: deletes stored detection rows. Durable song data, so this is a
+     * scoped user deletion, never an automatic one.
+     */
     public static void clearDetectionArtifacts(Context context) {
+        CatalogStore.deleteArtifacts(context, ArtifactKind.DETECTION);
+        CatalogStore.deleteArtifacts(context, ArtifactKind.DETECTION_TEXT);
         SpicyCacheStore.clear(context, PREFS_DETECTION_CACHE);
     }
 
-    /** Drops Sound artifacts only. A Sound contract change must not touch Meaning. */
+    /** Explicit settings action: deletes stored Sound artifacts only; Meaning is untouched. */
     public static void clearSoundArtifacts(Context context) {
+        CatalogStore.deleteArtifacts(context, ArtifactKind.SOUND);
         SpicyCacheStore.clear(context, PREFS_SOUND_CACHE);
     }
 
-    /** Drops Meaning artifacts only. A Meaning contract change must not touch Sound. */
+    /** Explicit settings action: deletes stored Meaning artifacts only; Sound is untouched. */
     public static void clearMeaningArtifacts(Context context) {
+        CatalogStore.deleteArtifacts(context, ArtifactKind.MEANING);
         SpicyCacheStore.clear(context, PREFS_MEANING_CACHE);
     }
 
+    // Sound, Meaning, and detection artifacts are durable song data owned by the catalog. The
+    // older preference-era stores are read once per key and promoted on a hit; they are never
+    // written again.
+
     public static String getSoundArtifact(Context context, String key) {
-        return getBoundedRecord(context, PREFS_SOUND_CACHE, key);
+        return catalogArtifact(context, key, ArtifactKind.SOUND, PREFS_SOUND_CACHE);
     }
 
     public static boolean putSoundArtifact(Context context, String key, String value) {
-        return putBoundedRecord(context, PREFS_SOUND_CACHE, key, value, soundQuotaBytes(context));
+        return CatalogStore.putArtifact(context, key, ArtifactKind.SOUND, digestOf(key), value);
     }
 
     public static String getMeaningArtifact(Context context, String key) {
-        return getBoundedRecord(context, PREFS_MEANING_CACHE, key);
+        return catalogArtifact(context, key, ArtifactKind.MEANING, PREFS_MEANING_CACHE);
     }
 
     public static boolean putMeaningArtifact(Context context, String key, String value) {
-        return putBoundedRecord(context, PREFS_MEANING_CACHE, key, value, meaningQuotaBytes(context));
+        return CatalogStore.putArtifact(context, key, ArtifactKind.MEANING, digestOf(key), value);
     }
 
     public static String getDetectionArtifact(Context context, String key) {
-        return getBoundedRecord(context, PREFS_DETECTION_CACHE, key);
+        return catalogArtifact(context, key, detectionKind(key), PREFS_DETECTION_CACHE);
     }
 
-    /** Detection records are compact but never unbounded; cap entries as well as bytes. */
-    static final int DETECTION_MAX_ENTRIES = 2000;
-
     public static boolean putDetectionArtifact(Context context, String key, String value) {
-        return putBoundedRecord(context, PREFS_DETECTION_CACHE, key, value,
-                detectionQuotaBytes(context), DETECTION_MAX_ENTRIES);
+        return CatalogStore.putArtifact(context, key, detectionKind(key), digestOf(key), value);
+    }
+
+    /**
+     * Catalog first; on a miss, the public release's store (via the SQLite cache that imported
+     * it). A legacy hit is promoted into the catalog so the next read is catalog-only. Readers
+     * validate digest, rows, and configuration before applying any artifact, so a promoted record
+     * that no longer fits is ignored exactly as before.
+     */
+    private static String catalogArtifact(Context context, String key, ArtifactKind kind,
+                                          String legacyStore) {
+        if (context == null || isBlank(key)) return null;
+        String stored = CatalogStore.artifact(context, key);
+        if (stored != null) return stored;
+        String legacy = getBoundedRecord(context, legacyStore, key);
+        if (!isBlank(legacy)) CatalogStore.putArtifact(context, key, kind, digestOf(key), legacy);
+        return legacy;
+    }
+
+    private static ArtifactKind detectionKind(String key) {
+        return safe(key).startsWith("detection/text/") ? ArtifactKind.DETECTION_TEXT
+                : ArtifactKind.DETECTION;
+    }
+
+    /** Canonical digest named by an artifact key; "" for text-keyed detection. */
+    static String digestOf(String key) {
+        String value = safe(key);
+        if (value.startsWith("sound|") || value.startsWith("meaning|")) {
+            String[] parts = value.split("\\|", 3);
+            return parts.length >= 2 ? parts[1] : "";
+        }
+        if (value.startsWith("detection/") && !value.startsWith("detection/text/")) {
+            String[] parts = value.split("/", 3);
+            return parts.length >= 2 ? parts[1] : "";
+        }
+        return "";
     }
 
     public static String sourceLanguageForCache(String sourceLang) {
@@ -138,7 +170,7 @@ public final class LyricCaches {
         return "translate|" + safe(trackId) + "|" + sourceLanguageForCache(sourceLang) + "|" + safe(targetLang) + "|" + safe(text);
     }
 
-    /** Reads retained artifacts even when the owner has reduced the storage budget. */
+    /** Reads a preference-era record even when the owner has reduced the storage budget. */
     private static String getBoundedRecord(Context context, String prefsName, String key) {
         if (context == null) return null;
         try {
@@ -149,31 +181,12 @@ public final class LyricCaches {
         }
     }
 
-    /** Refuses writes that would evict saved artifacts; successful writes are durable. */
-    private static boolean putBoundedRecord(Context context, String prefsName, String key, String value,
-                                         long quotaBytes) {
-        return putBoundedRecord(context, prefsName, key, value, quotaBytes, Integer.MAX_VALUE);
-    }
-
-    private static boolean putBoundedRecord(Context context, String prefsName, String key, String value,
-                                         long quotaBytes, int maxEntries) {
-        if (context == null || isBlank(value)) return false;
-        try {
-            return SpicyCacheStore.put(context, prefsName, sha256(key), value, quotaBytes,
-                    maxEntries);
-        } catch (Throwable t) {
-            Diagnostics.warn("LyricCaches", "putBoundedRecord", t);
-            return false;
-        }
-    }
-
     /**
      * Sound artifact key: canonical digest plus Sound configuration only. No translation backend,
      * target language, or Meaning contract may appear here.
      *
      * <p>Keeping the configuration in the key means a track holds one record per reading style it
-     * has been shown in, so returning to a style is instant rather than a re-derivation. The store
-     * is sized for that; see {@link CacheStoragePolicy#soundQuota(long)}.
+     * has been shown in, so returning to a style is instant rather than a re-derivation.
      */
     public static String soundArtifactKey(String canonicalDigest, String soundConfigId) {
         return "sound|" + safe(canonicalDigest) + "|" + safe(soundConfigId);

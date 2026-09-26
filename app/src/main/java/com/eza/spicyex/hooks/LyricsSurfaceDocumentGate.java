@@ -37,6 +37,11 @@ final class LyricsSurfaceDocumentGate {
         return new Candidate(lifecycle, next, safe(trackId));
     }
 
+    /** Supersedes preparation already in flight without offering a replacement document. */
+    void invalidate() {
+        currentSequence = ++sequence;
+    }
+
     boolean accepts(Candidate candidate, String currentTrackId) {
         return active && candidate != null
                 && candidate.lifecycle == lifecycle

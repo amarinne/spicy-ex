@@ -258,16 +258,40 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private LyricsTransliterationSession transliterationSession;
     private LyricsSessionManager.SessionSubscription sessionSubscription;
     private LyricsSessionManager.LyricsRequest lyricRequest;
+    private String sessionStatus = "";
     private final LyricsSurfaceDocumentGate documentGate = new LyricsSurfaceDocumentGate();
     private final LyricsSessionManager.Listener sessionListener = new LyricsSessionManager.Listener() {
-        @Override public void onSessionChanged(LyricsSessionManager.Snapshot snapshot) {}
+        @Override public void onSessionChanged(LyricsSessionManager.Snapshot snapshot) {
+            if (!running || snapshot == null) return;
+            boolean changed = !snapshot.status.equals(sessionStatus);
+            sessionStatus = snapshot.status;
+            if (changed && document == null && "no_lyrics".equals(snapshot.status)) {
+                showError("Lyrics unavailable");
+            }
+        }
 
         @Override public void onDocumentChanged(LyricsSessionManager.Snapshot snapshot,
                                                 LyricsDocument nextDocument) {
-            if (!running || snapshot == null || nextDocument == null) return;
+            if (!running || snapshot == null) return;
+            if (nextDocument == null) {
+                retireSessionDocument(snapshot);
+                return;
+            }
             prepareAndScheduleDocument(snapshot.trackUri, nextDocument);
         }
     };
+
+    private void retireSessionDocument(LyricsSessionManager.Snapshot snapshot) {
+        documentGate.invalidate();
+        ++NativeSpicyLyricsHook.fetchGeneration;
+        document = null;
+        loadingTrackId = trackIdFromUri(snapshot.trackUri);
+        pendingSourceSwap = null;
+        pendingSourceSwapUri = "";
+        sessionStatus = snapshot.status;
+        if ("no_lyrics".equals(snapshot.status)) showError("Lyrics unavailable");
+        else showLoading("Loading lyrics…");
+    }
     private LyricsRenderConfig renderConfig;
     private final SharedPreferences preferences;
     private boolean preferencesRegistered;
@@ -315,6 +339,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     // Unsynced (plain) lyrics: no per-line timing, so don't auto-follow or karaoke-wash — render every
     // line uniformly bright + readable and let the user scroll freely (a "static screen").
     private boolean staticDoc;
+    /**
+     * Source swap deferred while the user holds follow: a manual pick must not yank the rows
+     * out from under a manual scroll. Applied when follow resumes; a track change always
+     * renders immediately and drops any stash.
+     */
+    private LyricsDocument pendingSourceSwap;
+    private String pendingSourceSwapUri = "";
     private final LyricsPlaybackClock playbackClock;
     private SpotifyTrack throttledTrack;
     private long throttledTrackAtMs;
@@ -831,8 +862,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         bottomVirtualSpacer = new LyricsSpaceView(activity, 0);
         sourceFooter = textFactory.createText(activity, "", 12, Color.rgb(125, 125, 125), textFactory.resolveTypeface(false));
         sourceFooter.setGravity(Gravity.CENTER);
-        sourceFooter.setAlpha(0.56f);
+        sourceFooter.setAlpha(0.8f);
         sourceFooter.setPadding(dp(16), dp(38), dp(16), dp(180));
+        // The source line is the picker action: it stays visually separated from the
+        // songwriter/provider credit below it, and reads as an action ("Source: … ›").
+        sourceFooter.setClickable(true);
+        sourceFooter.setFocusable(true);
+        sourceFooter.setOnClickListener(v -> openSourcePicker());
         rowMountController = new LyricsRowMountController(
                 mountedRowsHost,
                 topVirtualSpacer,
@@ -1514,6 +1550,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 }
                 return;
             }
+            // A source swap for the track already on screen waits while the user holds follow;
+            // track changes always render immediately and drop any stash.
+            if (!id.equals(pendingSourceSwapUri)) {
+                pendingSourceSwap = null;
+                pendingSourceSwapUri = "";
+            }
+            if (document != null && followState.isHoldingNow() && id.equals(currentId)
+                    && id.equals(trackIdFromUri(document.trackId))) {
+                pendingSourceSwap = doc;
+                pendingSourceSwapUri = trackUri;
+                status.setText("New source ready — resume follow to apply");
+                return;
+            }
             // A derived-layer completion republishes the whole document. When the canonical base
             // is unchanged, absorb only the new reading/translation text into the document already
             // on screen: swapping the object would rebuild the timeline and reset the active row
@@ -1583,10 +1632,23 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void showError(String error) {
         document = null;
         loadingTrackId = "";
+        pendingSourceSwap = null;
+        pendingSourceSwapUri = "";
         rowMountController.reset();
         followState.resetActive();
         emptyStateController.showError(lyricsColumn, error);
         status.setText("Lyrics error: " + safe(error));
+    }
+    /** Opens the catalog source picker for the currently rendered track. */
+    private void openSourcePicker() {
+        try {
+            if (document == null || document.lines.isEmpty()) return;
+            SpotifyTrack current = host.getCurrentTrackSafely();
+            if (current == null || current.uri == null || current.uri.isEmpty()) return;
+            LyricsSourcePickerDialog.show(activity, host, uiStrings(), status::setText);
+        } catch (Throwable t) {
+            XpLog.log(TAG + " source picker open failed: " + t);
+        }
     }
 
     private void renderDocument() {
@@ -1612,9 +1674,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             showError("Empty applied lyrics rows");
             return;
         }
-        sourceFooter.setText(!isBlank(document.songWriters)
+        sourceFooter.setText("Source: " + sourceProviderLabel(document.provider)
+                + " · " + com.eza.spicyex.lyrics.catalog.CatalogPickerModel.displayTypeTiming(document.type) + " ›"
+                + "\n" + (!isBlank(document.songWriters)
                 ? "Written by " + document.songWriters
-                : "lyrics provided by " + sourceProviderLabel(document.provider));
+                : "lyrics provided by " + sourceProviderLabel(document.provider)));
+        sourceFooter.setContentDescription("Lyrics source: " + sourceProviderLabel(document.provider)
+                + ", " + com.eza.spicyex.lyrics.catalog.CatalogPickerModel.displayTypeTiming(document.type)
+                + ". Activate to change source.");
         rowMountController.markDirty();
         renderWindowForActive(0);
         if (resetScrollForNextDocument) {
@@ -2032,6 +2099,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         View row = rowMountController.attachedRowView(line);
         if (row == null || scrollController == null || !scrollController.isRowVisible(row, dp(5))) return;
         followState.clearHold();
+        if (flushPendingSourceSwap()) return;
         setActiveLine(activeIndex, lyricPos, track);
         updateJumpToCurrentVisibility();
     }
@@ -2048,11 +2116,28 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         int index = lyricPos >= 0 ? LyricTimeline.findPrimaryActiveRow(document.appliedLines, lyricPos) : followState.activeIndex();
         if (index < 0 || index >= document.appliedLines.size()) return;
         followState.clearHold();
+        if (flushPendingSourceSwap()) return;
         renderWindowForActive(index);
         setActiveLine(index, Math.max(0, lyricPos), track);
         frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
                 renderConfig, Math.max(0, lyricPos), index, 1f / 60f, false);
         updateJumpToCurrentVisibility();
+    }
+
+    /** Applies a source swap stashed while follow was held; true when one was pending. */
+    private boolean flushPendingSourceSwap() {
+        LyricsDocument stashed = pendingSourceSwap;
+        String stashedUri = pendingSourceSwapUri;
+        pendingSourceSwap = null;
+        pendingSourceSwapUri = "";
+        if (stashed == null || stashedUri.isEmpty()) return false;
+        try {
+            prepareAndScheduleDocument(stashedUri, stashed);
+            return true;
+        } catch (Throwable t) {
+            XpLog.log(TAG + " pending source swap apply failed: " + t);
+            return false;
+        }
     }
 
     private long adjustedLyricPositionMs(long playbackPositionMs) {
