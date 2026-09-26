@@ -202,6 +202,8 @@
     <string name="settings_option_heavy">Heavy</string>
     <string name="settings_option_single_tap">Single tap</string>
     <string name="settings_option_double_tap">Double tap</string>
+    <string name="settings_option_every_time">Every time</string>
+    <string name="settings_option_first_few_times">First few times</string>
     <string name="settings_option_fullscreen">Fullscreen</string>
     <string name="settings_option_artwork">Artwork</string>
     <string name="settings_option_regular">Regular</string>
@@ -481,6 +483,7 @@
     <string name="lyrics_ad_music">Playing music instead · lyrics resume after the ad</string>
     <string name="lyrics_ad_resume">Lyrics resume after the ad</string>
     <string name="lyrics_ad_position" formatted="false">%1$d of %2$d</string>
+    <string name="lyrics_ad_break_left" formatted="false">%1$s left in the break</string>
     <!-- Settings search: words people might type for each idea, comma-separated, in this language. -->
     <string name="search_terms_blur">blur, blurry, soft focus, fuzzy</string>
     <string name="search_terms_font">font, typeface, typography</string>
@@ -557,10 +560,12 @@
     <string name="settings_search_settings_ui_language">app language, menu language</string>
     <string name="settings_search_lyrics_double_tap_like">heart, add to liked songs, instagram</string>
     <string name="settings_search_lyrics_long_press_share">share lyrics image, story, instagram, card</string>
+    <string name="settings_search_lyrics_share_gesture_hint">swipe up hint, how to add lines, tutorial, guide, share card</string>
     <string name="settings_search_lyric_tap_seek_mode">tap a line to jump there, play from this line</string>
     <string name="settings_search_lyrics_status_bar_hidden_portrait">hide clock and battery, fullscreen, notification bar</string>
     <string name="settings_search_lyrics_status_bar_hidden_landscape">hide clock and battery, fullscreen, notification bar</string>
     <string name="share_hint">Swipe up to add lyrics · Tap to toggle translation</string>
+    <string name="share_hint_swipe_up">Swipe up on the card to add the next line</string>
     <string name="share_design_glass">Glass</string>
     <string name="share_design_classic">Classic</string>
     <string name="share_design_minimal">Minimal</string>
@@ -600,6 +605,7 @@
     <string name="share_pick_count" formatted="false">%1$d selected</string>
     <string name="share_done">Done</string>
     <string name="settings_label_lyrics_long_press_share">Long-press a line to share</string>
+    <string name="settings_label_lyrics_share_gesture_hint">Share sheet gesture hint</string>
     <string name="settings_label_lyric_auto_resume_follow_delay_seconds">Auto-resume follow delay</string>
     <string name="settings_label_lyrics_font_custom_path">Custom font file</string>
     <string name="settings_lyrics_font_path_absent">Not set</string>
@@ -618,6 +624,7 @@
     <string name="settings_tap_seek_taken_by_like">Off · double tap likes</string>
     <string name="settings_tap_seek_double_tap_turns_off_like">Turns off double-tap to like</string>
     <string name="settings_double_tap_like_note">Double tap already seeks to a line. Turning this on turns that off.</string>
+    <string name="settings_karaoke_labs_note">Labs · these are the original song\'s lyrics, so they may not stay in sync with the karaoke recording.</string>
     <string name="settings_label_lyrics_status_bar_hidden_portrait">Hide status bar (portrait)</string>
     <string name="settings_label_lyrics_status_bar_hidden_landscape">Hide status bar (landscape)</string>
     <string name="settings_label_lyric_skip_chip_style">Skip chip style</string>

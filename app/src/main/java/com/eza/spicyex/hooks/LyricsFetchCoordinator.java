@@ -96,6 +96,7 @@ final class LyricsFetchCoordinator {
         String operationKey = fetchKey(track, sendToken, authorized)
                 + "|source=" + sourceOverride
                 + "|sel=" + selectionIdentity(context, track)
+                + "|karaoke=" + karaokeOriginals(context)
                 + "|manual=" + (manualSpicyToken == null || manualSpicyToken.trim().isEmpty()
                 ? "none" : Integer.toHexString(manualSpicyToken.hashCode()));
         InFlightFetch existing;
@@ -248,6 +249,17 @@ final class LyricsFetchCoordinator {
             return "unknown";
         }
     }
+    /** Whether karaoke versions search for the original: a request made either way must not
+     *  join one made the other way. */
+    private static boolean karaokeOriginals(Context context) {
+        try {
+            return com.eza.spicyex.SpotifyPlusConfig.from(context)
+                    .get(com.eza.spicyex.Settings.KARAOKE_ORIGINAL_LYRICS);
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
     static String fetchKey(SpotifyTrack track, boolean sendToken, SpotifyTokenState.Authorized authorized) {
         String uri = track == null ? "" : safe(track.uri);
         boolean tokenUsable = sendToken && authorized != null;

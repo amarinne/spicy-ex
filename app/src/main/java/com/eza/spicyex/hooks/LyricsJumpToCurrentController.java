@@ -237,12 +237,24 @@ final class LyricsJumpToCurrentController {
         }
     }
 
+    /**
+     * The chip's countdown fill. It follows the countdown as it rises; when the countdown drops
+     * (a touch on the list restarts it) the fill drains back instead of vanishing; and when
+     * playback pauses it dissolves like mist - its edge softens and spreads while it fades - all
+     * inside the pill's outline.
+     */
     private static final class PillProgressDrawable extends Drawable {
         private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint fog = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Path clip = new android.graphics.Path();
+        private final RectF bounds = new RectF();
         private float progress;
-        private float progressAlpha = 1f;
-        private ValueAnimator progressFadeAnimator;
+        /** 0 = plain fill, 1 = fully dissolved. */
+        private float mist;
+        private ValueAnimator drainAnimator;
+        private float drainTarget = -1f;
+        private ValueAnimator mistAnimator;
 
         PillProgressDrawable() {
             stroke.setStyle(Paint.Style.STROKE);
@@ -251,72 +263,133 @@ final class LyricsJumpToCurrentController {
         }
 
         void setProgress(float value) {
-            if (progressFadeAnimator != null) { progressFadeAnimator.cancel(); progressFadeAnimator = null; }
-            progressAlpha = 1f;
-            progress = Math.max(0f, Math.min(1f, value));
-            invalidateSelf();
-        }
-
-        void fadeOut() {
-            if (progressAlpha <= 0.01f) return;
-            if (progressFadeAnimator != null) {
-                if (progressFadeAnimator.isRunning()) return;
-                progressFadeAnimator = null;
-            }
-            ValueAnimator animator = ValueAnimator.ofFloat(progressAlpha, 0f);
-            progressFadeAnimator = animator;
-            animator.setDuration(260L);
-            animator.addUpdateListener(a -> {
-                progressAlpha = (Float) a.getAnimatedValue();
-                invalidateSelf();
-            });
-            animator.start();
-        }
-
-        void reset() {
-            if (progressFadeAnimator != null) {
-                progressFadeAnimator.cancel();
-                progressFadeAnimator = null;
-            }
-            if (progress <= 0.001f) {
-                progressAlpha = 1f;
+            float next = Math.max(0f, Math.min(1f, value));
+            if (mist > 0f) {
+                // Playing again after a pause: the dissolved fill starts over from here.
+                cancelMist();
+                mist = 0f;
+                progress = next;
                 invalidateSelf();
                 return;
             }
-            ValueAnimator animator = ValueAnimator.ofFloat(progress, 0f);
-            progressFadeAnimator = animator;
-            animator.setDuration(150L);
-            animator.setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f));
+            if (drainAnimator != null) {
+                // Draining toward a lower value: let it finish unless the countdown has risen
+                // past what is shown again.
+                if (next <= progress + 0.005f) return;
+                cancelDrain();
+            }
+            if (next < progress - 0.02f) {
+                drainTo(next);
+                return;
+            }
+            progress = next;
+            invalidateSelf();
+        }
+
+        /** Playback paused: the fill dissolves. */
+        void fadeOut() {
+            if (progress <= 0.001f || mist >= 1f || mistAnimator != null) return;
+            cancelDrain();
+            ValueAnimator animator = ValueAnimator.ofFloat(mist, 1f);
+            mistAnimator = animator;
+            animator.setDuration(700L);
+            animator.setInterpolator(new android.view.animation.DecelerateInterpolator(1.2f));
             animator.addUpdateListener(a -> {
-                progress = (Float) a.getAnimatedValue();
-                progressAlpha = 1f;
+                mist = (Float) a.getAnimatedValue();
                 invalidateSelf();
             });
             animator.addListener(new AnimatorListenerAdapter() {
                 @Override public void onAnimationEnd(Animator animation) {
-                    if (progressFadeAnimator == animation) progressFadeAnimator = null;
-                    progress = 0f;
-                    progressAlpha = 1f;
-                    invalidateSelf();
+                    if (mistAnimator == animation) mistAnimator = null;
                 }
             });
             animator.start();
         }
 
+        /** The list was touched: the fill drains back to empty. */
+        void reset() {
+            cancelMist();
+            mist = 0f;
+            if (progress <= 0.001f) {
+                progress = 0f;
+                invalidateSelf();
+                return;
+            }
+            drainTo(0f);
+        }
+
+        private void drainTo(float target) {
+            if (drainAnimator != null && Math.abs(drainTarget - target) < 0.005f) return;
+            cancelDrain();
+            ValueAnimator animator = ValueAnimator.ofFloat(progress, target);
+            drainAnimator = animator;
+            drainTarget = target;
+            // A longer fill takes a little longer to drain, never sluggishly.
+            animator.setDuration(Math.round(180L + 220L * (progress - target)));
+            animator.setInterpolator(new android.view.animation.PathInterpolator(0.3f, 0f, 0.1f, 1f));
+            animator.addUpdateListener(a -> {
+                progress = (Float) a.getAnimatedValue();
+                invalidateSelf();
+            });
+            animator.addListener(new AnimatorListenerAdapter() {
+                @Override public void onAnimationEnd(Animator animation) {
+                    if (drainAnimator == animation) {
+                        drainAnimator = null;
+                        drainTarget = -1f;
+                    }
+                }
+            });
+            animator.start();
+        }
+
+        private void cancelDrain() {
+            ValueAnimator animator = drainAnimator;
+            drainAnimator = null;
+            drainTarget = -1f;
+            if (animator != null) animator.cancel();
+        }
+
+        private void cancelMist() {
+            ValueAnimator animator = mistAnimator;
+            mistAnimator = null;
+            if (animator != null) animator.cancel();
+        }
+
         @Override public void draw(Canvas canvas) {
-            RectF bounds = new RectF(getBounds());
+            bounds.set(getBounds());
             float radius = Math.min(bounds.width(), bounds.height()) * 0.5f;
+            fill.setShader(null);
             fill.setColor(Color.argb(48, 255, 255, 255));
             canvas.drawRoundRect(bounds, radius, radius, fill);
-            if (progress > 0f) {
-                // Clip the fill to the outer pill and draw a plain rectangle inside that clip.
-                // Rounding the partially-filled rectangle itself makes its left edge swell and
-                // can visually escape the button while the progress is still small.
-                float right = bounds.left + bounds.width() * progress;
+            if (progress > 0f && mist < 1f) {
+                // Clipped to the pill: a plain rectangle inside the clip, since rounding the
+                // partial fill itself makes its left edge swell out of the button.
+                clip.rewind();
+                clip.addRoundRect(bounds, radius, radius, android.graphics.Path.Direction.CW);
                 canvas.save();
-                canvas.clipPath(roundRectPath(bounds, radius));
-                fill.setColor(Color.argb(Math.round((35 + 25 * progress) * progressAlpha), 255, 255, 255));
-                canvas.drawRect(bounds.left, bounds.top, right, bounds.bottom, fill);
+                canvas.clipPath(clip);
+                float right = bounds.left + bounds.width() * progress;
+                int alpha = Math.round(35 + 25 * progress);
+                if (mist <= 0f) {
+                    fill.setColor(Color.argb(alpha, 255, 255, 255));
+                    canvas.drawRect(bounds.left, bounds.top, right, bounds.bottom, fill);
+                } else {
+                    // Mist: the edge feathers out to the right as it spreads, the body thins
+                    // from the left, and the whole of it fades.
+                    float spread = bounds.width() * 0.45f * mist;
+                    float fade = (float) Math.pow(1f - mist, 1.6f);
+                    int body = Math.round(alpha * fade);
+                    int thin = Math.round(alpha * fade * (1f - 0.6f * mist));
+                    fog.setShader(new android.graphics.LinearGradient(
+                            bounds.left, 0f, right + spread, 0f,
+                            new int[]{Color.argb(thin, 255, 255, 255), Color.argb(body, 255, 255, 255),
+                                    Color.argb(0, 255, 255, 255)},
+                            new float[]{0f, Math.max(0.05f, Math.min(0.95f,
+                                    (right - bounds.left) / Math.max(1f, right + spread - bounds.left)
+                                            * (1f - 0.5f * mist))), 1f},
+                            android.graphics.Shader.TileMode.CLAMP));
+                    canvas.drawRect(bounds.left, bounds.top, right + spread, bounds.bottom, fog);
+                }
                 canvas.restore();
             }
             canvas.drawRoundRect(bounds, radius, radius, stroke);
@@ -324,15 +397,9 @@ final class LyricsJumpToCurrentController {
 
         @Override public void setAlpha(int alpha) { fill.setAlpha(alpha); stroke.setAlpha(alpha); }
         @Override public void setColorFilter(android.graphics.ColorFilter filter) {
-            fill.setColorFilter(filter); stroke.setColorFilter(filter);
+            fill.setColorFilter(filter); fog.setColorFilter(filter); stroke.setColorFilter(filter);
         }
         @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
-
-        private android.graphics.Path roundRectPath(RectF rect, float radius) {
-            android.graphics.Path path = new android.graphics.Path();
-            path.addRoundRect(rect, radius, radius, android.graphics.Path.Direction.CW);
-            return path;
-        }
     }
 
     /** Re-reads {@link Settings#FOLLOW_CHIP_POSITION} and {@link Settings#FOLLOW_CHIP_STYLE}

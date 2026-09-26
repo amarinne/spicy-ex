@@ -951,14 +951,32 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                  *  the text below spans exactly the cover's width. */
                 @Override
                 protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-                    super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-                    if (columnArtFrame == null) return;
+                    // The cover is sized from the full column width every time. Measuring it
+                    // with the previous pass's centring padding in place measured the song info
+                    // narrower, it wrapped to more lines, the cover came out smaller, the padding
+                    // grew - and every re-layout (a tap on the cover is one) shrank it again.
+                    if (columnArtFrame == null) {
+                        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+                        return;
+                    }
                     int content = MeasureSpec.getSize(widthMeasureSpec);
+                    int heightMode = MeasureSpec.getMode(heightMeasureSpec);
+                    int available = Math.max(0, MeasureSpec.getSize(heightMeasureSpec)
+                            - getPaddingTop() - getPaddingBottom());
+                    columnArtLockedSide = -1;
+                    columnArtFrame.measure(MeasureSpec.makeMeasureSpec(content, MeasureSpec.EXACTLY),
+                            heightMode == MeasureSpec.UNSPECIFIED ? heightMeasureSpec
+                                    : MeasureSpec.makeMeasureSpec(available, MeasureSpec.AT_MOST));
                     int side = columnArtFrame.getMeasuredWidth();
                     int inset = side > 0 ? Math.max(0, (content - side) / 2) : 0;
                     if (inset != getPaddingLeft() || inset != getPaddingRight()) {
                         setPadding(inset, getPaddingTop(), inset, getPaddingBottom());
+                    }
+                    columnArtLockedSide = side;
+                    try {
                         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+                    } finally {
+                        columnArtLockedSide = -1;
                     }
                 }
             };
@@ -985,7 +1003,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
                     int width = MeasureSpec.getSize(widthMeasureSpec);
                     int side = width;
-                    if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
+                    if (columnArtLockedSide >= 0) {
+                        side = Math.min(width, columnArtLockedSide);
+                    } else if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
                         int reserve = dp(8);
                         if (title != null && title.getVisibility() != GONE) {
                             title.measure(widthMeasureSpec,
@@ -1786,6 +1806,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
+    /** Cover side fixed by the left column's first measure pass for its centred second pass;
+     *  -1 outside it. */
+    private int columnArtLockedSide = -1;
+
     private void springBackColumnArt() {
         if (columnArtFrame == null) return;
         columnArtFrame.animate().cancel();
@@ -1959,7 +1983,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             }
         }
         long pos = playbackClock.getPosition(track, playingNow);
-        if (adTrack) updateAdCard(track, pos);
+        if (adTrack) {
+            AdBreakInfo.notePaused(!playingNow);
+            updateAdCard(track, pos);
+        } else {
+            AdBreakInfo.noteBreakOver();
+        }
 
         String trackTitle = emptyFallback(track.title, "Unknown title");
         String trackArtist = emptyFallback(track.artist, "Unknown artist");
@@ -2075,7 +2104,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         updateFrameDemand(true, false);
     }
 
-    /** "1 of 3 · 0:23" under the ad card: where this ad sits in the break and how long it has left. */
+    /** "1 of 3 · 0:37" under the ad card: where this ad sits in the break and how long the
+     *  whole break has left (this ad's own time left when Spotify has not said). */
     private void updateAdCard(SpotifyTrack track, long positionMs) {
         StringBuilder text = new StringBuilder();
         AdBreakInfo info = AdBreakInfo.current(track.uri);
@@ -2085,10 +2115,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     .replace("%1$d", String.valueOf(info.index))
                     .replace("%2$d", String.valueOf(info.count)));
         }
-        if (track.duration > 0 && positionMs >= 0) {
-            long left = Math.max(0L, (track.duration - positionMs + 999L) / 1000L);
+        long breakLeftMs = AdBreakInfo.breakRemainingMs();
+        long adLeftMs = track.duration > 0 && positionMs >= 0 ? track.duration - positionMs : -1L;
+        boolean wholeBreak = breakLeftMs >= 0 || (info != null && info.isLast());
+        long leftMs = breakLeftMs >= 0 ? Math.max(breakLeftMs, adLeftMs) : adLeftMs;
+        if (leftMs >= 0) {
+            long left = Math.max(0L, (leftMs + 999L) / 1000L);
+            String clock = (left / 60) + ":" + (left % 60 < 10 ? "0" : "") + (left % 60);
             if (text.length() > 0) text.append("  ·  ");
-            text.append(left / 60).append(':').append(left % 60 < 10 ? "0" : "").append(left % 60);
+            text.append(wholeBreak
+                    ? com.eza.spicyex.UiLanguage.strings(activity, config.get(Settings.UI_LANGUAGE))
+                            .get("lyrics_ad_break_left", "%1$s left in the break").replace("%1$s", clock)
+                    : clock);
         }
         emptyStateController.updateAdProgress(text.toString());
     }
@@ -4859,6 +4897,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
         jumpToCurrentController.update(shouldShow);
 
+        // The countdown starts once the list is at rest: not while it is still gliding or
+        // springing back from an end, and not while paused (it starts over on resume rather
+        // than jumping ahead by the time spent paused).
+        boolean settling = scrollInProgress || (lyricsScroll instanceof com.eza.spicyex.lyrics.ElasticScrollView
+                && ((com.eza.spicyex.lyrics.ElasticScrollView) lyricsScroll).isStretched());
+        if (shouldShow && (settling || !host.isPlayerActuallyPlaying())) followState.markManualScroll();
         if (shouldShow && host.isPlayerActuallyPlaying()) {
             int delaySeconds = config == null ? Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.defaultValue
                     : config.get(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS);

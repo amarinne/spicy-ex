@@ -132,7 +132,8 @@ final class AdMuteController {
         main.removeCallbacks(recheck);
         long remaining = remainingMs(track);
         AdBreakInfo info = AdBreakInfo.current(track.uri);
-        if (info != null && info.isLast() && remaining >= 0 && remaining <= MUSIC_END_LEAD_MS) {
+        boolean lastAd = AdBreakInfo.endsWithThisAd(info, remaining);
+        if (lastAd && remaining >= 0 && remaining <= MUSIC_END_LEAD_MS) {
             if (music.isPlaying()) music.fadeOutAndStop();
             return;
         }
@@ -141,7 +142,7 @@ final class AdMuteController {
         if (remaining > 0) {
             // Look again just in time for the ending (and meanwhile once a second, so a break
             // position that only shows up on screen later is still caught).
-            long wait = info != null && info.isLast()
+            long wait = lastAd
                     ? Math.max(50L, remaining - MUSIC_END_LEAD_MS)
                     : Math.min(1000L, Math.max(50L, remaining - MUSIC_END_LEAD_MS));
             main.postDelayed(recheck, wait);

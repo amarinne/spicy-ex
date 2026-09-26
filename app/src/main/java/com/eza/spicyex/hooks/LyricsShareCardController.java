@@ -342,7 +342,7 @@ final class LyricsShareCardController {
         renderThumbs();
         if (backdrop == Backdrop.ARTIST && artistImage == null) fetchArtistImage();
         if (spotifyCode) fetchSpotifyCode();
-        if (document != null && !picked.isEmpty()) {
+        if (document != null && !picked.isEmpty() && hintPasses() > 0) {
             View teaseHost = overlay;
             teaseHost.postDelayed(() -> {
                 if (overlay == teaseHost) teaseNextLine();
@@ -860,8 +860,11 @@ final class LyricsShareCardController {
     }
 
     /**
-     * Gesture hint: the next lyric peeks up from the bottom of the card as if about to be pulled
-     * in, the card lifts a touch to make room, then both settle back - "swipe up to add".
+     * Gesture hint, shown as a demonstration rather than a nudge: a chip under the card says
+     * what to do ("Swipe up on the card to add the next line", with that line underneath), and a
+     * finger dot presses on the card and drags it up, the card following, twice. The first few
+     * times the sheet opens the demonstration plays in full; after that one pass is enough of a
+     * reminder. A touch on the card ends it at once.
      */
     private void teaseNextLine() {
         if (document == null || cardHost == null || !(cardHost.getParent() instanceof FrameLayout)) return;
@@ -873,35 +876,51 @@ final class LyricsShareCardController {
         if (!selectionFits(candidate)) return;
         if (!(overlay instanceof FrameLayout)) return;
         FrameLayout host = (FrameLayout) overlay;
+        int passes = consumeHintPasses();
+        if (passes <= 0) return;
 
-        // A chip under the card (outside it, where the hint text sits): the next line, with an
-        // arrow pointing up into the card.
+        // The chip under the card, where the one-line hint sits: what to do, then the line.
         LinearLayout chip = new LinearLayout(activity);
         chip.setGravity(Gravity.CENTER_VERTICAL);
-        chip.setPadding(dp(12), dp(7), dp(16), dp(7));
-        android.graphics.drawable.GradientDrawable bg = glass(dp(18), 0, 50);
-        bg.setColor(Color.argb(190, 22, 22, 26));
+        chip.setPadding(dp(14), dp(9), dp(18), dp(9));
+        android.graphics.drawable.GradientDrawable bg = glass(dp(20), 0, 50);
+        bg.setColor(Color.argb(205, 22, 22, 26));
         chip.setBackground(bg);
         chip.setElevation(dp(30));
         ImageView arrow = new ImageView(activity);
         arrow.setImageDrawable(new LineIcon(LineIcon.Kind.ARROW_UP, Color.WHITE));
-        LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(dp(15), dp(15));
-        arrowLp.rightMargin = dp(8);
+        LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(dp(18), dp(18));
+        arrowLp.rightMargin = dp(10);
         chip.addView(arrow, arrowLp);
-        TextView text = new TextView(activity);
-        text.setText(safe(document.appliedLines.get(next).text));
-        text.setTextColor(Color.WHITE);
-        text.setTextSize(13);
-        text.setTypeface(Typeface.DEFAULT_BOLD);
-        text.setSingleLine(true);
-        text.setEllipsize(TextUtils.TruncateAt.END);
-        text.setMaxWidth(Math.max(dp(100), cardHost.getWidth() - dp(60)));
-        chip.addView(text);
+        LinearLayout texts = new LinearLayout(activity);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        int maxText = Math.max(dp(120), cardHost.getWidth() - dp(70));
+        TextView instruction = new TextView(activity);
+        instruction.setText(s("hint_swipe_up", "Swipe up on the card to add the next line"));
+        instruction.setTextColor(Color.WHITE);
+        instruction.setTextSize(14);
+        instruction.setTypeface(Typeface.DEFAULT_BOLD);
+        instruction.setMaxWidth(maxText);
+        texts.addView(instruction);
+        TextView preview = new TextView(activity);
+        preview.setText("\u201C" + safe(document.appliedLines.get(next).text) + "\u201D");
+        preview.setTextColor(Color.argb(170, 255, 255, 255));
+        preview.setTextSize(12);
+        preview.setSingleLine(true);
+        preview.setEllipsize(TextUtils.TruncateAt.END);
+        preview.setMaxWidth(maxText);
+        LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        previewLp.topMargin = dp(2);
+        texts.addView(preview, previewLp);
+        chip.addView(texts);
         int[] hostAt = new int[2];
         int[] cardAt = new int[2];
         host.getLocationOnScreen(hostAt);
         cardHost.getLocationOnScreen(cardAt);
-        float cardBottom = cardAt[1] - hostAt[1] + cardHost.getHeight() - cardHost.getTranslationY();
+        float cardTop = cardAt[1] - hostAt[1] - cardHost.getTranslationY();
+        float cardBottom = cardTop + cardHost.getHeight();
+        float cardCenterX = cardAt[0] - hostAt[0] + cardHost.getWidth() / 2f;
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.CENTER_HORIZONTAL);
@@ -909,94 +928,149 @@ final class LyricsShareCardController {
         host.addView(chip, lp);
         teasePill = chip;
 
+        // The finger: a soft dot with a ring, pressing on the lower part of the card.
+        View finger = new View(activity);
+        android.graphics.drawable.GradientDrawable dot = new android.graphics.drawable.GradientDrawable();
+        dot.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        dot.setColor(Color.argb(110, 255, 255, 255));
+        dot.setStroke(dp(2), Color.argb(230, 255, 255, 255));
+        finger.setBackground(dot);
+        finger.setElevation(dp(32));
+        int fingerSize = dp(46);
+        FrameLayout.LayoutParams fingerLp = new FrameLayout.LayoutParams(fingerSize, fingerSize,
+                Gravity.TOP | Gravity.START);
+        float fingerStartY = cardBottom - cardHost.getHeight() * 0.22f - fingerSize / 2f;
+        fingerLp.leftMargin = Math.round(cardCenterX - fingerSize / 2f);
+        fingerLp.topMargin = Math.round(fingerStartY);
+        host.addView(finger, fingerLp);
+        finger.setAlpha(0f);
+        teaseFinger = finger;
+
         View card = cardHost;
         card.setPivotX(card.getWidth() / 2f);
         card.setPivotY(card.getHeight());
         card.setCameraDistance(8000f * activity.getResources().getDisplayMetrics().density);
-        float lift = dp(20);
-        float tug = dp(4);
+        float lift = dp(26);
         float tilt = 4f;
+        float travel = Math.min(dp(130), cardHost.getHeight() * 0.35f);
         chip.setAlpha(0f);
         TextView hintText = hint;
-        // One clock for the card and the chip: the card lifts (tipping back a touch, as if being
-        // pulled up), gives an extra small tug, then is let go and springs home with a damped
-        // bounce; the chip rises in under it, beckons, and is drawn up into the card.
+        // Each pass: the finger lands and presses (0-280ms), drags up with the card following
+        // (280-1000), lets go - the card springs home, the finger fades (1000-1350) - and rests.
+        final float pass = 1650f;
+        final float total = passes * pass + 450f;
         android.animation.ValueAnimator clock = android.animation.ValueAnimator.ofFloat(0f, 1f);
-        long total = 1750L;
-        clock.setDuration(total);
+        clock.setDuration((long) total);
         clock.setInterpolator(null);
         clock.addUpdateListener(a -> {
             float t = a.getAnimatedFraction() * total;
-            float y;
-            float rot;
-            if (t < 480f) {
-                float p = 1f - (float) Math.pow(1f - t / 480f, 3);
-                y = -lift * p;
-                rot = tilt * p;
-            } else if (t < 1000f) {
-                float k = (float) Math.sin(Math.PI * (t - 480f) / 520f);
-                y = -lift - tug * k;
-                rot = tilt + 1.5f * k;
-            } else {
-                float u = t - 1000f;
-                float spring = (float) (Math.exp(-u / 120f) * Math.cos(u / 68f));
+            // The chip: in over the first 350ms, out over the last 350ms.
+            float chipIn = Math.min(1f, t / 350f);
+            float chipOut = Math.max(0f, Math.min(1f, (t - (total - 350f)) / 350f));
+            float chipEase = 1f - (float) Math.pow(1f - chipIn, 3);
+            chip.setAlpha(chipIn * (1f - chipOut));
+            chip.setTranslationY(dp(14) * (1f - chipEase) - dp(10) * chipOut);
+            if (hintText != null) hintText.setAlpha(1f - Math.min(1f, t / 200f) * (1f - chipOut));
+
+            float local = t % pass;
+            boolean active = t < passes * pass;
+            float y = 0f;
+            float rot = 0f;
+            float fingerAlpha = 0f;
+            float fingerScale = 1f;
+            float fingerY = 0f;
+            if (active && local < 280f) {
+                float p = local / 280f;
+                fingerAlpha = p;
+                fingerScale = 1.25f - 0.35f * p; // lands, then presses in
+            } else if (active && local < 1000f) {
+                float p = (local - 280f) / 720f;
+                float e = p < 0.5f ? 4f * p * p * p : 1f - (float) Math.pow(-2f * p + 2f, 3) / 2f;
+                fingerAlpha = 1f;
+                fingerScale = 0.9f;
+                fingerY = -travel * e;
+                y = -lift * e;
+                rot = tilt * e;
+                arrow.setTranslationY(-dp(3) * (float) Math.sin(Math.PI * p * 2f));
+            } else if (active && local < 1350f) {
+                float u = local - 1000f;
+                float p = u / 350f;
+                fingerAlpha = 1f - p;
+                fingerScale = 0.9f + 0.3f * p;
+                fingerY = -travel - dp(10) * p;
+                float spring = (float) (Math.exp(-u / 110f) * Math.cos(u / 62f));
                 y = -lift * spring;
                 rot = tilt * spring;
+                arrow.setTranslationY(0f);
             }
+            finger.setAlpha(fingerAlpha);
+            finger.setScaleX(fingerScale);
+            finger.setScaleY(fingerScale);
+            finger.setTranslationY(fingerY);
             card.setTranslationY(y);
             card.setRotationX(rot);
             float scale = 1f - 0.012f * Math.min(1f, Math.abs(y) / lift);
             card.setScaleX(scale);
             card.setScaleY(scale);
-            // The chip.
-            if (t < 120f) {
-                chip.setAlpha(0f);
-            } else if (t < 620f) {
-                float p = (t - 120f) / 500f;
-                float e = 1f - (float) Math.pow(1f - p, 3);
-                chip.setAlpha(Math.min(1f, p * 1.6f));
-                chip.setTranslationY(dp(18) * (1f - e));
-                float cs = 0.9f + 0.1f * e;
-                chip.setScaleX(cs);
-                chip.setScaleY(cs);
-            } else if (t < 1000f) {
-                chip.setAlpha(1f);
-                chip.setTranslationY(0f);
-                chip.setScaleX(1f);
-                chip.setScaleY(1f);
-                // The arrow beckons upward.
-                arrow.setTranslationY(-dp(3) * (float) Math.sin(Math.PI * (t - 620f) / 190f) * (t < 1000f ? 1f : 0f));
-            } else {
-                float p = Math.min(1f, (t - 1000f) / 380f);
-                float e = p * p;
-                arrow.setTranslationY(0f);
-                chip.setTranslationY(-dp(16) * e);
-                float cs = 1f - 0.15f * e;
-                chip.setScaleX(cs);
-                chip.setScaleY(cs);
-                chip.setAlpha(1f - p);
-            }
-            if (hintText != null) {
-                float hidden = t < 1000f ? Math.min(1f, t / 200f) : Math.max(0f, 1f - (t - 1150f) / 300f);
-                hintText.setAlpha(1f - Math.max(0f, Math.min(1f, hidden)));
-            }
         });
         clock.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(android.animation.Animator animation) {
                 if (teasePill == chip) teasePill = null;
+                if (teaseFinger == finger) teaseFinger = null;
                 if (teaseClock == animation) teaseClock = null;
                 card.setTranslationY(0f);
                 card.setRotationX(0f);
                 card.setScaleX(1f);
                 card.setScaleY(1f);
                 if (chip.getParent() instanceof ViewGroup) ((ViewGroup) chip.getParent()).removeView(chip);
+                if (finger.getParent() instanceof ViewGroup) ((ViewGroup) finger.getParent()).removeView(finger);
                 if (hintText != null) hintText.setAlpha(1f);
             }
         });
         teaseClock = clock;
         clock.start();
     }
+
+    /** "Share sheet gesture hint": a full demonstration (two passes) the first few times and one
+     *  pass after that, the full one every time, or none. Does not count this showing. */
+    private int hintPasses() {
+        String mode;
+        try {
+            mode = com.eza.spicyex.SpotifyPlusConfig.from(activity)
+                    .get(com.eza.spicyex.Settings.SHARE_GESTURE_HINT);
+        } catch (Throwable ignored) {
+            mode = "First few times";
+        }
+        if ("Off".equals(mode)) return 0;
+        if ("Every time".equals(mode)) return 2;
+        return hintShownCount() < 3 ? 2 : 1;
+    }
+
+    /** {@link #hintPasses} for the hint about to play, counting it as shown. */
+    private int consumeHintPasses() {
+        int passes = hintPasses();
+        if (passes <= 0) return 0;
+        try {
+            hintPrefs().edit().putInt("swipe_up_shown", hintShownCount() + 1).apply();
+        } catch (Throwable ignored) {
+        }
+        return passes;
+    }
+
+    private int hintShownCount() {
+        try {
+            return hintPrefs().getInt("swipe_up_shown", 0);
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private android.content.SharedPreferences hintPrefs() {
+        return activity.getSharedPreferences("spicyex_share_hint", android.content.Context.MODE_PRIVATE);
+    }
+
+    private View teaseFinger;
 
     /** The swipe-up hint on screen, if any: a touch on the card ends it early. */
     private View teasePill;
@@ -1010,6 +1084,13 @@ final class LyricsShareCardController {
             clock.cancel();
         }
         if (teasePill == chip) teasePill = null;
+        View finger = teaseFinger;
+        teaseFinger = null;
+        if (finger != null) {
+            finger.animate().alpha(0f).setDuration(140).withEndAction(() -> {
+                if (finger.getParent() instanceof ViewGroup) ((ViewGroup) finger.getParent()).removeView(finger);
+            }).start();
+        }
         if (cardHost != null) {
             cardHost.animate().translationY(0f).rotationX(0f).scaleX(1f).scaleY(1f).setDuration(260)
                     .setInterpolator(new PathInterpolator(0.2f, 0.9f, 0.2f, 1f)).start();
@@ -1080,6 +1161,7 @@ final class LyricsShareCardController {
             teaseClock = null;
         }
         teasePill = null;
+        teaseFinger = null;
         // Full-size bitmaps kept only for the open sheet: the frozen lyrics background and the
         // shareable card (drawn at most twice, 5-6 MB each) go with it.
         lyricsBackground = null;

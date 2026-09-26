@@ -66,6 +66,7 @@
     <string name="settings_tap_seek_taken_by_like">オフ · ダブルタップはいいね</string>
     <string name="settings_tap_seek_double_tap_turns_off_like">選ぶとダブルタップでいいねはオフになります</string>
     <string name="settings_double_tap_like_note">ダブルタップは歌詞の移動に使われています。オンにするとそちらはオフになります。</string>
+    <string name="settings_karaoke_labs_note">ラボ機能 · 原曲の歌詞を使うため、カラオケ音源とずれることがあります。</string>
     <string name="settings_source_rank_smart">自動</string>
     <string name="settings_source_none_on">有効なソースなし</string>
     <string name="settings_search_hint">設定を検索</string>
@@ -231,6 +232,7 @@
     <string name="settings_option_bossa_nova">ボサノバ</string>
     <string name="settings_option_ambient">アンビエント</string>
     <string name="share_hint">上にスワイプで歌詞を追加 · タップで翻訳の切替</string>
+    <string name="share_hint_swipe_up">カードを上にスワイプすると次の歌詞が追加されます</string>
     <string name="share_design_glass">グラス</string>
     <string name="share_design_classic">クラシック</string>
     <string name="share_design_minimal">ミニマル</string>
@@ -310,6 +312,8 @@
     <string name="settings_option_heavy">強</string>
     <string name="settings_option_single_tap">シングルタップ</string>
     <string name="settings_option_double_tap">ダブルタップ</string>
+    <string name="settings_option_every_time">毎回</string>
+    <string name="settings_option_first_few_times">最初の数回だけ</string>
     <string name="settings_option_fullscreen">全画面</string>
     <string name="settings_option_artwork">アートワーク</string>
     <string name="settings_option_regular">標準</string>
@@ -612,4 +616,7 @@
     <string name="search_terms_screen">画面, 全画面</string>
     <string name="search_terms_auto">自動</string>
     <string name="search_terms_notification">通知, ロック画面</string>
+    <string name="settings_label_lyrics_share_gesture_hint">共有画面のジェスチャーヒント</string>
+    <string name="settings_search_lyrics_share_gesture_hint">上スワイプのヒント, 歌詞の追加方法, ガイド, チュートリアル</string>
+    <string name="lyrics_ad_break_left" formatted="false">広告 残り %1$s</string>
 </resources>

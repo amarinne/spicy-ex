@@ -120,6 +120,11 @@ public class ElasticScrollView extends ScrollView {
         setOffset(rubber(pull));
     }
 
+    /** True while the list is pulled past an end or springing back from one. */
+    public boolean isStretched() {
+        return springing || Math.abs(offset) > 0.5f;
+    }
+
     @Override
     public void fling(int velocityY) {
         flinging = true;

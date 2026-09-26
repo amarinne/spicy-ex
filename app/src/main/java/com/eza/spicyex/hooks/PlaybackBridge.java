@@ -51,6 +51,7 @@ final class PlaybackBridge {
     void install(XpPackage lpparm, SpotifySymbolResolver symbols) {
         hookPlayerStateBridge(lpparm, symbols);
         installMediaSessionHook();
+        AdBreakInfo.installHooks();
     }
 
     private void hookPlayerStateBridge(XpPackage lpparm, SpotifySymbolResolver symbols) {

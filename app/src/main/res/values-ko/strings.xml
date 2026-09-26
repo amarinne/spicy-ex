@@ -230,6 +230,7 @@
     <string name="settings_option_bossa_nova">보사노바</string>
     <string name="settings_option_ambient">앰비언트</string>
     <string name="share_hint">위로 밀어 가사 추가 · 탭하여 번역 켜기/끄기</string>
+    <string name="share_hint_swipe_up">카드를 위로 밀면 다음 가사가 추가돼요</string>
     <string name="share_design_glass">글래스</string>
     <string name="share_design_classic">클래식</string>
     <string name="share_design_minimal">미니멀</string>
@@ -309,6 +310,8 @@
     <string name="settings_option_heavy">강하게</string>
     <string name="settings_option_single_tap">한 번 탭</string>
     <string name="settings_option_double_tap">두 번 탭</string>
+    <string name="settings_option_every_time">매번</string>
+    <string name="settings_option_first_few_times">처음 몇 번만</string>
     <string name="settings_option_fullscreen">전체 화면</string>
     <string name="settings_option_artwork">앨범 아트</string>
     <string name="settings_option_regular">보통</string>
@@ -582,6 +585,7 @@
     <string name="settings_option_play_music_instead">음악으로 대체</string>
     <string name="settings_layout_editor_follow_chip_look">버튼 모양</string>
     <string name="lyrics_ad_position" formatted="false">%2$d개 중 %1$d번째</string>
+    <string name="lyrics_ad_break_left" formatted="false">광고 %1$s 남음</string>
     <!-- Settings search: words people might type for each idea, comma-separated, in this language. -->
     <string name="search_terms_blur">블러, 흐림, 흐리게, 뿌옇게, 흐릿</string>
     <string name="search_terms_font">글꼴, 폰트, 서체, 글씨체</string>
@@ -658,14 +662,17 @@
     <string name="settings_search_settings_ui_language">앱 언어, 메뉴 언어, 설정 언어</string>
     <string name="settings_search_lyrics_double_tap_like">하트, 좋아요 추가, 이중탭, 더블탭</string>
     <string name="settings_search_lyrics_long_press_share">가사 공유, 이미지, 스토리, 인스타</string>
+    <string name="settings_search_lyrics_share_gesture_hint">위로 밀기 힌트, 가사 추가 방법, 안내, 튜토리얼, 공유 카드</string>
     <string name="settings_search_lyric_tap_seek_mode">가사 눌러서 이동, 그 줄부터 재생</string>
     <string name="settings_search_lyrics_status_bar_hidden_portrait">시계 배터리 숨기기, 전체화면, 상단바</string>
     <string name="settings_search_lyrics_status_bar_hidden_landscape">시계 배터리 숨기기, 전체화면, 상단바</string>
     <string name="settings_label_lyrics_long_press_share">가사를 길게 눌러 공유</string>
+    <string name="settings_label_lyrics_share_gesture_hint">공유 화면 제스처 힌트</string>
     <string name="settings_label_lyrics_double_tap_like">두 번 탭해서 좋아요</string>
     <string name="settings_tap_seek_taken_by_like">꺼짐 · 두 번 탭은 좋아요</string>
     <string name="settings_tap_seek_double_tap_turns_off_like">선택하면 두 번 탭해서 좋아요가 꺼져요</string>
     <string name="settings_double_tap_like_note">두 번 탭은 가사 이동에 사용 중이에요. 켜면 그 기능은 꺼져요.</string>
+    <string name="settings_karaoke_labs_note">실험실 기능 · 원곡 가사를 가져오기 때문에 카라오케 음원과 싱크가 맞지 않을 수 있어요.</string>
     <string name="settings_label_lyrics_status_bar_hidden_portrait">상태 표시줄 숨기기 (세로)</string>
     <string name="settings_label_lyrics_status_bar_hidden_landscape">상태 표시줄 숨기기 (가로)</string>
     <string name="settings_card_editor">재생 중 카드 편집기…</string>

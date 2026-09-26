@@ -1538,8 +1538,14 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         return setting == Settings.CACHE_SIZE ? cacheSizeSummary() : selectorSummary(setting, value);
     }
 
-    /** The shared double tap: warns on the like switch what turning it on turns off. */
+    /** The shared double tap: warns on the like switch what turning it on turns off. Karaoke
+     *  lyrics are Labs: they are the original recording's, timed to it, not to the karaoke one. */
     @Override public String switchNote(Settings.BooleanSetting setting) {
+        if (setting == Settings.KARAOKE_ORIGINAL_LYRICS) {
+            return uiStrings.get("settings_karaoke_labs_note",
+                    "Labs \u00b7 these are the original song's lyrics, so they may not stay in sync "
+                            + "with the karaoke recording.");
+        }
         if (setting == Settings.DOUBLE_TAP_LIKE && "Double tap".equals(store.get(Settings.TAP_SEEK_MODE))
                 && !Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
             return uiStrings.get("settings_double_tap_like_note",

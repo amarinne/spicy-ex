@@ -288,8 +288,17 @@ final class LyricsSessionManager {
             CanonicalSourceCodec.Record record = null;
             try {
                 String selectionIdentity = LyricsSourcePreferences.selectionIdentity(context, requestedUri);
-                record = CanonicalSourceCache.load(context, requestedUri, selectionIdentity);
-                if (record == null) {
+                // A karaoke version's stored lyrics are the original song's, fetched while
+                // "Show original lyrics for karaoke versions" was on: with it off they are not
+                // this track's, so the stored record is not served (and not deleted, for when
+                // the option comes back on).
+                boolean karaokeOriginalsOff = requestedTrack != null
+                        && com.eza.spicyex.lyrics.KaraokeTitles.isKaraokeVersion(requestedTrack.title)
+                        && !com.eza.spicyex.SpotifyPlusConfig.from(context)
+                                .get(com.eza.spicyex.Settings.KARAOKE_ORIGINAL_LYRICS);
+                record = karaokeOriginalsOff ? null
+                        : CanonicalSourceCache.load(context, requestedUri, selectionIdentity);
+                if (record == null && !karaokeOriginalsOff) {
                     // Migration: a record orphaned by a retired source (or any identity change)
                     // stays display-authoritative. Serve it unless an explicit per-track override
                     // rejects its source; the refresh policy still probes when the base leaves

@@ -147,6 +147,14 @@ public final class Settings {
             "lyrics_long_press_share", GESTURES, "Long-press a line to share", false
     );
 
+    // The share sheet's swipe-up demonstration (see LyricsShareCardController#teaseNextLine):
+    // two passes the first few times then one, on every open, or never.
+    public static final Setting<String> SHARE_GESTURE_HINT = enumSetting(
+            "lyrics_share_gesture_hint", GESTURES, "Share sheet gesture hint",
+            "First few times",
+            "First few times", "Every time", "Off"
+    );
+
     // Double-tapping the lyrics adds the song to Liked Songs with a heart (or star) burst where
     // the finger was, as on Instagram Reels. It never removes a like. While on it owns the
     // double tap outright: "Tap lyric to seek" on double tap does nothing, and on single tap
