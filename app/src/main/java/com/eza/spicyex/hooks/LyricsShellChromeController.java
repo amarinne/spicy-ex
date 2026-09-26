@@ -17,6 +17,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.eza.spicyex.R;
+import com.eza.spicyex.Settings;
 import com.eza.spicyex.lyrics.ChipSpinnerDrawable;
 import com.eza.spicyex.lyrics.GlyphIconDrawable;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
@@ -25,14 +26,16 @@ import com.eza.spicyex.ui.ActionIconDrawable;
 /**
  * Builds the fullscreen shell's top chrome row.
  *
- * <p>Control order is owned by {@code docs/FULLSCREEN_CHROME_SPEC.md} — cog stays anchored
- * top-right in every mode. Off/Bottom: Back leading at the top-left corner, then title
- * spacer, then transliteration, translation, like, settings (reads right-to-left as cog,
- * like, translation, transliteration). Top: Back is gone (art owns the corner) and the
- * controls form a vertical rail anchored right, reading top to bottom as settings, like,
- * translation, transliteration. R1 like sits second, ahead of the reading toggles, only
- * when enabled; Off reserves nothing. Rotation remounts; mode switches re-apply
- * synchronously — nothing rewrites layout from size listeners.
+ * <p>Default control order: cog anchored top-right. Off/Bottom: Back leading at the top-left
+ * corner, then title spacer, then transliteration, translation, like, settings (reads
+ * right-to-left as cog, like, translation, transliteration). Top: Back is gone (art owns the
+ * corner) and the controls form a vertical rail anchored right, reading top to bottom as
+ * settings, like, translation, transliteration. R1 like sits second, ahead of the reading
+ * toggles, only when enabled; Off reserves nothing. {@link Settings#CHROME_CLUSTER_POSITION}
+ * mirrors this whole arrangement to the opposite edge (Back trails, cluster leads instead) in
+ * every mode - see {@link #applyClusterPosition} - without changing the cluster's own internal
+ * icon order. Rotation remounts; mode switches re-apply synchronously — nothing rewrites layout
+ * from size listeners.
  */
 final class LyricsShellChromeController {
     private LyricsShellChromeController() {
@@ -48,6 +51,7 @@ final class LyricsShellChromeController {
             int chromeButtonDp,
             boolean landscape,
             boolean topActive,
+            boolean mirrored,
             Runnable onBack,
             Runnable onRomanToggle,
             Runnable onTranslationToggle,
@@ -118,10 +122,31 @@ final class LyricsShellChromeController {
 
         romanToggle.setForeground(romanSpinner);
         translationToggle.setForeground(translationSpinner);
-        ChromeViews views = new ChromeViews(header, back, configCluster,
+        ChromeViews views = new ChromeViews(header, headerTitle, back, configCluster,
                 romanToggle, translationToggle, settingsButton, likeButton);
         applyTopMode(views, topActive, chromeButtonDp, landscape);
+        applyClusterPosition(views, mirrored);
         return views;
+    }
+
+    /** Mirrors the whole header arrangement to the opposite edge:
+     *  {@link Settings#CHROME_CLUSTER_POSITION} "Left" puts the cluster (and, in Top mode's
+     *  vertical rail, the rail itself) at the start instead of the end, with Back trailing
+     *  instead of leading. Internal order among the cluster's own icons is unaffected - only
+     *  which side of the title spacer {@code back}/{@code configCluster} sit on. Reorders
+     *  {@code header}'s three children directly rather than reassigning gravity, since a
+     *  horizontal LinearLayout positions a child purely by where it falls relative to the
+     *  weighted title spacer. */
+    static void applyClusterPosition(ChromeViews chrome, boolean mirrored) {
+        if (chrome == null || chrome.header == null) return;
+        View[] order = mirrored
+                ? new View[]{chrome.configCluster, chrome.headerTitle, chrome.back}
+                : new View[]{chrome.back, chrome.headerTitle, chrome.configCluster};
+        for (View child : order) {
+            if (child == null) continue;
+            chrome.header.removeView(child);
+            chrome.header.addView(child);
+        }
     }
 
     /**
@@ -155,27 +180,24 @@ final class LyricsShellChromeController {
             chrome.configCluster.removeView(button);
             chrome.configCluster.addView(button, new LinearLayout.LayoutParams(size, size));
         }
-        int visibleIndex = 0;
+        // The gap is a transparent divider rather than per-button margins: LinearLayout draws a
+        // middle divider only between children that are not GONE, and re-evaluates that on every
+        // layout. Margins were computed from visibility at the moment this ran, so a toggle that
+        // appeared or disappeared later (a new song, an ad) left two buttons touching.
+        android.graphics.drawable.GradientDrawable divider = new android.graphics.drawable.GradientDrawable();
+        divider.setColor(Color.TRANSPARENT);
+        divider.setSize(gap, gap);
+        chrome.configCluster.setDividerDrawable(divider);
+        chrome.configCluster.setShowDividers(LinearLayout.SHOW_DIVIDER_MIDDLE);
         for (int i = 0; i < chrome.configCluster.getChildCount(); i++) {
             View child = chrome.configCluster.getChildAt(i);
             if (!(child.getLayoutParams() instanceof LinearLayout.LayoutParams)) continue;
             LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) child.getLayoutParams();
-            boolean gone = child.getVisibility() != View.VISIBLE;
-            int wantTop = 0;
-            int wantLeft = 0;
-            if (!gone) {
-                if (topActive) {
-                    wantTop = visibleIndex == 0 ? 0 : gap;
-                } else {
-                    wantLeft = visibleIndex == 0 ? 0 : gap;
-                }
-                visibleIndex++;
-            }
             lp.width = size;
             lp.height = size;
-            lp.topMargin = wantTop;
+            lp.topMargin = 0;
             lp.bottomMargin = 0;
-            lp.leftMargin = wantLeft;
+            lp.leftMargin = 0;
             lp.rightMargin = 0;
             child.setLayoutParams(lp);
             child.setMinimumWidth(size);
@@ -185,6 +207,7 @@ final class LyricsShellChromeController {
 
     static final class ChromeViews {
         final ViewGroup header;
+        final TextView headerTitle;
         final TextView back;
         final LinearLayout configCluster;
         final ImageButton romanToggle;
@@ -192,10 +215,12 @@ final class LyricsShellChromeController {
         final ImageButton settingsButton;
         final ImageButton likeButton;
 
-        ChromeViews(ViewGroup header, TextView back, LinearLayout configCluster,
+        ChromeViews(ViewGroup header, TextView headerTitle, TextView back,
+                LinearLayout configCluster,
                 ImageButton romanToggle, ImageButton translationToggle,
                 ImageButton settingsButton, ImageButton likeButton) {
             this.header = header;
+            this.headerTitle = headerTitle;
             this.back = back;
             this.configCluster = configCluster;
             this.romanToggle = romanToggle;

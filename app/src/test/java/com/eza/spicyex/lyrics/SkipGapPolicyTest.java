@@ -35,6 +35,7 @@ public class SkipGapPolicyTest {
         assertNotNull(target);
         assertEquals(0, target.gapStartMs);
         assertEquals(10000, target.targetMs);
+        assertEquals(SkipGapPolicy.GapKind.LEADING, target.kind);
     }
 
     @Test
@@ -43,6 +44,7 @@ public class SkipGapPolicyTest {
         assertNotNull(target);
         assertEquals(15000, target.gapStartMs);
         assertEquals(25000, target.targetMs);
+        assertEquals(SkipGapPolicy.GapKind.INTERLUDE, target.kind);
     }
 
     @Test
@@ -51,6 +53,7 @@ public class SkipGapPolicyTest {
         assertNotNull(target);
         assertEquals(30000, target.gapStartMs);
         assertEquals(59000, target.targetMs);
+        assertEquals(SkipGapPolicy.GapKind.TRAILING, target.kind);
     }
 
     @Test

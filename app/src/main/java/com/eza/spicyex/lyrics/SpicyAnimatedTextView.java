@@ -30,9 +30,6 @@ public class SpicyAnimatedTextView extends TextView {
     private boolean shaderVertical;
     private boolean shaderRtl;
     private int shaderWidth = -1;
-    // Apple lift widens the karaoke band while active (NaN = shared GRADIENT_BAND default).
-    private float gradientBandWidth = Float.NaN;
-    private float shaderBand = Float.NaN;
     // Apple line shadow under the active line (0 = off, the shared-path default).
     private float lineShadowAlpha;
 
@@ -72,19 +69,21 @@ public class SpicyAnimatedTextView extends TextView {
         this.selfGlow = enabled;
     }
 
-    /** Apple lift band width for the karaoke gradient (NaN restores the shared default). */
-    public void setGradientBandWidth(float bandWidth) {
-        float bounded = Float.isNaN(bandWidth) ? Float.NaN : Math.max(8f, Math.min(140f, bandWidth));
-        if (Float.compare(this.gradientBandWidth, bounded) == 0) return;
-        this.gradientBandWidth = bounded;
-        cachedShader = null;
-        if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
-        else invalidate();
-    }
-
-    private float gradientBand() {
-        return Float.isNaN(gradientBandWidth) ? LyricAnimations.GRADIENT_BAND : gradientBandWidth;
-    }
+    /*
+     * The karaoke edge is a fixed physical size, in em, wherever it is drawn - Apple Music (and
+     * AMLL, which reproduces it) use a soft edge about half a line tall. It used to be a
+     * percentage of the span it crossed (40%, forced to 64% on the active Apple line), so on a
+     * line-synced row - most non-English songs only have line timing - the edge was smeared across
+     * half the line and the point actually being sung could not be seen.
+     *
+     * The edge has two parts: a short "hot" run at the sung position, drawn at full brightness so
+     * the current point reads as a point, and a soft fade ahead of it into the unsung colour, which
+     * keeps the hint of where the sweep is heading.
+     */
+    /** Full-brightness run just behind the sung position, in em. */
+    private static final float FILL_HOT_EM = 0.3f;
+    /** Soft fade from the sung position into the unsung colour, in em. */
+    private static final float FILL_FADE_EM = 0.55f;
 
     /** Apple line shadow intensity (0 = off). */
     public void setLineShadow(float intensity) {
@@ -208,54 +207,67 @@ public class SpicyAnimatedTextView extends TextView {
                 && Math.abs(glow - shaderGlow) < 0.03f
                 && Math.abs(brightnessMultiplier - shaderBrightness) < 0.01f
                 && Math.abs(offset - shaderOffset) < 0.5f
-                && Float.compare(gradientBand(), shaderBand) == 0
                 && verticalGradient == shaderVertical
                 && horizontalRtl == shaderRtl) {
             return cachedShader;
         }
         // Spicy CSS parity (Mixed.css): --gradient-alpha 0.85 (sung), --gradient-alpha-end 0.35
         // (unsung). glow nudges the sung edge toward full white (desktop does this via text-shadow).
+        // Use the current text color as the base for the gradient so the fill adapts to the
+        // text color (white on dark, dark on light, or any custom color).
+        int textColor = getCurrentTextColor();
+        int baseR = Color.red(textColor);
+        int baseG = Color.green(textColor);
+        int baseB = Color.blue(textColor);
         int startAlpha = Math.round(255f * (0.85f + 0.15f * Math.max(0f, Math.min(1f, glow))) * brightnessMultiplier);
         int endAlpha = Math.round(255f * 0.35f * brightnessMultiplier);
-        int sungColor = Color.argb(startAlpha, 255, 255, 255);
-        int unsungColor = Color.argb(endAlpha, 255, 255, 255);
+        int sungColor = Color.argb(startAlpha, baseR, baseG, baseB);
+        int hotColor = Color.argb(Math.round(255f * brightnessMultiplier), baseR, baseG, baseB);
+        int unsungColor = Color.argb(endAlpha, baseR, baseG, baseB);
         float origin = verticalGradient
                 ? (verticalContainerSpace ? -offset : getPaddingTop())
                 : getPaddingLeft() - offset;
         float far = origin + shaderExtent;
-        float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-        if (verticalGradient) {
-            y0 = origin;
-            y1 = far;
-        } else if (horizontalRtl) {
-            x0 = far;
-            x1 = origin;
-        } else {
-            x0 = origin;
-            x1 = far;
-        }
         if (gradientPosition <= LyricAnimations.GRADIENT_UNSUNG + 0.5f) {
-            cachedShader = new LinearGradient(x0, y0, x1, y1,
-                    new int[]{unsungColor, unsungColor}, null, Shader.TileMode.CLAMP);
+            cachedShader = solidShader(unsungColor);
         } else if (gradientPosition >= 99.5f) {
-            cachedShader = new LinearGradient(x0, y0, x1, y1,
-                    new int[]{sungColor, sungColor}, null, Shader.TileMode.CLAMP);
+            cachedShader = solidShader(sungColor);
         } else {
-            float p0 = Math.max(0f, Math.min(1f, gradientPosition / 100f));
-            float p1 = Math.max(p0 + 0.001f, Math.min(1f,
-                    (gradientPosition + gradientBand()) / 100f));
+            float textSize = Math.max(1f, getTextSize());
+            float hot = FILL_HOT_EM * textSize;
+            float fade = FILL_FADE_EM * textSize;
+            float progress = (gradientPosition - LyricAnimations.GRADIENT_UNSUNG)
+                    / LyricAnimations.GRADIENT_RANGE;
+            // Distance of the sung position from the leading edge: starts one fade-width before
+            // the text so nothing is lit at 0, and reaches the far end at 1.
+            float edge = -fade + (shaderExtent + fade) * Math.max(0f, Math.min(1f, progress));
+            float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+            if (verticalGradient) {
+                y0 = origin + edge - hot;
+                y1 = origin + edge + fade;
+            } else if (horizontalRtl) {
+                x0 = far - edge + hot;
+                x1 = far - edge - fade;
+            } else {
+                x0 = origin + edge - hot;
+                x1 = origin + edge + fade;
+            }
             cachedShader = new LinearGradient(x0, y0, x1, y1,
-                    new int[]{sungColor, unsungColor}, new float[]{p0, p1}, Shader.TileMode.CLAMP);
+                    new int[]{sungColor, hotColor, unsungColor},
+                    new float[]{0f, hot / (hot + fade), 1f}, Shader.TileMode.CLAMP);
         }
         shaderPos = gradientPosition;
         shaderGlow = glow;
-        shaderBand = gradientBand();
         shaderBrightness = brightnessMultiplier;
         shaderWidth = shaderExtent;
         shaderOffset = offset;
         shaderVertical = verticalGradient;
         shaderRtl = horizontalRtl;
         return cachedShader;
+    }
+
+    private static Shader solidShader(int color) {
+        return new LinearGradient(0f, 0f, 1f, 0f, color, color, Shader.TileMode.CLAMP);
     }
 
     @Override

@@ -49,7 +49,14 @@ public final class PanelDialog {
 
     public PanelDialog(Context context, String title) {
         this.context = context;
-        this.dialog = new Dialog(context);
+        // onBackPressed covers the gesture-back path too, where no KEYCODE_BACK is delivered
+        // and the platform default would drop the card without its exit animation.
+        this.dialog = new Dialog(context) {
+            @Override
+            public void onBackPressed() {
+                PanelDialog.this.dismiss();
+            }
+        };
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
 
         LinearLayout root = new LinearLayout(context);
@@ -87,6 +94,28 @@ public final class PanelDialog {
     }
 
     private final LinearLayout root;
+    /** A filtered list keeps one height while its rows come and go, instead of jumping. */
+    private boolean fixedHeight;
+
+    /** Keeps one height (90% of the screen) whatever the content, for lists that change size. */
+    public PanelDialog tall() {
+        fixedHeight = true;
+        return this;
+    }
+
+    /** A view pinned between the title and the scrolling body (tabs, filters). */
+    public PanelDialog pinned(View view) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(8);
+        root.addView(view, root.indexOfChild(scroll), lp);
+        return this;
+    }
+
+    /** The body's scroller, to reset its position after the content is swapped. */
+    public ScrollView scroller() {
+        return scroll;
+    }
 
     /** Adds a view to the dialog body. */
     public PanelDialog add(View view) {
@@ -390,6 +419,10 @@ public final class PanelDialog {
         public ActionIconDrawable.Kind icon;
         /** Dimmed and not tappable, with the reason carried in {@link #suffix}. */
         public boolean unavailable;
+        /** Smaller second line under the label (a language's own name, for instance). */
+        public String detail = "";
+        /** Extra words a search matches besides the label and detail. */
+        public String keywords = "";
 
         private Option(String value, String label) {
             this.value = value == null ? "" : value;
@@ -484,6 +517,172 @@ public final class PanelDialog {
         return this;
     }
 
+    /**
+     * A long confirming selector made findable: a search field pinned above the list, the
+     * {@code pinned} values (the current one, the phone's languages) first under their own
+     * caption, then every option in the order given. Typing hides the captions and pinned
+     * rows and narrows the full list to options whose label, detail, value or keywords
+     * contain every typed word. Commits like {@link #confirmingOptions}: Save only.
+     */
+    public PanelDialog searchableOptions(java.util.List<Option> options, java.util.List<String> pinned,
+                                         String initialValue,
+                                         final java.util.function.Consumer<String> onSave,
+                                         String saveLabel, String cancelLabel, String searchHint,
+                                         String pinnedTitle, String allTitle, String emptyText) {
+        if (options == null) return this;
+        fixedHeight = true;
+        final ConfirmingSelection selection = new ConfirmingSelection(initialValue);
+        final java.util.List<OptionRow> rows = new java.util.ArrayList<>();
+        final TextView save = button(saveLabel, true, () -> {
+            if (onSave != null) onSave.accept(selection.pending());
+        });
+        final Runnable repaint = () -> {
+            for (OptionRow other : rows) {
+                paintOptionHighlight(other, selection.isHighlighted(other.option.value));
+            }
+            applySaveArmed(save, selection);
+        };
+
+        // The search field sits between the title and the list, so it never scrolls away.
+        LinearLayout search = new LinearLayout(context);
+        search.setOrientation(LinearLayout.HORIZONTAL);
+        search.setGravity(Gravity.CENTER_VERTICAL);
+        search.setPadding(dp(12), 0, dp(4), 0);
+        search.setBackground(rounded(COL_FIELD, COL_CARD_BORDER, 16));
+        ImageView glass = new ImageView(context);
+        glass.setImageDrawable(new ActionIconDrawable(ActionIconDrawable.Kind.SEARCH, COL_SUMMARY, density()));
+        glass.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams glassLp = new LinearLayout.LayoutParams(dp(18), dp(18));
+        glassLp.rightMargin = dp(8);
+        search.addView(glass, glassLp);
+        final EditText field = new EditText(context);
+        field.setSingleLine(true);
+        field.setHint(searchHint);
+        field.setTextColor(COL_TITLE);
+        field.setHintTextColor(COL_SUMMARY);
+        field.setTextSize(15f);
+        field.setBackground(null);
+        field.setPadding(0, dp(11), 0, dp(11));
+        field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        field.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        field.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        field.setOnEditorActionListener((v, actionId, event) -> {
+            hideKeyboard(field);
+            return true;
+        });
+        search.addView(field, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        final ImageButton clear = iconButton(ActionIconDrawable.Kind.CLOSE, cancelLabel, () -> field.setText(""));
+        clear.setBackground(null);
+        clear.setPadding(dp(8), dp(8), dp(8), dp(8));
+        clear.setVisibility(View.GONE);
+        search.addView(clear, new LinearLayout.LayoutParams(dp(34), dp(34)));
+        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        searchLp.bottomMargin = dp(8);
+        root.addView(search, root.indexOfChild(scroll), searchLp);
+
+        final java.util.Map<String, Option> byValue = new java.util.HashMap<>();
+        for (Option option : options) byValue.put(option.value, option);
+        final java.util.List<View> browseOnly = new java.util.ArrayList<>();
+        java.util.List<Option> top = new java.util.ArrayList<>();
+        if (pinned != null) {
+            for (String value : pinned) {
+                Option option = byValue.get(value);
+                if (option != null && !top.contains(option)) top.add(option);
+            }
+        }
+        if (!top.isEmpty()) {
+            TextView caption = caption(pinnedTitle);
+            browseOnly.add(caption);
+            body.addView(caption);
+            for (Option option : top) {
+                OptionRow built = selectableRow(option, selection, rows, repaint);
+                browseOnly.add(built.row);
+                add(built.row);
+            }
+            TextView all = caption(allTitle);
+            browseOnly.add(all);
+            body.addView(all);
+        }
+        final java.util.List<OptionRow> listed = new java.util.ArrayList<>();
+        for (Option option : options) listed.add(selectableRow(option, selection, rows, repaint));
+        for (OptionRow built : listed) add(built.row);
+        final TextView empty = text(emptyText, 14f, COL_SUMMARY);
+        empty.setGravity(Gravity.CENTER);
+        empty.setPadding(dp(12), dp(28), dp(12), dp(28));
+        empty.setVisibility(View.GONE);
+        body.addView(empty);
+
+        field.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
+            @Override public void afterTextChanged(android.text.Editable text) {
+                String[] words = foldForSearch(text.toString()).trim().split("\\s+");
+                boolean browsing = words.length == 1 && words[0].isEmpty();
+                clear.setVisibility(browsing ? View.GONE : View.VISIBLE);
+                for (View view : browseOnly) view.setVisibility(browsing ? View.VISIBLE : View.GONE);
+                int shown = 0;
+                for (OptionRow built : listed) {
+                    boolean match = browsing || matchesAll(built.option, words);
+                    built.row.setVisibility(match ? View.VISIBLE : View.GONE);
+                    if (match) shown++;
+                }
+                empty.setVisibility(shown == 0 ? View.VISIBLE : View.GONE);
+                scroll.scrollTo(0, 0);
+            }
+        });
+
+        repaint.run();
+        root.addView(save, matchWrap(8));
+        secondary(cancelLabel, null);
+        return this;
+    }
+
+    private OptionRow selectableRow(final Option option, final ConfirmingSelection selection,
+                                    java.util.List<OptionRow> rows, final Runnable repaint) {
+        OptionRow built = optionRow(option);
+        rows.add(built);
+        if (!option.unavailable) {
+            built.row.setOnClickListener(v -> {
+                hideKeyboard(v);
+                selection.select(option.value);
+                repaint.run();
+            });
+        }
+        return built;
+    }
+
+    private void hideKeyboard(View view) {
+        android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager)
+                context.getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        root.requestFocus();
+    }
+
+    private TextView caption(String label) {
+        TextView view = text(label == null ? "" : label, 13f, COL_SUMMARY);
+        view.setTypeface(Typeface.DEFAULT_BOLD);
+        view.setPadding(dp(8), dp(10), dp(8), dp(4));
+        return view;
+    }
+
+    /** Every typed word appears somewhere in the option's label, detail, value or keywords. */
+    static boolean matchesAll(Option option, String[] words) {
+        String haystack = foldForSearch(option.label + " " + option.detail + " "
+                + option.value + " " + option.keywords);
+        for (String word : words) {
+            if (!word.isEmpty() && !haystack.contains(word)) return false;
+        }
+        return true;
+    }
+
+    /** Lower case without accents, so "espanol" finds "Español". */
+    static String foldForSearch(String value) {
+        if (value == null) return "";
+        String decomposed = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD);
+        return decomposed.replaceAll("\\p{M}+", "").toLowerCase(java.util.Locale.ROOT);
+    }
+
     /** Save is an armed action: enabled only while pending differs from stored. */
     private static void applySaveArmed(TextView save, ConfirmingSelection selection) {
         boolean dirty = selection.isDirty();
@@ -575,7 +774,7 @@ public final class PanelDialog {
         int maxHeight = (int) (context.getResources().getDisplayMetrics().heightPixels * 0.90f);
         root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        boolean constrained = root.getMeasuredHeight() > maxHeight;
+        boolean constrained = fixedHeight || root.getMeasuredHeight() > maxHeight;
         LinearLayout.LayoutParams scrollParams = (LinearLayout.LayoutParams) scroll.getLayoutParams();
         scrollParams.height = constrained ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT;
         scrollParams.weight = constrained ? 1f : 0f;
@@ -629,8 +828,20 @@ public final class PanelDialog {
             label = null;
         } else {
             label = text(option.label + option.suffix, 16f, COL_TITLE);
-            row.addView(label, new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            if (option.detail.isEmpty()) {
+                row.addView(label, new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            } else {
+                LinearLayout texts = new LinearLayout(context);
+                texts.setOrientation(LinearLayout.VERTICAL);
+                texts.addView(label);
+                TextView detail = text(option.detail, 13f, COL_SUMMARY);
+                detail.setSingleLine(true);
+                detail.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                texts.addView(detail);
+                row.addView(texts, new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            }
         }
         if (!option.preview.isEmpty()) {
             TextView preview = text(option.preview, 18f, COL_TITLE);

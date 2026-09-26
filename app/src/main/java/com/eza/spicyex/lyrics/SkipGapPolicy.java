@@ -19,14 +19,27 @@ public final class SkipGapPolicy {
     private SkipGapPolicy() {
     }
 
-    /** A live gap: where it starts (sticky-ack key) and where a skip should land. */
+    /** Which kind of gap a {@link SkipTarget} skips - drives the skip chip's label. */
+    public enum GapKind {
+        /** No vocal row before this gap: the track's own intro. */
+        LEADING,
+        /** A gap with vocals both before and after it: a mid-song instrumental break. */
+        INTERLUDE,
+        /** No vocal row after this gap: the outro tail. */
+        TRAILING
+    }
+
+    /** A live gap: where it starts (sticky-ack key), where a skip should land, and what kind of
+     *  gap it is. */
     public static final class SkipTarget {
         public final long gapStartMs;
         public final long targetMs;
+        public final GapKind kind;
 
-        SkipTarget(long gapStartMs, long targetMs) {
+        SkipTarget(long gapStartMs, long targetMs, GapKind kind) {
             this.gapStartMs = gapStartMs;
             this.targetMs = targetMs;
+            this.kind = kind;
         }
     }
 
@@ -45,10 +58,13 @@ public final class SkipGapPolicy {
         long gapStart = row.startMs;
         long gapEnd = row.endMs;
         if (gapEnd <= lyricPosMs) return null;
-        if (hasVocalAtOrAfter(rows, gapEnd)) return new SkipTarget(gapStart, gapEnd);
+        if (hasVocalAtOrAfter(rows, gapEnd)) {
+            GapKind kind = hasVocalBefore(rows, gapStart) ? GapKind.INTERLUDE : GapKind.LEADING;
+            return new SkipTarget(gapStart, gapEnd, kind);
+        }
         long target = gapEnd - OUTRO_EARLY_MS;
         if (target <= lyricPosMs) return null;
-        return new SkipTarget(gapStart, target);
+        return new SkipTarget(gapStart, target, GapKind.TRAILING);
     }
 
     private static boolean hasVocalAtOrAfter(List<AppliedLine> rows, long gapEndMs) {
@@ -57,5 +73,25 @@ public final class SkipGapPolicy {
             if (row.startMs >= gapEndMs) return true;
         }
         return false;
+    }
+
+    private static boolean hasVocalBefore(List<AppliedLine> rows, long gapStartMs) {
+        for (AppliedLine row : rows) {
+            if (row == null || row.dotLine) continue;
+            if (row.startMs < gapStartMs) return true;
+        }
+        return false;
+    }
+
+    /** Default skip-chip label per gap kind - kept here so it's covered by the same pure,
+     *  unit-tested logic as the gap classification itself. */
+    public static String defaultLabel(GapKind kind) {
+        if (kind == null) return "Skip";
+        switch (kind) {
+            case LEADING: return "Skip Intro";
+            case TRAILING: return "Next track";
+            case INTERLUDE:
+            default: return "Skip";
+        }
     }
 }

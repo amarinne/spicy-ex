@@ -45,7 +45,6 @@ public final class LyricsSurfaceRowPlanner {
         options.adaptiveTextSizeEnabled = safePolicy.adaptiveTextSizeEnabled;
         options.appleStyle = safePolicy.appleStyle;
         options.appleCompactText = safePolicy.appleCompactText;
-        options.appleCjkWrap = safePolicy.appleCjkWrap;
         options.translationBright = safePolicy.translationBright;
         options.wrapLongLines = safePolicy.wrapLongLines;
         options.adaptiveSectioningEnabled = safePolicy.adaptiveSectioningEnabled;
@@ -170,6 +169,10 @@ public final class LyricsSurfaceRowPlanner {
     }
 
     private static void ensureAlignedWordsForSentenceSync(AppliedLine line, SurfacePolicy policy) {
+        // A compact-card projection may contain a lead line followed by background mini-lines.
+        // Those newlines are layout rows, not word boundaries; synthesising words here would
+        // flatten them back into one horizontal word strip.
+        if (line != null && line.text != null && line.text.indexOf('\n') >= 0) return;
         boolean needsAttachedRomanization = policy.attachTransliterationToWords && policy.showRomanization
                 && line != null && line.readingRenderPlan != null
                 && !line.readingRenderPlan.timedReadingUnits.isEmpty();
@@ -284,7 +287,6 @@ public final class LyricsSurfaceRowPlanner {
         public final boolean adaptiveTextSizeEnabled;
         public final boolean appleStyle;
         public final boolean appleCompactText;
-        public final boolean appleCjkWrap;
         public final boolean translationBright;
         public final boolean wrapLongLines;
         public final boolean adaptiveSectioningEnabled;
@@ -383,7 +385,7 @@ public final class LyricsSurfaceRowPlanner {
                     attachTransliterationToWords, lineLevelFillTopDown, lineLevelFillSentence,
                     wordLevelFill, interludeNoteIcon, lyricWeight, lyricsFont, textSizeMultiplier,
                     translationBright, wrapLongLines, forceStartAligned, horizontalSafetyPadding,
-                    adaptiveSectioningEnabled, true, false, false, false);
+                    adaptiveSectioningEnabled, true, false, false);
         }
 
         public SurfacePolicy(
@@ -410,7 +412,7 @@ public final class LyricsSurfaceRowPlanner {
                     attachTransliterationToWords, lineLevelFillTopDown, lineLevelFillSentence,
                     wordLevelFill, interludeNoteIcon, lyricWeight, lyricsFont, textSizeMultiplier,
                     translationBright, wrapLongLines, forceStartAligned, horizontalSafetyPadding,
-                    adaptiveSectioningEnabled, adaptiveTextSizeEnabled, false, false, false);
+                    adaptiveSectioningEnabled, adaptiveTextSizeEnabled, false, false);
         }
 
         public SurfacePolicy(
@@ -433,8 +435,7 @@ public final class LyricsSurfaceRowPlanner {
                 boolean adaptiveSectioningEnabled,
                 boolean adaptiveTextSizeEnabled,
                 boolean appleStyle,
-                boolean appleCompactText,
-                boolean appleCjkWrap
+                boolean appleCompactText
         ) {
             this.lineSpacingMultiplier = lineSpacingMultiplier;
             this.showRomanization = showRomanization;
@@ -454,7 +455,6 @@ public final class LyricsSurfaceRowPlanner {
             this.adaptiveTextSizeEnabled = adaptiveTextSizeEnabled;
             this.appleStyle = appleStyle;
             this.appleCompactText = appleCompactText;
-            this.appleCjkWrap = appleCjkWrap;
             this.forceStartAligned = forceStartAligned;
             this.horizontalSafetyPadding = horizontalSafetyPadding;
         }
@@ -486,8 +486,7 @@ public final class LyricsSurfaceRowPlanner {
                     cfg == null || cfg.adaptiveSectioningEnabled,
                     cfg == null || cfg.adaptiveTextSizeEnabled,
                     cfg != null && cfg.appleStyle,
-                    cfg != null && cfg.appleCompactText,
-                    cfg != null && cfg.appleCjkWrap);
+                    cfg != null && cfg.appleCompactText);
         }
 
         public static SurfacePolicy liveCard(LyricsRenderConfig config) {

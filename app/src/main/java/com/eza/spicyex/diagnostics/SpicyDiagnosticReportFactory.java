@@ -131,7 +131,9 @@ public final class SpicyDiagnosticReportFactory {
         } catch (Throwable ignored) {
             product.add("xposedApiVersion", JsonNull.INSTANCE);
         }
-        product.addProperty("processIdentity", bounded(Application.getProcessName(), 64));
+        String processIdentity = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P
+                ? Application.getProcessName() : "unknown";
+        product.addProperty("processIdentity", bounded(processIdentity, 64));
         JsonObject features = new JsonObject();
         features.addProperty("lyricsHooks", true);
         features.addProperty("translation", FeatureAvailability.translationAvailable());

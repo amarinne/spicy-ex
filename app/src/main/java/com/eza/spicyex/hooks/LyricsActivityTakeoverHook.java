@@ -220,9 +220,11 @@ final class LyricsActivityTakeoverHook {
             return;
         }
         if (!shouldInterceptLyricsBack(nativeLyricsSessionActive, hasNativeSpicyRoot(activity))) return;
+        param.setResult(null);
+        // The lyrics screen closes its own layers first (share sheet, line picker, editor).
+        if (shellConsumesBack(activity)) return;
         markExplicitLyricsExit(activity);
         activity.finish();
-        param.setResult(null);
     }
 
     // getDeclaredMethod lookups are exact-class only, so an onBackPressed
@@ -304,6 +306,10 @@ final class LyricsActivityTakeoverHook {
                     unregisterSystemBackCallback(activity);
                     return;
                 }
+                // This callback outranks everything else on the dispatcher, so the layout editor
+                // never saw a back press and back closed the whole lyrics screen mid-edit. Ask
+                // the shell first: the editor's sheet closes, then the editor, then the screen.
+                if (shellConsumesBack(activity)) return;
                 markExplicitLyricsExit(activity);
                 activity.finish();
             };
@@ -345,6 +351,7 @@ final class LyricsActivityTakeoverHook {
             }
             retry.postNext();
             nowPlayingInjector.schedule(activity);
+            injectLandscapeFallbackButton(activity);
         } catch (Throwable t) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " schedule extra lyrics injection failed: " + t);
         }
@@ -566,6 +573,9 @@ final class LyricsActivityTakeoverHook {
      * carousel's own flexible zone immediately left of the device icon - encroaching there just
      * trims the track-title marquee a bit, it doesn't sit on top of a real control.
      */
+    // Smallest height each mini player bar has had: its normal, ad-free control-row height.
+    private static final java.util.Map<View, Integer> NORMAL_BAR_HEIGHT = new java.util.WeakHashMap<>();
+
     private void repositionMiniPlayerButton(View button, View bar, View content, int side,
                                              View connectButton, View carousel) {
         try {
@@ -586,7 +596,25 @@ final class LyricsActivityTakeoverHook {
                 x = barLeftInContent + bar.getWidth() - dp(PLAY_PAUSE_MARGIN_END_DP) - side * 3 - dp(8);
             }
             button.setX(x);
-            button.setY(barTopInContent + (bar.getHeight() - side) / 2f);
+            // Vertically: the bar's control row, not the whole bar. During an ad Spotify grows
+            // the bar (ad label/progress), and centring on that pushed the button up into the
+            // middle of it while the real controls stayed at the bottom.
+            int barHeight = bar.getHeight();
+            Integer normal = NORMAL_BAR_HEIGHT.get(bar);
+            if (barHeight > 0 && (normal == null || barHeight < normal)) {
+                NORMAL_BAR_HEIGHT.put(bar, barHeight);
+                normal = barHeight;
+            }
+            float centreY;
+            if (connectButton != null && connectButton.isShown() && connectButton.getHeight() > 0) {
+                int[] connLoc = new int[2];
+                connectButton.getLocationOnScreen(connLoc);
+                centreY = (connLoc[1] - contentLoc[1]) + connectButton.getHeight() / 2f;
+            } else {
+                int row = normal == null ? barHeight : normal;
+                centreY = barTopInContent + barHeight - row / 2f;
+            }
+            button.setY(centreY - side / 2f);
             // This button is a floating overlay, not a real MotionLayout participant, so the
             // marquee track title still scrolls straight into our button's space rather than
             // making room for it on its own. Push the carousel's own end margin out to actually
@@ -633,6 +661,63 @@ final class LyricsActivityTakeoverHook {
         button.setPadding(dp(13), dp(13), dp(13), dp(13));
         button.setClickable(true);
         button.setFocusable(true);
+        button.setOnClickListener(v -> launchNativeLyricsFullscreen(activity));
+        return button;
+    }
+
+
+    private static final String TAG_LANDSCAPE_LYRICS_BUTTON = "spicy_landscape_lyrics_entry";
+
+    /** Fallback landscape entry: when both the mini-player and accessory-row injections fail
+     *  (e.g. Spotify uses a different layout in landscape), add a small floating button
+     *  anchored to the right edge near the bottom. */
+    private boolean injectLandscapeFallbackButton(Activity activity) {
+        try {
+            if (activity == null || activity.isFinishing()
+                    || isLyricsFullscreenActivity(activity)
+                    || !isNativeSpicyEnabled(activity)) return true;
+            FrameLayout content = activity.findViewById(android.R.id.content);
+            if (content == null) return false;
+            if (content.findViewWithTag(TAG_LANDSCAPE_LYRICS_BUTTON) != null) return true;
+
+            android.content.res.Configuration config = activity.getResources().getConfiguration();
+            if (config.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE) return false;
+
+            // Only inject if the other two methods both failed
+            if (content.findViewWithTag(TAG_MINI_PLAYER_LYRICS_BUTTON) != null) return true;
+            if (content.findViewWithTag(TAG_EXTRA_LYRICS_BUTTON) != null) return true;
+
+            int side = dp(40);
+            View button = createLandscapeFallbackButton(activity);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(side, side);
+            lp.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.END;
+            lp.setMargins(0, 0, dp(16), dp(160));
+            content.addView(button, lp);
+            XpLog.log(NativeSpicyLyricsHook.TAG
+                    + " inserted landscape fallback lyrics button in " + activity.getClass().getName());
+            return true;
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " inject landscape fallback button failed: " + t);
+            return true;
+        }
+    }
+
+    private View createLandscapeFallbackButton(Activity activity) {
+        ImageButton button = new ImageButton(activity);
+        button.setTag(TAG_LANDSCAPE_LYRICS_BUTTON);
+        button.setContentDescription("Open Spicy lyrics");
+        NativeIconButtons.setModuleIcon(button, activity, R.drawable.ic_spicy_lyrics_page);
+        button.setColorFilter(Color.rgb(232, 232, 238));
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        bg.setColor(Color.argb(160, 30, 30, 35));
+        bg.setStroke(dp(1), Color.argb(60, 255, 255, 255));
+        button.setBackground(bg);
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
+        button.setClickable(true);
+        button.setFocusable(true);
+        button.setElevation(dp(6));
         button.setOnClickListener(v -> launchNativeLyricsFullscreen(activity));
         return button;
     }
@@ -936,6 +1021,15 @@ final class LyricsActivityTakeoverHook {
         }
     }
 
+    private boolean shellConsumesBack(Activity activity) {
+        try {
+            FrameLayout content = activity.findViewById(android.R.id.content);
+            View root = content == null ? null : content.findViewWithTag(TAG_NATIVE_SPICY_ROOT);
+            return root instanceof NativeSpicyShellView && ((NativeSpicyShellView) root).consumeBack();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
 
     private boolean hasNativeSpicyRoot(Activity activity) {
         try {

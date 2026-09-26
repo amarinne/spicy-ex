@@ -34,6 +34,17 @@ public final class CanonicalSourceCodec {
 
     public static String encode(LyricsDocument document, int sourceRevision, String canonicalDigest,
                                 long savedAtMs, String selectionIdentity) {
+        return encode(document, sourceRevision, canonicalDigest, savedAtMs, selectionIdentity,
+                "", "", "");
+    }
+
+    /**
+     * With the song's title, artist and URI alongside, which only the settings panel's cache
+     * browser reads (decode ignores them, so older records without them stay compatible).
+     */
+    public static String encode(LyricsDocument document, int sourceRevision, String canonicalDigest,
+                                long savedAtMs, String selectionIdentity, String title,
+                                String artist, String trackUri) {
         if (document == null) return "";
         JsonObject root = new JsonObject();
         root.addProperty("schema", SCHEMA_VERSION);
@@ -42,6 +53,9 @@ public final class CanonicalSourceCodec {
         root.addProperty("savedAtMs", savedAtMs);
         root.addProperty("selectionIdentity", nz(selectionIdentity));
         root.addProperty("trackId", nz(document.trackId));
+        if (!nz(title).isEmpty()) root.addProperty("title", title);
+        if (!nz(artist).isEmpty()) root.addProperty("artist", artist);
+        if (!nz(trackUri).isEmpty()) root.addProperty("trackUri", trackUri);
         root.addProperty("provider", nz(document.provider));
         root.addProperty("selectedSource", nz(document.selectedSource));
         root.addProperty("selectionMode", nz(document.selectionMode));

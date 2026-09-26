@@ -77,6 +77,18 @@ public class LyricAnimationsTest {
     }
 
     @Test
+    public void wordScaleSplineStrongMatchesLetterAmplitude() {
+        assertEquals(LyricAnimations.letterScaleSpline(0f),
+                LyricAnimations.wordScaleSplineStrong(0f), EPS);
+        assertEquals(LyricAnimations.letterScaleSpline(0.7f),
+                LyricAnimations.wordScaleSplineStrong(0.7f), EPS);
+        assertEquals(LyricAnimations.letterScaleSpline(1f),
+                LyricAnimations.wordScaleSplineStrong(1f), EPS);
+        assertTrue(LyricAnimations.wordScaleSplineStrong(0.7f) > LyricAnimations.scaleSpline(0.7f));
+        assertContinuous(LyricAnimations::wordScaleSplineStrong, 0.7f);
+    }
+
+    @Test
     public void easeSinOutEndpoints() {
         assertEquals(0f, LyricAnimations.easeSinOut(0f), EPS);
         assertEquals(1f, LyricAnimations.easeSinOut(1f), EPS);

@@ -63,8 +63,8 @@ public class SourcePreferencesAdapterTest {
         // Missing entries default to disabled, never to null or absent.
         assertEquals(Boolean.FALSE, sink.enabled.get(Source.SPICY));
         assertEquals(Arrays.asList("rankingMode", "sourceOrder",
-                "enabled:apple", "enabled:spicy", "enabled:spotify", "enabled:amll",
-                "enabled:lrclib"),
+                "enabled:apple", "enabled:spicy", "enabled:spotify", "enabled:amll", "enabled:lrclib",
+                "enabled:netease", "enabled:qq_music", "enabled:musixmatch"),
                 sink.calls);
     }
 

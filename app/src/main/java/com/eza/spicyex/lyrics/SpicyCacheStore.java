@@ -158,6 +158,33 @@ public final class SpicyCacheStore {
         }
     }
 
+    /** One stored row, as {@link #scan} hands it over. */
+    public interface RowVisitor {
+        void visit(String key, String value, long bytes, long updatedAtMs);
+    }
+
+    /**
+     * Walks every entry of a namespace, newest first, one row at a time (the cursor window, not
+     * the whole namespace, is what is resident). For the settings panel's cache browser.
+     */
+    public static void scan(Context context, String namespace, RowVisitor visitor) {
+        if (context == null || visitor == null) return;
+        try {
+            Helper db = helper(context);
+            db.importLegacyOnce(namespace);
+            try (Cursor cursor = db.getReadableDatabase().query(TABLE,
+                    new String[]{"entry_key", "value", "value_bytes", "updated_at_ms"},
+                    "namespace = ?", new String[]{namespace}, null, null,
+                    "updated_at_ms DESC", null)) {
+                while (cursor.moveToNext()) {
+                    visitor.visit(cursor.getString(0), cursor.getString(1),
+                            cursor.getLong(2), cursor.getLong(3));
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     public static void clear(Context context, String namespace) {
         if (context == null) return;
         try {

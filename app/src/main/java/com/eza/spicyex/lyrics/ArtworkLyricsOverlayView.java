@@ -41,8 +41,8 @@ public final class ArtworkLyricsOverlayView extends FrameLayout {
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         setFocusable(false);
         setFocusableInTouchMode(false);
-        setClipChildren(true);
-        setClipToPadding(true);
+        setClipChildren(false);
+        setClipToPadding(false);
 
         View scrim = new View(context);
         GradientDrawable scrimBackground = new GradientDrawable(

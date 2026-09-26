@@ -58,15 +58,47 @@ final class NativeLyricsUtils {
         return landscape ? dp(72) : dp(20);
     }
 
+    /** Whether the lyrics screen hides the status bar in the current orientation. */
+    static boolean statusBarHidden(Context context) {
+        try {
+            boolean landscape = context.getResources().getDisplayMetrics().widthPixels
+                    > context.getResources().getDisplayMetrics().heightPixels;
+            com.eza.spicyex.SpotifyPlusConfig config = com.eza.spicyex.SpotifyPlusConfig.from(context);
+            return Boolean.TRUE.equals(config.get(landscape
+                    ? com.eza.spicyex.Settings.STATUS_BAR_HIDDEN_LANDSCAPE
+                    : com.eza.spicyex.Settings.STATUS_BAR_HIDDEN_PORTRAIT));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * Top clearance for the lyrics screen's chrome, in the content area's own coordinates: the
+     * chrome gap below where the status bar is, pinned to the same place on screen whether or not
+     * the bar is showing.
+     *
+     * <p>Hiding the bar used to drop its height here, and hiding also lets the window's content
+     * start at the very top of the screen, so buttons, artwork and lyrics jumped up. Measuring
+     * where the content area actually starts ({@link #contentScreenTop}) and clearing the bar from
+     * there puts everything at the same screen position in both states, never below it.
+     */
     static int topSystemPadding(Context context) {
+        return statusBarClearance(context) + dp(28);
+    }
+
+    /** How much of the status bar's height overlaps the content area: none when it starts below. */
+    static int statusBarClearance(Context context) {
         int status = 0;
         try {
             int resId = context.getResources().getIdentifier("status_bar_height", "dimen", "android");
             if (resId > 0) status = context.getResources().getDimensionPixelSize(resId);
         } catch (Throwable ignored) {
         }
-        return status + dp(28);
+        return Math.max(0, status - contentScreenTop);
     }
+
+    /** Where the activity's content area starts on screen, kept by the lyrics shell. */
+    static volatile int contentScreenTop;
 
     static int dp(int value) {
         Activity activity = References.currentActivity();

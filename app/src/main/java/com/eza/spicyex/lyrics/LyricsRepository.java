@@ -18,8 +18,10 @@ import java.util.concurrent.TimeUnit;
 import com.eza.spicyex.xposed.XpLog;
 import okhttp3.Call;
 import okhttp3.Callback;
+import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
+import okhttp3.RequestBody;
 import okhttp3.Response;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
@@ -30,6 +32,12 @@ public final class LyricsRepository {
     private static final String TAG = "[SpotifyPlusLyricsRepository]";
     private static final int NATIVE_LYRICS_RETRY_LIMIT = 4;
     private static final long NATIVE_LYRICS_RETRY_DELAY_MS = 125;
+    // QQ Music's search cgi throttles with an inline {"code":2001,...} (empty results, HTTP 200)
+    // rather than a transport error - observed to be transient per-query noise, not a real "no
+    // match": the identical request can flip between 2001 and a normal hit call to call with no
+    // change in query or device. A short retry clears most of these before giving up for real.
+    private static final int QQ_SEARCH_RETRY_LIMIT = 2;
+    private static final long QQ_SEARCH_RETRY_DELAY_MS = 500;
 
     // Tracks confirmed to have no lyrics from ANY source this session — shared across callers (the
     // in-player card and the fullscreen screen both fetch through here), so a no-lyric song isn't
@@ -87,53 +95,34 @@ public final class LyricsRepository {
                 com.eza.spicyex.lyrics.session.LyricsSourcePreferences.rankingMode(context);
         java.util.List<com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source> enabledOrder =
                 com.eza.spicyex.lyrics.session.LyricsSourcePreferences.enabledSourceOrder(context);
-        if (rankingMode == com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode.SOURCE_ORDER) {
-            fetchOrderedSources(context, track, generation, enabledOrder, accessToken, callback);
-            return;
-        }
         if (enabledOrder.isEmpty()) {
             callback.onError("All lyric sources disabled");
             return;
         }
-        boolean remoteEnabled = isStepEnabled(enabledOrder,
-                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.APPLE_MUSIC,
-                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPICY);
-        boolean nativeEnabled = enabledOrder.contains(
-                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPOTIFY);
-        boolean lrclibEnabled = enabledOrder.contains(
-                com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.LRCLIB);
         if (NO_LYRICS.containsKey(trackId)) {
             XpLog.log(TAG + " skip fetch: no lyrics from any source this session, id=" + trackId);
             callback.onError("Lyrics unavailable (cached no-result)");
             return;
         }
-        final String negId = trackId;
-        ResultCallback gated = new ResultCallback() {
-            @Override
-            public void onSuccess(LyricsDocument document) {
-                NO_LYRICS.remove(negId);
-                callback.onSuccess(document);
+        // Karaoke/off-vocal versions have no lyrics of their own: search for the original.
+        SpotifyTrack searchTrack = track;
+        try {
+            if (com.eza.spicyex.SpotifyPlusConfig.from(context)
+                    .get(com.eza.spicyex.Settings.KARAOKE_ORIGINAL_LYRICS)) {
+                searchTrack = KaraokeTitles.forLyricsSearch(track);
             }
-
-            @Override
-            public void onError(String error) {
-                // Remember genuine "no lyrics anywhere" (LRCLIB returned no match) so neither surface
-                // re-queries it. NOT transient network/server failures (those should retry):
-                //   not-found  -> "LRCLIB empty", "no LRCLIB result", "LRCLIB HTTP 404"
-                //   transient  -> "LRCLIB failed: <io>", "LRCLIB HTTP 5xx"
-                if (LyricsFetchErrors.isDurableNoLyrics(error)) {
-                    NO_LYRICS.put(negId, Boolean.TRUE);
-                    XpLog.log(TAG + " cached no-lyrics for id=" + negId + " (" + error + ")");
-                }
-                callback.onError(error);
-            }
-        };
-        fetchRemoteLyricsFallback(context, track, generation, sendToken, accessToken,
-                tokenGeneration, authRecovery, false, gated,
-                remoteEnabled, nativeEnabled, lrclibEnabled);
+        } catch (Throwable ignored) {
+        }
+        // Both Auto and Source Order modes now respect enabled sources
+        fetchOrderedSources(context, searchTrack, generation, enabledOrder, accessToken, callback);
     }
 
-    /** Source-order Auto: first enabled source in user order that yields lyrics wins. */
+    /** Source-order Auto: walks enabled sources in order. A word-level (Syllable) hit wins
+     *  immediately; a lower-fidelity hit (Line/Static) is kept only as a fallback while later
+     *  sources are still tried, so a Line-only source landing first in the list can't silently
+     *  starve a later one (e.g. QQ's word-level QRC) of ever being attempted. Costs a bit of
+     *  latency on tracks whose first hit isn't already Syllable, in exchange for actually earning
+     *  the "Auto" name instead of being a plain first-match Source Order. */
     private void fetchOrderedSources(Context context, SpotifyTrack track, int generation,
                                      java.util.List<com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source> enabledOrder,
                                      String accessToken, ResultCallback callback) {
@@ -141,25 +130,67 @@ public final class LyricsRepository {
             callback.onError("All lyric sources disabled");
             return;
         }
-        attemptOrderedSource(context, track, generation, enabledOrder, 0, accessToken, callback);
+        attemptOrderedSource(context, track, generation, enabledOrder, 0, accessToken, callback,
+                new java.util.ArrayList<>(), null, null);
     }
 
     private void attemptOrderedSource(Context context, SpotifyTrack track, int generation,
                                       java.util.List<com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source> enabledOrder,
-                                      int index, String accessToken, ResultCallback callback) {
+                                      int index, String accessToken, ResultCallback callback,
+                                      java.util.List<String> attempted,
+                                      LyricsDocument bestSoFar, String bestSourceSoFar) {
         if (index >= enabledOrder.size()) {
+            if (bestSoFar != null) {
+                LyricsFetchDiagnosticsState.record(diagnosticsSourceId(bestSourceSoFar), attempted, bestSoFar,
+                        accessToken != null, false);
+                callback.onSuccess(bestSoFar);
+                return;
+            }
+            // Every enabled source failed this round - the settings-panel diagnostics snapshot
+            // must still move, otherwise it keeps showing whichever source last actually won
+            // (frequently Apple, since it's first in the default order) even once that source
+            // stops being tried at all - the mismatch this fix is for.
+            LyricsFetchDiagnosticsState.record("none", attempted, null, accessToken != null, false);
             callback.onError("No lyric source in order produced lyrics");
             return;
         }
         String source = labelFor(enabledOrder.get(index));
+        attempted.add(source);
         fetchSingleSource(context, track, generation, source, accessToken, new ResultCallback() {
             @Override public void onSuccess(LyricsDocument document) {
-                callback.onSuccess(document);
+                if ("Syllable".equalsIgnoreCase(document.type)) {
+                    LyricsFetchDiagnosticsState.record(diagnosticsSourceId(source), attempted, document,
+                            accessToken != null, false);
+                    callback.onSuccess(document);
+                    return;
+                }
+                // Keep the best candidate seen so far, rather than the first non-syllable hit.
+                // The old first-hit rule let Apple Music's Line result permanently beat a later
+                // QQ Word/Line result even when QQ was the better candidate for this track.
+                LyricsDocument keptBest = bestSoFar == null
+                        || LyricQualityRanker.prefer(document, bestSoFar) ? document : bestSoFar;
+                String keptSource = keptBest == document ? source : bestSourceSoFar;
+                attemptOrderedSource(context, track, generation, enabledOrder, index + 1, accessToken, callback,
+                        attempted, keptBest, keptSource);
             }
             @Override public void onError(String error) {
-                attemptOrderedSource(context, track, generation, enabledOrder, index + 1, accessToken, callback);
+                attemptOrderedSource(context, track, generation, enabledOrder, index + 1, accessToken, callback,
+                        attempted, bestSoFar, bestSourceSoFar);
             }
         }, 0);
+    }
+
+    /** Maps a fetchSingleSource() label to the short id LyricsFetchDiagnosticsState/the settings
+     *  panel expect (matching what sourceOrigin() already recognizes for cache display). */
+    private static String diagnosticsSourceId(String label) {
+        if ("Apple Music".equals(label)) return "apple_music";
+        if ("Spicy".equals(label)) return "spicy";
+        if ("Spotify".equals(label)) return "native";
+        if ("LRCLIB".equals(label)) return "lrclib";
+        if ("NetEase".equals(label)) return "netease";
+        if ("QQ Music".equals(label)) return "qq_music";
+        if ("Musixmatch".equals(label)) return "musixmatch";
+        return "unknown";
     }
 
     private static String labelFor(com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source source) {
@@ -170,6 +201,9 @@ public final class LyricsRepository {
             case SPOTIFY: return "Spotify";
             case AMLL: return "AMLL";
             case LRCLIB: return "LRCLIB";
+            case NETEASE: return "NetEase";
+            case QQ_MUSIC: return "QQ Music";
+            case MUSIXMATCH: return "Musixmatch";
             default: return "Auto";
         }
     }
@@ -249,6 +283,48 @@ public final class LyricsRepository {
                     callback.onError("LRCLIB source unavailable: " + safe(error));
                 }
             }, "strict LRCLIB");
+            return;
+        }
+        if ("NetEase".equals(source)) {
+            fetchNetease(context, track, generation, new ResultCallback() {
+                @Override public void onSuccess(LyricsDocument document) {
+                    document.selectedSource = "NetEase";
+                    document.selectionMode = "strict";
+                    document.selectionOverride = "NetEase";
+                    callback.onSuccess(document);
+                }
+                @Override public void onError(String error) {
+                    callback.onError("NetEase source unavailable: " + safe(error));
+                }
+            });
+            return;
+        }
+        if ("Musixmatch".equals(source)) {
+            fetchMusixmatch(context, track, generation, new ResultCallback() {
+                @Override public void onSuccess(LyricsDocument document) {
+                    document.selectedSource = "Musixmatch";
+                    document.selectionMode = "strict";
+                    document.selectionOverride = "Musixmatch";
+                    callback.onSuccess(document);
+                }
+                @Override public void onError(String error) {
+                    callback.onError("Musixmatch source unavailable: " + safe(error));
+                }
+            });
+            return;
+        }
+        if ("QQ Music".equals(source)) {
+            fetchQqMusic(context, track, generation, new ResultCallback() {
+                @Override public void onSuccess(LyricsDocument document) {
+                    document.selectedSource = "QQ Music";
+                    document.selectionMode = "strict";
+                    document.selectionOverride = "QQ Music";
+                    callback.onSuccess(document);
+                }
+                @Override public void onError(String error) {
+                    callback.onError("QQ Music source unavailable: " + safe(error));
+                }
+            });
             return;
         }
         if ("AMLL".equals(source)) {
@@ -1079,6 +1155,155 @@ public final class LyricsRepository {
         return true;
     }
 
+    // --- Musixmatch (ported from Lyricify Lyrics Helper's Musixmatch provider, Apache-2.0) ---
+    // The Android app's API: it serves the word-level "richsync" body, and unlike the desktop
+    // API is not known to answer with a different track's lyrics.
+    private static final String MXM_BASE = "https://apic.musixmatch.com/ws/1.1/";
+    private static final String MXM_APP_ID = "android-player-v1.0";
+    private static final String MXM_USER_AGENT = "Dalvik/2.1.0 (Linux; U; Android 13)";
+    private static final long MXM_CAPTCHA_BACKOFF_MS = 10 * 60 * 1000L;
+    private static volatile String mxmToken;
+    private static volatile long mxmBlockedUntilMs;
+
+    private void fetchMusixmatch(Context context, SpotifyTrack track, int generation,
+                                 ResultCallback callback) {
+        if (System.currentTimeMillis() < mxmBlockedUntilMs) {
+            callback.onError("Musixmatch paused after a captcha");
+            return;
+        }
+        ioScheduler.execute(() -> {
+            try {
+                JsonObject found = mxmFindTrack(track);
+                if (found == null) {
+                    callback.onError("Musixmatch: no matching track");
+                    return;
+                }
+                long trackId = found.get("track_id").getAsLong();
+                String body = mxmGet("macro.subtitles.get?namespace=lyrics_richsynched"
+                        + "&optional_calls=track.richsync&subtitle_format=lrc"
+                        + "&track_id=" + trackId + "&f_subtitle_length_max_deviation=40");
+                if (body == null) {
+                    callback.onError("Musixmatch: no lyrics response");
+                    return;
+                }
+                LyricsDocument document = parser.parseMusixmatchLyrics(context, track, body);
+                if (document == null || document.lines.isEmpty()) {
+                    callback.onError("Musixmatch empty");
+                    return;
+                }
+                callback.onSuccess(document);
+            } catch (Throwable t) {
+                callback.onError("Musixmatch failed: " + safe(t.getMessage()));
+            }
+        });
+    }
+
+    /** track.search, then the first hit whose title and artist actually match and whose length
+     *  is within a few seconds - Musixmatch returns loosely related tracks for most queries. */
+    private JsonObject mxmFindTrack(SpotifyTrack track) throws IOException {
+        StringBuilder query = new StringBuilder("track.search?page_size=10&page=1&s_track_rating=desc");
+        query.append("&q_track=").append(Uri.encode(safe(track.title)));
+        query.append("&q_artist=").append(Uri.encode(safe(track.artist)));
+        long durationSec = Math.max(0, track.duration) / 1000L;
+        if (durationSec > 0) query.append("&q_duration=").append(durationSec);
+        String body = mxmGet(query.toString());
+        if (body == null) return null;
+        JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+        JsonElement listElement = root.getAsJsonObject("message").getAsJsonObject("body").get("track_list");
+        if (listElement == null || !listElement.isJsonArray()) return null;
+        String wantTitle = mxmNormalize(track.title);
+        String wantArtist = mxmNormalize(track.artist);
+        for (JsonElement item : listElement.getAsJsonArray()) {
+            if (!item.isJsonObject() || !item.getAsJsonObject().has("track")) continue;
+            JsonObject candidate = item.getAsJsonObject().getAsJsonObject("track");
+            String title = mxmNormalize(Json.optString(candidate, "track_name"));
+            String artist = mxmNormalize(Json.optString(candidate, "artist_name"));
+            boolean titleOk = !title.isEmpty() && (title.contains(wantTitle) || wantTitle.contains(title));
+            boolean artistOk = wantArtist.isEmpty() || artist.contains(wantArtist) || wantArtist.contains(artist);
+            long length = candidate.has("track_length") ? candidate.get("track_length").getAsLong() : 0L;
+            boolean lengthOk = durationSec <= 0 || length <= 0 || Math.abs(length - durationSec) <= 4;
+            if (titleOk && artistOk && lengthOk && candidate.has("track_id")) return candidate;
+        }
+        return null;
+    }
+
+    private static String mxmNormalize(String value) {
+        String lower = safe(value).toLowerCase(java.util.Locale.ROOT);
+        // Drop bracketed qualifiers ("(Remastered 2011)", "[feat. X]") and punctuation.
+        lower = lower.replaceAll("[(\\[].*?[)\\]]", " ").replaceAll("[\\p{Punct}\\s]+", " ");
+        return lower.trim();
+    }
+
+    /** One API call with the cached user token; renews it once on a 401 "renew". */
+    private String mxmGet(String call) throws IOException {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            String token = mxmEnsureToken();
+            if (token == null) return null;
+            String url = MXM_BASE + call + "&usertoken=" + Uri.encode(token) + "&format=json"
+                    + "&app_id=" + MXM_APP_ID + "&t=" + java.util.UUID.randomUUID().toString().replace("-", "");
+            String body = mxmHttp(url);
+            if (body == null) return null;
+            JsonObject header = JsonParser.parseString(body).getAsJsonObject()
+                    .getAsJsonObject("message").getAsJsonObject("header");
+            int status = header.has("status_code") ? header.get("status_code").getAsInt() : 0;
+            String hint = Json.optString(header, "hint");
+            if (status == 200 || status == 404) return body;
+            if (status == 401 && "captcha".equalsIgnoreCase(hint)) {
+                mxmBlockedUntilMs = System.currentTimeMillis() + MXM_CAPTCHA_BACKOFF_MS;
+                return null;
+            }
+            if (status == 401 && "renew".equalsIgnoreCase(hint)) {
+                mxmToken = null;
+                continue;
+            }
+            return null;
+        }
+        return null;
+    }
+
+    private String mxmEnsureToken() throws IOException {
+        String token = mxmToken;
+        if (mxmTokenUsable(token)) return token;
+        synchronized (LyricsRepository.class) {
+            if (mxmTokenUsable(mxmToken)) return mxmToken;
+            String body = mxmHttp(MXM_BASE + "token.get?user_language=en&app_id=" + MXM_APP_ID
+                    + "&t=" + java.util.UUID.randomUUID().toString().replace("-", ""));
+            if (body == null) return null;
+            JsonObject message = JsonParser.parseString(body).getAsJsonObject().getAsJsonObject("message");
+            JsonObject header = message.getAsJsonObject("header");
+            if ("captcha".equalsIgnoreCase(Json.optString(header, "hint"))) {
+                mxmBlockedUntilMs = System.currentTimeMillis() + MXM_CAPTCHA_BACKOFF_MS;
+                return null;
+            }
+            JsonElement bodyElement = message.get("body");
+            String fresh = bodyElement != null && bodyElement.isJsonObject()
+                    ? Json.optString(bodyElement.getAsJsonObject(), "user_token") : null;
+            if (!mxmTokenUsable(fresh)) return null;
+            mxmToken = fresh;
+            return fresh;
+        }
+    }
+
+    private static boolean mxmTokenUsable(String token) {
+        if (token == null || token.trim().isEmpty() || "null".equals(token)) return false;
+        for (int i = 0; i < token.length(); i++) if (token.charAt(i) != '0') return true;
+        return false;
+    }
+
+    private String mxmHttp(String url) throws IOException {
+        Request request = new Request.Builder()
+                .url(url)
+                .get()
+                .header("User-Agent", MXM_USER_AGENT)
+                .header("Cookie", "AWSELB=0; AWSELBCORS=0")
+                .build();
+        try (Response response = http.newCall(request).execute()) {
+            if (response.body() == null) return null;
+            String body = response.body().string();
+            return body.isEmpty() ? null : body;
+        }
+    }
+
     private void fetchLrclib(Context context, SpotifyTrack track, int generation, ResultCallback callback, String reason) {
         fetchLrclib(context, track, generation, callback, reason, new LyricsProviderChain(generation, null), false);
     }
@@ -1236,6 +1461,403 @@ public final class LyricsRepository {
         });
     }
 
+    /**
+     * NetEase Cloud Music, added as an extra opt-in source (Lyricify-style: more candidate
+     * catalogs means fewer tracks with no synced lyrics at all). Uses NetEase's legacy
+     * {@code /api/search/get} and {@code /api/song/lyric} routes, which still answer with plain
+     * JSON — unlike their newer {@code /weapi/...} routes, these don't require request encryption,
+     * so no auth/signing is needed. Best-effort only: on any failure this simply reports an error
+     * and the caller (manual "strict" pick, or Source-order ranking) moves on.
+     */
+    private void fetchNetease(Context context, SpotifyTrack track, int generation, ResultCallback callback) {
+        String query = (safe(track == null ? null : track.title) + " "
+                + safe(track == null ? null : track.artist)).trim();
+        // limit=20, not 8: NetEase lists a song's reissues and regional editions as separate hits
+        // and only some of them carry word-level lyrics, so a short page regularly cut off the
+        // only entry that had any. Matches the page size Lyricify uses.
+        String url = "https://music.163.com/api/search/get?s=" + Uri.encode(query)
+                + "&type=1&offset=0&limit=20";
+        Request request = new Request.Builder()
+                .url(url)
+                .get()
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", "https://music.163.com/")
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                callback.onError("NetEase search failed: " + safe(e.getMessage()));
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        callback.onError("NetEase search HTTP " + response.code());
+                        return;
+                    }
+                    java.util.List<NeteaseSongRanker.Candidate> songs =
+                            rankNeteaseSongs(response.body().string(), track);
+                    if (songs.isEmpty()) {
+                        callback.onError("NetEase empty");
+                        return;
+                    }
+                    fetchNeteaseLyric(context, track, generation, songs, callback);
+                } catch (Throwable t) {
+                    callback.onError("NetEase search parse failed: " + safe(t.getMessage()));
+                }
+            }
+        });
+    }
+
+    /** Tries NetEase's word-level ("YRC") endpoint across the ranked hits, then falls back to the
+     *  plain line-level one for the best hit. Word-level content is per-recording and is only
+     *  discoverable by asking, so the walk is what turns "this track has karaoke timing somewhere"
+     *  into actually rendering it. A YRC-specific failure is never surfaced; the fallback IS the
+     *  error handling, exactly as on the QQ side. */
+    private void fetchNeteaseLyric(Context context, SpotifyTrack track, int generation,
+                                    java.util.List<NeteaseSongRanker.Candidate> songs,
+                                    ResultCallback callback) {
+        java.util.List<Long> ids = new java.util.ArrayList<>();
+        for (NeteaseSongRanker.Candidate candidate : songs) {
+            if (!candidate.supportsWordLyrics()) continue;
+            if (!ids.contains(candidate.id)) ids.add(candidate.id);
+            if (ids.size() >= NeteaseSongRanker.MAX_WORD_LYRIC_ATTEMPTS) break;
+        }
+        String lineId = String.valueOf(songs.get(0).id);
+        Runnable lineFallback =
+                () -> fetchNeteaseLyricById(context, track, generation, lineId, callback);
+        if (ids.isEmpty()) {
+            lineFallback.run();
+            return;
+        }
+        tryNeteaseWordLyricChain(context, track, generation, ids, 0, callback, lineFallback);
+    }
+
+    private void tryNeteaseWordLyricChain(Context context, SpotifyTrack track, int generation,
+                                           java.util.List<Long> ids, int index,
+                                           ResultCallback callback, Runnable lineFallback) {
+        if (index >= ids.size()) {
+            lineFallback.run();
+            return;
+        }
+        fetchNeteaseWordLyric(context, track, generation, ids.get(index), callback,
+                () -> tryNeteaseWordLyricChain(context, track, generation, ids, index + 1,
+                        callback, lineFallback));
+    }
+
+    /** NetEase's word-level lyrics are only served over their signed "eapi" transport - the plain
+     *  web endpoint below returns line-level LRC and nothing else. See {@link NeteaseEapi}. */
+    private void fetchNeteaseWordLyric(Context context, SpotifyTrack track, int generation,
+                                        long songId, ResultCallback callback, Runnable fallback) {
+        String apiPath = "/api/song/lyric/v1";
+        String payload = "{\"id\":\"" + songId + "\",\"cp\":\"false\",\"lv\":\"0\",\"kv\":\"0\","
+                + "\"tv\":\"0\",\"rv\":\"0\",\"yv\":\"0\",\"ytv\":\"0\",\"yrv\":\"0\","
+                + "\"csrf_token\":\"\",\"header\":" + NeteaseEapi.headerJson() + "}";
+        String params = NeteaseEapi.params(apiPath, payload);
+        if (params == null) {
+            fallback.run();
+            return;
+        }
+        Request request = new Request.Builder()
+                .url("https://interface3.music.163.com/eapi/song/lyric/v1")
+                .post(new okhttp3.FormBody.Builder().add("params", params).build())
+                .header("User-Agent", NeteaseEapi.USER_AGENT)
+                .header("Referer", "https://music.163.com/")
+                .header("Cookie", NeteaseEapi.cookieHeader())
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                fallback.run();
+            }
+            @Override public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        fallback.run();
+                        return;
+                    }
+                    LyricsDocument doc = parser.parseNeteaseWordLyrics(
+                            context, track, response.body().string());
+                    if (doc == null || doc.lines.isEmpty()) {
+                        fallback.run();
+                        return;
+                    }
+                    doc.generation = generation;
+                    callback.onSuccess(doc);
+                } catch (Throwable t) {
+                    fallback.run();
+                }
+            }
+        });
+    }
+
+    private void fetchNeteaseLyricById(Context context, SpotifyTrack track, int generation,
+                                       String songId, ResultCallback callback) {
+        String url = "https://music.163.com/api/song/lyric?id=" + Uri.encode(songId) + "&lv=1&kv=1&tv=1";
+        Request request = new Request.Builder()
+                .url(url)
+                .get()
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", "https://music.163.com/")
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                callback.onError("NetEase lyric failed: " + safe(e.getMessage()));
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        callback.onError("NetEase lyric HTTP " + response.code());
+                        return;
+                    }
+                    LyricsDocument doc = parser.parseNeteaseLyrics(context, track, response.body().string());
+                    doc.generation = generation;
+                    if (doc.lines.isEmpty()) {
+                        callback.onError("NetEase empty");
+                        return;
+                    }
+                    callback.onSuccess(doc);
+                } catch (Throwable t) {
+                    callback.onError("NetEase parse failed: " + safe(t.getMessage()));
+                }
+            }
+        });
+    }
+
+    /** Every acceptable search hit, best first - see {@link NeteaseSongRanker}. The old version of
+     *  this picked purely on runtime closeness with a flat penalty for a mismatched artist and
+     *  compared the title not at all, so any song of roughly the right length won. */
+    private static java.util.List<NeteaseSongRanker.Candidate> rankNeteaseSongs(
+            String body, SpotifyTrack track) {
+        JsonElement root = JsonParser.parseString(body);
+        if (!root.isJsonObject()) return java.util.Collections.emptyList();
+        JsonObject result = Json.optObject(root.getAsJsonObject(), "result");
+        JsonArray songs = result == null ? null : Json.optArray(result, "songs");
+        return NeteaseSongRanker.rank(songs,
+                track == null ? null : track.title,
+                track == null ? null : track.artist,
+                track == null ? null : track.album,
+                track == null ? 0 : track.duration);
+    }
+
+
+    // --- QQ Music ---
+
+    private void fetchQqMusic(Context context, SpotifyTrack track, int generation, ResultCallback callback) {
+        fetchQqMusic(context, track, generation, callback, 0);
+    }
+
+    private void fetchQqMusic(Context context, SpotifyTrack track, int generation, ResultCallback callback,
+                               int retryCount) {
+        String query = (safe(track == null ? null : track.title) + " "
+                + safe(track == null ? null : track.artist)).trim();
+        String data = "{\"music.search.SearchCgiService\":{\"method\":\"DoSearchForQQMusicDesktop\","
+                + "\"module\":\"music.search.SearchCgiService\","
+                // 20, not 10: QQ lists a song's other pressings as separate hits (and as nested
+                // "grp" entries under them), and word-level lyrics are attached per hit, so a
+                // short page regularly cut off the only entry that had any.
+                + "\"param\":{\"num_per_page\":\"20\",\"page_num\":\"1\","
+                + "\"query\":\"" + query.replace("\\", "\\\\").replace("\"", "\\\"") + "\",\"search_type\":\"0\"}}}";
+        Request request = new Request.Builder()
+                .url("https://u.y.qq.com/cgi-bin/musicu.fcg")
+                .post(RequestBody.create(data, MediaType.parse("application/json")))
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", "https://y.qq.com/")
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                callback.onError("QQ Music search failed: " + safe(e.getMessage()));
+            }
+            @Override public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        callback.onError("QQ Music search HTTP " + response.code());
+                        return;
+                    }
+                    String body = response.body().string();
+                    int searchCode = qqSearchServiceCode(body);
+                    java.util.List<QqSongRanker.Candidate> songs = searchCode == 0
+                            ? rankQqSongs(body, track) : java.util.Collections.emptyList();
+                    if (songs.isEmpty()) {
+                        if (searchCode != 0 && retryCount < QQ_SEARCH_RETRY_LIMIT) {
+                            ioScheduler.schedule(
+                                    () -> fetchQqMusic(context, track, generation, callback, retryCount + 1),
+                                    QQ_SEARCH_RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
+                            return;
+                        }
+                        callback.onError("QQ Music empty" + (searchCode != 0 ? " (code " + searchCode + ")" : ""));
+                        return;
+                    }
+                    fetchQqMusicLyric(context, track, generation, songs, callback);
+                } catch (Throwable t) {
+                    callback.onError("QQ Music search parse failed: " + safe(t.getMessage()));
+                }
+            }
+        });
+    }
+
+    /** Non-zero here means the search cgi rejected the request itself (commonly 2001, QQ's
+     *  anti-abuse throttle) rather than genuinely finding no match - distinct from a normal,
+     *  real empty result which reports 0. */
+    private static int qqSearchServiceCode(String body) {
+        try {
+            JsonElement root = JsonParser.parseString(body);
+            if (!root.isJsonObject()) return 0;
+            JsonObject service = Json.optObject(root.getAsJsonObject(), "music.search.SearchCgiService");
+            return service == null ? 0 : (int) Json.optDouble(service, 0d, "code");
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    /** Tries QQ's word-level ("QRC") endpoint first - the same karaoke-timed data Lyricify uses -
+     *  and falls back to the plain line-level LRC endpoint whenever no acceptable hit has a numeric
+     *  id, every word-level request fails, or the decrypt/parse comes back empty (private/VIP-only
+     *  tracks, format drift, etc.). Never surfaces a QRC-specific error to the caller; the fallback
+     *  IS the error handling.
+     *
+     *  <p>The word-level attempt walks the ranked hits rather than stopping at the best one. QQ
+     *  lists the same song repeatedly (album cut, single, live, regional release) and word-level
+     *  content is attached per entry, so the top hit regularly has none while an equally-valid
+     *  sibling does. Giving up after one attempt is what left tracks that do have karaoke timing
+     *  rendering as a plain line-synced document. */
+    private void fetchQqMusicLyric(Context context, SpotifyTrack track, int generation,
+                                    java.util.List<QqSongRanker.Candidate> songs, ResultCallback callback) {
+        java.util.List<Long> wordIds = new java.util.ArrayList<>();
+        for (QqSongRanker.Candidate candidate : songs) {
+            if (!candidate.supportsWordLyrics()) continue;
+            if (!wordIds.contains(candidate.id)) wordIds.add(candidate.id);
+            if (wordIds.size() >= QqSongRanker.MAX_WORD_LYRIC_ATTEMPTS) break;
+        }
+        String lineMid = songs.get(0).mid;
+        Runnable lineFallback = () -> fetchQqLineLyric(context, track, generation, lineMid, callback);
+        if (wordIds.isEmpty()) {
+            lineFallback.run();
+            return;
+        }
+        tryQqWordLyricChain(context, track, generation, wordIds, 0, callback, lineFallback);
+    }
+
+    private void tryQqWordLyricChain(Context context, SpotifyTrack track, int generation,
+                                      java.util.List<Long> ids, int index, ResultCallback callback,
+                                      Runnable lineFallback) {
+        if (index >= ids.size()) {
+            lineFallback.run();
+            return;
+        }
+        fetchQqWordLyric(context, track, generation, ids.get(index), callback,
+                () -> tryQqWordLyricChain(context, track, generation, ids, index + 1, callback,
+                        lineFallback));
+    }
+
+    private void fetchQqWordLyric(Context context, SpotifyTrack track, int generation, long songId,
+                                   ResultCallback callback, Runnable fallback) {
+        RequestBody form = new okhttp3.FormBody.Builder()
+                .add("version", "15")
+                .add("miniversion", "82")
+                .add("lrctype", "4")
+                .add("musicid", String.valueOf(songId))
+                .build();
+        Request request = new Request.Builder()
+                .url("https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg")
+                .post(form)
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", "https://c.y.qq.com/")
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                fallback.run();
+            }
+            @Override public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        fallback.run();
+                        return;
+                    }
+                    String raw = response.body().string();
+                    LyricsDocument doc = parser.parseQqWordLyrics(context, track, raw);
+                    if (doc == null || doc.lines.isEmpty()) {
+                        fallback.run();
+                        return;
+                    }
+                    doc.generation = generation;
+                    callback.onSuccess(doc);
+                } catch (Throwable t) {
+                    fallback.run();
+                }
+            }
+        });
+    }
+
+    private void fetchQqLineLyric(Context context, SpotifyTrack track, int generation,
+                                    String songMid, ResultCallback callback) {
+        String callbackName = "MusicJsonCallback_lrc";
+        long pcachetime = System.currentTimeMillis();
+        String url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
+                + "?callback=" + callbackName
+                + "&pcachetime=" + pcachetime
+                + "&songmid=" + Uri.encode(songMid)
+                + "&g_tk=5381&jsonpCallback=" + callbackName
+                + "&loginUin=0&hostUin=0&format=jsonp&inCharset=utf8&outCharset=utf8"
+                + "&notice=0&platform=yqq&needNewCode=0";
+        Request request = new Request.Builder()
+                .url(url)
+                .get()
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", "https://y.qq.com/")
+                .build();
+        http.newCall(request).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                callback.onError("QQ Music lyric failed: " + safe(e.getMessage()));
+            }
+            @Override public void onResponse(Call call, Response response) throws IOException {
+                try (Response ignored = response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        callback.onError("QQ Music lyric HTTP " + response.code());
+                        return;
+                    }
+                    String raw = response.body().string();
+                    // Strip JSONP wrapper
+                    if (raw.startsWith(callbackName + "(")) {
+                        raw = raw.substring(callbackName.length() + 1);
+                        if (raw.endsWith(")")) raw = raw.substring(0, raw.length() - 1);
+                    }
+                    LyricsDocument doc = parser.parseQqMusicLyrics(context, track, raw);
+                    doc.generation = generation;
+                    if (doc.lines.isEmpty()) {
+                        callback.onError("QQ Music empty");
+                        return;
+                    }
+                    callback.onSuccess(doc);
+                } catch (Throwable t) {
+                    callback.onError("QQ Music lyric parse failed: " + safe(t.getMessage()));
+                }
+            }
+        });
+    }
+
+    /** Every acceptable search hit, best first - see {@link QqSongRanker} for how they are ordered
+     *  and which are rejected outright. */
+    private static java.util.List<QqSongRanker.Candidate> rankQqSongs(String body, SpotifyTrack track) {
+        JsonElement root = JsonParser.parseString(body);
+        if (!root.isJsonObject()) return java.util.Collections.emptyList();
+        // Response is nested under music.search.SearchCgiService.data.body.song.list
+        JsonObject obj = root.getAsJsonObject();
+        JsonObject service = Json.optObject(obj, "music.search.SearchCgiService");
+        JsonObject data = service == null ? null : Json.optObject(service, "data");
+        JsonObject bodyObj = data == null ? null : Json.optObject(data, "body");
+        JsonObject songObj = bodyObj == null ? null : Json.optObject(bodyObj, "song");
+        JsonArray list = songObj == null ? null : Json.optArray(songObj, "list");
+        return QqSongRanker.rank(list,
+                track == null ? null : track.title,
+                track == null ? null : track.artist,
+                track == null ? null : track.album,
+                track == null ? 0 : track.duration);
+    }
+
     private void scheduleLrclibVariant(Context context, SpotifyTrack track, int generation,
                                        ResultCallback callback, String reason,
                                        LyricsProviderChain chain, boolean tokenPresent,
@@ -1354,6 +1976,9 @@ public final class LyricsRepository {
         String source = doc == null ? "" : safe(doc.fetchSource).toLowerCase(java.util.Locale.US);
         if (source.contains("cache")) return "cache";
         if (source.contains("lrclib")) return "lrclib";
+        if (source.contains("netease")) return "netease";
+        if (source.contains("qq")) return "qq_music";
+        if (source.contains("musixmatch")) return "musixmatch";
         if (source.contains("amll")) return "amll";
         if (source.contains("native")) return "native";
         if (source.contains("spicy")) return "apple_music";
@@ -1415,6 +2040,15 @@ public final class LyricsRepository {
     public interface Parser {
         LyricsDocument parseSpicyLyrics(Context context, SpotifyTrack track, String raw, boolean fromCache);
         LyricsDocument parseLrclibLyrics(Context context, SpotifyTrack track, String body);
+        LyricsDocument parseNeteaseLyrics(Context context, SpotifyTrack track, String body);
+
+        /** @return null when the response has no word-level ("YRC") content to use. */
+        LyricsDocument parseNeteaseWordLyrics(Context context, SpotifyTrack track, String body);
+        LyricsDocument parseQqMusicLyrics(Context context, SpotifyTrack track, String body);
+        LyricsDocument parseQqWordLyrics(Context context, SpotifyTrack track, String body);
+
+        /** Musixmatch macro.subtitles.get: richsync, else LRC, else plain; null if unusable. */
+        LyricsDocument parseMusixmatchLyrics(Context context, SpotifyTrack track, String body);
         LyricsDocument parseAmllTtml(Context context, SpotifyTrack track, String ttml);
     }
 

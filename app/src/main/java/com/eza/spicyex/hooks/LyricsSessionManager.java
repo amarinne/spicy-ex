@@ -288,8 +288,17 @@ final class LyricsSessionManager {
             CanonicalSourceCodec.Record record = null;
             try {
                 String selectionIdentity = LyricsSourcePreferences.selectionIdentity(context, requestedUri);
-                record = CanonicalSourceCache.load(context, requestedUri, selectionIdentity);
-                if (record == null) {
+                // A karaoke version's stored lyrics are the original song's, fetched while
+                // "Show original lyrics for karaoke versions" was on: with it off they are not
+                // this track's, so the stored record is not served (and not deleted, for when
+                // the option comes back on).
+                boolean karaokeOriginalsOff = requestedTrack != null
+                        && com.eza.spicyex.lyrics.KaraokeTitles.isKaraokeVersion(requestedTrack.title)
+                        && !com.eza.spicyex.SpotifyPlusConfig.from(context)
+                                .get(com.eza.spicyex.Settings.KARAOKE_ORIGINAL_LYRICS);
+                record = karaokeOriginalsOff ? null
+                        : CanonicalSourceCache.load(context, requestedUri, selectionIdentity);
+                if (record == null && !karaokeOriginalsOff) {
                     // Migration: a record orphaned by a retired source (or any identity change)
                     // stays display-authoritative. Serve it unless an explicit per-track override
                     // rejects its source; the refresh policy still probes when the base leaves
@@ -432,7 +441,7 @@ final class LyricsSessionManager {
         if (outcome == CanonicalBaseAdoption.Outcome.UNCHANGED) {
             // Same canonical source arrived again. Nothing changed, so nothing republishes and no
             // derived artifact is invalidated.
-            persistCanonicalBase(requestedUri, result,
+            persistCanonicalBase(requestedTrack, requestedUri, result,
                     session == null ? 1 : session.identity.sourceRevision, incoming.digest);
             return;
         }
@@ -448,8 +457,8 @@ final class LyricsSessionManager {
         if (outcome == CanonicalBaseAdoption.Outcome.REPLACE) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOURCE_REPLACED);
         }
-        persistCanonicalBase(requestedUri, canonicalSource, session.identity.sourceRevision,
-                incoming.digest);
+        persistCanonicalBase(requestedTrack, requestedUri, canonicalSource,
+                session.identity.sourceRevision, incoming.digest);
         Snapshot snapshot = snapshot();
         List<RequestRecord> pending = takeRequests(requestedGeneration);
         for (RequestRecord request : pending) {
@@ -459,14 +468,17 @@ final class LyricsSessionManager {
         startDetection(requestedTrack, result, requestedGeneration);
     }
 
-    private void persistCanonicalBase(String requestedUri, LyricsDocument snapshot, int revision,
-                                      String digest) {
+    private void persistCanonicalBase(SpotifyTrack requestedTrack, String requestedUri,
+                                      LyricsDocument snapshot, int revision, String digest) {
+        final String title = requestedTrack == null || requestedTrack.title == null ? "" : requestedTrack.title;
+        final String artist = requestedTrack == null || requestedTrack.artist == null ? "" : requestedTrack.artist;
         // The caller owns this snapshot and must not mutate it after handoff: the IO thread reads
         // it without a further whole-document copy.
         final LyricsDocument toPersist = snapshot;
         NativeRuntime.LYRICS_IO.execute(
                 () -> CanonicalSourceCache.save(context, requestedUri, toPersist, revision, digest,
-                        LyricsSourcePreferences.selectionIdentity(context, requestedUri)));
+                        LyricsSourcePreferences.selectionIdentity(context, requestedUri),
+                        title, artist));
     }
 
     private void acceptError(String requestedUri, int requestedGeneration, String error) {

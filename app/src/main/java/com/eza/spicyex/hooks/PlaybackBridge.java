@@ -32,6 +32,15 @@ import org.luckypray.dexkit.query.matchers.MethodMatcher;
 final class PlaybackBridge {
     private static final Pattern DIGITS = Pattern.compile("\\d+");
 
+    /** Fired synchronously, right after References.playerState/playerStateStrong are updated,
+     *  every time Spotify's own state machine builds a new PlayerState - e.g. AdMuteController
+     *  uses this for near-instant ad-track detection instead of a slower poll. */
+    private static volatile Runnable stateUpdateListener;
+
+    static void setStateUpdateListener(Runnable listener) {
+        stateUpdateListener = listener;
+    }
+
     private volatile boolean isPlaying;
     private volatile long mediaPositionMs = -1;
     private volatile long mediaPositionUpdatedAtElapsedMs = 0;
@@ -42,6 +51,7 @@ final class PlaybackBridge {
     void install(XpPackage lpparm, SpotifySymbolResolver symbols) {
         hookPlayerStateBridge(lpparm, symbols);
         installMediaSessionHook();
+        AdBreakInfo.installHooks();
     }
 
     private void hookPlayerStateBridge(XpPackage lpparm, SpotifySymbolResolver symbols) {
@@ -57,6 +67,15 @@ final class PlaybackBridge {
                         if (state == null) return;
                         References.playerStateStrong = state;
                         References.playerState = new WeakReference<>(state);
+                        Runnable listener = stateUpdateListener;
+                        if (listener != null) {
+                            try {
+                                listener.run();
+                            } catch (Throwable t) {
+                                XpLog.log(NativeSpicyLyricsHook.TAG
+                                        + " state update listener failed: " + t);
+                            }
+                        }
                     });
             XpLog.log(NativeSpicyLyricsHook.TAG + " player state builder hook installed");
         } catch (Throwable t) {
@@ -123,17 +142,36 @@ final class PlaybackBridge {
         }
     }
 
+    /** Same capability-checked posture as skipToNext/PreviousTrack: false, and no transport call
+     *  sent at all, when the current PlaybackState doesn't currently advertise ACTION_SEEK_TO
+     *  (most visibly a free-account session with seek/skip restricted) - callers can use this to
+     *  proactively hide/disable seek affordances instead of firing a seek that gets silently
+     *  ignored server-side, which used to be the only way this surfaced. */
     boolean seekSpotifyTo(long positionMs) {
-        try {
-            MediaController controller = transportController();
-            if (controller == null) return false;
-            controller.getTransportControls().seekTo(positionMs);
-            forcePosition(positionMs);
-            return true;
-        } catch (Throwable t) {
-            XpLog.log(NativeSpicyLyricsHook.TAG + " media seek failed: " + t);
-            return false;
-        }
+        boolean ok = sendTransportControl("seek", PlaybackState.ACTION_SEEK_TO,
+                tc -> tc.seekTo(positionMs));
+        if (ok) forcePosition(positionMs);
+        return ok;
+    }
+
+    /** Whether the current PlaybackState advertises ACTION_SEEK_TO right now - see
+     *  {@link #seekSpotifyTo}. False whenever no session is captured yet, same as every other
+     *  capability check here. */
+    // canSeek() is polled from the lyrics frame loop; each read is a binder call into
+    // system_server, so it is re-read at most every CAN_SEEK_TTL_MS (still fast enough to catch
+    // an ad starting).
+    private static final long CAN_SEEK_TTL_MS = 400L;
+    private long canSeekReadAt = Long.MIN_VALUE / 2;
+    private boolean canSeekCached;
+
+    boolean canSeek() {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - canSeekReadAt < CAN_SEEK_TTL_MS) return canSeekCached;
+        canSeekReadAt = now;
+        MediaController controller = transportController();
+        PlaybackState state = controller == null ? null : controller.getPlaybackState();
+        canSeekCached = state != null && (state.getActions() & PlaybackState.ACTION_SEEK_TO) != 0;
+        return canSeekCached;
     }
 
     /** Toggles play/pause through Spotify's own MediaSession transport. Null-safe: false when
@@ -309,6 +347,23 @@ final class PlaybackBridge {
         return pausedAccessorCache;
     }
 
+    /** True only when Spotify's own PlayerState says paused. Unlike isPlayerActuallyPlaying this
+     *  ignores the media session, which does not always report ads as playing. */
+    boolean isPlayerStatePaused() {
+        try {
+            Object state = References.playerState == null ? null : References.playerState.get();
+            if (state == null) return false;
+            for (Method paused : pausedAccessors(state.getClass())) {
+                try {
+                    Object result = paused.invoke(state);
+                    if (result instanceof Boolean && (Boolean) result) return true;
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
 
     boolean isPlayerActuallyPlaying() {
         if (!isPlaying) return false;

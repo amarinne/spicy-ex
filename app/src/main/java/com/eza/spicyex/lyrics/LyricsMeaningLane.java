@@ -843,6 +843,9 @@ public final class LyricsMeaningLane {
             GoogleEnhancer.BatchResult result = provider.translate(context, http, processingVersion,
                     id, sourceLang, targetLang, batch, cancelTag);
             if (stats != null) stats.record(result);
+            // Rate-limited: the remaining batches (and the retry passes after this one) would
+            // only be refused too, and every refused ask keeps the limit in place.
+            boolean rateLimited = result.httpStatus == 429;
             for (GoogleEnhancer.BatchLine item : batch) {
                 if (item == null || item.index < 0 || item.index >= workerSnapshot.lines.size()) continue;
                 LyricsLine line = workerSnapshot.lines.get(item.index);
@@ -857,6 +860,10 @@ public final class LyricsMeaningLane {
                 if (row != null) entries.add(new MeaningEntry(row.rowId, value, targetLang));
                 translatedIndices.add(item.index);
                 changed.incrementAndGet();
+            }
+            if (rateLimited) {
+                retry.clear();
+                break;
             }
         }
         return retry;

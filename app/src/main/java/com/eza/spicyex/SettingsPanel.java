@@ -64,9 +64,13 @@ import java.util.Set;
  * layout stays visually stable unless device screenshots verify a change.
  */
 public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs.Host,
-        SourceOrderEditor.Host {
-    // Static: survives panel re-opens within the process, so the panel never re-opens fully collapsed.
-    private static final Set<String> expandedSections = new java.util.HashSet<>();
+        SourceOrderEditor.Host, com.eza.spicyex.settings.CacheManager.Host {
+    /**
+     * Two levels, as a phone's own settings: the section list, and one section's page. Null is
+     * the list. (It used to be one long page of all-caps accordions, every open section's rows
+     * stacked into the same scroll - hard to find anything in.)
+     */
+    private String openSection;
 
     private final Context context;
     private final PanelStyle style;
@@ -75,10 +79,16 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     private final SettingRowFactory rows;
     private final PanelDialogs dialogs;
     private final SourceOrderEditor sources;
+    private final com.eza.spicyex.settings.CacheManager cache;
     private final java.util.function.BooleanSupplier isHalfSize;
     private final Runnable onToggleSize;
     private final Runnable onClose;
+    /** Opens the layout editor: {@link #EDITOR_LYRICS} or {@link #EDITOR_CARD}. */
+    private final java.util.function.IntConsumer onOpenLayoutEditor;
+    public static final int EDITOR_LYRICS = 1;
+    public static final int EDITOR_CARD = 2;
     private final java.util.function.Consumer<CacheClearKind> onClearCache;
+    private final Runnable onResyncTiming;
 
     private LinearLayout sectionsContainer;
     private TextView panelTitle;
@@ -114,7 +124,9 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     public SettingsPanel(Context context, SettingsStore store,
                          java.util.function.BooleanSupplier isHalfSize,
                          Runnable onToggleSize, Runnable onClose,
-                         java.util.function.Consumer<CacheClearKind> onClearCache) {
+                         java.util.function.IntConsumer onOpenLayoutEditor,
+                         java.util.function.Consumer<CacheClearKind> onClearCache,
+                         Runnable onResyncTiming) {
         this.context = context;
         this.style = new PanelStyle(context);
         this.store = store;
@@ -122,10 +134,13 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         this.rows = new SettingRowFactory(this);
         this.dialogs = new PanelDialogs(this);
         this.sources = new SourceOrderEditor(this);
+        this.cache = new com.eza.spicyex.settings.CacheManager(this);
         this.isHalfSize = isHalfSize;
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
+        this.onOpenLayoutEditor = onOpenLayoutEditor;
         this.onClearCache = onClearCache;
+        this.onResyncTiming = onResyncTiming;
         writer.ensureBackgroundStyleMigrated(store.get(Settings.ENABLE_BACKGROUND));
         this.uiStrings = UiLanguage.strings(context, store.get(Settings.UI_LANGUAGE));
     }
@@ -168,12 +183,333 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                 ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
         renderHeader(content);
+        buildSearch(content);
         sectionsContainer = new LinearLayout(context);
         sectionsContainer.setOrientation(LinearLayout.VERTICAL);
         content.addView(sectionsContainer, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         renderSections(sectionsContainer);
         return scroll;
+    }
+
+    // --- Search ---
+
+    private LinearLayout searchBar;
+    private android.widget.EditText searchField;
+    private LinearLayout searchResults;
+    private volatile com.eza.spicyex.settings.SettingsSearch searchIndex;
+
+    /** A result that opens a Layout Editor rather than a panel row. */
+    private static final class EditorTarget {
+        final int mode;
+        final Settings.Setting<?> setting;
+
+        EditorTarget(int mode, Settings.Setting<?> setting) {
+            this.mode = mode;
+            this.setting = setting;
+        }
+    }
+
+    /**
+     * The search field above the section list. Typing swaps the list for results (see
+     * {@link com.eza.spicyex.settings.SettingsSearch} for how they are found: any language,
+     * typos, other words for the same idea); tapping one opens its section, scrolls to the row
+     * and marks it, or opens the editor for what only the Layout Editor edits.
+     */
+    private void buildSearch(LinearLayout content) {
+        searchBar = new LinearLayout(context);
+        searchBar.setOrientation(LinearLayout.HORIZONTAL);
+        searchBar.setGravity(Gravity.CENTER_VERTICAL);
+        searchBar.setPadding(style.dp(12), 0, style.dp(4), 0);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setCornerRadius(style.dp(14));
+        bg.setColor(0x14FFFFFF);
+        searchBar.setBackground(bg);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(style.dp(18), style.dp(18));
+        iconLp.rightMargin = style.dp(8);
+        searchBar.addView(style.kindView(Kind.SEARCH, PanelStyle.COL_SUMMARY, 18), iconLp);
+        searchField = new android.widget.EditText(context);
+        searchField.setSingleLine(true);
+        searchField.setHint(uiStrings.get("settings_search_hint", "Search settings"));
+        searchField.setTextColor(PanelStyle.COL_TITLE);
+        searchField.setHintTextColor(PanelStyle.COL_SUMMARY);
+        searchField.setTextSize(15);
+        searchField.setBackground(null);
+        searchField.setPadding(0, style.dp(10), 0, style.dp(10));
+        searchField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        searchField.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        searchField.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        searchBar.addView(searchField, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        final android.widget.ImageView clear = style.kindView(Kind.CLOSE, PanelStyle.COL_SUMMARY, 16);
+        clear.setPadding(style.dp(8), style.dp(8), style.dp(8), style.dp(8));
+        clear.setContentDescription(uiStrings.get("settings_ai_cancel", "Cancel"));
+        clear.setVisibility(View.GONE);
+        clear.setOnClickListener(v -> searchField.setText(""));
+        searchBar.addView(clear, new LinearLayout.LayoutParams(style.dp(34), style.dp(34)));
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        barLp.bottomMargin = style.dp(8);
+        content.addView(searchBar, barLp);
+
+        searchResults = new LinearLayout(context);
+        searchResults.setOrientation(LinearLayout.VERTICAL);
+        searchResults.setVisibility(View.GONE);
+        content.addView(searchResults, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // Reading every language's strings takes a moment: start as soon as the field is
+        // focused, so the first letter typed does not wait for it.
+        searchField.setOnFocusChangeListener((v, focused) -> {
+            if (focused && searchIndex == null) {
+                Thread warm = new Thread(this::searchIndex, "SettingsSearchIndex");
+                warm.setDaemon(true);
+                warm.start();
+            }
+        });
+        searchField.setOnEditorActionListener((v, actionId, event) -> {
+            hideKeyboard();
+            return true;
+        });
+        searchField.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
+            @Override public void afterTextChanged(android.text.Editable text) {
+                String query = text.toString();
+                boolean searching = !query.trim().isEmpty();
+                clear.setVisibility(query.isEmpty() ? View.GONE : View.VISIBLE);
+                if (sectionsContainer != null) sectionsContainer.setVisibility(searching ? View.GONE : View.VISIBLE);
+                searchResults.setVisibility(searching ? View.VISIBLE : View.GONE);
+                if (!searching) {
+                    searchResults.removeAllViews();
+                    return;
+                }
+                renderSearchResults(query);
+            }
+        });
+    }
+
+    private void hideKeyboard() {
+        if (searchField == null) return;
+        android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager)
+                context.getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) imm.hideSoftInputFromWindow(searchField.getWindowToken(), 0);
+        searchField.clearFocus();
+    }
+
+    /** Everything searchable, built once per search session from what the panel shows now. */
+    private synchronized com.eza.spicyex.settings.SettingsSearch searchIndex() {
+        if (searchIndex != null) return searchIndex;
+        List<com.eza.spicyex.settings.SettingsSearch.Entry> entries = new ArrayList<>();
+        LinkedHashMap<Settings.Section, List<Settings.Setting<?>>> grouped = groupVisibleSettings();
+        List<Settings.Section> sections = new ArrayList<>(grouped.keySet());
+        sections.add(Settings.DEBUG);
+        for (Settings.Section section : sections) {
+            String name = uiStrings.section(section);
+            entries.add(new com.eza.spicyex.settings.SettingsSearch.Entry(section,
+                    names(name, SettingsUiResourceNames.section(section), section.label), "", section.id,
+                    sectionKeywords(section)));
+            List<Settings.Setting<?>> items = grouped.get(section);
+            if (items == null) continue;
+            for (Settings.Setting<?> setting : items) {
+                if (setting == Settings.LYRICS_SOURCE_OVERRIDE || setting == Settings.LYRICS_SOURCE_ORDER) continue;
+                entries.add(new com.eza.spicyex.settings.SettingsSearch.Entry(setting,
+                        names(searchTitle(setting), SettingsUiResourceNames.setting(setting), setting.label),
+                        name, section.id, settingKeywords(setting, section)));
+            }
+        }
+        // What only the Layout Editor edits: found here too, opening the editor.
+        String lyricsEditor = uiStrings.get("settings_search_editor_lyrics", "Layout editor · Lyrics screen");
+        String cardEditor = uiStrings.get("settings_search_editor_card", "Layout editor · Now playing");
+        for (Settings.Setting<?> setting : com.eza.spicyex.hooks.LayoutEditorSettings.covered()) {
+            boolean card = com.eza.spicyex.hooks.LayoutEditorSettings.isCardSetting(setting);
+            List<String> extra = settingKeywords(setting, null);
+            extra.add("layout editor");
+            extra.add(uiStrings.section(card ? Settings.NOW_PLAYING : Settings.LYRICS_SCREEN));
+            entries.add(new com.eza.spicyex.settings.SettingsSearch.Entry(
+                    new EditorTarget(card ? EDITOR_CARD : EDITOR_LYRICS, setting),
+                    names(searchTitle(setting), SettingsUiResourceNames.setting(setting), setting.label),
+                    card ? cardEditor : lyricsEditor, card ? "editor_card" : "editor_lyrics", extra));
+        }
+        // Synonym groups: each language's own words, from its strings file.
+        List<List<String>> concepts = new ArrayList<>();
+        for (String id : com.eza.spicyex.settings.SettingsSearch.CONCEPT_IDS) {
+            concepts.add(com.eza.spicyex.settings.SettingsSearch.mergeTerms(
+                    uiStrings.inEveryLanguage("search_terms_" + id)));
+        }
+        searchIndex = new com.eza.spicyex.settings.SettingsSearch(entries, concepts);
+        return searchIndex;
+    }
+
+    /** A name as shown, then as every shipped language has it, then the English built-in. */
+    private List<String> names(String shown, String resource, String builtIn) {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        out.add(shown);
+        out.addAll(uiStrings.inEveryLanguage(resource));
+        if (builtIn != null) out.add(builtIn);
+        return new ArrayList<>(out);
+    }
+
+    private String searchTitle(Settings.Setting<?> setting) {
+        if (setting == Settings.LYRICS_SOURCE_MODE) {
+            return uiStrings.get("settings_source_list_title", "Sources");
+        }
+        return uiStrings.setting(setting);
+    }
+
+    private List<String> sectionKeywords(Settings.Section section) {
+        List<String> extra = new ArrayList<>();
+        extra.add(section.id.replace('_', ' '));
+        if (section == Settings.LYRICS_SOURCES) {
+            extra.add("Apple Music Musixmatch LRCLIB NetEase QQ Music Spotify cache");
+            extra.add(uiStrings.get("settings_cache_title", "Stored lyrics"));
+        }
+        return extra;
+    }
+
+    /** The words that describe a setting besides its name: key, section, option labels. */
+    private List<String> settingKeywords(Settings.Setting<?> setting, Settings.Section section) {
+        List<String> extra = new ArrayList<>();
+        extra.add(setting.key.replace('_', ' '));
+        if (section != null) extra.add(section.label);
+        // Words written for search, in every language that has them.
+        extra.addAll(uiStrings.inEveryLanguage("settings_search_" + setting.key));
+        if (setting instanceof Settings.StringSetting && setting.allowedValues != null) {
+            for (Object value : setting.allowedValues) {
+                String raw = String.valueOf(value);
+                extra.add(raw);
+                extra.add(uiStrings.option((Settings.StringSetting) setting, raw));
+            }
+        }
+        if (setting == Settings.LYRICS_SOURCE_MODE) {
+            extra.add("Apple Music Musixmatch LRCLIB NetEase QQ Music Spotify smart order ranking");
+            extra.add(uiStrings.section(Settings.LYRICS_SOURCES));
+        }
+        if (setting == Settings.CACHE_SIZE) {
+            extra.add(uiStrings.get("settings_cache_title", "Stored lyrics"));
+            extra.add(uiStrings.get("settings_cache_clear", "Clear"));
+        }
+        return extra;
+    }
+
+    private void renderSearchResults(String query) {
+        searchResults.removeAllViews();
+        List<com.eza.spicyex.settings.SettingsSearch.Result> results = searchIndex().search(query, 12, 4);
+        if (results.isEmpty()) {
+            TextView empty = style.text(uiStrings.get("settings_search_empty", "No matching settings"), 14,
+                    PanelStyle.COL_SUMMARY, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(0, style.dp(32), 0, style.dp(32));
+            searchResults.addView(empty);
+            return;
+        }
+        boolean relatedShown = false;
+        for (com.eza.spicyex.settings.SettingsSearch.Result result : results) {
+            if (result.related && !relatedShown) {
+                relatedShown = true;
+                TextView caption = style.text(uiStrings.get("settings_search_related", "Related"), 13,
+                        PanelStyle.COL_SECTION, true);
+                caption.setPadding(style.dp(6), style.dp(14), 0, style.dp(4));
+                searchResults.addView(caption);
+            }
+            searchResults.addView(searchResultRow(result.entry));
+        }
+    }
+
+    private View searchResultRow(final com.eza.spicyex.settings.SettingsSearch.Entry entry) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(style.dp(56));
+        row.setPadding(style.dp(8), style.dp(8), style.dp(6), style.dp(8));
+        android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();
+        shape.setCornerRadius(style.dp(14));
+        shape.setColor(0x00000000);
+        row.setBackground(new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x22FFFFFF), shape, shape));
+
+        Kind icon = entry.target instanceof Settings.Section
+                ? PanelStyle.sectionIcon((Settings.Section) entry.target)
+                : entry.target instanceof EditorTarget ? Kind.EDIT
+                : entry.target instanceof Settings.Setting
+                ? PanelStyle.sectionIcon(((Settings.Setting<?>) entry.target).section) : null;
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(style.dp(20), style.dp(20));
+        iconLp.rightMargin = style.dp(14);
+        row.addView(style.kindView(icon == null ? Kind.SETTINGS : icon, PanelStyle.COL_SECTION, 18), iconLp);
+
+        LinearLayout texts = new LinearLayout(context);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView title = style.text(entry.title, 15, PanelStyle.COL_TITLE, true);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        texts.addView(title);
+        String detail = entry.place;
+        if (entry.target instanceof Settings.StringSetting) {
+            Settings.StringSetting setting = (Settings.StringSetting) entry.target;
+            String value = selectorSummary(setting, store.get(setting));
+            if (value != null && !value.isEmpty()) detail = detail.isEmpty() ? value : detail + " \u00b7 " + value;
+        }
+        if (!detail.isEmpty()) {
+            TextView sub = style.text(detail, 12, PanelStyle.COL_SUMMARY, false);
+            sub.setSingleLine(true);
+            sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            texts.addView(sub);
+        }
+        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 16),
+                new LinearLayout.LayoutParams(style.dp(24), style.dp(24)));
+        row.setOnClickListener(v -> openSearchResult(entry));
+        return row;
+    }
+
+    private void openSearchResult(com.eza.spicyex.settings.SettingsSearch.Entry entry) {
+        hideKeyboard();
+        Object target = entry.target;
+        searchField.setText("");
+        if (target instanceof EditorTarget) {
+            com.eza.spicyex.hooks.LayoutEditorSettings.openOn(((EditorTarget) target).setting);
+            openEditor(((EditorTarget) target).mode);
+        } else if (target instanceof Settings.Section) {
+            Settings.Section section = (Settings.Section) target;
+            if (isEditorSection(section)) openEditorFor(section); else navigate(section);
+        } else if (target instanceof Settings.Setting) {
+            final Settings.Setting<?> setting = (Settings.Setting<?>) target;
+            navigate(setting.section);
+            sectionsContainer.postDelayed(() -> revealRow(setting), 240);
+        }
+    }
+
+    /** Scrolls a row of the open page into view and marks it with a brief highlight. */
+    private void revealRow(Settings.Setting<?> setting) {
+        if (sectionsContainer == null || scrollRoot == null) return;
+        View cardView = findChildByTag(sectionsContainer, PanelTags.card(setting.section));
+        if (!(cardView instanceof LinearLayout)) return;
+        View row = findRowIn((LinearLayout) cardView, setting.key);
+        if (row == null) return;
+        int y = 0;
+        for (View v = row; v != null && v != scrollRoot; v = v.getParent() instanceof View ? (View) v.getParent() : null) {
+            y += v.getTop();
+        }
+        scrollRoot.smoothScrollTo(0, Math.max(0, y - style.dp(96)));
+        final android.graphics.drawable.GradientDrawable mark = new android.graphics.drawable.GradientDrawable();
+        mark.setCornerRadius(style.dp(12));
+        mark.setColor(PanelStyle.COL_ACCENT);
+        mark.setAlpha(0);
+        row.setForeground(mark);
+        android.animation.ValueAnimator pulse = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        pulse.setDuration(1600);
+        pulse.addUpdateListener(a -> {
+            float p = (float) a.getAnimatedValue();
+            // In quickly, hold, then out slowly.
+            float level = p < 0.15f ? p / 0.15f : p < 0.45f ? 1f : 1f - (p - 0.45f) / 0.55f;
+            mark.setAlpha(Math.round(56 * level));
+        });
+        pulse.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(android.animation.Animator animation) {
+                row.setForeground(null);
+            }
+        });
+        pulse.start();
     }
 
     private void renderHeader(LinearLayout content) {
@@ -213,12 +549,76 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     private void renderSections(LinearLayout content) {
         if (aiAvailable()) aiRows().ensureInitialModelCheck();
-        for (Map.Entry<Settings.Section, List<Settings.Setting<?>>> entry
-                : groupVisibleSettings().entrySet()) {
-            renderSectionGroup(content, entry.getKey(), entry.getValue());
+        LinkedHashMap<Settings.Section, List<Settings.Setting<?>>> grouped = groupVisibleSettings();
+        Settings.Section open = openSectionOf(grouped);
+        if (open == null) {
+            // The list: one tile per section, what is inside it written underneath.
+            openSection = null;
+            for (Settings.Section section : grouped.keySet()) {
+                appendSectionHeader(content, section, false, -1);
+            }
+            appendSectionHeader(content, Settings.DEBUG, false, -1);
+            return;
         }
-        appendSectionHeader(content, Settings.DEBUG, expandedSections.contains(Settings.DEBUG.id), -1);
-        if (expandedSections.contains(Settings.DEBUG.id)) appendDebugCard(content, -1);
+        // One section's page: a back bar with its name, then its rows.
+        appendSectionHeader(content, open, true, -1);
+        if (open == Settings.DEBUG) {
+            appendDebugCard(content, -1);
+        } else {
+            List<Settings.Setting<?>> items = grouped.get(open);
+            appendSectionCard(content, open, items == null ? new ArrayList<>() : items, -1);
+        }
+    }
+
+    private Settings.Section openSectionOf(Map<Settings.Section, List<Settings.Setting<?>>> grouped) {
+        if (openSection == null) return null;
+        if (Settings.DEBUG.id.equals(openSection)) return Settings.DEBUG;
+        for (Settings.Section section : grouped.keySet()) {
+            if (section.id.equals(openSection) && !isEditorSection(section)) return section;
+        }
+        return null;
+    }
+
+    private boolean isOpen(Settings.Section section) {
+        return openSection != null && openSection.equals(section.id);
+    }
+
+    /** Into a section's page (or back to the list with null), sliding the way it goes. */
+    private void navigate(Settings.Section section) {
+        if (sectionsContainer == null) return;
+        boolean forward = section != null;
+        openSection = section == null ? null : section.id;
+        aiBadgeView = null;
+        sectionsContainer.animate().cancel();
+        sectionsContainer.removeAllViews();
+        renderSections(sectionsContainer);
+        if (searchBar != null) searchBar.setVisibility(section == null ? View.VISIBLE : View.GONE);
+        // What is visible may change on a page; the next search reindexes.
+        if (section != null) searchIndex = null;
+        if (scrollRoot != null) scrollRoot.scrollTo(0, 0);
+        sectionsContainer.setTranslationX(style.dp(forward ? 32 : -32));
+        sectionsContainer.setAlpha(0f);
+        sectionsContainer.animate().translationX(0f).alpha(1f).setDuration(220)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
+    }
+
+    /** Back from a section's page returns to the list; on the list the host closes the panel. */
+    public boolean handleBack() {
+        // A search in progress is the first thing back undoes.
+        if (searchField != null && searchField.getText().length() > 0) {
+            searchField.setText("");
+            return true;
+        }
+        if (openSection == null) return false;
+        navigate(null);
+        return true;
+    }
+
+    /** Closes this dialog (its usual animated exit), then hands off to the shell: the layout
+     *  editor is an overlay on the real lyrics screen, not a separate window. */
+    private void openEditor(int mode) {
+        if (onClose != null) onClose.run();
+        if (onOpenLayoutEditor != null) onOpenLayoutEditor.accept(mode);
     }
 
     private LinkedHashMap<Settings.Section, List<Settings.Setting<?>>> groupVisibleSettings() {
@@ -235,6 +635,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                     grouped.put(section, items);
                 }
                 items.add(setting);
+            }
+            // The editor sections have no rows of their own: they are buttons into the editors.
+            if (isEditorSection(section) && !grouped.containsKey(section)) {
+                grouped.put(section, new ArrayList<>());
             }
         }
         return grouped;
@@ -263,17 +667,9 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         snapshot.put(Settings.LINE_SPACING, store.get(Settings.LINE_SPACING));
         snapshot.put(Settings.LIVE_CARD_TEXT_SIZE, store.get(Settings.LIVE_CARD_TEXT_SIZE));
         snapshot.put(Settings.TRACK_INFO_TEXT_SIZE, store.get(Settings.TRACK_INFO_TEXT_SIZE));
+        snapshot.put(Settings.DOUBLE_TAP_LIKE, store.get(Settings.DOUBLE_TAP_LIKE));
+        snapshot.put(Settings.TAP_SEEK_MODE, store.get(Settings.TAP_SEEK_MODE));
         return snapshot.build();
-    }
-
-    private void renderSectionGroup(LinearLayout content, Settings.Section section,
-                                    List<Settings.Setting<?>> items) {
-        boolean expanded = expandedSections.contains(section.id);
-        appendSectionHeader(content, section, expanded, -1);
-        if (!expanded) return;
-        // The AI section's remaining rows are not settings: a key that must not persist as it
-        // is typed, and a model list that has to be fetched before it can be offered.
-        appendSectionCard(content, section, items, -1);
     }
 
     /** Card for a settings section; AI gets its non-setting rows appended after the settings. */
@@ -293,6 +689,18 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                     LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
         style.attachCard(parent, card, at);
+    }
+
+    /**
+     * The sections whose look is edited on the screen itself: in the panel they are single
+     * buttons that open their editor straight away, not sections to expand.
+     */
+    private static boolean isEditorSection(Settings.Section section) {
+        return section == Settings.LYRICS_SCREEN || section == Settings.NOW_PLAYING;
+    }
+
+    private void openEditorFor(Settings.Section section) {
+        openEditor(section == Settings.NOW_PLAYING ? EDITOR_CARD : EDITOR_LYRICS);
     }
 
     private void appendDebugCard(LinearLayout parent, int at) {
@@ -365,7 +773,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     private void renderSetting(LinearLayout content, Settings.Setting<?> setting) {
         if (setting == Settings.LYRICS_SOURCE_MODE) {
-            sources.mergedRow(content);
+            sources.inlineBlock(content);
             return;
         }
         if (setting == Settings.LYRICS_SOURCE_OVERRIDE
@@ -374,6 +782,23 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         }
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             spicyTokenRow(content);
+            return;
+        }
+        if (setting == Settings.CACHE_SIZE) {
+            // The limit row with the stored-lyrics block under it, one keyed unit: patchRow
+            // still finds the limit's summary inside, and the block refreshes itself.
+            LinearLayout unit = new LinearLayout(context);
+            unit.setOrientation(LinearLayout.VERTICAL);
+            rows.selectorRow(unit, Settings.CACHE_SIZE);
+            if (unit.getChildCount() > 0) unit.getChildAt(0).setTag(null);
+            cache.block(unit);
+            unit.setTag(PanelTags.row(Settings.CACHE_SIZE));
+            content.addView(unit, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            return;
+        }
+        if (setting == Settings.LYRICS_FONT_CUSTOM_PATH) {
+            lyricsFontPathRow(content);
             return;
         }
         if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) {
@@ -431,8 +856,11 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
             rebuildSections();
             return;
         }
+        // On a section's page only that section is on screen; a change elsewhere shows when its
+        // page is opened.
+        if (openSection != null && !isOpen(target)) return;
         captureAnchor();
-        boolean expanded = expandedSections.contains(target.id);
+        boolean expanded = isOpen(target);
         if (!expanded && PanelTags.card(target).equals(anchorTag)) {
             retargetAnchorToHeader(target);
         }
@@ -456,19 +884,20 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     /** Keyed card sync: stale rows out, the rest reused by ID and patched, missing rows built. */
     private void rebindCard(Settings.Section target, int headerIdx) {
         List<Settings.Setting<?>> items = groupVisibleSettings().get(target);
-        if (items == null || items.isEmpty()) {
+        if (items == null) items = new ArrayList<>();
+        if (items.isEmpty()) {
             rebuildSections(); // defensive: rendered section without visible settings
             return;
         }
         int cardIdx = indexOfChildByTag(PanelTags.card(target));
-        LinearLayout card;
         if (cardIdx < 0 || !(sectionsContainer.getChildAt(cardIdx) instanceof LinearLayout)) {
-            card = style.newCard();
-            card.setTag(PanelTags.card(target));
-            style.attachCard(sectionsContainer, card, headerIdx + 1);
-        } else {
-            card = (LinearLayout) sectionsContainer.getChildAt(cardIdx);
+            // A section just expanded: its card is built whole, by the same code as a full
+            // render, rather than row by row here - which left out everything in a card that is
+            // not a setting row until the panel was reopened.
+            appendSectionCard(sectionsContainer, target, items, headerIdx + 1);
+            return;
         }
+        LinearLayout card = (LinearLayout) sectionsContainer.getChildAt(cardIdx);
         PanelSnapshot snapshot = captureSnapshot();
         Map<String, Settings.Setting<?>> byKey = new java.util.HashMap<>();
         List<String> visibleKeys = new ArrayList<>();
@@ -555,6 +984,11 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     @Override public void onSettingChanged(Settings.Setting<?> setting) {
+        // Double tap is one gesture: turning either use on turns the other off.
+        if (setting == Settings.DOUBLE_TAP_LIKE && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))
+                && "Double tap".equals(store.get(Settings.TAP_SEEK_MODE))) {
+            writer.put(Settings.TAP_SEEK_MODE, "Off");
+        }
         if (setting == Settings.LYRICS_SOURCE_MODE) {
             com.eza.spicyex.lyrics.session.LyricsSourcePreferences.setRankingMode(context,
                     com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode.parse(
@@ -565,9 +999,6 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         } else if (setting == Settings.ANIMATION_STYLE) {
             // The Apple Music card appears/disappears with this pick (a cross-section change),
             // so the whole panel rebuilds anchor-preserved instead of one section in place.
-            if ("Apple Music".equals(String.valueOf(store.get(setting)))) {
-                expandedSections.add(Settings.APPLE.id);
-            }
             rebuildSections();
         } else if (PanelPolicy.shouldRebuildSectionAfterChange(setting)) {
             rebuildSection(setting.section);
@@ -586,37 +1017,132 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     /** Section headers --- */
 
     private LinearLayout buildSectionHeader(Settings.Section section, boolean expanded) {
+        return expanded ? buildPageBar(section) : buildSectionTile(section);
+    }
+
+    /**
+     * A section in the list: its icon on a tinted square, its name in plain case, and a line
+     * saying what is inside - the first few of its settings, or where the button goes.
+     */
+    private LinearLayout buildSectionTile(Settings.Section section) {
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setMinimumHeight(style.dp(44));
-        row.setPadding(style.dp(4), style.dp(8), style.dp(4), style.dp(8));
+        row.setMinimumHeight(style.dp(64));
+        row.setPadding(style.dp(12), style.dp(10), style.dp(10), style.dp(10));
+        android.graphics.drawable.GradientDrawable tile = new android.graphics.drawable.GradientDrawable();
+        tile.setCornerRadius(style.dp(16));
+        tile.setColor(0x10FFFFFF);
         row.setBackground(new android.graphics.drawable.RippleDrawable(
-                android.content.res.ColorStateList.valueOf(0x22FFFFFF), null,
-                new android.graphics.drawable.ColorDrawable(0xFFFFFFFF)));
+                android.content.res.ColorStateList.valueOf(0x22FFFFFF), tile, null));
         row.setTag(PanelTags.header(section));
 
+        boolean aiLit = section == Settings.AI && aiReady();
+        Kind sectionIcon = PanelStyle.sectionIcon(section);
+        android.widget.FrameLayout badge = new android.widget.FrameLayout(context);
+        android.graphics.drawable.GradientDrawable badgeBg = new android.graphics.drawable.GradientDrawable();
+        badgeBg.setCornerRadius(style.dp(11));
+        badgeBg.setColor(isEditorSection(section) || aiLit ? 0x331ED760 : 0x1AFFFFFF);
+        badge.setBackground(badgeBg);
+        if (sectionIcon != null) {
+            ImageView icon = style.kindView(sectionIcon,
+                    isEditorSection(section) || aiLit ? PanelStyle.COL_ACCENT : PanelStyle.COL_TITLE, 20);
+            if (section == Settings.AI) aiBadgeView = icon;
+            badge.addView(icon, new android.widget.FrameLayout.LayoutParams(
+                    style.dp(24), style.dp(24), Gravity.CENTER));
+        }
+        LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(style.dp(40), style.dp(40));
+        badgeLp.rightMargin = style.dp(14);
+        row.addView(badge, badgeLp);
+
+        LinearLayout texts = new LinearLayout(context);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.addView(style.text(uiStrings.section(section), 16, PanelStyle.COL_TITLE, true));
+        String summary = tileSummary(section);
+        if (section == Settings.LYRICS_SOURCES) {
+            LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            subLp.topMargin = style.dp(4);
+            texts.addView(sources.tileLine(), subLp);
+        } else if (!summary.isEmpty()) {
+            TextView sub = style.text(summary, 13, PanelStyle.COL_SUMMARY, false);
+            sub.setSingleLine(true);
+            sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            subLp.topMargin = style.dp(2);
+            texts.addView(sub, subLp);
+        }
+        row.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        if (isEditorSection(section)) {
+            // A button into the editor: one tap opens it, there is no page.
+            row.addView(style.kindView(Kind.CHEVRONS_RIGHT, PanelStyle.COL_ACCENT, 16),
+                    new LinearLayout.LayoutParams(style.dp(28), style.dp(28)));
+            row.setOnClickListener(v -> openEditorFor(section));
+        } else {
+            row.addView(style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 16),
+                    new LinearLayout.LayoutParams(style.dp(28), style.dp(28)));
+            row.setOnClickListener(v -> navigate(section));
+        }
+        return row;
+    }
+
+    /** What a tile says is inside: where an editor button goes, else its first few settings. */
+    private String tileSummary(Settings.Section section) {
+        if (section == Settings.LYRICS_SCREEN) return uiStrings.get("settings_layout_editor", "Layout editor…");
+        if (section == Settings.NOW_PLAYING) return uiStrings.get("settings_card_editor", "Now playing card editor…");
+        if (section == Settings.DEBUG) {
+            return uiStrings.get("settings_tile_debug", "Version, cache and diagnostics");
+        }
+        List<Settings.Setting<?>> items = groupVisibleSettings().get(section);
+        if (items == null || items.isEmpty()) return "";
+        StringBuilder out = new StringBuilder();
+        int shown = 0;
+        for (Settings.Setting<?> setting : items) {
+            if (setting == Settings.LYRICS_SOURCE_OVERRIDE || setting == Settings.LYRICS_SOURCE_ORDER) continue;
+            if (shown == 3) {
+                out.append(" \u00b7 \u2026");
+                break;
+            }
+            if (shown > 0) out.append(" \u00b7 ");
+            out.append(uiStrings.setting(setting));
+            shown++;
+        }
+        return out.toString();
+    }
+
+    /** A section's page: back to the list, and its name large. */
+    private LinearLayout buildPageBar(Settings.Section section) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(style.dp(48));
+        row.setPadding(0, style.dp(2), style.dp(4), style.dp(8));
+        row.setTag(PanelTags.header(section));
+        ImageView back = style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_TITLE, 20);
+        back.setRotation(180f);
+        back.setContentDescription(uiStrings.get("settings_back", "Back"));
+        back.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        android.graphics.drawable.GradientDrawable backBg = new android.graphics.drawable.GradientDrawable();
+        backBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        backBg.setColor(0x1AFFFFFF);
+        back.setBackground(backBg);
+        back.setOnClickListener(v -> navigate(null));
+        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(style.dp(36), style.dp(36));
+        backLp.rightMargin = style.dp(12);
+        row.addView(back, backLp);
         Kind sectionIcon = PanelStyle.sectionIcon(section);
         if (sectionIcon != null) {
-            ImageView sectionIconView = style.kindView(sectionIcon,
+            ImageView icon = style.kindView(sectionIcon,
                     section == Settings.AI && aiReady() ? PanelStyle.COL_ACCENT : PanelStyle.COL_SECTION, 18);
-            if (section == Settings.AI) aiBadgeView = sectionIconView;
-            row.addView(sectionIconView, style.leadParams());
+            if (section == Settings.AI) aiBadgeView = icon;
+            LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(style.dp(22), style.dp(22));
+            iconLp.rightMargin = style.dp(8);
+            row.addView(icon, iconLp);
         }
-
-        TextView title = style.text(uiStrings.section(section), 14, PanelStyle.COL_TITLE, true);
-        title.setAllCaps(true);
-        title.setLetterSpacing(0.05f);
-        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        row.addView(style.kindView(expanded ? Kind.CHEVRON_DOWN : Kind.CHEVRON_RIGHT,
-                        PanelStyle.COL_SECTION, 16),
-                new LinearLayout.LayoutParams(style.dp(28), style.dp(28)));
-        row.setOnClickListener(v -> {
-            boolean nowExpanded = !expandedSections.contains(section.id);
-            if (nowExpanded) expandedSections.add(section.id);
-            else expandedSections.remove(section.id);
-            rebuildSection(section);
-        });
+        row.addView(style.text(uiStrings.section(section), 20, PanelStyle.COL_TITLE, true),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         return row;
     }
 
@@ -625,7 +1151,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         View row = buildSectionHeader(section, expanded);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = style.dp(4);
+        lp.topMargin = style.dp(expanded ? 0 : 8);
         if (at < 0 || at >= parent.getChildCount()) parent.addView(row, lp);
         else parent.addView(row, at, lp);
     }
@@ -757,29 +1283,76 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                 new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
     }
 
+    private void lyricsFontPathRow(LinearLayout content) {
+        String path = store.get(Settings.LYRICS_FONT_CUSTOM_PATH);
+        String display = path == null || path.isEmpty()
+                ? uiStrings.get("settings_lyrics_font_path_absent", "Not set") : path;
+        List<AiSettingsRows.IconAction> actions = new ArrayList<>();
+        actions.add(new AiSettingsRows.IconAction(Kind.EDIT,
+                uiStrings.get("settings_lyrics_font_path_edit", "Edit font path"),
+                v -> dialogs.promptLyricsFontPath()));
+        rows.aiFieldRow(content, uiStrings.setting(Settings.LYRICS_FONT_CUSTOM_PATH),
+                display, false, Settings.LYRICS_FONT_CUSTOM_PATH.key,
+                v -> dialogs.promptLyricsFontPath(),
+                actions.toArray(new AiSettingsRows.IconAction[0]));
+        String coverage = fontCoverageSummaryForPanel(path);
+        if (!coverage.isEmpty()) {
+            TextView cov = style.text(coverage, 12, PanelStyle.COL_SUMMARY, false);
+            cov.setPadding(style.dp(52), 0, style.dp(16), style.dp(12));
+            content.addView(cov, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        }
+    }
+
+    private String fontCoverageSummaryForPanel(String path) {
+        if (path == null || path.isEmpty()) return "";
+        android.graphics.Typeface typeface = null;
+        java.io.File file = new java.io.File(path);
+        if (file.isFile()) {
+            try {
+                typeface = android.graphics.Typeface.createFromFile(file);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (typeface == null) typeface = android.graphics.Typeface.create(path, android.graphics.Typeface.NORMAL);
+        java.util.List<String> missing = com.eza.spicyex.lyrics.LyricsFontValidator.missingScripts(typeface);
+        return missing.isEmpty()
+                ? uiStrings.get("settings_lyrics_font_check_all_covered", "Covers every supported language")
+                : uiStrings.get("settings_lyrics_font_check_missing", "Falls back for") + ": "
+                        + String.join(", ", missing);
+    }
+
     // --- Diagnostics card ---
 
     private void renderActions(LinearLayout content) {
         rows.actionRow(content, Kind.BUG,
                 DiagnosticReportingDialog.reportProblemLabel(context, store),
                 v -> DiagnosticReportingDialog.show(context, store));
-        clearAction(content, "settings_action_clear_translation_cache",
-                "Clear translation cache", CacheClearKind.TRANSLATION);
-        clearAction(content, "settings_action_clear_reading_cache",
-                "Clear transliteration cache", CacheClearKind.TRANSLITERATION);
-        clearAction(content, "settings_action_clear_ai_cache",
-                "Clear AI results", CacheClearKind.AI);
-        clearAction(content, "settings_action_clear_lyrics_cache",
-                "Clear lyrics response cache", CacheClearKind.LYRICS_RESPONSE);
+        rows.actionRow(content, null,
+                uiStrings.get("settings_action_resync_timing", "Reset lyrics sync"),
+                v -> {
+                    writer.put(Settings.SYNC_OFFSET_MS, 0);
+                    if (onResyncTiming != null) onResyncTiming.run();
+                    android.widget.Toast.makeText(context,
+                            uiStrings.get("settings_resync_timing_done", "Lyrics sync reset"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
+        rows.actionRow(content, null,
+                uiStrings.get("settings_action_ad_music_test", "Play / stop ad replacement music"),
+                v -> {
+                    boolean playing = com.eza.spicyex.hooks.AdMusicPreview.toggle(
+                            store.get(Settings.AD_MUSIC_THEME));
+                    android.widget.Toast.makeText(context, uiStrings.get(playing
+                                    ? "settings_ad_music_test_playing" : "settings_ad_music_test_stopped",
+                            playing ? "Playing a new piece" : "Stopped"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
+        // Cache clears live with the cache itself, on the Lyrics sources page (CacheManager).
         rows.actionRow(content, Kind.EXTERNAL_LINK,
                 uiStrings.get("settings_action_open_github", "Open GitHub"), v -> openGithub());
     }
 
-    private void clearAction(LinearLayout content, String key, String fallback, CacheClearKind kind) {
-        rows.actionRow(content, null, uiStrings.get(key, fallback), v -> clearCache(kind));
-    }
-
-    private void clearCache(CacheClearKind kind) {
+    @Override public void clearCache(CacheClearKind kind) {
         if (onClearCache == null) return;
         onClearCache.accept(kind);
         // Cache clears update preference memory (and the AI database) before returning. Rebuild
@@ -904,6 +1477,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         return PanelPolicy.unavailable(setting, captureSnapshot());
     }
 
+    @Override public String cacheLimitLabel() {
+        return uiStrings.option(Settings.CACHE_SIZE, store.get(Settings.CACHE_SIZE));
+    }
+
     @Override public String cacheSizeSummary() {
         String label = uiStrings.option(Settings.CACHE_SIZE, store.get(Settings.CACHE_SIZE));
         return SettingLabels.cacheUsageSummary(panelStrings, label,
@@ -942,6 +1519,11 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     /** Writes the value and applies immediate side effects (the UI-language swap). */
     @Override public void onOptionChosen(Settings.StringSetting setting, String value) {
         writer.put(setting, value);
+        // Seeking on double tap takes the gesture back from double-tap to like.
+        if (setting == Settings.TAP_SEEK_MODE && "Double tap".equals(value)
+                && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            writer.put(Settings.DOUBLE_TAP_LIKE, false);
+        }
         if (setting == Settings.UI_LANGUAGE) {
             uiStrings = UiLanguage.strings(context, value);
             if (panelTitle != null) panelTitle.setText(uiStrings.appName());
@@ -953,7 +1535,32 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     }
 
     @Override public String rowSummaryFor(Settings.StringSetting setting, String value) {
-        return setting == Settings.CACHE_SIZE ? cacheSizeSummary() : labelFor(setting, value);
+        return setting == Settings.CACHE_SIZE ? cacheSizeSummary() : selectorSummary(setting, value);
+    }
+
+    /** The shared double tap: warns on the like switch what turning it on turns off. Karaoke
+     *  lyrics are Labs: they are the original recording's, timed to it, not to the karaoke one. */
+    @Override public String switchNote(Settings.BooleanSetting setting) {
+        if (setting == Settings.KARAOKE_ORIGINAL_LYRICS) {
+            return uiStrings.get("settings_karaoke_labs_note",
+                    "Labs \u00b7 these are the original song's lyrics, so they may not stay in sync "
+                            + "with the karaoke recording.");
+        }
+        if (setting == Settings.DOUBLE_TAP_LIKE && "Double tap".equals(store.get(Settings.TAP_SEEK_MODE))
+                && !Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            return uiStrings.get("settings_double_tap_like_note",
+                    "Double tap already seeks to a line. Turning this on turns that off.");
+        }
+        return null;
+    }
+
+    /** Tap-to-seek on double tap does nothing while double tap likes; the row says so. */
+    @Override public String selectorSummary(Settings.StringSetting setting, String value) {
+        if (setting == Settings.TAP_SEEK_MODE && "Double tap".equals(value)
+                && Boolean.TRUE.equals(store.get(Settings.DOUBLE_TAP_LIKE))) {
+            return uiStrings.get("settings_tap_seek_taken_by_like", "Off \u00b7 double tap likes");
+        }
+        return labelFor(setting, value);
     }
 
     @Override public PanelStrings panelStrings() {

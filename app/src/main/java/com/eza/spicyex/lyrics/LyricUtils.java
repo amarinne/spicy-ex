@@ -38,4 +38,17 @@ public final class LyricUtils {
         if (parts.length >= 3 && "track".equals(parts[1])) return parts[2];
         return "";
     }
+
+    /**
+     * Convert a "spotify:type:id" URI into the same open.spotify.com web link Spotify's own
+     * share sheet ("Copy link" / "Share Using...") hands out for that content, e.g.
+     * "spotify:track:ID" -> "https://open.spotify.com/track/ID". Returns "" if not a bare
+     * "spotify:type:id" URI (local files, ads, etc.).
+     */
+    public static String spotifyUriToWebUrl(String uri) {
+        if (uri == null) return "";
+        String[] parts = uri.split(":");
+        if (parts.length < 3 || isBlank(parts[1]) || isBlank(parts[2])) return "";
+        return "https://open.spotify.com/" + parts[1] + "/" + parts[2];
+    }
 }

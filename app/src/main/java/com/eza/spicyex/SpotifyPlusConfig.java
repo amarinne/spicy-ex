@@ -2,6 +2,7 @@ package com.eza.spicyex;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 
 /**
  * Owns hook/runtime reads from the host-process "SpotifyPlus" preferences.
@@ -25,15 +26,21 @@ public final class SpotifyPlusConfig {
     public static final String JP_READING_ROMAJI_ONLY = "romaji_only";
 
     private final SharedPreferences hostPrefs;
+    private final Context appContext;
 
-    private SpotifyPlusConfig(SharedPreferences hostPrefs) {
+    private SpotifyPlusConfig(SharedPreferences hostPrefs, Context appContext) {
         this.hostPrefs = hostPrefs;
+        this.appContext = appContext;
         SettingsStore.migrateLikedSongsButton(hostPrefs);
         SettingsStore.migrateLineBlurLevel(hostPrefs);
+        SettingsStore.migrateSourceRankingLabel(hostPrefs);
+        SettingsStore.migrateAdMode(hostPrefs);
     }
 
     public static SpotifyPlusConfig from(Context context) {
-        return new SpotifyPlusConfig(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE));
+        Context ctx = context.getApplicationContext();
+        if (ctx == null) ctx = context;
+        return new SpotifyPlusConfig(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE), ctx);
     }
 
     // Single source of truth: the "SpotifyPlus" prefs in THIS process. In the hook that's Spotify's
@@ -42,20 +49,26 @@ public final class SpotifyPlusConfig {
 
     public <T> T get(Settings.Setting<T> setting) {
         try {
-            Object value;
-            if (setting instanceof Settings.BooleanSetting) {
-                value = hostPrefs.getBoolean(setting.key, (Boolean) setting.defaultValue);
-            } else if (setting instanceof Settings.IntegerSetting) {
-                value = hostPrefs.getInt(setting.key, (Integer) setting.defaultValue);
-            } else {
-                value = hostPrefs.getString(setting.key, (String) setting.defaultValue);
-            }
+            String landscapeKey = Settings.landscapeKey(appContext, setting);
+            String key = landscapeKey != null && hostPrefs.contains(landscapeKey)
+                    ? landscapeKey : setting.key;
+            Object value = readRaw(key, setting);
             if (value == null) value = setting.defaultValue;
             return setting.coerce(value);
         } catch (ClassCastException | IllegalArgumentException invalidStoredValue) {
             // A preference may survive a schema type change. Ignore the invalid value and use
             // the declared default; runtime settings must never crash Spotify during startup.
             return setting.defaultValue;
+        }
+    }
+
+    private Object readRaw(String key, Settings.Setting<?> setting) {
+        if (setting instanceof Settings.BooleanSetting) {
+            return hostPrefs.getBoolean(key, (Boolean) setting.defaultValue);
+        } else if (setting instanceof Settings.IntegerSetting) {
+            return hostPrefs.getInt(key, (Integer) setting.defaultValue);
+        } else {
+            return hostPrefs.getString(key, (String) setting.defaultValue);
         }
     }
 
