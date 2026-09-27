@@ -191,17 +191,32 @@ public class CatalogPickerModelTest {
     }
 
     @Test
-    public void spotifyUncheckedUsesLocalLyrics() {
+    public void spotifyUncheckedOffersExplicitCheck() {
         List<Row> rows = CatalogPickerModel.build(Collections.<CatalogCandidate>emptyList(),
                 Collections.<SourceId, ProviderStatus>emptyMap(), null, null);
 
         Row spotify = sourceRow(rows, SourceId.SPOTIFY_NATIVE);
         assertTrue(spotify != null);
         assertEquals("Spotify", spotify.title);
-        assertEquals("Use Spotify's lyrics", spotify.subtitle);
+        assertEquals("Tap to check", spotify.subtitle);
         assertTrue(!spotify.stored);
         assertTrue(spotify.checkable);
         assertEquals(CatalogPickerModel.DataMark.NONE, spotify.mark);
+    }
+
+    @Test
+    public void spotifyFailureAndEnabledCheckOrderAreVisible() {
+        Map<SourceId, ProviderStatus> states = new HashMap<>();
+        states.put(SourceId.SPOTIFY_NATIVE, ProviderStatus.TRANSIENT_ERROR);
+        CatalogPolicy policy = new CatalogPolicy(java.util.Arrays.asList(
+                SourceId.SPOTIFY_NATIVE, SourceId.LRCLIB), false);
+        List<Row> rows = CatalogPickerModel.build(Collections.<CatalogCandidate>emptyList(),
+                states, null, null, policy);
+
+        Row spotify = sourceRow(rows, SourceId.SPOTIFY_NATIVE);
+        assertEquals("Failed · tap to retry", spotify.subtitle);
+        assertEquals(CatalogPickerModel.DataMark.EMPTY, spotify.mark);
+        assertEquals("Check all: Spotify, LRCLIB", rows.get(7).subtitle);
     }
 
     @Test

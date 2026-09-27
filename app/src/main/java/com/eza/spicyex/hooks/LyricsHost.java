@@ -26,6 +26,11 @@ public interface LyricsHost {
 
     boolean seekSpotifyTo(long positionMs);
 
+    /** Whether a seek would currently be honored (ACTION_SEEK_TO advertised right now) - lets
+     *  callers hide/disable seek affordances proactively instead of finding out after a silent
+     *  rejection. See PlaybackBridge#canSeek. */
+    boolean canSeek();
+
     /** Play/pause toggle and track skips via the captured MediaSession transport.
      * False when no session is captured (callers degrade to no-op visuals). */
     boolean togglePlayPause();
@@ -76,6 +81,18 @@ public interface LyricsHost {
     /** Rows for the current track's picker, loaded off the caller thread. */
     void loadCatalogPickerRows(CatalogPickerRowsCallback callback);
 
+    /**
+     * Track the session's catalog commands act on; empty when none. Read on the main thread, where
+     * the session adopts tracks, so a match here holds for a command issued in the same frame.
+     */
+    String catalogTrackUri();
+
+    /** True while the session's own acquisition fetch is running for the current track. */
+    boolean catalogFetchInFlight();
+
+    /** Keeps session ticks coming while a surface watches catalog state; close to release. */
+    LyricsSessionManager.PollingDemandLease acquireLyricsPollingDemand();
+
     /** Renders one stored candidate and pins it; zero requests. */
     void selectCatalogCandidate(String candidateId, CatalogActionCallback callback);
 
@@ -89,11 +106,7 @@ public interface LyricsHost {
     /** Runs the QQ and NetEase adapters for the current track. */
     void checkOtherCatalogSources(CatalogActionCallback callback);
 
-    /**
-     * Owner-requested climb of the whole quality chain in the built-in order, stopping at the first
-     * source that answers well enough. The manual escape hatch for a track whose seat is only
-     * line-timed and whose better sources were never asked.
-     */
+    /** Checks every enabled source in preference order and reports completion after the last. */
     void refreshAllCatalogSourcesInOrder(CatalogActionCallback callback);
 
     /** Blacklists a wrong match: deletes the row and marks its source rejected. */
@@ -109,10 +122,14 @@ public interface LyricsHost {
     void reconcileLyricsSources();
 
     interface CatalogPickerRowsCallback {
-        void onRows(java.util.List<com.eza.spicyex.lyrics.catalog.CatalogPickerModel.Row> rows);
+        void onRows(String trackUri,
+                    java.util.List<com.eza.spicyex.lyrics.catalog.CatalogPickerModel.Row> rows);
     }
 
     interface CatalogActionCallback {
         void onComplete(boolean success, String detail);
+
+        default void onProgress(String detail) {
+        }
     }
 }

@@ -4,6 +4,7 @@ import java.util.Locale;
 
 /** Explicit Korean extra-line display modes. Raw lyrics remain the primary line. */
 public enum KoreanDisplayMode {
+    OFF("Off"),
     WORD_TRANSLIT("wordTranslit"),
     RR_STANDARD("rrStandard"),
     RR_PRONUNCIATION("rrPronunciation"),

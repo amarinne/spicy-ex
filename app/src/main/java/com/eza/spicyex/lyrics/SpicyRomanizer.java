@@ -349,6 +349,10 @@ public final class SpicyRomanizer {
     public static KoreanRomanizeResult romanizeKoreanForDisplay(String text, KoreanDisplayMode mode) {
         String source = text == null ? "" : text;
         KoreanDisplayMode effective = mode == null ? KoreanDisplayMode.RR_STANDARD : mode;
+        if (effective == KoreanDisplayMode.OFF) {
+            return new KoreanRomanizeResult(source, "", null,
+                    romanizeKoreanDisplayPieces(source, effective));
+        }
         if (effective == KoreanDisplayMode.WORD_TRANSLIT) {
             return new KoreanRomanizeResult(source, romanizeKoreanSpellingDisplay(source, false), null,
                     romanizeKoreanDisplayPieces(source, effective));
@@ -365,6 +369,11 @@ public final class SpicyRomanizer {
 
     public static List<String> romanizeKoreanDisplayPieces(String text, KoreanDisplayMode mode) {
         KoreanDisplayMode effective = mode == null ? KoreanDisplayMode.RR_STANDARD : mode;
+        if (effective == KoreanDisplayMode.OFF) {
+            if (text == null || text.isEmpty()) return Collections.emptyList();
+            int count = text.codePointCount(0, text.length());
+            return Collections.nCopies(count, "");
+        }
         if (effective == KoreanDisplayMode.RR_PRONUNCIATION || effective == KoreanDisplayMode.VN_PRONUNCIATION) {
             return SpicyKoreanG2P.romanizeSyllablePieces(text, effective == KoreanDisplayMode.VN_PRONUNCIATION);
         }

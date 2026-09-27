@@ -219,9 +219,17 @@ public final class LyricsSoundLane {
         return true;
     }
 
+    /** A batch request's size: 60 lines of Cyrillic (2.6k characters, an 11k URL once encoded)
+     *  were checked against the live endpoint and came back whole. */
+    private static final int ROMANIZE_BATCH_MAX_LINES = 100;
+    private static final int ROMANIZE_BATCH_MAX_CHARS = 3000;
+
     /**
-     * Fans reading fallback requests out to the lane's own workers. Completion is counted, never
-     * awaited: the lane executor stays free and the Meaning lane is unaffected either way.
+     * Reading fallback over the network, in as few requests as the song allows: the lines that
+     * still need a reading are grouped by source language and each group goes to Google as one
+     * batch (split only if it is very long) - one request for a typical song, where it used to be
+     * one per line. Batches run on the lane's own workers; completion is counted, never awaited,
+     * so the lane executor stays free and the Meaning lane is unaffected either way.
      */
     private void runNetworkPass(
             DerivedLayerRun run,
@@ -232,37 +240,61 @@ public final class LyricsSoundLane {
             LyricsSecondaryProcessor.Callback callback, List<SoundEntry> entries,
             long startedAtMs, boolean explicitAiRequest
     ) {
-        final AtomicInteger remaining = new AtomicInteger(networkWork.size());
-        final AtomicInteger done = new AtomicInteger();
-        final int total = networkWork.size();
+        java.util.Map<String, List<GoogleEnhancer.BatchLine>> byLanguage = new java.util.LinkedHashMap<>();
         for (int index : networkWork) {
+            if (index < 0 || index >= workerSnapshot.lines.size()) continue;
+            LyricsLine line = workerSnapshot.lines.get(index);
+            if (locallyRomanized.contains(index)
+                    || !LyricsLocalRomanizer.shouldGoogleRomanize(showRomanization, line)) continue;
+            String language = line.detection != null && line.detection.hasLanguage()
+                    ? line.detection.language : effectiveSourceLang;
+            byLanguage.computeIfAbsent(safe(language), key -> new ArrayList<>())
+                    .add(new GoogleEnhancer.BatchLine(index, line.text));
+        }
+        final List<String> languages = new ArrayList<>();
+        final List<List<GoogleEnhancer.BatchLine>> batches = new ArrayList<>();
+        for (java.util.Map.Entry<String, List<GoogleEnhancer.BatchLine>> group : byLanguage.entrySet()) {
+            for (List<GoogleEnhancer.BatchLine> batch : GoogleEnhancer.chunk(group.getValue(),
+                    ROMANIZE_BATCH_MAX_LINES, ROMANIZE_BATCH_MAX_CHARS)) {
+                languages.add(group.getKey());
+                batches.add(batch);
+            }
+        }
+        if (batches.isEmpty()) {
+            finish(run, id, generation, snapshot, currentGuard, callback, entries,
+                    changed.get(), startedAtMs, explicitAiRequest);
+            return;
+        }
+        final AtomicInteger remaining = new AtomicInteger(batches.size());
+        final AtomicInteger done = new AtomicInteger();
+        final int total = batches.size();
+        for (int b = 0; b < batches.size(); b++) {
+            final String language = languages.get(b);
+            final List<GoogleEnhancer.BatchLine> batch = batches.get(b);
             networkWorkers.execute(() -> {
                 try {
                     if (!run.isNewest() || !isCurrent(currentGuard, id, generation, snapshot)) return;
-                    LyricsLine line = workerSnapshot.lines.get(index);
-                    boolean needRomanize = !locallyRomanized.contains(index)
-                            && LyricsLocalRomanizer.shouldGoogleRomanize(showRomanization, line);
-                    if (!needRomanize) return;
                     LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOUND_PROVIDER_CALL);
-                    GoogleEnhancer.Enhancement enhancement = GoogleEnhancer.enhanceLine(context, http,
-                            processingVersion, id, line.detection != null && line.detection.hasLanguage()
-                                    ? line.detection.language : effectiveSourceLang, "", line.text, true, false,
-                            run.tag);
-                    if (isBlank(enhancement.romanized) || enhancement.romanized.equals(line.text)
-                            || SpicyTextDetection.hasRomanizableScript(enhancement.romanized)) {
-                        return;
+                    java.util.Map<Integer, String> romanized = GoogleEnhancer.romanizeBatch(context, http,
+                            processingVersion, id, language, batch, run.tag);
+                    for (GoogleEnhancer.BatchLine item : batch) {
+                        String value = romanized.get(item.index);
+                        LyricsLine line = workerSnapshot.lines.get(item.index);
+                        if (isBlank(value) || value.equals(line.text)
+                                || SpicyTextDetection.hasRomanizableScript(value)) {
+                            continue;
+                        }
+                        CanonicalRow row = run.base.rowAt(item.index);
+                        if (row != null) {
+                            entries.add(SoundEntry.line(row.rowId, value, safe(line.chineseMode)));
+                        }
+                        changed.incrementAndGet();
                     }
-                    CanonicalRow row = run.base.rowAt(index);
-                    if (row != null) {
-                        entries.add(SoundEntry.line(row.rowId, enhancement.romanized,
-                                safe(line.chineseMode)));
-                    }
-                    changed.incrementAndGet();
                 } catch (Throwable t) {
-                    XpLog.log(TAG + " reading fallback line failed: " + t.getClass().getSimpleName());
+                    XpLog.log(TAG + " reading fallback batch failed: " + t.getClass().getSimpleName());
                 } finally {
                     int processed = done.incrementAndGet();
-                    if (processed % 12 == 0) {
+                    if (total > 1) {
                         post(run, id, generation, snapshot, currentGuard,
                                 () -> callback.progress("Network romanization... " + processed + "/" + total));
                     }

@@ -40,10 +40,17 @@ public final class SettingLabels {
     }
 
     public static String formatStepper(Settings.IntegerSetting setting, int value) {
-        if (setting == Settings.EXTRA_DARK_BACKGROUND) {
+        if (setting == Settings.EXTRA_DARK_BACKGROUND
+                || setting == Settings.LYRICS_BLUR_INTENSITY) {
             return value + "%";
         }
         if (setting == Settings.BACKGROUND_RENDER_QUALITY) {
+            return value + "%";
+        }
+        if (setting == Settings.APPLE_CASCADE_SPEED || setting == Settings.APPLE_SPRING_STRENGTH) {
+            return value + "%";
+        }
+        if (setting == Settings.FURIGANA_BRIGHTNESS || setting == Settings.FURIGANA_POSITION_PERCENT) {
             return value + "%";
         }
         if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM || setting == Settings.LINE_SPACING_CUSTOM

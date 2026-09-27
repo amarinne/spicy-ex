@@ -36,7 +36,9 @@ final class LyricsSkipGapController {
                 "Skip intro/outro", 44, 11);
         view.setAlpha(0f);
         view.setVisibility(View.GONE);
+        LyricsSkipGapController controller = new LyricsSkipGapController(view);
         view.setOnClickListener(v -> {
+            controller.update(false);
             if (onClick != null) onClick.run();
         });
 
@@ -46,7 +48,7 @@ final class LyricsSkipGapController {
                 Gravity.BOTTOM | Gravity.END);
         lp.setMargins(0, 0, dp(14), dp(24 + STACK_OFFSET_DP));
         parent.addView(view, lp);
-        return new LyricsSkipGapController(view);
+        return controller;
     }
 
     void update(boolean show) {

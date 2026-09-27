@@ -23,6 +23,12 @@ public class AdaptiveBreakPlannerTest {
     }
 
     @Test
+    public void avoidsLeavingOneTrailingGlyphWhenAnotherPartitionUsesSameLines() {
+        assertArrayEquals(new boolean[]{false, true, false},
+                AdaptiveBreakPlanner.plan(new int[]{40, 20, 20}, 60, null, null));
+    }
+
+    @Test
     public void fittingKeepTogetherGroupCannotSplit() {
         assertArrayEquals(new boolean[]{false, false, true},
                 AdaptiveBreakPlanner.plan(
@@ -41,9 +47,35 @@ public class AdaptiveBreakPlannerTest {
     }
 
     @Test
-    public void oversizedSingleChildFallsBackWithoutForcedBreaks() {
-        assertArrayEquals(new boolean[]{false, false},
+    public void oversizedSingleChildGetsItsOwnLine() {
+        // A child wider than the row overflows whichever line it lands on, so it occupies one on
+        // its own. Treating that as unplannable used to abandon the whole row to greedy wrapping.
+        assertArrayEquals(new boolean[]{false, true},
                 AdaptiveBreakPlanner.plan(new int[]{70, 10}, 50, null, null));
+    }
+
+    @Test
+    public void oneOversizedChildStillLetsTheRestOfTheRowBalance() {
+        // The regression this guards: the long word used to switch off planning for every other
+        // word on its line, which is what produced stranded single-word rows next to full ones.
+        boolean[] plan = AdaptiveBreakPlanner.plan(
+                new int[]{70, 25, 25, 25, 25}, 50, null, null);
+        assertArrayEquals(new boolean[]{false, true, false, true, false}, plan);
+    }
+
+    @Test
+    public void aWideSingleChildRowIsNotTreatedAsARunt() {
+        // 40 of 50 is a full-looking row; the old "one child = penalise" rule rejected it and
+        // produced a ragged layout instead.
+        assertArrayEquals(new boolean[]{false, true, false, false},
+                AdaptiveBreakPlanner.plan(new int[]{40, 10, 10, 10}, 50, null, null));
+    }
+
+    @Test
+    public void avoidsStrandingATinyTrailingFragment() {
+        // [45,5] vs [25,25]: same line count, but the first leaves a 5px runt.
+        boolean[] plan = AdaptiveBreakPlanner.plan(new int[]{25, 20, 5}, 30, null, null);
+        assertArrayEquals(new boolean[]{false, true, false}, plan);
     }
 
     @Test

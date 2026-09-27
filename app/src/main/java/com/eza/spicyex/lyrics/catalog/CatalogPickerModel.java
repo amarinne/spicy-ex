@@ -88,6 +88,13 @@ public final class CatalogPickerModel {
     public static List<Row> build(List<CatalogCandidate> candidates,
                                   Map<SourceId, ProviderStatus> states,
                                   CatalogSelection selection, Resolution auto) {
+        return build(candidates, states, selection, auto, null);
+    }
+
+    public static List<Row> build(List<CatalogCandidate> candidates,
+                                  Map<SourceId, ProviderStatus> states,
+                                  CatalogSelection selection, Resolution auto,
+                                  CatalogPolicy policy) {
         List<Row> rows = new ArrayList<>();
         boolean manual = selection != null && selection.mode == SelectionMode.MANUAL;
         SourceId winnerSource = !manual && auto != null && auto.winner != null
@@ -130,20 +137,22 @@ public final class CatalogPickerModel {
                         displaySource(source) + " · " + displayTiming(best),
                         statusLine(best, status),
                         selected, true, false, DataMark.HAVE, best.candidateId, source));
-            } else if (source == SourceId.SPOTIFY_NATIVE) {
-                // Spotify reuses the lyrics Spotify already fetched for this track: one local
-                // read, no network request. Tapping adopts whatever is already there.
-                rows.add(new Row(RowKind.SOURCE, displaySource(source),
-                        "Use Spotify's lyrics",
-                        false, false, true, DataMark.NONE, "", source));
             } else {
                 rows.add(new Row(RowKind.SOURCE, displaySource(source),
                         checkHint(status),
                         false, false, true, emptyMark(status), "", source));
             }
         }
+        StringBuilder enabled = new StringBuilder();
+        if (policy != null) {
+            for (SourceId source : policy.enabledOrder) {
+                if (enabled.length() > 0) enabled.append(", ");
+                enabled.append(displaySource(source));
+            }
+        }
         rows.add(new Row(RowKind.ACTION_CHECK_ALL, "Check all sources in order",
-                "Apple, Spotify, AMLL, LRCLIB until one returns lyrics",
+                enabled.length() == 0 ? "Check every enabled source"
+                        : "Check all: " + enabled,
                 false, false, false, DataMark.NONE, "", null));
         rows.add(new Row(RowKind.ACTION_DELETE_TRACK, "Clear saved lyrics",
                 "stored candidates and states", false, false, false, DataMark.NONE,
@@ -184,7 +193,7 @@ public final class CatalogPickerModel {
         }
     }
 
-    static String displaySource(SourceId source) {
+    public static String displaySource(SourceId source) {
         if (source == null) return "Unknown";
         switch (source) {
             case APPLE: return "Apple Music";

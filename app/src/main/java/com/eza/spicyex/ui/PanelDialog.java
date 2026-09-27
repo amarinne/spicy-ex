@@ -94,6 +94,15 @@ public final class PanelDialog {
         return this;
     }
 
+    /** Replaces the visible body while keeping the dialog and its scroll position. */
+    public void replaceBody(java.util.List<? extends View> views) {
+        int y = scroll.getScrollY();
+        body.removeAllViews();
+        for (View view : views) add(view);
+        scroll.post(() -> scroll.scrollTo(0, y));
+        if (dialog.isShowing()) applyWindowSize();
+    }
+
     /** Disclosure copy for consent and other irreversible choices. */
     public PanelDialog paragraph(String value) {
         TextView view = text(value, 14f, COL_SUMMARY);
@@ -581,6 +590,16 @@ public final class PanelDialog {
         scrollParams.weight = constrained ? 1f : 0f;
         scroll.setLayoutParams(scrollParams);
         window.setLayout(width, constrained ? maxHeight : ViewGroup.LayoutParams.WRAP_CONTENT);
+    }
+
+    /**
+     * Re-fits a showing card whose body changed height in place. A surface that patches its own
+     * rows (instead of closing and reopening) needs this, or a taller row would grow past a window
+     * sized for the shorter one.
+     */
+    public void refit() {
+        if (!dialog.isShowing()) return;
+        applyWindowSize();
     }
 
     public boolean isShowing() {

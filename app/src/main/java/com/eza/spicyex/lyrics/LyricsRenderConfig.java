@@ -22,7 +22,6 @@ public final class LyricsRenderConfig {
     public final boolean appleLift;
     public final boolean appleDimPassed;
     public final boolean appleCompactText;
-    public final boolean appleCjkWrap;
     public final boolean glowBlurEnabled;
     public final boolean lineBlurEnabled;
     public final boolean lineBlurHeavy;
@@ -84,7 +83,6 @@ public final class LyricsRenderConfig {
             boolean appleLift,
             boolean appleDimPassed,
             boolean appleCompactText,
-            boolean appleCjkWrap,
             boolean glowBlurEnabled,
             boolean lineBlurEnabled,
             boolean lineBlurHeavy,
@@ -147,7 +145,6 @@ public final class LyricsRenderConfig {
         this.appleLift = appleLift;
         this.appleDimPassed = appleDimPassed;
         this.appleCompactText = appleCompactText;
-        this.appleCjkWrap = appleCjkWrap;
         this.glowBlurEnabled = glowBlurEnabled;
         this.lineBlurEnabled = lineBlurEnabled;
         this.lineBlurHeavy = lineBlurHeavy;
@@ -222,7 +219,7 @@ public final class LyricsRenderConfig {
     ) {
         this(backgroundStyle, forceDarkBackground, 0, lineGradientEnabled, spotlight,
                 wordBounceEnabled, "Word/syllable synced only", "Phrase zoom", false, false, false,
-                false, false, glowBlurEnabled,
+                false, glowBlurEnabled,
                 lineBlurEnabled, false, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
                 attachTransliterationToWords, transliterationEnabled, adaptiveSectioningEnabled,
                 lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont,
@@ -274,6 +271,9 @@ public final class LyricsRenderConfig {
         // "Apple lift" is also a shared Bounce style value: it selects the Apple lift motion
         // curve in any animation style without enabling the rest of the Apple stack.
         boolean appleStyle = shell.appleAnimation();
+        // The karaoke shader reads its base colour from the view; this is the one place the style is
+        // resolved, so it publishes the flag rather than each row having to carry it.
+        SpicyAnimatedTextView.setAppleGradientBaseStyle(appleStyle);
         boolean appleLift = appleLiftMotion(wordBounceStyle, appleStyle, get(cfg, Settings.APPLE_LIFT));
         String lineBlurLevel = cfg == null ? Settings.ENABLE_LINE_BLUR.defaultValue
                 : cfg.get(Settings.ENABLE_LINE_BLUR);
@@ -292,11 +292,14 @@ public final class LyricsRenderConfig {
                 appleLift,
                 appleStyle && get(cfg, Settings.APPLE_FADE_PASSED_LINES),
                 appleStyle && get(cfg, Settings.APPLE_COMPACT_TEXT),
-                appleStyle && get(cfg, Settings.APPLE_CJK_WRAP_FIX),
                 get(cfg, Settings.ENABLE_GLOW_BLUR),
                 !"Off".equals(lineBlurLevel),
                 "Heavy".equals(lineBlurLevel),
-                shell.lineBlurQualityMultiplier(),
+                // Blur intensity is a user-facing artistic knob (Settings#LYRICS_BLUR_INTENSITY,
+                // 100 = unchanged), separate from lineBlurQualityMultiplier()'s device-performance
+                // tier scaling - folded into the same blurQuality slot since both are plain
+                // multipliers over the same curve (LyricsFrameRenderer#mobileLineBlurPx).
+                shell.lineBlurQualityMultiplier() * (get(cfg, Settings.LYRICS_BLUR_INTENSITY) / 100f),
                 "note".equals(get(cfg, Settings.INTERLUDE_ICON)),
                 get(cfg, Settings.TOGGLE_PROGRESS_RING),
                 transliterationAvailable && shell.attachTransliterationToWordsEnabled(),
@@ -382,7 +385,7 @@ public final class LyricsRenderConfig {
                  wordBounceEnabled,
                  wordBounceScope,
                  wordBounceStyle,
-                 false, false, false, false, false,
+                 false, false, false, false,
                  glow,
                  false,
                  false,
@@ -563,8 +566,7 @@ public final class LyricsRenderConfig {
             needsRowRemount = interludeChanged || weightChanged || textSizeChanged || attachChanged || transliterationChanged
                     || adaptiveSectioningChanged || spacingChanged || fillChanged || japaneseModeConfigChanged
                     || oldValue.translationBright != next.translationBright
-                    || oldValue.appleCompactText != next.appleCompactText
-                    || oldValue.appleCjkWrap != next.appleCjkWrap;
+                    || oldValue.appleCompactText != next.appleCompactText;
             needsLocalReprocess = transliterationChanged || chineseModeConfigChanged || koreanChanged || chineseTonesChanged || cyrillicChanged;
             needsBackgroundToggle = changed(oldValue.backgroundStyle, next.backgroundStyle)
                     || oldValue.forceDarkBackground != next.forceDarkBackground

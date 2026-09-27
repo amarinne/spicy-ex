@@ -25,6 +25,9 @@ licensed under AGPL-3.0:
     Lyric engine reference.
 - kawarp (@kawarp/core) — https://github.com/better-lyrics/kawarp  (AGPL-3.0)
     Domain-warp + Kawase-blur animated background; ported to an AGSL RuntimeShader.
+- Apple Music-like Lyrics (AMLL) — https://github.com/amll-dev/applemusic-like-lyrics  (AGPL-3.0)
+    Held-word emphasis in the Apple Music style: qualification rule, strength curve,
+    bell easing, per-letter stagger and offsets.
 - JmdictFurigana — https://github.com/Doublevil/JmdictFurigana  (CC BY-SA)
     Japanese word-level furigana span data used by the Full flavor for ruby placement.
 

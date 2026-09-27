@@ -40,11 +40,14 @@ public class SettingsDefaultsTest {
         assertEquals("Gradient wash", Settings.ANIMATION_STYLE.coerce("bogus"));
         assertTrue(Settings.APPLE_FADE_PASSED_LINES.defaultValue);
         assertTrue(Settings.APPLE_COMPACT_TEXT.defaultValue);
-        assertTrue(Settings.APPLE_CJK_WRAP_FIX.defaultValue);
         assertFalse(Settings.LINE_SLIDE_ANIMATION.defaultValue);
         assertTrue(Settings.APPLE_LIFT.defaultValue);
         assertEquals(Settings.APPLE, Settings.APPLE_LIFT.section);
         assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);
+        assertFalse(Settings.FOLLOW_CHIP_ANIMATION.defaultValue);
+        assertEquals(Settings.LYRICS, Settings.FOLLOW_CHIP_ANIMATION.section);
+        assertFalse(Settings.FOLLOW_CHIP_PROGRESS.defaultValue);
+        assertEquals(Settings.LYRICS, Settings.FOLLOW_CHIP_PROGRESS.section);
         assertFalse(Settings.HYPERGLOW_ENABLED.defaultValue);
         assertEquals("en", Settings.UI_LANGUAGE.defaultValue);
         // Default stays Google draft until device comparison proves another flow better; adding
@@ -70,6 +73,24 @@ public class SettingsDefaultsTest {
         assertEquals(SpotifyPlusConfig.JP_READING_ROMAJI_ONLY, Settings.JAPANESE_READING_MODE.defaultValue);
         assertEquals(SpotifyPlusConfig.CHINESE_MODE_PINYIN, Settings.CHINESE_MODE.defaultValue);
         assertEquals(KoreanDisplayMode.RR_STANDARD.value, Settings.KOREAN_ROMANIZATION.defaultValue);
+        assertTrue(Settings.KOREAN_ROMANIZATION.allowedValues.contains("Off"));
+        assertEquals("Off", Settings.KOREAN_ROMANIZATION.coerce("Off"));
+        assertEquals("Off", Settings.KOREAN_ROMANIZATION.coerce("off"));
+
+        assertEquals(Integer.valueOf(100), Settings.LYRICS_BLUR_INTENSITY.defaultValue);
+        assertEquals(25, Settings.LYRICS_BLUR_INTENSITY.minValue);
+        assertEquals(250, Settings.LYRICS_BLUR_INTENSITY.maxValue);
+        assertEquals(5, Settings.LYRICS_BLUR_INTENSITY.stepValue);
+
+        assertEquals(Integer.valueOf(59), Settings.FURIGANA_BRIGHTNESS.defaultValue);
+        assertEquals(20, Settings.FURIGANA_BRIGHTNESS.minValue);
+        assertEquals(100, Settings.FURIGANA_BRIGHTNESS.maxValue);
+        assertEquals(5, Settings.FURIGANA_BRIGHTNESS.stepValue);
+
+        assertEquals(Integer.valueOf(100), Settings.FURIGANA_POSITION_PERCENT.defaultValue);
+        assertEquals(40, Settings.FURIGANA_POSITION_PERCENT.minValue);
+        assertEquals(200, Settings.FURIGANA_POSITION_PERCENT.maxValue);
+        assertEquals(10, Settings.FURIGANA_POSITION_PERCENT.stepValue);
 
         // Text glow defaults ON since the B322+ desktop-parity rework made it subtle and cheap.
         assertEquals("Word/syllable synced only", Settings.WORD_BOUNCE.defaultValue);

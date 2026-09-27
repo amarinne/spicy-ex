@@ -4,9 +4,15 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.NativeLyricsSource;
+import com.eza.spicyex.lyrics.LyricsRepository;
+import android.os.Handler;
+import android.os.Looper;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Field;
+import java.lang.reflect.Proxy;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 
@@ -79,6 +85,8 @@ final class NativeLyricsCaptureHook {
     private final SpotifySymbolResolver symbols;
     private final NativeLyricsSource nativeLyricsSource;
     private final TrackProvider trackProvider;
+    private volatile Object spotifyLyricsService;
+    private volatile Object spotifyComponent;
 
     NativeLyricsCaptureHook(
             ClassLoader classLoader,
@@ -110,6 +118,155 @@ final class NativeLyricsCaptureHook {
         // table stays empty, the response body never reaches a named HTTP client, and the
         // endpoint string is annotation-only. The response classes are hooked by name above.
         NativeLyricsNetworkHook.install(classLoader, nativeLyricsSource, trackProvider);
+        installExplicitSpotifyRequest();
+    }
+
+    /** Uses Spotify's own authenticated Retrofit client when its verified service is present. */
+    private void installExplicitSpotifyRequest() {
+        try {
+            Class<?> service = XpReflect.findClass("p.kqb0", classLoader);
+            Class<?> retrofit = XpReflect.findClass("p.hqb0", classLoader);
+            Class<?> single = XpReflect.findClass("io.reactivex.rxjava3.core.Single", classLoader);
+            Method endpoint = retrofit.getMethod("b", String.class, boolean.class,
+                    String.class, boolean.class);
+            if (!single.isAssignableFrom(endpoint.getReturnType())) return;
+            Field client = service.getDeclaredField("a");
+            client.setAccessible(true);
+            Field language = service.getDeclaredField("c");
+            language.setAccessible(true);
+            XpHooks.hookAllConstructors(service, "lyrics:explicitSpotifyClient",
+                    (XpHooks.After) param -> {
+                        spotifyLyricsService = param.thisObject;
+                        XpLog.log(NativeSpicyLyricsHook.TAG
+                                + " explicit Spotify client captured");
+                    });
+            Class<?> provider = XpReflect.findClass("p.oon", classLoader);
+            Class<?> component = XpReflect.findClass("p.pon", classLoader);
+            XpHooks.hookAllConstructors(provider, "lyrics:spotifyComponentProvider",
+                    (XpHooks.After) param -> {
+                        if (spotifyComponent == null && param.args != null
+                                && param.args.length > 0
+                                && component.isInstance(param.args[0])) {
+                            spotifyComponent = param.args[0];
+                        }
+                    });
+            nativeLyricsSource.setRequester((track, callback) ->
+                    requestSpotifyTrack(track, callback, service, client, language, endpoint));
+            XpLog.log(NativeSpicyLyricsHook.TAG + " explicit Spotify request installed");
+        } catch (Throwable error) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " explicit Spotify request unavailable: "
+                    + error.getClass().getSimpleName());
+        }
+    }
+
+    private void requestSpotifyTrack(SpotifyTrack track,
+            LyricsRepository.NativeLyricsProvider.RequestCallback callback,
+            Class<?> service, Field clientField, Field languageField, Method endpoint) {
+        Object owner = spotifyLyricsService;
+        if (owner == null) owner = resolveSpotifyLyricsService(service);
+        if (owner == null || track == null || track.uri == null) {
+            if (owner == null) XpLog.log(NativeSpicyLyricsHook.TAG
+                    + " explicit Spotify client not created");
+            callback.onResult(null, "Spotify lyrics request unavailable");
+            return;
+        }
+        String id = com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(track.uri);
+        if (id.isEmpty()) {
+            callback.onResult(null, "Unsupported Spotify track");
+            return;
+        }
+        AtomicBoolean done = new AtomicBoolean();
+        Handler main = new Handler(Looper.getMainLooper());
+        final Object[] disposable = {null};
+        Runnable timeout = () -> {
+            if (!done.compareAndSet(false, true)) return;
+            dispose(disposable[0]);
+            callback.onResult(null, "Spotify lyrics request timed out");
+        };
+        try {
+            Object client = clientField.get(owner);
+            Object languageOwner = languageField.get(owner);
+            Method languageMethod = languageOwner.getClass().getMethod("j");
+            String language = (String) languageMethod.invoke(languageOwner);
+            Object request = endpoint.invoke(client, id, false,
+                    language == null ? "" : language, false);
+            Class<?> consumer = XpReflect.findClass(
+                    "io.reactivex.rxjava3.functions.Consumer", classLoader);
+            Object success = Proxy.newProxyInstance(classLoader, new Class<?>[]{consumer},
+                    (proxy, method, args) -> {
+                        if ("accept".equals(method.getName())
+                                && done.compareAndSet(false, true)) {
+                            main.removeCallbacks(timeout);
+                            Object response = args == null || args.length == 0 ? null : args[0];
+                            nativeLyricsSource.captureCandidate(track, response,
+                                    new Object[]{track.uri}, "explicit:spotify-retrofit");
+                            com.eza.spicyex.lyrics.LyricsDocument doc =
+                                    nativeLyricsSource.getNativeLyricsDocument(track);
+                            callback.onResult(doc, doc == null
+                                    ? "Spotify lyrics response unavailable" : "");
+                        }
+                        return null;
+                    });
+            Object failure = Proxy.newProxyInstance(classLoader, new Class<?>[]{consumer},
+                    (proxy, method, args) -> {
+                        if ("accept".equals(method.getName())
+                                && done.compareAndSet(false, true)) {
+                            main.removeCallbacks(timeout);
+                            Object error = args == null || args.length == 0 ? null : args[0];
+                            callback.onResult(null, spotifyRequestError(error));
+                        }
+                        return null;
+                    });
+            main.postDelayed(timeout, 10000L);
+            disposable[0] = request.getClass().getMethod("subscribe", consumer, consumer)
+                    .invoke(request, success, failure);
+            if (done.get()) dispose(disposable[0]);
+        } catch (Throwable error) {
+            main.removeCallbacks(timeout);
+            if (done.compareAndSet(false, true)) {
+                callback.onResult(null, "Spotify lyrics request failed");
+            }
+            XpLog.log(NativeSpicyLyricsHook.TAG + " explicit Spotify request failed: "
+                    + error.getClass().getSimpleName());
+        }
+    }
+
+    private Object resolveSpotifyLyricsService(Class<?> service) {
+        Object component = spotifyComponent;
+        if (component == null) return null;
+        try {
+            // Spotify 9.1.84's provider for this exact service is the component's `on`
+            // binding. Verify the returned class before retaining or invoking it.
+            Field binding = component.getClass().getDeclaredField("on");
+            binding.setAccessible(true);
+            Object provider = binding.get(component);
+            if (provider == null) return null;
+            Object created = provider.getClass().getMethod("get").invoke(provider);
+            if (!service.isInstance(created)) return null;
+            spotifyLyricsService = created;
+            return created;
+        } catch (Throwable error) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " Spotify client resolve failed: "
+                    + error.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private static String spotifyRequestError(Object error) {
+        try {
+            int code = (Integer) error.getClass().getMethod("code").invoke(error);
+            if (code == 404) return "Spotify has no lyrics for this track";
+        } catch (Throwable ignored) {
+        }
+        return "Spotify lyrics request failed";
+    }
+
+    private static void dispose(Object disposable) {
+        if (disposable == null) return;
+        try {
+            disposable.getClass().getMethod("dispose").invoke(disposable);
+        } catch (Throwable ignored) {
+        }
     }
 
     private void hookDeferredNativeLyricsClassLoading() {

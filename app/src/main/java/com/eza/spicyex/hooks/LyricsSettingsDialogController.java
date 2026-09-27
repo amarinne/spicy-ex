@@ -21,6 +21,7 @@ final class LyricsSettingsDialogController {
     private final LyricsAmbientController ambientController;
     private final LyricsHost host;
     private final Runnable onClosed;
+    private final Runnable onResyncTiming;
     private final String logTag;
 
     LyricsSettingsDialogController(
@@ -29,6 +30,7 @@ final class LyricsSettingsDialogController {
             LyricsAmbientController ambientController,
             LyricsHost host,
             Runnable onClosed,
+            Runnable onResyncTiming,
             String logTag
     ) {
         this.activity = activity;
@@ -36,6 +38,7 @@ final class LyricsSettingsDialogController {
         this.ambientController = ambientController;
         this.host = host;
         this.onClosed = onClosed;
+        this.onResyncTiming = onResyncTiming;
         this.logTag = logTag;
     }
 
@@ -53,7 +56,7 @@ final class LyricsSettingsDialogController {
                         halfMode = !halfMode;
                         applySize(window);
                     }, () -> Motion.exitCardThen(panelRef[0], dialog::isShowing, dialog::dismiss),
-                    host::clearLyricsCache);
+                    host::clearLyricsCache, onResyncTiming);
             panel.setLyricsHost(host);
             final View panelView = panel.build();
             panelRef[0] = panelView;

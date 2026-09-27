@@ -37,8 +37,59 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
     private final LinkedHashMap<String, LyricsDocument> byTrack = new LinkedHashMap<>();
     private final LinkedHashMap<String, Long> dbMisses = new LinkedHashMap<>();
     private final java.util.Set<NativeListener> listeners = new java.util.HashSet<>();
+    private final java.util.Map<String, java.util.List<LyricsRepository.NativeLyricsProvider.RequestCallback>>
+            nativeRequests = new java.util.HashMap<>();
     private final ContextProvider contextProvider;
     private final LyricsParser.Finalizer finalizer;
+    private volatile NativeRequester requester;
+
+    public interface NativeRequester {
+        void request(SpotifyTrack track, LyricsRepository.NativeLyricsProvider.RequestCallback callback);
+    }
+
+    public void setRequester(NativeRequester requester) {
+        this.requester = requester;
+    }
+
+    @Override public void requestNativeLyrics(SpotifyTrack track,
+            LyricsRepository.NativeLyricsProvider.RequestCallback callback) {
+        LyricsDocument cached = getNativeLyricsDocument(track);
+        if (cached != null && !cached.lines.isEmpty()) {
+            callback.onResult(cached, "");
+            return;
+        }
+        NativeRequester active = requester;
+        if (active == null) {
+            callback.onResult(null, "Spotify lyrics request unavailable");
+            return;
+        }
+        String id = trackIdFromUri(track == null ? "" : track.uri);
+        if (id.isEmpty()) {
+            callback.onResult(null, "Unsupported Spotify track");
+            return;
+        }
+        synchronized (lock) {
+            java.util.List<LyricsRepository.NativeLyricsProvider.RequestCallback> waiting =
+                    nativeRequests.get(id);
+            if (waiting != null) {
+                waiting.add(callback);
+                return;
+            }
+            waiting = new java.util.ArrayList<>();
+            waiting.add(callback);
+            nativeRequests.put(id, waiting);
+        }
+        active.request(track, (document, error) -> {
+            java.util.List<LyricsRepository.NativeLyricsProvider.RequestCallback> waiting;
+            synchronized (lock) {
+                waiting = nativeRequests.remove(id);
+            }
+            if (waiting == null) return;
+            for (LyricsRepository.NativeLyricsProvider.RequestCallback item : waiting) {
+                item.onResult(document, error);
+            }
+        });
+    }
 
     public NativeLyricsSource(ContextProvider contextProvider, LyricsParser.Finalizer finalizer) {
         this.contextProvider = contextProvider;
@@ -593,9 +644,9 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
 
         LyricsDocument doc = new LyricsDocument();
         doc.trackId = firstNonBlank(
-                nativeTrackIdCandidate(track),
                 extractTrackIdFromObjects(ctorArgs),
-                extractTrackIdFromObject(candidate)
+                extractTrackIdFromObject(candidate),
+                nativeTrackIdCandidate(track)
         );
         if (doc.trackId.isEmpty()) return null;
         doc.durationMs = track == null ? 0 : Math.max(0, track.duration);

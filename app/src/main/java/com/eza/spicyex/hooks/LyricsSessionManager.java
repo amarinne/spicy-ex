@@ -337,12 +337,9 @@ final class LyricsSessionManager {
     }
 
     /**
-     * Visit-time native probe. Spotify's own lyrics for the track are free local data
-     * (captured model or lyrics_db, zero requests), so each visit records what is there:
-     * a hit commits the candidate, a miss records NOT_FOUND. Manual pins never move; the
-     * seat is recomputed by the load that follows. Globally-disabled Spotify stays
-     * untouched here — automatic acquisition still skips it; only an explicit picker tap
-     * checks it as a track-scoped exception.
+     * A local hit commits immediately. A miss asks Spotify's own lyrics client for this
+     * track; only its confirmed absence records NOT_FOUND. Manual pins never move.
+     * Globally disabled Spotify stays untouched except for an explicit picker check.
      */
     private void probeNativeLyrics(SpotifyTrack track) {
         if (track == null || context == null || fetchCoordinator == null) return;
@@ -359,8 +356,14 @@ final class LyricsSessionManager {
                                 track == null ? "" : track.uri),
                         "", CatalogAdapters.SPOTIFY_NATIVE_ADAPTER_REVISION);
             } else {
-                CatalogAdapters.recordError(context, CatalogSource.SourceId.SPOTIFY_NATIVE,
-                        track, "Spotify has no lyrics for this track");
+                // Spotify's player may never mount its lyrics surface during a fullscreen
+                // track change. Ask its authenticated lyrics client for this track directly.
+                fetchCoordinator.nativeLyricsSource().requestNativeLyrics(track, (result, error) -> {
+                    if (result == null && "Spotify has no lyrics for this track".equals(error)) {
+                        CatalogAdapters.recordError(context, CatalogSource.SourceId.SPOTIFY_NATIVE,
+                                track, error);
+                    }
+                });
             }
         } catch (Throwable ignored) {
         }
@@ -660,7 +663,11 @@ final class LyricsSessionManager {
     /** Picker rows for the current track, resolved off-thread and posted back. */
     void pickerRows(LyricsHost.CatalogPickerRowsCallback callback) {
         String uri = policy.trackUri();
-        if (track == null || uri.isEmpty() || callback == null) return;
+        if (callback == null) return;
+        if (track == null || uri.isEmpty()) {
+            handler.post(() -> callback.onRows(uri, java.util.Collections.emptyList()));
+            return;
+        }
         NativeRuntime.LYRICS_IO.execute(() -> {
             try {
                 String bare = CatalogSource.bareTrackId(uri);
@@ -669,7 +676,7 @@ final class LyricsSessionManager {
                 CatalogResolver.Resolution auto = state.candidates.isEmpty() ? null
                         : CatalogDecisions.autoResolution(state, sources);
                 java.util.List<CatalogPickerModel.Row> rows = CatalogPickerModel.build(
-                        state.candidates, state.statuses(), state.selection, auto);
+                        state.candidates, state.statuses(), state.selection, auto, sources);
                 long trackBytes = bare.isEmpty() ? 0L
                         : CatalogStore.payloadBytesForTrack(context, bare);
                 java.util.List<CatalogPickerModel.Row> displayed = new java.util.ArrayList<>();
@@ -681,13 +688,23 @@ final class LyricsSessionManager {
                 }
                 handler.post(() -> {
                     try {
-                        callback.onRows(java.util.Collections.unmodifiableList(displayed));
+                        callback.onRows(uri, java.util.Collections.unmodifiableList(displayed));
                     } catch (Throwable ignored) {
                     }
                 });
             } catch (Throwable ignored) {
+                handler.post(() -> callback.onRows(uri, java.util.Collections.emptyList()));
             }
         });
+    }
+
+    String catalogTrackUri() {
+        return policy.trackUri();
+    }
+
+    /** The acquisition fetch owns {@code loadingUri} from launch until its outcome is accepted. */
+    boolean catalogFetchInFlight() {
+        return !loadingUri.isEmpty() && loadingUri.equals(policy.trackUri());
     }
 
     /** Pins one stored candidate as this track's manual selection and renders it. */
@@ -809,36 +826,47 @@ final class LyricsSessionManager {
         }
     }
 
-    /**
-     * Owner-requested re-ask of the whole quality chain, in order.
-     *
-     * <p>Reached from the picker's "Check all sources in order" action and from the agent command
-     * channel. The automatic visit now keeps searching while the seat is only line-timed or unsynced,
-     * but it will not spend a network round-trip on a track whose seat it already trusts. This walks
-     * the chain sequentially rather than racing it, so the result reflects the built-in preference
-     * instead of arrival order.
-     *
-     * <p>A preference walk, not a quality escalation: the ordered fetch stops at the first source
-     * that returns any lyrics. Reaching word or syllable timing for a line-timed seat is the
-     * automatic visit's job.
-     */
+    /** Explicitly checks every enabled source, in preference order. */
     void refreshAllCatalogSourcesInOrder(LyricsHost.CatalogActionCallback callback) {
         SpotifyTrack current = track;
         String uri = policy.trackUri();
+        int generation = policy.generation();
         if (current == null || uri.isEmpty()) {
             completeCatalogAction(callback, false, "No current track");
             return;
         }
-        fetchCoordinator.invalidate(current);
-        loadingUri = "";
-        // An owner request bypasses the error backoff and the upgrade horizon.
-        nextFetchAtMs = 0L;
-        autoAttempts = 0;
-        pendingPlan = AcquisitionPlanner.refreshAllInOrder(CatalogPolicy.read(context));
-        maybeFetch();
-        // The climb is asynchronous and ends by electing a seat; report the request as taken so the
-        // panel can rerender, rather than claiming a document that has not arrived yet.
-        completeCatalogAction(callback, true, "Checking all sources in order");
+        java.util.List<CatalogSource.SourceId> sources =
+                CatalogPolicy.read(context).enabledOrder;
+        if (sources.isEmpty()) {
+            completeCatalogAction(callback, false, "All lyric sources disabled");
+            return;
+        }
+        checkCatalogSourcesInOrder(sources, 0, uri, generation, 0, callback);
+    }
+
+    private void checkCatalogSourcesInOrder(java.util.List<CatalogSource.SourceId> sources,
+            int index, String uri, int generation, int found,
+            LyricsHost.CatalogActionCallback callback) {
+        if (!policy.accepts(generation, uri)) {
+            completeCatalogAction(callback, false, "Track changed");
+            return;
+        }
+        if (index == sources.size()) {
+            completeCatalogAction(callback, true,
+                    "Checked " + sources.size() + " sources; " + found + " available");
+            return;
+        }
+        CatalogSource.SourceId source = sources.get(index);
+        if (callback != null) callback.onProgress("Checking "
+                + CatalogPickerModel.displaySource(source) + " (" + (index + 1)
+                + "/" + sources.size() + ")");
+        refreshCatalogSource(source, (success, detail) -> {
+            if (callback != null) callback.onProgress(
+                    CatalogPickerModel.displaySource(source) + ": "
+                            + (success ? "Available" : (detail == null ? "Failed" : detail)));
+            checkCatalogSourcesInOrder(sources, index + 1, uri, generation,
+                    found + (success ? 1 : 0), callback);
+        });
     }
 
     /** Runs both explicit-check adapters; each commits and the seat decides what renders. */

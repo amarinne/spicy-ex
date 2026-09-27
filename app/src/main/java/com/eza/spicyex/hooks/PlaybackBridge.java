@@ -136,6 +136,30 @@ final class PlaybackBridge {
         }
     }
 
+    /** Whether the current PlaybackState advertises ACTION_SEEK_TO right now - see
+     *  {@link #seekSpotifyTo}. False whenever no session is captured yet, same as every other
+     *  capability check here. */
+    // canSeek() is polled from the lyrics frame loop; each read is a binder call into
+    // system_server, so it is re-read at most every CAN_SEEK_TTL_MS (still fast enough to catch
+    // an ad starting).
+    private static final long CAN_SEEK_TTL_MS = 400L;
+    private long canSeekReadAt = Long.MIN_VALUE / 2;
+    private boolean canSeekCached;
+
+    boolean canSeek() {
+        long now = SystemClock.uptimeMillis();
+        if (now - canSeekReadAt < CAN_SEEK_TTL_MS) return canSeekCached;
+        canSeekReadAt = now;
+        try {
+            MediaController controller = transportController();
+            PlaybackState state = controller == null ? null : controller.getPlaybackState();
+            canSeekCached = state != null && (state.getActions() & PlaybackState.ACTION_SEEK_TO) != 0;
+        } catch (Throwable t) {
+            canSeekCached = false;
+        }
+        return canSeekCached;
+    }
+
     /** Toggles play/pause through Spotify's own MediaSession transport. Null-safe: false when
      * no session is captured yet (same failure posture as seek). */
     boolean togglePlayPause() {

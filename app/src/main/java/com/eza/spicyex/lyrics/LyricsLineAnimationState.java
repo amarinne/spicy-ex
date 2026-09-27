@@ -63,6 +63,21 @@ public final class LyricsLineAnimationState {
             boolean washEnabled,
             boolean appleDimPassed
     ) {
+        return forLine(line, positionMs, spotlight, washEnabled, appleDimPassed, true);
+    }
+
+    /**
+     * @param appleStyle animation style is "Apple Music". Only the Apple stack ramps the active
+     *  line up to 1.03 (1.05 under Spotlight); every other style keeps the flat 1.0/1.04 target.
+     */
+    public static LyricsLineAnimationState forLine(
+            AppliedLine line,
+            long positionMs,
+            boolean spotlight,
+            boolean washEnabled,
+            boolean appleDimPassed,
+            boolean appleStyle
+    ) {
         boolean active = LyricTimeline.isRowActiveAt(line, positionMs);
         boolean sung = line != null && positionMs >= line.endMs;
         float progress = active ? progress01(positionMs, line.startMs, LyricTimeline.fillEndMs(line)) : 0f;
@@ -93,7 +108,17 @@ public final class LyricsLineAnimationState {
             float eased = LyricAnimations.easeSinOut(progress);
             brightnessTarget = 0.42f + 0.58f * eased * eased;
         }
-        float scaleTarget = active ? (spotlight ? 1.04f : 1.0f) : 0.95f;
+        float scaleTarget;
+        if (!appleStyle) {
+            scaleTarget = active ? (spotlight ? 1.04f : 1.0f) : 0.95f;
+        } else if (active) {
+            float baseScale = 1.0f;
+            // Kept small: the emphasis now goes to held words (GlowFlexbox word emphasis).
+            float maxScale = spotlight ? 1.05f : 1.03f;
+            scaleTarget = baseScale + (maxScale - baseScale) * LyricAnimations.easeSinOut(progress);
+        } else {
+            scaleTarget = 0.95f;
+        }
         LyricsLineAnimationState state = line == null ? new LyricsLineAnimationState() : state(line);
         state.set(active, sung, spotlight, progress, gradient, glowTarget, brightnessTarget, scaleTarget);
         return state;

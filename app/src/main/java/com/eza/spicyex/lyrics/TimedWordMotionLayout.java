@@ -8,6 +8,9 @@ import android.view.ViewGroup;
 /** Atomic timed-word container that preserves direct Flexbox baseline geometry. */
 final class TimedWordMotionLayout extends ViewGroup {
     private int measuredBaseline = -1;
+    private int[] childRows = new int[0];
+    private int[] rowHeights = new int[0];
+    private int[] rowAscents = new int[0];
 
     TimedWordMotionLayout(Context context) {
         super(context);
@@ -17,33 +20,79 @@ final class TimedWordMotionLayout extends ViewGroup {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int width = getPaddingLeft() + getPaddingRight();
-        int maxNaturalHeight = 0;
-        int maxAscent = -1;
-        int maxDescent = -1;
+        int childCount = getChildCount();
+        int horizontalPadding = getPaddingLeft() + getPaddingRight();
+        int verticalPadding = getPaddingTop() + getPaddingBottom();
+        int available = View.MeasureSpec.getMode(widthMeasureSpec) == View.MeasureSpec.UNSPECIFIED
+                ? Integer.MAX_VALUE
+                : Math.max(1, MeasureSpec.getSize(widthMeasureSpec) - horizontalPadding);
+        int[] widths = new int[childCount];
+        int[] heights = new int[childCount];
+        int[] ascents = new int[childCount];
         int childState = 0;
-        for (int index = 0; index < getChildCount(); index++) {
+        for (int index = 0; index < childCount; index++) {
             View child = getChildAt(index);
             if (child.getVisibility() == GONE) continue;
-            measureChildWithMargins(child, widthMeasureSpec, width, heightMeasureSpec, 0);
+            // Measure every child against the full available width. Passing the accumulated row
+            // width as widthUsed makes later CJK fragments shrink during probing and produces a
+            // different layout from the final pass.
+            measureChildWithMargins(child, widthMeasureSpec, 0, heightMeasureSpec, 0);
             MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
-            int childWidth = lp.leftMargin + child.getMeasuredWidth() + lp.rightMargin;
-            int childHeight = lp.topMargin + child.getMeasuredHeight() + lp.bottomMargin;
-            width += childWidth;
-            maxNaturalHeight = Math.max(maxNaturalHeight, childHeight);
+            widths[index] = lp.leftMargin + child.getMeasuredWidth() + lp.rightMargin;
+            heights[index] = lp.topMargin + child.getMeasuredHeight() + lp.bottomMargin;
             int baseline = child.getBaseline();
             if (baseline >= 0) {
-                maxAscent = Math.max(maxAscent, lp.topMargin + baseline);
-                maxDescent = Math.max(maxDescent,
-                        child.getMeasuredHeight() - baseline + lp.bottomMargin);
+                ascents[index] = lp.topMargin + baseline;
+            } else {
+                ascents[index] = -1;
             }
             childState = combineMeasuredStates(childState, child.getMeasuredState());
         }
-        int contentHeight = baselineHeight(maxNaturalHeight, maxAscent, maxDescent);
-        measuredBaseline = maxAscent < 0 ? -1 : getPaddingTop() + maxAscent;
-        int height = getPaddingTop() + contentHeight + getPaddingBottom();
+
+        childRows = new int[childCount];
+        java.util.Arrays.fill(childRows, -1);
+        boolean[] planned = AdaptiveBreakPlanner.plan(widths, available, null, null);
+        int rowCount = 0;
+        int rowWidth = 0;
+        for (int index = 0; index < childCount; index++) {
+            if (getChildAt(index).getVisibility() == GONE) continue;
+            boolean wrap = index > 0 && planned.length > index && planned[index];
+            // The planner deliberately falls back when one child is wider than the viewport.
+            // Keep the group bounded anyway by starting a new row before every subsequent child.
+            if (!wrap && rowWidth > 0 && rowWidth + widths[index] > available) wrap = true;
+            if (wrap || rowWidth == 0) {
+                if (rowWidth > 0) rowCount++;
+                rowWidth = 0;
+            }
+            childRows[index] = rowCount;
+            rowWidth += widths[index];
+        }
+        if (rowWidth > 0) rowCount++;
+        rowHeights = new int[rowCount];
+        rowAscents = new int[rowCount];
+        java.util.Arrays.fill(rowAscents, -1);
+        int[] rowWidths = new int[rowCount];
+        for (int index = 0; index < childCount; index++) {
+            int row = childRows[index];
+            if (row < 0) continue;
+            rowWidths[row] += widths[index];
+            rowHeights[row] = Math.max(rowHeights[row], heights[index]);
+            if (ascents[index] >= 0) rowAscents[row] = Math.max(rowAscents[row], ascents[index]);
+        }
+        for (int row = 0; row < rowCount; row++) {
+            if (rowAscents[row] < 0) continue;
+            int descent = rowHeights[row] - rowAscents[row];
+            rowHeights[row] = baselineHeight(rowHeights[row], rowAscents[row], descent);
+        }
+        int naturalWidth = horizontalPadding;
+        for (int rowWidthValue : rowWidths) naturalWidth = Math.max(naturalWidth, horizontalPadding + rowWidthValue);
+        int contentHeight = 0;
+        for (int rowHeight : rowHeights) contentHeight += rowHeight;
+        measuredBaseline = rowCount == 0 || rowAscents[0] < 0
+                ? -1 : getPaddingTop() + rowAscents[0];
+        int height = verticalPadding + contentHeight;
         setMeasuredDimension(
-                resolveSizeAndState(Math.max(width, getSuggestedMinimumWidth()),
+                resolveSizeAndState(Math.max(naturalWidth, getSuggestedMinimumWidth()),
                         widthMeasureSpec, childState),
                 resolveSizeAndState(Math.max(height, getSuggestedMinimumHeight()),
                         heightMeasureSpec, childState << MEASURED_HEIGHT_STATE_SHIFT));
@@ -52,29 +101,39 @@ final class TimedWordMotionLayout extends ViewGroup {
     @Override
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
-        int x = rtl ? getWidth() - getPaddingRight() : getPaddingLeft();
-        int baselineInContent = measuredBaseline < 0 ? -1 : measuredBaseline - getPaddingTop();
-        for (int index = 0; index < getChildCount(); index++) {
-            View child = getChildAt(index);
-            if (child.getVisibility() == GONE) continue;
-            MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
-            int childBaseline = child.getBaseline();
-            int childTop = getPaddingTop() + lp.topMargin;
-            if (baselineInContent >= 0 && childBaseline >= 0) {
-                childTop = getPaddingTop() + baselineInContent - childBaseline;
+        int rowTop = getPaddingTop();
+        int[] rowX = new int[rowHeights.length];
+        for (int row = 0; row < rowHeights.length; row++) {
+            rowX[row] = rtl ? getWidth() - getPaddingRight() : getPaddingLeft();
+            for (int index = 0; index < getChildCount(); index++) {
+                if (childRows[index] != row) continue;
+                View child = getChildAt(index);
+                if (child.getVisibility() == GONE) continue;
+                MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
+                int childBaseline = child.getBaseline();
+                int childTop = rowTop + lp.topMargin;
+                if (rowAscents[row] >= 0 && childBaseline >= 0) {
+                    childTop = rowTop + rowAscents[row] - childBaseline;
+                }
+                if (rtl) {
+                    rowX[row] -= lp.rightMargin + child.getMeasuredWidth();
+                    child.layout(rowX[row], childTop, rowX[row] + child.getMeasuredWidth(),
+                            childTop + child.getMeasuredHeight());
+                    rowX[row] -= lp.leftMargin;
+                } else {
+                    rowX[row] += lp.leftMargin;
+                    child.layout(rowX[row], childTop, rowX[row] + child.getMeasuredWidth(),
+                            childTop + child.getMeasuredHeight());
+                    rowX[row] += child.getMeasuredWidth() + lp.rightMargin;
+                }
             }
-            if (rtl) {
-                x -= lp.rightMargin + child.getMeasuredWidth();
-                child.layout(x, childTop, x + child.getMeasuredWidth(),
-                        childTop + child.getMeasuredHeight());
-                x -= lp.leftMargin;
-            } else {
-                x += lp.leftMargin;
-                child.layout(x, childTop, x + child.getMeasuredWidth(),
-                        childTop + child.getMeasuredHeight());
-                x += child.getMeasuredWidth() + lp.rightMargin;
-            }
+            rowTop += rowHeights[row];
         }
+        /*
+         * Layout is intentionally row-based rather than a single horizontal strip. The outer
+         * GlowFlexbox can only wrap this ViewGroup as one timing atom; putting all of its CJK
+         * children on one line was the source of the off-screen overflow.
+         */
     }
 
     @Override

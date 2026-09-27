@@ -267,6 +267,23 @@ public final class LyricsRowViewFactory {
         List<int[]> adaptiveChildRanges = adaptiveWordRow ? new ArrayList<>() : null;
         for (int groupStart = 0; groupStart < line.words.size();) {
             int groupEnd = TimedWordGrouping.groupEnd(line, groupStart);
+            SyllableSegment flowing = groupEnd == groupStart ? line.words.get(groupStart) : null;
+            TimedTextRowProjection.Chunk flowingRoman = showAlignedRomaji
+                    && groupStart < romanizedWords.size() ? romanizedWords.get(groupStart) : null;
+            if (flowing != null && wrapLongLines && !showJapaneseFurigana
+                    && (flowingRoman == null || isBlank(flowingRoman.text))
+                    && CjkLineBreak.flowsByCharacter(flowing.text)) {
+                int[] sourceRange = FuriganaText.wordRange(line, flowing, groupStart, furiganaOffset);
+                furiganaOffset = Math.max(furiganaOffset, sourceRange[1]);
+                boolean certain = adaptiveRangeCertain(line.text, flowing.text, sourceRange);
+                TimedTextRowProjection.Chunk mainChunk = groupStart < mainProjection.size()
+                        ? mainProjection.get(groupStart) : null;
+                addFlowingCjkSegment(words, line, flowing, options,
+                        mainChunk != null && mainChunk.spaceAfter,
+                        certain ? sourceRange[0] : -1, adaptiveChildRanges);
+                groupStart = groupEnd + 1;
+                continue;
+            }
             TimedWordMotionLayout motionGroup = groupEnd > groupStart
                     ? new TimedWordMotionLayout(activity) : null;
             if (motionGroup != null) {
@@ -291,7 +308,7 @@ public final class LyricsRowViewFactory {
                 View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
                         options == null ? "Medium" : options.lyricWeight,
                         options == null ? "spotify" : options.lyricsFont,
-                        options, wrapLongLines, syllableContentWidthPx());
+                        options, wrapLongLines);
                 TimedTextRowProjection.Chunk romanChunk = showAlignedRomaji
                         && wordIndex < romanizedWords.size() ? romanizedWords.get(wordIndex) : null;
                 String romanizedWordText = romanChunk == null ? "" : romanChunk.text;
@@ -340,6 +357,87 @@ public final class LyricsRowViewFactory {
         row.addView(words, new LinearLayout.LayoutParams(
                 wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /**
+     * A Han/kana segment in a wrapping row, laid out as running text: each break unit from
+     * {@link CjkLineBreak#clusters} is its own item of the row's flexbox, so the segment continues
+     * on the current line and wraps part-way through exactly like the rest of the lyric. Every
+     * character is a letter view of the one segment (so fill, glow and letter motion are timed as
+     * a whole); the units only decide where lines may break. The first unit is the segment's
+     * motion view and the rest follow its word-level transform.
+     */
+    private void addFlowingCjkSegment(ViewGroup words, AppliedLine line, SyllableSegment seg,
+                                      Options options, boolean spaceAfter, int sourceStart,
+                                      List<int[]> adaptiveChildRanges) {
+        String text = LyricUtils.safe(seg.text);
+        String weight = options == null ? "Medium" : options.lyricWeight;
+        String font = options == null ? "spotify" : options.lyricsFont;
+        int total = text.codePointCount(0, text.length());
+        LyricsSyllableViewState.clearLetters(seg);
+        LyricsSyllableViewState.clearTextView(seg);
+        LyricsSyllableViewState.clearRomanizedTextView(seg);
+        List<View> units = new ArrayList<>();
+        int letterIndex = 0;
+        for (int[] cluster : CjkLineBreak.clusters(text)) {
+            LinearLayout unit = new LinearLayout(activity);
+            unit.setOrientation(LinearLayout.HORIZONTAL);
+            unit.setGravity(Gravity.CENTER_VERTICAL);
+            unit.setClipChildren(false);
+            unit.setClipToPadding(false);
+            List<String> letters = LyricVisuals.splitCodePoints(text.substring(cluster[0], cluster[1]));
+            addLetterViews(unit, line, seg, letters, letterIndex, total, weight, font);
+            letterIndex += letters.size();
+            FlexboxLayout.LayoutParams lp = new FlexboxLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            words.addView(unit, lp);
+            units.add(unit);
+            if (adaptiveChildRanges != null) {
+                adaptiveChildRanges.add(sourceStart >= 0
+                        ? new int[]{sourceStart + cluster[0], sourceStart + cluster[1]} : null);
+            }
+        }
+        if (units.isEmpty()) return;
+        View first = units.get(0);
+        LyricsSyllableViewState.setWordView(seg, first);
+        LyricsSyllableViewState.configureWordMotion(seg, first, words, true);
+        LyricsSyllableViewState.setFollowerMotionViews(seg, units.subList(1, units.size()));
+        if (spaceAfter) {
+            View last = units.get(units.size() - 1);
+            ((ViewGroup.MarginLayoutParams) last.getLayoutParams()).setMarginEnd(measuredSpacePx(last));
+        }
+    }
+
+    /** Appends one letter view per code point, timed as letters {@code firstIndex..} of
+     *  {@code total} across the segment. */
+    private void addLetterViews(ViewGroup parent, AppliedLine line, SyllableSegment seg,
+                                List<String> letters, int firstIndex, int total,
+                                String weight, String font) {
+        int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
+        float step = 1f / Math.max(1, total);
+        for (int i = 0; i < letters.size(); i++) {
+            String text = letters.get(i);
+            SpicyAnimatedTextView letterView = SpicyAnimatedTextView.unstyled(activity);
+            applyTextDirection(letterView, seg.text);
+            letterView.setTextSize(LyricsLineViewState.baseTextSp(line));
+            letterView.setTextColor(color);
+            textFactory.applyLyricTypeface(letterView, text, weight, font);
+            letterView.setIncludeFontPadding(true);
+            letterView.setMaxLines(1);
+            letterView.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
+            parent.addView(letterView, parent instanceof LinearLayout
+                    ? new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT)
+                    : new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT));
+            float relativeStart = (firstIndex + i) * step;
+            AnimatedLetterState letter = new AnimatedLetterState();
+            letter.start = relativeStart;
+            letter.duration = step;
+            letter.glowDuration = Math.max(step, 1f - relativeStart);
+            letter.view = letterView;
+            LyricsSyllableViewState.addLetter(seg, letter);
+        }
     }
 
     /** Arms adaptive wrapBefore planning on the wrapping word-row flexbox when the Adaptive
@@ -512,6 +610,7 @@ public final class LyricsRowViewFactory {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         rowLp.topMargin = dp(2);
         row.addView(romanWords, rowLp);
+        LyricsLineViewState.setTimedRomanRow(line, romanWords);
     }
 
     static String romanizedWordText(AppliedLine line, SyllableSegment seg, int wordIndex,
@@ -629,44 +728,20 @@ public final class LyricsRowViewFactory {
     }
 
     private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font,
-                               Options options, boolean wrapLongLines, float contentWidthPx) {
+                               Options options, boolean wrapLongLines) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
         boolean appleStyle = options != null && options.appleStyle;
-        boolean appleCjkWrap = options != null && options.appleCjkWrap;
-        boolean longWrappingWord = false;
-        if (appleCjkWrap && wrapLongLines && seg != null && !isBlank(seg.text)) {
-            android.graphics.Paint measurePaint = new android.graphics.Paint();
-            measurePaint.setTextSize(sp(LyricsLineViewState.baseTextSp(line)));
-            measurePaint.setTypeface(textFactory.resolveTypeface(true));
-            longWrappingWord = measurePaint.measureText(seg.text) + dp(8) > contentWidthPx;
-        }
-        if (!showJapaneseFurigana && !longWrappingWord && LyricVisuals.shouldUseLetterAnimator(seg, appleStyle)) {
+        if (!showJapaneseFurigana && LyricVisuals.shouldUseLetterAnimator(seg, appleStyle)) {
+            // Single-line on purpose: a segment that must wrap mid-word is Han/kana, and those are
+            // laid out as running text by addFlowingCjkSegment instead of a nested wrap box.
             LinearLayout letters = new LinearLayout(activity);
             letters.setOrientation(LinearLayout.HORIZONTAL);
-            letters.setClipToPadding(false);
             letters.setGravity(Gravity.CENTER_VERTICAL);
+            letters.setClipToPadding(false);
+            letters.setClipChildren(false);
             LyricsSyllableViewState.clearLetters(seg);
             List<String> letterTexts = LyricVisuals.splitCodePoints(seg.text);
-            float step = 1f / Math.max(1, letterTexts.size());
-            float relativeStart = 0f;
-            for (String text : letterTexts) {
-                SpicyAnimatedTextView letterView = SpicyAnimatedTextView.unstyled(activity);
-                applyTextDirection(letterView, seg.text);
-                letterView.setTextSize(LyricsLineViewState.baseTextSp(line));
-                letterView.setTextColor(color);
-                textFactory.applyLyricTypeface(letterView, text, weight, font);
-                letterView.setIncludeFontPadding(true);
-                letterView.setMaxLines(1);
-                letterView.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
-                letters.addView(letterView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                AnimatedLetterState letter = new AnimatedLetterState();
-                letter.start = relativeStart;
-                letter.duration = step;
-                letter.glowDuration = Math.max(step, 1f - relativeStart);
-                letter.view = letterView;
-                LyricsSyllableViewState.addLetter(seg, letter);
-                relativeStart += step;
-            }
+            addLetterViews(letters, line, seg, letterTexts, 0, letterTexts.size(), weight, font);
             LyricsSyllableViewState.clearTextView(seg);
             return letters;
         }
@@ -681,14 +756,29 @@ public final class LyricsRowViewFactory {
         if (showJapaneseFurigana) {
             word.setPadding(0, FuriganaText.rubyGapReservationPx(sp(LyricsLineViewState.baseTextSp(line))), 0, 0);
         }
-        word.setMaxLines(appleCjkWrap && wrapLongLines ? 4 : 1);
-        if (appleCjkWrap && wrapLongLines) {
-            word.setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY);
+        if (wrapLongLines && showJapaneseFurigana && isCjkWrapText(seg == null ? "" : seg.text)) {
+            // Ruby needs one contiguous layout, so a furigana word cannot be split into flowing
+            // units; it may wrap inside itself instead. The flexbox measures it against the row's
+            // real width, so no width cap is needed here.
+            word.setHorizontallyScrolling(false);
+            word.setEllipsize(null);
+            word.setMaxLines(Integer.MAX_VALUE);
+            applyAdaptiveWrapping(word, true, true);
+        } else {
+            word.setMaxLines(1);
+        }
+        if (showJapaneseFurigana) {
             word.setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE);
         }
         LyricsSyllableViewState.clearLetters(seg);
         LyricsSyllableViewState.setTextView(seg, word);
         return word;
+    }
+
+    private static boolean isCjkWrapText(String text) {
+        return SpicyTextDetection.hasCjkIdeograph(text)
+                || SpicyTextDetection.hasKana(text)
+                || SpicyTextDetection.itemKoreanTest(text);
     }
 
     private View stackRomanizedWord(AppliedLine line, SyllableSegment seg, View wordView, String romanizedWordText) {
@@ -795,7 +885,7 @@ public final class LyricsRowViewFactory {
 
     private boolean isCjkPhraseLine(AppliedLine line) {
         String language = ReadingLanguagePolicy.layoutLanguage(line);
-        return "ja".equals(language) || "zh".equals(language);
+        return "ja".equals(language) || "zh".equals(language) || "ko".equals(language);
     }
 
     private boolean hasJapaneseReading(AppliedLine line) {
@@ -805,16 +895,6 @@ public final class LyricsRowViewFactory {
     private int dp(int value) {
         float density = activity == null ? 1f : activity.getResources().getDisplayMetrics().density;
         return Math.round(value * density);
-    }
-
-    /**
-     * Width basis for the Apple long-CJK-word check: screen width minus chrome margin. Slightly
-     * conservative on purpose — wrapping a word a touch early is the safe direction.
-     */
-    private float syllableContentWidthPx() {
-        int screenWidthPx = activity == null ? 0
-                : activity.getResources().getDisplayMetrics().widthPixels;
-        return Math.max(1, screenWidthPx - dp(32));
     }
 
     private float sp(float value) {
@@ -874,6 +954,5 @@ public final class LyricsRowViewFactory {
         public String documentText = "";
         public boolean appleStyle;
         public boolean appleCompactText;
-        public boolean appleCjkWrap;
     }
 }

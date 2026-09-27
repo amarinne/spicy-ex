@@ -83,6 +83,11 @@ public final class LyricsLocalRomanizer {
                     && SpicyTextDetection.itemKoreanTest(line.text)
             ) {
                 KoreanDisplayMode mode = opts == null ? KoreanDisplayMode.RR_STANDARD : KoreanDisplayMode.fromSetting(opts.koreanMode);
+                if (mode == KoreanDisplayMode.OFF) {
+                    line.readingRenderPlan = null;
+                    line.romanizedText = "";
+                    return "";
+                }
                 line.readingRenderPlan = ReadingPlanFactory.korean(line, mode);
                 if (line.readingRenderPlan != null) {
                     // The plan is authoritative. Do not leave a provider line-level translit
@@ -163,6 +168,11 @@ public final class LyricsLocalRomanizer {
     private static boolean populateKoreanSegments(LyricsLine line, RomanizationOptions opts) {
         if (line == null || isBlank(line.text) || line.syllables == null || line.syllables.isEmpty()) return false;
         KoreanDisplayMode mode = opts == null ? KoreanDisplayMode.RR_STANDARD : KoreanDisplayMode.fromSetting(opts.koreanMode);
+        if (mode == KoreanDisplayMode.OFF) {
+            line.readingRenderPlan = null;
+            clearSegmentRomanization(line);
+            return false;
+        }
         line.readingRenderPlan = ReadingPlanFactory.korean(line, mode);
         if (line.readingRenderPlan == null) return false;
         clearSegmentRomanization(line);

@@ -9,6 +9,9 @@ import java.util.List;
 public final class SyllableRenderState {
     public View view;
     public View motionView;
+    /** Further views that move with {@link #motionView}: the other line-break units of a
+     *  segment that flows across lines. */
+    public List<View> followerMotionViews = new ArrayList<>();
     public View containerView;
     public boolean motionOwner;
     public SpicyAnimatedTextView textView;
@@ -23,6 +26,7 @@ public final class SyllableRenderState {
     public void clear() {
         view = null;
         motionView = null;
+        followerMotionViews = new ArrayList<>();
         containerView = null;
         motionOwner = false;
         textView = null;

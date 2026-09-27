@@ -112,6 +112,24 @@ public final class LyricsMeaningLaneBehaviorTest {
         assertTrue(events.index("google-translate:lane-behavior") < events.index("a:complete"));
     }
 
+    /**
+     * A 429 is the endpoint saying this network address is done for now. Every later batch, the
+     * retry pass and the rescue pass would only be refused too, and each refused ask keeps the
+     * limit in place - so the run stops asking instead of spending a song's worth of requests to
+     * learn the same thing again.
+     */
+    @Test public void rateLimitedStopsTheRunInsteadOfAskingAgain() throws Exception {
+        provider.rateLimited = true;
+        Recorder callback = new Recorder("limited");
+
+        assertTrue(newLane().start("rate-limited", 1, longPendingDocument(120), BACKEND, "en", "ko", "ko",
+                false, alwaysCurrent(), callback));
+
+        assertTrue("expected limited:complete, saw " + events.snapshot(),
+                events.await("limited:complete", WAIT_MS));
+        assertEquals("one refused request, not a run's worth of them", 1, provider.translateCalls());
+    }
+
     // --- Coalescer contracts ---------------------------------------------
 
     /**
@@ -471,6 +489,22 @@ public final class LyricsMeaningLaneBehaviorTest {
         return document;
     }
 
+    /** A song long enough to need more than one translation batch, so stopping early shows. */
+    private static LyricsDocument longPendingDocument(int lines) {
+        LyricsDocument document = new LyricsDocument();
+        document.trackId = "rate-limited-track";
+        document.language = "ko";
+        document.translationPending = true;
+        for (int i = 0; i < lines; i++) {
+            LyricsLine line = new LyricsLine();
+            line.text = "가사 " + i;
+            line.startMs = i * 1_000L;
+            line.endMs = i * 1_000L + 900L;
+            document.lines.add(line);
+        }
+        return document;
+    }
+
     private static void clearCoalescer() throws Exception {
         Field field = LyricsMeaningLane.class.getDeclaredField("COALESCER");
         field.setAccessible(true);
@@ -537,6 +571,8 @@ public final class LyricsMeaningLaneBehaviorTest {
     final class ControllableProvider implements LyricsMeaningLane.MeaningProvider {
         private final CountDownLatch release = new CountDownLatch(1);
         private volatile boolean gated;
+        /** Answers 429 the way the endpoint does when the address is rate limited. */
+        private volatile boolean rateLimited;
         private final AtomicInteger translateCalls = new AtomicInteger();
 
         void gate() {
@@ -572,6 +608,11 @@ public final class LyricsMeaningLaneBehaviorTest {
                 }
             }
             GoogleEnhancer.BatchResult result = new GoogleEnhancer.BatchResult();
+            if (rateLimited) {
+                result.httpStatus = 429;
+                result.failureReason = "http_429";
+                return result;
+            }
             for (GoogleEnhancer.BatchLine line : batch) {
                 result.translations.put(line.index, "T:" + line.text);
             }

@@ -63,4 +63,16 @@ final class LyricsFollowState {
         return !touching && manuallySuspended
                 && clock.getAsLong() - lastManualScrollMs >= cooldownMs;
     }
+
+    /** Returns whether the user is currently touching/dragging the list. */
+    boolean isTouching() {
+        return touching;
+    }
+
+    /** Returns 0..1 progress toward auto-resume based on the given cooldown. */
+    float autoResumeProgress(long cooldownMs) {
+        if (touching || !manuallySuspended || cooldownMs <= 0) return 0f;
+        long elapsed = clock.getAsLong() - lastManualScrollMs;
+        return Math.max(0f, Math.min(1f, elapsed / (float) cooldownMs));
+    }
 }

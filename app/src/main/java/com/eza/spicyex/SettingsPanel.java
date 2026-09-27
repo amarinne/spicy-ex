@@ -35,13 +35,11 @@ import com.eza.spicyex.settings.SettingsWriter;
 import com.eza.spicyex.settings.SourceOrderEditor;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.ActionIconDrawable.Kind;
-import com.eza.spicyex.ui.PanelDialog;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -79,6 +77,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     private final Runnable onToggleSize;
     private final Runnable onClose;
     private final java.util.function.Consumer<CacheClearKind> onClearCache;
+    private final Runnable onResyncTiming;
     private com.eza.spicyex.hooks.LyricsHost lyricsHost;
 
     private LinearLayout sectionsContainer;
@@ -115,7 +114,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     public SettingsPanel(Context context, SettingsStore store,
                          java.util.function.BooleanSupplier isHalfSize,
                          Runnable onToggleSize, Runnable onClose,
-                         java.util.function.Consumer<CacheClearKind> onClearCache) {
+                         java.util.function.Consumer<CacheClearKind> onClearCache,
+                         Runnable onResyncTiming) {
         this.context = context;
         this.style = new PanelStyle(context);
         this.store = store;
@@ -127,6 +127,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
         this.onClearCache = onClearCache;
+        this.onResyncTiming = onResyncTiming;
         writer.ensureBackgroundStyleMigrated(store.get(Settings.ENABLE_BACKGROUND));
         this.uiStrings = UiLanguage.strings(context, store.get(Settings.UI_LANGUAGE));
     }
@@ -660,7 +661,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         LanguageModelPack.DownloadStatus status = LanguageModelPack.status();
         // Rebuild once more after the worker switches to READY or ERROR; otherwise the polling
         // loop would stop before the terminal state became visible in the panel.
-        rebuildSection(Settings.TRANSLITERATION);
+        if (status.phase == LanguageModelPack.Phase.READY) rebuildSections();
+        else rebuildSection(Settings.TRANSLITERATION);
         if (status.phase == LanguageModelPack.Phase.DOWNLOADING) {
             languageModelPollQueued = true;
             uiHandler.postDelayed(this::refreshLanguageModelDownloadStatus, 500);
@@ -685,20 +687,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         LinearLayout row = style.newRow(content);
         row.setTag(PanelTags.row(Settings.DOWNLOAD_LANGUAGE_MODELS.key));
         row.setOnClickListener(v -> {
-            if (LanguageModelPack.isReady()) {
-                String sizeMb = String.format(Locale.getDefault(), "%.1f",
-                        LanguageModelPack.installedSizeBytes() / 1_000_000.0);
-                new PanelDialog(context, uiStrings.get("settings_language_model_delete_title", "Delete language model"))
-                        .paragraph(uiStrings.format("settings_language_model_delete_desc",
-                                "Delete the downloaded language model pack? This frees about %1$s MB.", sizeMb))
-                        .primary(uiStrings.get("settings_language_model_delete", "Delete"), () -> {
-                            LanguageModelPack.deleteDownload();
-                            rebuildSection(Settings.TRANSLITERATION);
-                        })
-                        .secondary(uiStrings.get("settings_ai_cancel", "Cancel"), null)
-                        .show();
-                return;
-            }
+            if (LanguageModelPack.isReady()) return;
             if (status.phase == LanguageModelPack.Phase.ERROR) {
                 LanguageModelPack.clearTransientState();
             }
@@ -714,13 +703,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
         String summary;
         String small = "";
-        if (status.phase == LanguageModelPack.Phase.READY) {
-            summary = uiStrings.get("settings_language_model_installed", "Downloaded");
-            String sizeMb = String.format(Locale.getDefault(), "%.1f",
-                    LanguageModelPack.installedSizeBytes() / 1_000_000.0);
-            small = uiStrings.format("settings_language_model_tap_to_delete_size",
-                    "Tap to delete · %1$s MB", sizeMb);
-        } else if (status.phase == LanguageModelPack.Phase.DOWNLOADING) {
+        if (status.phase == LanguageModelPack.Phase.DOWNLOADING) {
             summary = uiStrings.get("settings_language_model_downloading", "Downloading…");
             small = uiStrings.get("settings_language_model_progress", status.progressPercent + "%");
         } else if (status.phase == LanguageModelPack.Phase.ERROR) {
@@ -764,6 +747,17 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         rows.actionRow(content, Kind.BUG,
                 DiagnosticReportingDialog.reportProblemLabel(context, store),
                 v -> DiagnosticReportingDialog.show(context, store));
+        rows.actionRow(content, null,
+                uiStrings.get("settings_action_resync_timing", "Reset lyrics sync"),
+                v -> {
+                    // The panel owns the stored offset; the host re-anchors its playback clock so
+                    // the next frame measures from the real position instead of the old offset.
+                    writer.put(Settings.SYNC_OFFSET_MS, 0);
+                    if (onResyncTiming != null) onResyncTiming.run();
+                    android.widget.Toast.makeText(context,
+                            uiStrings.get("settings_resync_timing_done", "Lyrics sync reset"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
         clearAction(content, "settings_action_clear_translation_cache",
                 "Clear translation cache", CacheClearKind.TRANSLATION);
         clearAction(content, "settings_action_clear_reading_cache",

@@ -63,9 +63,22 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
         }
     }
 
+    /**
+     * Asks for one frame. Safe to call from anywhere, including from inside the frame callback.
+     *
+     * <p>The delta clock is only restarted when the loop was actually idle. It used to be zeroed
+     * unconditionally, which quietly broke every animation driven off this scheduler: the lyric
+     * shell calls this from its ScrollView scroll listener, and that listener fires on every frame
+     * the scroll spring moves the view. Each of those calls zeroed {@code lastFrameNanos}, so the
+     * next {@link #doFrame} reported a delta of 0 and the caller substituted a fixed 1/60s. Every
+     * spring then advanced by 16.7ms of simulated time per real frame regardless of how long the
+     * frame actually took - twice too fast on a 120Hz panel (which reads as a snap followed by a
+     * twitch) and half speed on a phone dropping to 30fps (which reads as sluggish, stuttering
+     * drift). While the loop is continuous the callback owns this field and it must not be reset.
+     */
     public void requestFrame() {
         if (!running) return;
-        lastFrameNanos = 0L;
+        if (!continuous && !framePosted) lastFrameNanos = 0L;
         postFrameIfNeeded();
     }
 

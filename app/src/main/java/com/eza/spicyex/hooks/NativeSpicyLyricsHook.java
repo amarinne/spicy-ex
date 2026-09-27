@@ -139,8 +139,14 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         }
     }
 
+    @Override
     public boolean seekSpotifyTo(long positionMs) {
         return playbackBridge.seekSpotifyTo(positionMs);
+    }
+
+    @Override
+    public boolean canSeek() {
+        return playbackBridge.canSeek();
     }
 
     @Override
@@ -207,6 +213,21 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     @Override
     public void loadCatalogPickerRows(CatalogPickerRowsCallback callback) {
         lyricsSessionManager.pickerRows(callback);
+    }
+
+    @Override
+    public String catalogTrackUri() {
+        return lyricsSessionManager.catalogTrackUri();
+    }
+
+    @Override
+    public boolean catalogFetchInFlight() {
+        return lyricsSessionManager.catalogFetchInFlight();
+    }
+
+    @Override
+    public LyricsSessionManager.PollingDemandLease acquireLyricsPollingDemand() {
+        return lyricsSessionManager.acquirePollingDemand();
     }
 
     @Override

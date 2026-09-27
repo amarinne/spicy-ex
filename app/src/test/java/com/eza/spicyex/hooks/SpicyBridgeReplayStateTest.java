@@ -1,8 +1,6 @@
 package com.eza.spicyex.hooks;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -61,8 +59,19 @@ public class SpicyBridgeReplayStateTest {
     }
 
     @Test
-    public void disconnectedBoundServiceWaitsForAndroidAutomaticReconnect() {
-        assertTrue(SpicyBridgeReplayState.shouldAwaitAutomaticReconnect(true));
-        assertFalse(SpicyBridgeReplayState.shouldAwaitAutomaticReconnect(false));
+    public void disconnectedPublisherRebindsAndReplaysRetainedPayload() {
+        SpicyBridgeReplayState state = new SpicyBridgeReplayState();
+        long revision = state.retainPayload();
+        state.markPublished(revision);
+        assertEquals(0L, state.pendingRevision());
+
+        // onServiceDisconnected must not clear the retained payload; the rebind replays it
+        // via onConnectionOpened on the next onServiceConnected so the current track resumes
+        // without a new session.
+        state.onConnectionOpened();
+
+        assertEquals(revision, state.pendingRevision());
+        state.markPublished(revision);
+        assertEquals(0L, state.pendingRevision());
     }
 }

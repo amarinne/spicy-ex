@@ -339,8 +339,10 @@ final class SpicyLyricBridgePublisher {
             synchronized (SpicyLyricBridgePublisher.this) {
                 bridge = null;
                 Diagnostics.setHyperGlowBridgeStatus("disconnected");
-                binding = SpicyBridgeReplayState.shouldAwaitAutomaticReconnect(bound);
-                if (!binding && enabled) connect();
+                XpLog.log("[SpotifyPlusBridge] service disconnected, rebinding");
+                binding = false;
+                unbindLocked();
+                if (enabled) connect();
             }
         }
 
@@ -348,6 +350,7 @@ final class SpicyLyricBridgePublisher {
         public void onBindingDied(ComponentName name) {
             synchronized (SpicyLyricBridgePublisher.this) {
                 bridge = null;
+                XpLog.log("[SpotifyPlusBridge] binding died, rebinding");
                 binding = false;
                 unbindLocked();
                 if (enabled) connect();

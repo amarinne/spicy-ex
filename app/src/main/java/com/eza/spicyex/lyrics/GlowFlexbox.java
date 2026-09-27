@@ -172,6 +172,251 @@ public class GlowFlexbox extends FlexboxLayout {
         return enabled && glow > 0.02f;
     }
 
+    // ---- per-visual-line zoom -------------------------------------------------------------
+    // A wrapped lyric used to zoom as one block: every visual line grew at once, and the last lines
+    // swung sideways/downwards the most. Instead, only the visual line being sung zooms, about its
+    // own start edge; the lines around it just make room (half the extra height each way). Applied
+    // as a draw-time canvas transform, so it never fights the per-word scale/lift properties the
+    // syllable animation writes onto the child views.
+    private final java.util.IdentityHashMap<View, Integer> childLine = new java.util.IdentityHashMap<>();
+    private float[] lineTop = new float[0];
+    private float[] lineBottom = new float[0];
+    private float[] lineLeft = new float[0];
+    private float[] lineRight = new float[0];
+    private float[] lineZoom = new float[0];
+    private float[] lineShift = new float[0];
+    private boolean lineZoomOpposite;
+    private boolean lineZoomActive;
+    private static final int[] ZOOM_LOC = new int[2];
+
+    @Override
+    protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        super.onLayout(changed, l, t, r, b);
+        rebuildVisualLines();
+        rebuildWordTransforms();
+    }
+
+    private void rebuildVisualLines() {
+        wordTransform.clear();
+        childLine.clear();
+        java.util.ArrayList<float[]> lines = new java.util.ArrayList<>();
+        float[] current = null;
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            if (child.getVisibility() == GONE) continue;
+            float top = child.getTop();
+            float bottom = child.getBottom();
+            // A new flex line starts where a child begins below the current line's middle.
+            if (current == null || top >= (current[0] + current[1]) / 2f) {
+                current = new float[]{top, bottom, child.getLeft(), child.getRight()};
+                lines.add(current);
+            } else {
+                current[0] = Math.min(current[0], top);
+                current[1] = Math.max(current[1], bottom);
+                current[2] = Math.min(current[2], child.getLeft());
+                current[3] = Math.max(current[3], child.getRight());
+            }
+            childLine.put(child, lines.size() - 1);
+        }
+        int n = lines.size();
+        if (lineZoom.length != n) {
+            lineZoom = new float[n];
+            java.util.Arrays.fill(lineZoom, 1f);
+            lineShift = new float[n];
+        }
+        lineTop = new float[n];
+        lineBottom = new float[n];
+        lineLeft = new float[n];
+        lineRight = new float[n];
+        for (int i = 0; i < n; i++) {
+            float[] line = lines.get(i);
+            lineTop[i] = line[0];
+            lineBottom[i] = line[1];
+            lineLeft[i] = line[2];
+            lineRight[i] = line[3];
+        }
+    }
+
+    public int visualLineCount() {
+        return lineTop.length;
+    }
+
+    /** Visual line holding {@code descendant} (any view inside one of this box's children), or -1. */
+    public int visualLineOf(View descendant) {
+        View view = descendant;
+        while (view != null && view.getParent() != this) {
+            Object parent = view.getParent();
+            view = parent instanceof View ? (View) parent : null;
+        }
+        Integer line = view == null ? null : childLine.get(view);
+        return line == null ? -1 : line;
+    }
+
+    /**
+     * Eases each visual line's zoom toward its target: {@code target} for {@code activeLine},
+     * {@code heldTarget} for the lines before it (already sung - they keep their zoom until the
+     * whole lyric line ends, instead of shrinking back as singing moves down), 1 for the rest.
+     * Every target is capped so the zoomed line keeps {@code marginPx} from the screen edge.
+     */
+    public void stepLineZoom(int activeLine, float target, float heldTarget, float deltaSeconds,
+                             boolean opposite, float marginPx) {
+        int n = lineZoom.length;
+        if (n == 0) return;
+        lineZoomOpposite = opposite;
+        float k = 1f - (float) Math.exp(-Math.max(0.001f, deltaSeconds) * 11f);
+        boolean changed = false;
+        boolean any = false;
+        for (int i = 0; i < n; i++) {
+            float want = i == activeLine ? target : i < activeLine ? heldTarget : 1f;
+            if (want > 1f) want = Math.min(want, fitLineZoom(i, opposite, marginPx));
+            float goal = Math.max(1f, want);
+            float next = lineZoom[i] + (goal - lineZoom[i]) * k;
+            if (Math.abs(next - goal) < 0.0005f) next = goal;
+            if (next != lineZoom[i]) {
+                lineZoom[i] = next;
+                changed = true;
+            }
+            if (next != 1f) any = true;
+        }
+        if (!changed) return;
+        // Lines above a zoomed line move up by half its extra height, lines below move down.
+        for (int i = 0; i < n; i++) {
+            float shift = 0f;
+            for (int j = 0; j < n; j++) {
+                if (j == i) continue;
+                float extra = (lineBottom[j] - lineTop[j]) * (lineZoom[j] - 1f) / 2f;
+                shift += j < i ? extra : -extra;
+            }
+            lineShift[i] = shift;
+        }
+        lineZoomActive = any;
+        invalidate();
+    }
+
+    public boolean hasLineZoom() {
+        return lineZoomActive;
+    }
+
+    // ---- word emphasis ------------------------------------------------------------------------
+    // A held (slow) word swells a little while it is sung, about its own centre. Its neighbours
+    // stay exactly where they are: squeezing them to keep the line width made every word between
+    // two held ones slide back and forth as the stress moved along. Draw-time only.
+    private static final float WORD_EMPHASIS_MAX = 0.07f;
+    private final java.util.IdentityHashMap<View, Float> wordEmphasis = new java.util.IdentityHashMap<>();
+    private final java.util.IdentityHashMap<View, float[]> wordTransform = new java.util.IdentityHashMap<>();
+    private boolean wordEmphasisActive;
+
+    /**
+     * Eases each child's emphasis toward {@code target} (0..1) for the child holding
+     * {@code activeDescendant} and 0 for every other one.
+     */
+    public void stepWordEmphasis(View activeDescendant, float target, float deltaSeconds) {
+        View active = activeDescendant;
+        while (active != null && active.getParent() != this) {
+            Object parent = active.getParent();
+            active = parent instanceof View ? (View) parent : null;
+        }
+        // Only a word that is a small part of its line: in text without spaces (Japanese, Chinese)
+        // one "word" box can be a whole phrase or line, and swelling that is a line zoom.
+        if (active != null && !emphasisEligible(active)) active = null;
+        if (active == null && !wordEmphasisActive) return;
+        float rise = 1f - (float) Math.exp(-Math.max(0.001f, deltaSeconds) / 0.12f);
+        float fall = 1f - (float) Math.exp(-Math.max(0.001f, deltaSeconds) / 0.28f);
+        boolean changed = false;
+        boolean any = false;
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            Float currentBox = wordEmphasis.get(child);
+            float current = currentBox == null ? 0f : currentBox;
+            float goal = child == active ? Math.max(0f, Math.min(1f, target)) : 0f;
+            float next = current + (goal - current) * (goal > current ? rise : fall);
+            if (Math.abs(next - goal) < 0.002f) next = goal;
+            if (next != current) {
+                changed = true;
+                if (next == 0f) wordEmphasis.remove(child); else wordEmphasis.put(child, next);
+            }
+            if (next != 0f) any = true;
+        }
+        if (!changed) return;
+        wordEmphasisActive = any;
+        rebuildWordTransforms();
+        invalidate();
+    }
+
+    private boolean emphasisEligible(View child) {
+        Integer line = childLine.get(child);
+        if (line == null || line >= lineTop.length) return false;
+        int members = 0;
+        for (int i = 0; i < getChildCount(); i++) {
+            Integer at = childLine.get(getChildAt(i));
+            if (at != null && at.equals(line)) members++;
+        }
+        float lineWidth = lineRight[line] - lineLeft[line];
+        return members >= 3 && lineWidth > 0f && child.getWidth() <= lineWidth * 0.4f;
+    }
+
+    /** Per child [translateX, scale]: the held word scales in place; nothing else moves. */
+    private void rebuildWordTransforms() {
+        wordTransform.clear();
+        if (!wordEmphasisActive) return;
+        for (java.util.Map.Entry<View, Float> entry : wordEmphasis.entrySet()) {
+            wordTransform.put(entry.getKey(), new float[]{0f, 1f + WORD_EMPHASIS_MAX * entry.getValue()});
+        }
+    }
+
+    /** Applies {@code child}'s word emphasis: moved along its line and scaled about its baseline. */
+    private void applyWordTransform(Canvas canvas, View child) {
+        if (!wordEmphasisActive) return;
+        float[] t = wordTransform.get(child);
+        if (t == null) return;
+        // About its own centre and baseline: grows up and out evenly, never sinking below its
+        // neighbours or shoving them.
+        canvas.scale(t[1], t[1], (child.getLeft() + child.getRight()) / 2f, child.getBottom());
+    }
+
+    private float fitLineZoom(int line, boolean opposite, float marginPx) {
+        View root = getRootView();
+        int screenWidth = root == null ? 0 : root.getWidth();
+        float span = lineRight[line] - lineLeft[line];
+        if (screenWidth <= 0 || span <= 0f) return Float.MAX_VALUE;
+        getLocationInWindow(ZOOM_LOC);
+        float scale = getScaleX();
+        float originX = ZOOM_LOC[0] - getPivotX() * (1f - scale);
+        if (opposite) {
+            float right = originX + lineRight[line] * scale;
+            return (right - marginPx) / (span * scale);
+        }
+        float left = originX + lineLeft[line] * scale;
+        return (screenWidth - marginPx - left) / (span * scale);
+    }
+
+    /** Applies {@code child}'s visual-line zoom to {@code canvas}; false when it has none. */
+    private boolean applyLineTransform(Canvas canvas, View child) {
+        if (!lineZoomActive) return false;
+        Integer line = childLine.get(child);
+        if (line == null || line >= lineZoom.length) return false;
+        float zoom = lineZoom[line];
+        float shift = lineShift[line];
+        if (zoom == 1f && shift == 0f) return false;
+        canvas.translate(0f, shift);
+        if (zoom != 1f) {
+            canvas.scale(zoom, zoom, lineZoomOpposite ? lineRight[line] : lineLeft[line],
+                    (lineTop[line] + lineBottom[line]) / 2f);
+        }
+        return true;
+    }
+
+    @Override
+    protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
+        if (!lineZoomActive && !wordEmphasisActive) return super.drawChild(canvas, child, drawingTime);
+        int save = canvas.save();
+        applyLineTransform(canvas, child);
+        applyWordTransform(canvas, child);
+        boolean result = super.drawChild(canvas, child, drawingTime);
+        canvas.restoreToCount(save);
+        return result;
+    }
+
     @Override
     protected void dispatchDraw(Canvas canvas) {
         drawGlowLayer(canvas, this);
@@ -183,6 +428,10 @@ public class GlowFlexbox extends FlexboxLayout {
         for (int i = 0; i < parent.getChildCount(); i++) {
             View child = parent.getChildAt(i);
             int save = canvas.save();
+            if (parent == this) {
+                applyLineTransform(canvas, child);
+                applyWordTransform(canvas, child);
+            }
             canvas.translate(child.getLeft(), child.getTop());
             canvas.concat(child.getMatrix());
             if (child instanceof SpicyAnimatedTextView) {
@@ -199,6 +448,10 @@ public class GlowFlexbox extends FlexboxLayout {
         for (int i = 0; i < parent.getChildCount(); i++) {
             View child = parent.getChildAt(i);
             int save = canvas.save();
+            if (parent == this) {
+                applyLineTransform(canvas, child);
+                applyWordTransform(canvas, child);
+            }
             canvas.translate(child.getLeft(), child.getTop());
             canvas.concat(child.getMatrix());
             if (child instanceof SpicyAnimatedTextView) {

@@ -30,8 +30,4 @@ final class SpicyBridgeReplayState {
         retainedRevision = 0L;
         publishedRevision = 0L;
     }
-
-    static boolean shouldAwaitAutomaticReconnect(boolean bound) {
-        return bound;
-    }
 }

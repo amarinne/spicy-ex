@@ -400,4 +400,24 @@ public class KoreanPronunciationTest {
     public void romanizationOptionsPreserveKoreanOffSentinel() {
         assertEquals("Off", new RomanizationOptions("", "Off", false, "", false).koreanMode);
     }
+
+    @Test
+    public void koreanReadingOffSettingRoundTrips() {
+        assertEquals("Off", com.eza.spicyex.Settings.KOREAN_ROMANIZATION.coerce("Off"));
+        assertEquals("Off", com.eza.spicyex.Settings.KOREAN_ROMANIZATION.coerce("off"));
+        assertEquals(KoreanDisplayMode.OFF, KoreanDisplayMode.fromSetting("Off"));
+        assertEquals(KoreanDisplayMode.OFF, KoreanDisplayMode.fromSetting("off"));
+        assertEquals("Off", KoreanDisplayMode.valueOfSetting("Off"));
+        assertEquals("Off", KoreanDisplayMode.valueOfSetting("off"));
+    }
+
+    @Test
+    public void koreanReadingOffProducesNoDisplayOrPlan() {
+        LyricsLine line = new LyricsLine();
+        line.text = "한국어 노래";
+        RomanizationOptions opts = new RomanizationOptions("", "Off", false, "", false);
+        assertEquals("", LyricsLocalRomanizer.romanizeLine(opts, null, line, line.text));
+        org.junit.Assert.assertNull(line.readingRenderPlan);
+        assertEquals("", line.romanizedText);
+    }
 }

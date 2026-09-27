@@ -223,11 +223,12 @@ public final class LyricsRepository {
             return;
         }
         if ("Spotify".equals(source)) {
-            // Explicit Spotify use is a one-shot local read: it adopts whatever lyrics Spotify
-            // already fetched for this track (captured model or lyrics_db) and never performs a
-            // network request or a retry wait. A miss is a terminal NOT_FOUND outcome.
-            LyricsDocument document = nativeLyricsProvider.getNativeLyricsDocument(track);
-            if (document != null && !document.lines.isEmpty()) {
+            nativeLyricsProvider.requestNativeLyrics(track, (document, error) -> {
+                if (document == null || document.lines.isEmpty()) {
+                    callback.onError(error == null || error.isEmpty()
+                            ? "Spotify lyrics request failed" : error);
+                    return;
+                }
                 document.selectedSource = "Spotify";
                 document.selectionMode = "strict";
                 document.selectionOverride = "Spotify";
@@ -236,9 +237,7 @@ public final class LyricsRepository {
                         trackIdFromUri(track == null ? "" : track.uri), "",
                         CatalogAdapters.SPOTIFY_NATIVE_ADAPTER_REVISION);
                 callback.onSuccess(document);
-            } else {
-                callback.onError("Spotify has no lyrics for this track");
-            }
+            });
             return;
         }
         if ("LRCLIB".equals(source)) {
@@ -1520,5 +1519,13 @@ public final class LyricsRepository {
 
     public interface NativeLyricsProvider {
         LyricsDocument getNativeLyricsDocument(SpotifyTrack track);
+
+        interface RequestCallback {
+            void onResult(LyricsDocument document, String error);
+        }
+
+        default void requestNativeLyrics(SpotifyTrack track, RequestCallback callback) {
+            callback.onResult(getNativeLyricsDocument(track), "Spotify lyrics request unavailable");
+        }
     }
 }

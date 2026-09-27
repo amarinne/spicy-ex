@@ -99,9 +99,6 @@ public class TimedTextRowProjectionTest {
 
     @Test
     public void groupedMotionKeepsCompletedFragmentsStillAndSeamsClosed() {
-        assertEquals(1f, LyricsAnimationApplier.groupedWrapperScale(true), 0.0001f);
-        assertEquals(1f, LyricsAnimationApplier.groupedWrapperScale(false), 0.0001f);
-        assertEquals(0f, LyricsAnimationApplier.groupedWrapperY(true), 0.0001f);
         assertEquals(1f, LyricsAnimationApplier.groupedLocalScale(
                 false, false, true, false, 0.5f), 0.0001f);
         assertEquals(0f, LyricsAnimationApplier.groupedLocalY(

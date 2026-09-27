@@ -87,6 +87,7 @@ public final class LyricsMountedRowWindow {
             if (line == null) continue;
             View row = rowAccess == null ? null : rowAccess.rowFor(line);
             if (row == null) continue;
+            boolean attached = false;
             if (row.getParent() != host) {
                 if (row.getParent() instanceof ViewGroup) {
                     ((ViewGroup) row.getParent()).removeView(row);
@@ -95,6 +96,7 @@ public final class LyricsMountedRowWindow {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT));
                 if (mountedCallback != null) mountedCallback.apply(line);
+                attached = true;
             } else {
                 int currentIndex = host.indexOfChild(row);
                 if (currentIndex != childIndex) {
@@ -102,7 +104,11 @@ public final class LyricsMountedRowWindow {
                     host.addView(row, childIndex);
                 }
             }
-            if (styleCallback != null) styleCallback.apply(lineIndex, lineIndex == activeIndex);
+            // Only a row (re)attached here gets its base style: re-styling every row already in the
+            // window on each shift reset sung lines to the unsung fill - and the renderer, which
+            // skips rows it believes settled, never lit them again (past lyrics lost their colour
+            // while scrolling).
+            if (attached && styleCallback != null) styleCallback.apply(lineIndex, lineIndex == activeIndex);
         }
 
         mountedIndices.clear();

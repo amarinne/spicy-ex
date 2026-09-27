@@ -60,6 +60,16 @@ public final class Settings {
             "lyric_auto_resume_follow", LYRICS, "Auto-resume lyric follow", true
     );
 
+    // Enable/disable dynamic animation for follow chip entrance and exit
+    public static final Setting<Boolean> FOLLOW_CHIP_ANIMATION = boolSetting(
+            "lyric_follow_chip_animation", LYRICS, "Follow chip animation", false
+    );
+
+    // Show progress bar on follow chip indicating time remaining
+    public static final Setting<Boolean> FOLLOW_CHIP_PROGRESS = boolSetting(
+            "lyric_follow_chip_progress", LYRICS, "Follow chip progress bar", false
+    );
+
     // Intro/outro skip: Off hides the affordance entirely; On demand shows a chevrons-right
     // chip next to the jump-to-current control while a lyric gap is active; Auto seeks past
     // the gap with no button. New-feature default Off; no bool predecessor on private main,
@@ -73,6 +83,16 @@ public final class Settings {
     // straight to the native fullscreen lyrics - see LyricsActivityTakeoverHook.
     public static final Setting<Boolean> MINI_PLAYER_LYRICS_ICON = boolSetting(
             "mini_player_lyrics_icon", LYRICS, "Show lyrics icon on mini player", false
+    );
+
+    // Whether the lyrics screen keeps the status bar hidden, per orientation. A swipe from the
+    // edge still shows it for a moment.
+    public static final Setting<Boolean> STATUS_BAR_HIDDEN_PORTRAIT = boolSetting(
+            "lyrics_status_bar_hidden_portrait", LYRICS, "Hide status bar (portrait)", false
+    );
+
+    public static final Setting<Boolean> STATUS_BAR_HIDDEN_LANDSCAPE = boolSetting(
+            "lyrics_status_bar_hidden_landscape", LYRICS, "Hide status bar (landscape)", false
     );
 
     public static final IntegerSetting SYNC_OFFSET_MS = intSetting(
@@ -267,6 +287,22 @@ public final class Settings {
             "lyrics_fullscreen_controls", TEXT, "Fullscreen controls", "Always on",
             "5 seconds", "10 seconds", "30 seconds", "Always on"
     );
+
+    // Where the active lyric line rests vertically in the viewport. Auto keeps the existing
+    // behavior (raised when the Apple-style line-slide animation is on and the screen is
+    // portrait, center otherwise); Top/Center/Bottom pin it explicitly regardless of that
+    // animation setting; Custom unlocks LYRICS_FOCUS_POSITION_CUSTOM_PERCENT (set by the layout
+    // editor's focus-point drag handle). See LyricsScrollController's anchor fractions.
+    public static final Setting<String> LYRICS_FOCUS_POSITION = enumSetting(
+            "lyrics_focus_position", INTERNAL, "Lyrics focus point", "Auto",
+            "Auto", "Top", "Center", "Bottom", "Custom"
+    );
+
+    // 0 = top edge, 100 = bottom edge, for LYRICS_FOCUS_POSITION == "Custom".
+    public static final IntegerSetting LYRICS_FOCUS_POSITION_CUSTOM_PERCENT = intSetting(
+            "lyrics_focus_position_custom_percent", INTERNAL, "Custom focus point",
+            50, 0, 100, 5
+    );
     // Position of the fullscreen track-info readout (artwork + title/artist). Off hides the
     // readout, its metadata, and its artwork gestures; back, config toggles, and the floating
     // cluster stay. New-feature rule: default Off for all installs, no migration.
@@ -342,10 +378,6 @@ public final class Settings {
             "lyric_apple_compact_text", APPLE, "Compact text size", true
     );
 
-    public static final Setting<Boolean> APPLE_CJK_WRAP_FIX = boolSetting(
-            "lyric_apple_cjk_wrap_fix", APPLE, "Wrap long CJK words", true
-    );
-
     // Row-scroll cascade. Apple-owned: rendered only inside the Apple sub-section.
     public static final Setting<Boolean> LINE_SLIDE_ANIMATION = boolSetting(
             "lyric_line_slide_animation", APPLE, "Apple Music-style slide", false
@@ -355,6 +387,24 @@ public final class Settings {
     // carries no competing "Apple lift" value; the renderer reads this key under Apple Music.
     public static final Setting<Boolean> APPLE_LIFT = boolSetting(
             "lyric_apple_lift", APPLE, "Apple lift", true
+    );
+
+    // Apple-owned: a one-shot reveal for the first render of a freshly loaded document (opening
+    // the lyrics screen, or a track/source change) - rows rise up from below and fade in instead
+    // of appearing instantly. Distinct from LINE_SLIDE_ANIMATION, which is the per-scroll-step
+    // cascade; this plays once per document, not on every active-line change.
+    public static final Setting<Boolean> LOAD_LIFT_ANIMATION = boolSetting(
+            "lyric_load_lift_animation", APPLE, "Rise in on load", false
+    );
+
+    // Speed multiplier for row cascade and load-lift animations (100 = normal, 50 = half,
+    // 200 = double). Applies to all animation styles.
+    public static final IntegerSetting APPLE_CASCADE_SPEED = intSetting(
+            "apple_cascade_speed", APPLE, "Slide speed", 100, 50, 200, 5
+    );
+
+    public static final IntegerSetting APPLE_SPRING_STRENGTH = intSetting(
+            "apple_spring_strength", APPLE, "Spring strength", 100, 50, 200, 5
     );
 
     // One selector owns both the bounce gate and its scope.
@@ -378,6 +428,15 @@ public final class Settings {
     public static final Setting<String> ENABLE_LINE_BLUR = enumSetting(
             "lyric_enable_line_blur", ANIMATION, "Blur distant lines", "Off",
             "Off", "Slight", "Heavy"
+    );
+
+    // Percent multiplier over the Slight/Heavy blur curve above (100 = unchanged). Since the
+    // curve is max * distanceFalloff(distance), scaling it scales both how strong the blur gets
+    // and how quickly it ramps up with distance together - a single safe knob rather than
+    // exposing the falloff shape's own constants directly. See
+    // LyricsFrameRenderer#mobileLineBlurPx.
+    public static final IntegerSetting LYRICS_BLUR_INTENSITY = intSetting(
+            "lyrics_blur_intensity", ANIMATION, "Blur intensity", 100, 25, 250, 5
     );
 
     // Direction the karaoke gradient fills each line as it plays: down the line ("Top to bottom")
@@ -436,6 +495,20 @@ public final class Settings {
             "off", "furigana_only", "furigana_romaji", "romaji_only", "cycle"
     );
 
+    // Design controls for the furigana reading itself (color/position), separate from
+    // JAPANESE_READING_MODE (which reading mode is active at all - a function choice, not a
+    // design one). See FuriganaText#applySettings. Default 59% reproduces the previous hardcoded
+    // gray (150,150,150).
+    public static final IntegerSetting FURIGANA_BRIGHTNESS = intSetting(
+            "lyrics_furigana_brightness", TRANSLITERATION, "Furigana brightness", 59, 20, 100, 5
+    );
+
+    // Percent scale on the gap between the furigana reading and the kanji it annotates (100 =
+    // the previous fixed spacing). Below 100 pulls the reading closer; above pushes it further up.
+    public static final IntegerSetting FURIGANA_POSITION_PERCENT = intSetting(
+            "lyrics_furigana_position_percent", TRANSLITERATION, "Furigana position", 100, 40, 200, 10
+    );
+
     public static final Setting<String> CHINESE_MODE = enumSetting(
             "lyrics_chinese_mode", TRANSLITERATION, "Chinese reading",
             "pinyin",
@@ -445,6 +518,7 @@ public final class Settings {
     public static final Setting<String> KOREAN_ROMANIZATION = enumSetting(
             "lyrics_korean_romanization", TRANSLITERATION, "Korean reading",
             KoreanDisplayMode.RR_STANDARD.value,
+            KoreanDisplayMode.OFF.value,
             KoreanDisplayMode.RR_STANDARD.value,
             KoreanDisplayMode.WORD_TRANSLIT.value,
             KoreanDisplayMode.RR_PRONUNCIATION.value,

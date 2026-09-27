@@ -26,7 +26,7 @@ public final class ReadingPlanFactory {
     private ReadingPlanFactory() {}
 
     public static RenderPlan korean(LyricsLine line, KoreanDisplayMode mode) {
-        if (line == null) return null;
+        if (line == null || mode == KoreanDisplayMode.OFF) return null;
         List<SourceSpan> spans = new ArrayList<>();
         if (line.syllables != null && !line.syllables.isEmpty()) {
             for (int index = 0; index < line.syllables.size(); index++) {

@@ -95,11 +95,6 @@ public final class LanguageModelPack {
         prefetch();
     }
 
-    public static void deleteDownload() {
-        deleteRecursively(root());
-        clearTransientState();
-    }
-
     public static boolean isReady() {
         File root = root();
         if (root == null || !new File(root, READY).isFile()) return false;
@@ -107,11 +102,6 @@ public final class LanguageModelPack {
             if (!new File(root, required).isFile()) return false;
         }
         return true;
-    }
-
-    /** Size of the installed files, excluding filesystem allocation overhead. */
-    public static long installedSizeBytes() {
-        return isReady() ? sizeBytes(root()) : 0;
     }
 
     public static InputStream open(String relativePath) {
@@ -309,15 +299,5 @@ public final class LanguageModelPack {
         File[] children = file.listFiles();
         if (children != null) for (File child : children) deleteRecursively(child);
         file.delete();
-    }
-
-    private static long sizeBytes(File file) {
-        if (file == null || !file.exists()) return 0;
-        if (file.isFile()) return file.length();
-        File[] children = file.listFiles();
-        if (children == null) return 0;
-        long total = 0;
-        for (File child : children) total += sizeBytes(child);
-        return total;
     }
 }

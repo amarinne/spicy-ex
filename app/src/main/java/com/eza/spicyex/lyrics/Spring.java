@@ -87,4 +87,32 @@ public class Spring {
         position = value;
         velocity = 0f;
     }
+
+    /** Adds to the current position without touching velocity or goal - folds a new displacement
+     *  into an in-flight spring so it keeps its existing motion instead of restarting from rest. */
+    public void nudgePosition(float delta) {
+        position += delta;
+    }
+
+    /** Moves position and goal together: the same motion, relocated by {@code delta}. */
+    public void shift(float delta) {
+        position += delta;
+        goal += delta;
+    }
+
+    /** Launches the spring with speed already on it, instead of accelerating up from rest. Units
+     *  match {@code position} per second. */
+    public void setVelocity(float velocity) {
+        this.velocity = velocity;
+    }
+
+    /** Adds to the current speed without touching position or goal - gives an in-flight spring a
+     *  push while leaving the column it belongs to visually continuous on this frame. */
+    public void nudgeVelocity(float delta) {
+        velocity += delta;
+    }
+
+    public float velocity() {
+        return velocity;
+    }
 }

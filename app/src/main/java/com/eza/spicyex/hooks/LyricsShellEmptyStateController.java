@@ -3,11 +3,13 @@ package com.eza.spicyex.hooks;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.dp;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -89,6 +91,56 @@ final class LyricsShellEmptyStateController {
     static int loadingTopMargin(int viewportHeightPx, int paddingTopPx) {
         if (viewportHeightPx <= 0) return 0;
         return Math.max(0, viewportHeightPx / 2 - Math.max(0, paddingTopPx));
+    }
+
+    /**
+     * An instrumental track: a quiet note and its label in place of "No lyrics found", so a
+     * deliberate no-lyrics track does not read as a lookup failure.
+     */
+    void showInstrumental(LinearLayout lyricsColumn) {
+        ++stateToken;
+        lyricsColumn.removeAllViews();
+        com.eza.spicyex.SettingsUiStrings strings = com.eza.spicyex.UiLanguage.strings(activity,
+                config.get(Settings.UI_LANGUAGE));
+
+        LinearLayout box = new LinearLayout(activity);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView note = textFactory.createText(activity, "♫", 56, Color.WHITE,
+                textFactory.resolveTypeface(true));
+        note.setGravity(Gravity.CENTER);
+        note.setPadding(dp(16), dp(72), dp(16), dp(4));
+        box.addView(note, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView title = textFactory.createText(activity,
+                strings.get("lyrics_instrumental", "Instrumental"), 22, Color.WHITE,
+                textFactory.resolveTypeface(true));
+        title.setGravity(Gravity.CENTER);
+        title.setAlpha(0.85f);
+        box.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        lyricsColumn.addView(box, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // A slow breath on the note, so the screen reads as music playing rather than an error.
+        ValueAnimator breathe = ValueAnimator.ofFloat(0.55f, 1f);
+        breathe.setDuration(1600);
+        breathe.setRepeatCount(ValueAnimator.INFINITE);
+        breathe.setRepeatMode(ValueAnimator.REVERSE);
+        breathe.setInterpolator(new AccelerateDecelerateInterpolator());
+        breathe.addUpdateListener(a -> note.setAlpha((float) a.getAnimatedValue()));
+        note.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {
+                breathe.start();
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+                breathe.cancel();
+            }
+        });
+        if (note.isAttachedToWindow()) breathe.start();
     }
 
     void showError(LinearLayout lyricsColumn, String error) {

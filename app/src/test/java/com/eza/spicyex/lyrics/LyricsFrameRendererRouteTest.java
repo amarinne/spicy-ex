@@ -98,6 +98,43 @@ public class LyricsFrameRendererRouteTest {
         assertFalse(LyricsFrameRenderer.blurNeedsRefresh(false, true, true, false));
     }
 
+    @Test
+    public void degenerateCheckMeasuresTheLineOwnEndNotItsHeldWindow() {
+        // A short, fast line whose active window was extended across a sub-threshold instrumental
+        // gap: the words cover their own line completely, so word-by-word fill must survive.
+        AppliedLine line = new AppliedLine();
+        line.startMs = 10_000;
+        line.sourceLine = new LyricsLine();
+        line.sourceLine.startMs = 10_000;
+        line.sourceLine.endMs = 10_400;
+        line.endMs = 13_200; // held to the next line's start
+        line.words.add(segment("yeah", 10_000, 10_400));
+        assertFalse(LyricsFrameRenderer.hasDegenerateWordTiming(line));
+    }
+
+    @Test
+    public void oneCollapsedSpanAmongHealthyOnesKeepsTimedWordFill() {
+        AppliedLine line = new AppliedLine();
+        line.startMs = 1000;
+        line.endMs = 5000;
+        line.words.add(segment("a", 1000, 2000));
+        line.words.add(segment("b", 2000, 3000));
+        line.words.add(segment(".", 3000, 3000)); // provider noise, not a broken line
+        line.words.add(segment("c", 3000, 4500));
+        assertFalse(LyricsFrameRenderer.hasDegenerateWordTiming(line));
+    }
+
+    @Test
+    public void mostlyCollapsedSpansAreStillDegenerate() {
+        AppliedLine line = new AppliedLine();
+        line.startMs = 1000;
+        line.endMs = 5000;
+        line.words.add(segment("a", 1000, 2000));
+        line.words.add(segment("b", 2000, 2000));
+        line.words.add(segment("c", 2500, 2500));
+        assertTrue(LyricsFrameRenderer.hasDegenerateWordTiming(line));
+    }
+
     /**
      * The frame pass stops driving a row's scale/glow/syllable springs once it culls the row, so
      * those springs cannot settle. The pending-animation probe has to cull the same rows, or a

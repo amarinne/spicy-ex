@@ -16,6 +16,9 @@ public final class PanelPolicy {
     }
 
     public static boolean shouldRender(Settings.Setting<?> setting, PanelSnapshot snapshot) {
+        if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) return !snapshot.languageModelReady();
+        if ((setting.section == Settings.TRANSLITERATION || setting.section == Settings.TRANSLATION)
+                && !snapshot.languageModelReady()) return false;
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             return snapshot.spicySourceEnabled();
         }
@@ -53,6 +56,9 @@ public final class PanelPolicy {
             return snapshot.animatedBackgroundAvailable()
                     && LyricsBackgroundStyle.isAnimated(snapshot.get(Settings.BACKGROUND_STYLE));
         }
+        if (setting == Settings.LYRICS_BLUR_INTENSITY) {
+            return !"Off".equals(snapshot.get(Settings.ENABLE_LINE_BLUR));
+        }
         if (setting == Settings.LINE_SYNC_FILL) {
             return "Gradient wash".equals(snapshot.get(Settings.ANIMATION_STYLE));
         }
@@ -60,6 +66,9 @@ public final class PanelPolicy {
             // Apple motion is owned by the Apple section under Apple Music; the shared
             // bounce rows would compete, so they stand down while the Apple card is up.
             return !"Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
+        }
+        if (setting == Settings.APPLE_SPRING_STRENGTH) {
+            return "Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
         }
         if (isAppleOwned(setting)) {
             return "Apple Music".equals(snapshot.get(Settings.ANIMATION_STYLE));
@@ -82,6 +91,12 @@ public final class PanelPolicy {
         if (setting == Settings.TRACK_INFO_TEXT_SIZE_CUSTOM) {
             return "Custom".equals(snapshot.get(Settings.TRACK_INFO_TEXT_SIZE));
         }
+        if (setting == Settings.FURIGANA_BRIGHTNESS || setting == Settings.FURIGANA_POSITION_PERCENT) {
+            String reading = snapshot.get(Settings.JAPANESE_READING_MODE);
+            return snapshot.transliterationAvailable()
+                    && Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED))
+                    && ("furigana_only".equals(reading) || "furigana_romaji".equals(reading));
+        }
         return true;
     }
 
@@ -103,9 +118,10 @@ public final class PanelPolicy {
     public static boolean isAppleOwned(Settings.Setting<?> setting) {
         return setting == Settings.APPLE_FADE_PASSED_LINES
                 || setting == Settings.APPLE_COMPACT_TEXT
-                || setting == Settings.APPLE_CJK_WRAP_FIX
                 || setting == Settings.LINE_SLIDE_ANIMATION
-                || setting == Settings.APPLE_LIFT;
+                || setting == Settings.APPLE_LIFT
+                || setting == Settings.LOAD_LIFT_ANIMATION
+                || setting == Settings.APPLE_CASCADE_SPEED;
     }
 
     public static boolean unavailable(Settings.Setting<?> setting, PanelSnapshot snapshot) {
@@ -190,6 +206,8 @@ public final class PanelPolicy {
                 || setting == Settings.LIVE_CARD_TEXT_SIZE
                 || setting == Settings.TRACK_INFO_TEXT_SIZE
                 || setting == Settings.LYRICS_SOURCE_OVERRIDE
-                || setting == Settings.LYRICS_SOURCE_MODE;
+                || setting == Settings.LYRICS_SOURCE_MODE
+                || setting == Settings.ENABLE_LINE_BLUR
+                || setting == Settings.JAPANESE_READING_MODE;
     }
 }

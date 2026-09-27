@@ -77,6 +77,21 @@ public class PanelPolicyTest {
     // --- Translation / transliteration ---
 
     @Test
+    public void languageControlsReplaceDownloadWhenPackIsReady() {
+        PanelSnapshot missing = PanelSnapshot.builder().allCapabilities()
+                .languageModelReady(false).build();
+        assertTrue(PanelPolicy.shouldRender(Settings.DOWNLOAD_LANGUAGE_MODELS, missing));
+        assertFalse(PanelPolicy.shouldRender(Settings.TRANSLITERATION_ENABLED, missing));
+        assertFalse(PanelPolicy.shouldRender(Settings.TRANSLATION_ENABLED, missing));
+
+        PanelSnapshot ready = PanelSnapshot.builder().allCapabilities()
+                .languageModelReady(true).build();
+        assertFalse(PanelPolicy.shouldRender(Settings.DOWNLOAD_LANGUAGE_MODELS, ready));
+        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLITERATION_ENABLED, ready));
+        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_ENABLED, ready));
+    }
+
+    @Test
     public void translationRowsNeedCapabilityAndMasterSwitch() {
         PanelSnapshot noCapability = PanelSnapshot.builder().allCapabilities()
                 .translationAvailable(false)
@@ -178,6 +193,43 @@ public class PanelPolicyTest {
     }
 
     @Test
+    public void blurIntensityNeedsDistanceBlurActive() {
+        PanelSnapshot blurSlight = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.ENABLE_LINE_BLUR, "Slight").build();
+        assertTrue(PanelPolicy.shouldRender(Settings.LYRICS_BLUR_INTENSITY, blurSlight));
+        PanelSnapshot blurHeavy = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.ENABLE_LINE_BLUR, "Heavy").build();
+        assertTrue(PanelPolicy.shouldRender(Settings.LYRICS_BLUR_INTENSITY, blurHeavy));
+        PanelSnapshot blurOff = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.ENABLE_LINE_BLUR, "Off").build();
+        assertFalse(PanelPolicy.shouldRender(Settings.LYRICS_BLUR_INTENSITY, blurOff));
+    }
+
+    @Test
+    public void furiganaDesignRowsNeedFuriganaReadingModeActive() {
+        PanelSnapshot furiganaOnly = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.TRANSLITERATION_ENABLED, true)
+                .put(Settings.JAPANESE_READING_MODE, "furigana_only").build();
+        assertTrue(PanelPolicy.shouldRender(Settings.FURIGANA_BRIGHTNESS, furiganaOnly));
+        assertTrue(PanelPolicy.shouldRender(Settings.FURIGANA_POSITION_PERCENT, furiganaOnly));
+        PanelSnapshot furiganaRomaji = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.TRANSLITERATION_ENABLED, true)
+                .put(Settings.JAPANESE_READING_MODE, "furigana_romaji").build();
+        assertTrue(PanelPolicy.shouldRender(Settings.FURIGANA_BRIGHTNESS, furiganaRomaji));
+        assertTrue(PanelPolicy.shouldRender(Settings.FURIGANA_POSITION_PERCENT, furiganaRomaji));
+        PanelSnapshot romajiOnly = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.TRANSLITERATION_ENABLED, true)
+                .put(Settings.JAPANESE_READING_MODE, "romaji_only").build();
+        assertFalse(PanelPolicy.shouldRender(Settings.FURIGANA_BRIGHTNESS, romajiOnly));
+        assertFalse(PanelPolicy.shouldRender(Settings.FURIGANA_POSITION_PERCENT, romajiOnly));
+        PanelSnapshot off = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.TRANSLITERATION_ENABLED, true)
+                .put(Settings.JAPANESE_READING_MODE, "off").build();
+        assertFalse(PanelPolicy.shouldRender(Settings.FURIGANA_BRIGHTNESS, off));
+        assertFalse(PanelPolicy.shouldRender(Settings.FURIGANA_POSITION_PERCENT, off));
+    }
+
+    @Test
     public void spicyTokenRowNeedsSpicyEnabled() {
         assertFalse(PanelPolicy.shouldRender(Settings.SPICY_MANUAL_TOKEN, full()));
         PanelSnapshot spicy = PanelSnapshot.builder().allCapabilities()
@@ -256,6 +308,8 @@ public class PanelPolicyTest {
     public void rebuildScopeCoversGatingToggles() {
         assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.TRANSLATION_ENABLED));
         assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.LYRICS_SOURCE_MODE));
+        assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.ENABLE_LINE_BLUR));
+        assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.JAPANESE_READING_MODE));
         // UI language takes the full rebuild path (every label changes), not the section path.
         assertFalse(PanelPolicy.shouldRebuildSectionAfterChange(Settings.UI_LANGUAGE));
         assertFalse(PanelPolicy.shouldRebuildSectionAfterChange(Settings.TAP_SEEK_MODE));
@@ -307,7 +361,6 @@ public class PanelPolicyTest {
         Settings.Setting<?>[] appleRows = {
                 Settings.APPLE_FADE_PASSED_LINES,
                 Settings.APPLE_COMPACT_TEXT,
-                Settings.APPLE_CJK_WRAP_FIX,
                 Settings.LINE_SLIDE_ANIMATION,
                 Settings.APPLE_LIFT
         };
