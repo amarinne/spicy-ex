@@ -55,6 +55,24 @@ public final class Json {
         }
     }
 
+    /**
+     * First present, non-null, numeric value among {@code keys} as a {@link Long}, or null when no
+     * key is present or the value is not numeric.
+     *
+     * <p>Use this instead of {@link #optDouble} for timing fields. {@code optDouble} cannot tell
+     * "the payload omitted this field" from "the time is 0", so a caller given a fallback of 0
+     * silently reads a missing timestamp as midnight and pins the line to the start of the song.
+     */
+    public static Long optLongOrNull(JsonObject object, String... keys) {
+        JsonElement element = optElement(object, keys);
+        if (element == null) return null;
+        try {
+            return element.getAsLong();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     public static boolean optBoolean(JsonObject object, boolean fallback, String... keys) {
         JsonElement element = optElement(object, keys);
         if (element == null) return fallback;

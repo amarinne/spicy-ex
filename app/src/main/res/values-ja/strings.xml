@@ -392,4 +392,18 @@
     <string name="lyrics_ai_refined_google">AI が Google 翻訳バージョンを調整しました。</string>
     <string name="lyrics_ai_from_source">AI が元のリリックスから翻訳しました。</string>
     <string name="lyrics_ai_model_used">モデル: %1$s</string>
+    <string name="share_hint">上にスワイプで歌詞を追加 · タップで翻訳の切替</string>
+    <string name="share_design_glass">グラス</string>
+    <string name="share_design_classic">クラシック</string>
+    <string name="share_design_minimal">ミニマル</string>
+    <string name="share_design_polaroid">ポラロイド</string>
+    <string name="share_backdrop_blur">ぼかしアートワーク</string>
+    <string name="share_backdrop_lyrics">歌詞の背景</string>
+    <string name="share_code_unavailable">Spotifyコードを取得できません</string>
+    <string name="share_save">保存</string>
+    <string name="share_share">共有</string>
+    <string name="share_full">このカードにはこれ以上入りません</string>
+    <string name="share_saved">ピクチャ/SpicyExに保存しました</string>
+    <string name="share_save_failed">カードを保存できませんでした</string>
+    <string name="share_chooser">歌詞を共有</string>
 </resources>

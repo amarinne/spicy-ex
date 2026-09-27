@@ -52,6 +52,7 @@ public final class SettingsUiSchema {
             Settings.MINI_PLAYER_LYRICS_ICON,
             Settings.STATUS_BAR_HIDDEN_PORTRAIT,
             Settings.STATUS_BAR_HIDDEN_LANDSCAPE,
+            Settings.LONG_PRESS_SHARE,
             Settings.SYNC_OFFSET_MS,
             Settings.HYPERGLOW_ENABLED,
             // Lyrics sources
@@ -94,6 +95,7 @@ public final class SettingsUiSchema {
             Settings.ADAPTIVE_LANDSCAPE_LAYOUT,
             Settings.PANEL_MEDIA_CONTROLS,
             Settings.ANIMATION_STYLE,
+            Settings.TRANSITION_FEEL,
             Settings.WORD_BOUNCE,
             Settings.WORD_BOUNCE_STYLE,
             Settings.ENABLE_GLOW_BLUR,

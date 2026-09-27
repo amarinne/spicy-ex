@@ -15,6 +15,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -45,6 +46,7 @@ public final class PanelDialog {
     private final LinearLayout body;
     private final LinearLayout header;
     private final ScrollView scroll;
+    private final PanelSurface surface;
     private ImageButton closeButton;
 
     public PanelDialog(Context context, String title) {
@@ -75,7 +77,10 @@ public final class PanelDialog {
         root.addView(scroll, matchWrap(0));
 
         this.root = root;
-        dialog.setContentView(root);
+        this.surface = new PanelSurface(context, dialog, root, 0.62f);
+        surface.onAvailableSizeChanged(this::applyCardSize);
+        dialog.setContentView(surface);
+        PanelSurface.configureWindow(dialog.getWindow());
         dialog.setOnKeyListener((d, keyCode, event) -> {
             if (keyCode == android.view.KeyEvent.KEYCODE_BACK
                     && event.getAction() == android.view.KeyEvent.ACTION_UP) {
@@ -100,7 +105,7 @@ public final class PanelDialog {
         body.removeAllViews();
         for (View view : views) add(view);
         scroll.post(() -> scroll.scrollTo(0, y));
-        if (dialog.isShowing()) applyWindowSize();
+        if (isShowing()) applyCardSize();
     }
 
     /** Disclosure copy for consent and other irreversible choices. */
@@ -160,7 +165,7 @@ public final class PanelDialog {
             boolean expanded = content.getVisibility() != View.VISIBLE;
             content.setVisibility(expanded ? View.VISIBLE : View.GONE);
             chevron.setImageDrawable(disclosure(expanded));
-            applyWindowSize();
+            applyCardSize();
         });
 
         add(row);
@@ -562,12 +567,9 @@ public final class PanelDialog {
 
     public void show() {
         dialog.show();
-        Window window = dialog.getWindow();
-        if (window == null) return;
-        window.setBackgroundDrawable(new ColorDrawable(android.graphics.Color.TRANSPARENT));
-        window.setDimAmount(0.62f);
-        applyWindowSize();
-        Motion.enterCard(root);
+        PanelSurface.configureWindow(dialog.getWindow());
+        applyCardSize();
+        surface.enter(0.62f);
     }
 
     /**
@@ -577,19 +579,33 @@ public final class PanelDialog {
      * dialog that wrapped when it opened has no scroll weight, and a section unfolded afterwards
      * would push its own end off the bottom of a window sized for the folded card.
      */
-    private void applyWindowSize() {
-        Window window = dialog.getWindow();
-        if (window == null) return;
+    private void applyCardSize() {
         int width = (int) (context.getResources().getDisplayMetrics().widthPixels * 0.92f);
         int maxHeight = (int) (context.getResources().getDisplayMetrics().heightPixels * 0.90f);
+        if (surface.availableWidth() > 0) width = Math.min(width, surface.availableWidth());
+        if (surface.availableHeight() > 0) maxHeight = Math.min(maxHeight, surface.availableHeight());
+        LinearLayout.LayoutParams scrollParams = (LinearLayout.LayoutParams) scroll.getLayoutParams();
+        scrollParams.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        scrollParams.weight = 0f;
+        scroll.setLayoutParams(scrollParams);
+
         root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
         boolean constrained = root.getMeasuredHeight() > maxHeight;
-        LinearLayout.LayoutParams scrollParams = (LinearLayout.LayoutParams) scroll.getLayoutParams();
         scrollParams.height = constrained ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT;
         scrollParams.weight = constrained ? 1f : 0f;
         scroll.setLayoutParams(scrollParams);
-        window.setLayout(width, constrained ? maxHeight : ViewGroup.LayoutParams.WRAP_CONTENT);
+
+        int cardHeight = constrained ? maxHeight : ViewGroup.LayoutParams.WRAP_CONTENT;
+        FrameLayout.LayoutParams cardParams = (FrameLayout.LayoutParams) root.getLayoutParams();
+        if (cardParams == null) {
+            cardParams = new FrameLayout.LayoutParams(width, cardHeight, Gravity.CENTER);
+        } else {
+            cardParams.width = width;
+            cardParams.height = cardHeight;
+            cardParams.gravity = Gravity.CENTER;
+        }
+        root.setLayoutParams(cardParams);
     }
 
     /**
@@ -598,12 +614,12 @@ public final class PanelDialog {
      * sized for the shorter one.
      */
     public void refit() {
-        if (!dialog.isShowing()) return;
-        applyWindowSize();
+        if (!isShowing()) return;
+        applyCardSize();
     }
 
     public boolean isShowing() {
-        return dialog.isShowing();
+        return dialog.isShowing() && !surface.isExiting();
     }
 
     public PanelDialog onDismiss(final Runnable callback) {
@@ -685,10 +701,7 @@ public final class PanelDialog {
 
     /** Dismisses completely before running a replacement-dialog or rebuild action. */
     public void dismissThen(Runnable action) {
-        Motion.exitCardThen(root, dialog::isShowing, () -> {
-            dialog.dismiss();
-            if (action != null) action.run();
-        });
+        surface.exit(action);
     }
 
     private TextView button(String label, boolean accent, final Runnable action) {

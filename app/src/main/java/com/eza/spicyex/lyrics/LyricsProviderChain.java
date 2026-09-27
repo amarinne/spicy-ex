@@ -79,11 +79,25 @@ final class LyricsProviderChain {
             if (nativeBaseline != null && !prefer(synced.document, nativeBaseline)) {
                 return Decision.suppress();
             }
-            return Decision.deliver(synced.document, true, raw, false);
+            if (isWordOrBetter(synced.document)) {
+                return Decision.deliver(synced.document, true, raw, false);
+            }
+            // LINE is below the WORD search threshold: hold it and keep probing the
+            // remaining enabled sources instead of sealing the visit.
+            if (deliveredCachedSynced) return Decision.suppress();
+            if (pendingStatic != null && prefer(pendingStatic, synced.document)) {
+                return Decision.continueAfter(synced, pendingStatic);
+            }
+            String rawToCache = safe(raw).equals(safe(cachedRaw)) ? null : raw;
+            holdStatic(synced.document, synced.source, rawToCache, false);
+            return Decision.continueAfter(synced, pendingStatic);
         }
         if (result instanceof Static) {
             if (deliveredCachedSynced) return Decision.suppress();
             Static statik = (Static) result;
+            if (pendingStatic != null && prefer(pendingStatic, statik.document)) {
+                return Decision.continueAfter(statik, pendingStatic);
+            }
             String rawToCache = safe(raw).equals(safe(cachedRaw)) ? null : raw;
             holdStatic(statik.document, statik.source, rawToCache, false);
             return Decision.continueAfter(statik, pendingStatic);
@@ -103,12 +117,21 @@ final class LyricsProviderChain {
         if (pendingStatic != null) {
             LyricsDocument winner = prefer(nativeDoc, pendingStatic) ? nativeDoc : pendingStatic;
             if (staticAlreadyShown) return Decision.suppress();
+            if (!isWordOrBetter(winner) && (amllAllowed || lrclibAllowed)) {
+                holdStatic(winner, winner == nativeDoc ? Source.NATIVE : pendingStaticSource,
+                        winner == nativeDoc ? null : pendingStaticRaw, false);
+                return Decision.continueAfter(result, pendingStatic);
+            }
             if (winner == nativeDoc) {
                 return Decision.deliver(nativeDoc, false, null, false);
             }
             return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
         }
-        return Decision.deliver(nativeDoc, false, null, false);
+        if (isWordOrBetter(nativeDoc)) {
+            return Decision.deliver(nativeDoc, false, null, false);
+        }
+        holdStatic(nativeDoc, Source.NATIVE, null, false);
+        return Decision.holdStatic();
     }
 
     Decision nativeMissAfterRetries(String message) {
@@ -133,7 +156,7 @@ final class LyricsProviderChain {
         return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
     }
 
-    /** Word-level AMLL TTML ranks against a held Apple static the same way LRCLIB does. */
+    /** Word-level AMLL TTML ranks against a held sub-word document the same way LRCLIB does. */
     Decision acceptAmll(LyricsDocument doc) {
         Result result = fromDocument(doc, Source.AMLL);
         if (!(result instanceof Synced) && !(result instanceof Static)) {
@@ -142,9 +165,18 @@ final class LyricsProviderChain {
         addCandidate(Source.AMLL);
         LyricsDocument amllDoc = result.document();
         if (pendingStatic == null) {
+            if (!isWordOrBetter(amllDoc) && lrclibAllowed) {
+                holdStatic(amllDoc, Source.AMLL, null, false);
+                return Decision.continueAfter(result, pendingStatic);
+            }
             return Decision.deliver(amllDoc, false, null, false);
         }
         LyricsDocument winner = prefer(amllDoc, pendingStatic) ? amllDoc : pendingStatic;
+        if (!isWordOrBetter(winner) && lrclibAllowed) {
+            holdStatic(winner, winner == amllDoc ? Source.AMLL : pendingStaticSource,
+                    winner == amllDoc ? null : pendingStaticRaw, false);
+            return Decision.continueAfter(result, pendingStatic);
+        }
         if (winner == amllDoc) {
             return Decision.deliver(amllDoc, false, null, false);
         }
@@ -248,6 +280,15 @@ final class LyricsProviderChain {
     static boolean isSyncedType(String type) {
         return "Line".equalsIgnoreCase(type) || "Word".equalsIgnoreCase(type)
                 || "Syllable".equalsIgnoreCase(type);
+    }
+
+    /**
+     * Whether a document meets the WORD search threshold ({@link CatalogSource.TimingLevel}).
+     * LINE and static documents keep the in-visit search open across enabled sources.
+     */
+    static boolean isWordOrBetter(LyricsDocument doc) {
+        if (doc == null) return false;
+        return "Word".equalsIgnoreCase(doc.type) || "Syllable".equalsIgnoreCase(doc.type);
     }
 
     enum Source {

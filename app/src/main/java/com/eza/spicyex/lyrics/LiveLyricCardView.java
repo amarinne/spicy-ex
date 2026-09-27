@@ -12,6 +12,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.eza.spicyex.SpotifyPlusConfig;
+import com.eza.spicyex.ui.Motion;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -120,7 +121,7 @@ public final class LiveLyricCardView extends LinearLayout {
     public void setInterlude(boolean note) {
         LyricsRenderConfig config = LyricsRenderConfig.read(getContext(), null).forLiveCard();
         mountedOverflowMode = config.liveCardOverflowMode;
-        LinearLayout nextHost = replaceRowHost(false, "None");
+        LinearLayout nextHost = replaceRowHost(true, config.liveCardTransitionMode);
         TextView indicator = new TextView(getContext());
         indicator.setText(note ? "♪" : "• • •");
         indicator.setTextColor(Color.WHITE);
@@ -128,11 +129,32 @@ public final class LiveLyricCardView extends LinearLayout {
         indicator.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         indicator.setAlpha(1f);
         nextHost.addView(indicator, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        animateIn(nextHost, config.liveCardTransitionMode);
         mountedSourceLine = null;
         mountedLine = null;
         mountedRowPlan = null;
         mountedLiveConfig = config;
         mountedOverflowViewports.clear();
+        oneRowDocument.appliedLines.clear();
+        invalidateForFrame();
+    }
+
+    public void clearAnimated() {
+        LyricsRenderConfig config = LyricsRenderConfig.read(getContext(), null).forLiveCard();
+        String mode = config.liveCardTransitionMode;
+        if ("None".equals(mode) || !Motion.animationsEnabled() || rowHost == null || rowHost.getChildCount() == 0) {
+            clear();
+            return;
+        }
+        mountedOverflowMode = config.liveCardOverflowMode;
+        replaceRowHost(true, mode);
+        styleBatcher.clearPendingWrites();
+        mountedSourceLine = null;
+        mountedLine = null;
+        mountedRowPlan = null;
+        mountedLiveConfig = null;
+        mountedOverflowViewports.clear();
+        mountedConfigKey = "";
         oneRowDocument.appliedLines.clear();
         invalidateForFrame();
     }
@@ -213,14 +235,12 @@ public final class LiveLyricCardView extends LinearLayout {
         LinearLayout oldHost = rowHost;
         LinearLayout nextHost = newRowHost(getContext());
         rowHost = nextHost;
-        if (animateExit && !"None".equals(transitionMode)
+        if (animateExit && !"None".equals(transitionMode) && Motion.animationsEnabled()
                 && oldHost != null && oldHost.getChildCount() > 0 && oldHost.getParent() == stage) {
             oldHost.animate().cancel();
-            oldHost.setTranslationY(0f);
-            oldHost.setAlpha(1f);
             android.view.ViewPropertyAnimator animator = oldHost.animate()
                     .alpha(0f)
-                    .setDuration(130)
+                    .setDuration(Motion.dur(130))
                     .withEndAction(() -> {
                         styleBatcher.invalidateRecursive(oldHost);
                         stage.removeView(oldHost);
@@ -230,7 +250,13 @@ public final class LiveLyricCardView extends LinearLayout {
             stage.addView(nextHost, rowHostLayoutParams(mountedOverflowMode));
             return nextHost;
         }
-        stage.removeAllViews();
+        // A fast result can arrive while the prior line is still exiting behind an empty host.
+        if (animateExit && !"None".equals(transitionMode) && Motion.animationsEnabled()
+                && oldHost != null && oldHost.getChildCount() == 0) {
+            stage.removeView(oldHost);
+        } else {
+            stage.removeAllViews();
+        }
         if (oldHost != null) styleBatcher.invalidateRecursive(oldHost);
         stage.addView(nextHost, rowHostLayoutParams(mountedOverflowMode));
         return nextHost;
@@ -247,7 +273,7 @@ public final class LiveLyricCardView extends LinearLayout {
 
     private void animateIn(View host, String transitionMode) {
         if (host == null) return;
-        if ("None".equals(transitionMode)) {
+        if ("None".equals(transitionMode) || !Motion.animationsEnabled()) {
             host.animate().cancel();
             host.setTranslationY(0f);
             host.setAlpha(1f);
@@ -256,7 +282,7 @@ public final class LiveLyricCardView extends LinearLayout {
         host.animate().cancel();
         host.setTranslationY("Fade up".equals(transitionMode) ? dp(14) : 0f);
         host.setAlpha(0f);
-        host.animate().translationY(0f).alpha(1f).setDuration(210).start();
+        host.animate().translationY(0f).alpha(1f).setDuration(Motion.dur(210)).start();
     }
 
     private void clearLineState(AppliedLine line) {

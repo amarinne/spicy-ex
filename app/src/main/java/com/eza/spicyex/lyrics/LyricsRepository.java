@@ -611,7 +611,7 @@ public final class LyricsRepository {
                         callback.onSuccess(doc);
                         return;
                     }
-                    XpLog.log(TAG + " remote returned static type=" + doc.type + "; probing native synced upgrade");
+                    XpLog.log(TAG + " remote returned sub-word type=" + doc.type + "; probing native synced upgrade");
                     fetchNativeThenLrclib(context, track, generation, callback, 0, "Apple Music static", chain, hasToken,
                             nativeEnabled, lrclibEnabled);
                 } catch (java.util.concurrent.CancellationException cancelled) {
@@ -775,8 +775,24 @@ public final class LyricsRepository {
                     trackIdFromUri(track == null ? "" : track.uri), "",
                     CatalogAdapters.SPOTIFY_NATIVE_ADAPTER_REVISION);
             LyricsProviderChain.Decision decision = chain.acceptNative(nativeDoc);
-            if (chain.hasPendingStatic()) {
-                if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
+            if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
+            if (decision.action == LyricsProviderChain.Action.CONTINUE
+                    || decision.action == LyricsProviderChain.Action.HOLD_STATIC) {
+                // Below-WORD winner held: probe AMLL/LRCLIB when due, else deliver the held best.
+                // A hold always carries a pending document; any other CONTINUE falls through to
+                // the retry/fallback logic below.
+                if (chain.hasPendingStatic()) {
+                    if (lrclibEnabled || chain.amllAllowed) {
+                        XpLog.log(TAG + " native sub-word held (" + safe(reason) + ") type="
+                                + safe(chain.pendingStatic().type) + "; probing AMLL/LRCLIB");
+                        fetchAmllStageOrLrclib(context, track, generation, callback, reason, chain,
+                                tokenPresent, lrclibEnabled, true);
+                    } else {
+                        deliverHeldStatic(context, track, callback, reason, chain, tokenPresent);
+                    }
+                    return;
+                }
+            } else if (chain.hasPendingStatic()) {
                 if (decision.document == nativeDoc) {
                     XpLog.log(TAG + " using native lyrics (" + safe(reason) + ") type=" + nativeDoc.type
                             + " provider=" + nativeDoc.provider + " lines=" + nativeDoc.lines.size()
@@ -1042,6 +1058,14 @@ public final class LyricsRepository {
                 providerItemId, ttml, CatalogAdapters.AMLL_ADAPTER_REVISION);
         LyricsProviderChain.Decision decision = chain.acceptAmll(doc);
         if (decision.action == LyricsProviderChain.Action.SUPPRESS) return;
+        if (decision.action == LyricsProviderChain.Action.CONTINUE
+                || decision.action == LyricsProviderChain.Action.HOLD_STATIC) {
+            // Below-WORD winner held with LRCLIB still due: fetchLrclibStage delivers the
+            // held best itself when LRCLIB is held back.
+            fetchLrclibStage(context, track, generation, callback, "AMLL sub-word", chain,
+                    tokenPresent, true);
+            return;
+        }
         if (decision.action == LyricsProviderChain.Action.DELIVER) {
             boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
             if (decision.document != doc && decision.document != null) {
@@ -1157,6 +1181,21 @@ public final class LyricsRepository {
                 callback.onSuccess(remoteStatic);
             }
         }, reason, chain, tokenPresent);
+    }
+
+    private void deliverHeldStatic(Context context, SpotifyTrack track, ResultCallback callback,
+                                   String reason, LyricsProviderChain chain, boolean tokenPresent) {
+        LyricsDocument held = chain.pendingStatic();
+        if (held == null || held.lines == null || held.lines.isEmpty()) {
+            callback.onError(reason + "; no lyrics");
+            return;
+        }
+        boolean cacheWrite = cacheChosenRaw(context, track, chain.pendingStaticRaw());
+        XpLog.log(TAG + " delivering held sub-word lyrics (" + safe(reason) + ") type=" + held.type
+                + " provider=" + held.provider + " lines=" + held.lines.size());
+        LyricsFetchDiagnosticsState.record(sourceLabel(held, "apple_music"), chain.candidatesSeen(),
+                held, tokenPresent, cacheWrite);
+        callback.onSuccess(held);
     }
 
     private static boolean cacheChosenRaw(Context context, SpotifyTrack track, String raw) {

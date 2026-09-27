@@ -27,6 +27,8 @@ import static com.eza.spicyex.hooks.NativeSpicyLyricsHook.TAG;
 import static com.eza.spicyex.hooks.NativeSpicyLyricsHook.dbg;
 import static com.eza.spicyex.hooks.NativeSpicyLyricsHook.dbgEnter;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -256,6 +258,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final LyricsSettingsDialogController settingsDialogController;
     private final LyricsFollowState followState = new LyricsFollowState();
     private final LyricsShellEmptyStateController emptyStateController;
+    /** Lazily built: the long-press-to-share preview is opened far less often than the screen itself. */
+    private LyricsShareCardController shareCardController;
     private LyricsRowMountController rowMountController;
     private LinearLayout contentColumn;
     /** Non-null only in the adaptive two-column landscape mode; owns header/lyrics/status. */
@@ -368,12 +372,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         documentGate.invalidate();
         ++NativeSpicyLyricsHook.fetchGeneration;
         document = null;
-        loadingTrackId = trackIdFromUri(snapshot.trackUri);
+        String id = trackIdFromUri(snapshot.trackUri);
+        loadingTrackId = id;
         pendingSourceSwap = null;
         pendingSourceSwapUri = "";
         sessionStatus = snapshot.status;
-        if ("no_lyrics".equals(snapshot.status)) showError("Lyrics unavailable");
-        else showLoading("Loading lyrics…");
+        if ("no_lyrics".equals(snapshot.status)) {
+            showError("Lyrics unavailable");
+            return;
+        }
+        beginLoadingTransition(id);
     }
     private LyricsRenderConfig renderConfig;
     private final SharedPreferences preferences;
@@ -431,6 +439,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      */
     private LyricsDocument pendingSourceSwap;
     private String pendingSourceSwapUri = "";
+    private boolean songChangeHadSkeleton;
+    private boolean hasRenderedDocument;
     private final LyricsPlaybackClock playbackClock;
     private SpotifyTrack throttledTrack;
     private long throttledTrackAtMs;
@@ -467,6 +477,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     };
 
+
+    boolean consumeBack() {
+        return consumeShareSheetBack();
+    }
+
+    /** Back closes the lyric share sheet first, like any other sheet over the lyrics. */
+    private boolean consumeShareSheetBack() {
+        if (shareCardController == null || !shareCardController.isShowing()) return false;
+        // The line picker first, then the sheet.
+        if (!shareCardController.closePickerIfOpen()) shareCardController.dismiss();
+        return true;
+    }
     private boolean isLandscape() {
         return getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
     }
@@ -625,8 +647,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
+    /** Lyrics frozen under the share sheet: no per-frame lyric work, so no row re-blurs. */
+    private boolean lyricsFrozen;
+    /** The share sheet hides everything: nothing but it is drawn, the background is paused. */
+    private boolean lyricsCovered;
+
     private final VsyncFrameScheduler frameScheduler = new VsyncFrameScheduler(deltaTimeSeconds -> {
         if (!running) return;
+        // The share sheet is up: the lyrics hold still under it (see onShareSheet).
+        if (lyricsFrozen) return;
         float dt = deltaTimeSeconds <= 0d ? (1f / 60f) : (float) Math.max(0.001d, Math.min(0.08d, deltaTimeSeconds));
         // Order matters: the reveal publishes this frame's alpha factor, then updateState() runs
         // the renderer, which reads it. Stepping it after would show every row one frame stale.
@@ -640,6 +669,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         super(activity);
         this.host = host;
         this.activity = activity;
+        com.eza.spicyex.ui.Motion.initialize(activity);
         this.romanSpinner = new ChipSpinnerDrawable(activity);
         this.translationSpinner = new ChipSpinnerDrawable(activity);
         this.toggleSpinnerController = new LyricsToggleSpinnerController(romanSpinner, translationSpinner);
@@ -667,6 +697,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 this::resyncLyricsTiming, TAG);
         this.emptyStateController = new LyricsShellEmptyStateController(activity, config, textFactory);
         this.shellLifecycle = new LyricsShellLifecycle(activity, () -> {
+            if (consumeShareSheetBack()) return;
             host.markExplicitLyricsExit(activity);
             activity.finish();
         });
@@ -1029,11 +1060,22 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 config,
                 followState::holdUntil,
                 followState::setTouching,
-                this::seekNearestLineAt);
+                this::seekNearestLineAt,
+                this::shareLyricLineAt);
         lyricsScroll.setOnTouchListener((view, event) -> {
             if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN
                     || event.getActionMasked() == android.view.MotionEvent.ACTION_MOVE) {
                 revealChrome();
+            }
+            trackPressedLyric(event);
+            int action = event.getActionMasked();
+            if (action != android.view.MotionEvent.ACTION_DOWN && tapSeekHandler.longPressFired()
+                    && shareCardController != null && shareCardController.isShowing()) {
+                // The finger that opened the share sheet is still down: its moves pull the card a
+                // little (the sheet's rubber band) instead of scrolling the lyrics underneath.
+                shareCardController.heldDrag(event);
+                tapSeekHandler.onTouch(view, event);
+                return true;
             }
             return tapSeekHandler.onTouch(view, event);
         });
@@ -1154,6 +1196,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         dbgEnter("NativeSpicyShellView.start");
         if (running) return;
         running = true;
+        // Spotify's own lyrics page (which may hold the window's keep-screen-on request) is
+        // hidden while this shell covers it, so hold the request on our own view instead.
+        setKeepScreenOn(true);
+        hasRenderedDocument = false;
+        cancelSongChangeTransitions();
         applyStatusBarPreference();
         com.eza.spicyex.lyrics.LanguageModelPack.setReadyListener(languageModelReadyListener);
         ambientController.start();
@@ -1170,6 +1217,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     void stop() {
         dbgEnter("NativeSpicyShellView.stop");
         running = false;
+        setKeepScreenOn(false);
+        cancelLoadEntranceAnimation();
+        cancelSongChangeTransitions();
         // Hand the status bar back only if this screen took it; Spotify's window is otherwise
         // left as it found it.
         if (statusBarHiddenByUs) {
@@ -1203,6 +1253,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (chromeHeader != null) chromeHeader.animate().cancel();
         if (trackInfoController != null) trackInfoController.teardown();
         hideColumnOverlay();
+        cancelColumnArtFollowThroughTimeout();
+        columnArtInFollowThrough = false;
         if (columnArtFrame != null) {
             columnArtFrame.animate().cancel();
             columnArtFrame.setTranslationX(0f);
@@ -1258,6 +1310,44 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      * arrives (no clear-and-gap on song change); a cover that never arrives gives
      * up after ~10s rather than showing the wrong track forever. */
     private static final long COLUMN_ART_RETRY_WINDOW_MS = 10_000L;
+    private int columnArtFollowThroughTarget;
+    private boolean columnArtInFollowThrough;
+    private final Runnable columnArtTimeoutRunnable = this::onColumnArtTimeout;
+
+    private void onColumnArtTimeout() {
+        if (!columnArtInFollowThrough || columnArtFrame == null) return;
+        columnArtInFollowThrough = false;
+        if (!columnArtFrame.isAttachedToWindow()) {
+            columnArtFrame.setTranslationX(0f);
+            return;
+        }
+        columnArtFrame.animate().cancel();
+        if (com.eza.spicyex.ui.Motion.animationsEnabled()) {
+            columnArtFrame.animate().translationX(0f).setDuration(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.BASE)).start();
+        } else {
+            columnArtFrame.setTranslationX(0f);
+        }
+    }
+
+    private void cancelColumnArtFollowThroughTimeout() {
+        if (columnArtFrame != null) {
+            columnArtFrame.removeCallbacks(columnArtTimeoutRunnable);
+        }
+    }
+
+    private void startColumnArtFollowThrough(int targetPx) {
+        if (columnArtFrame == null) return;
+        cancelColumnArtFollowThroughTimeout();
+        columnArtFollowThroughTarget = targetPx;
+        columnArtInFollowThrough = true;
+        columnArtFrame.postDelayed(columnArtTimeoutRunnable, 400L);
+        columnArtFrame.animate().cancel();
+        if (com.eza.spicyex.ui.Motion.animationsEnabled()) {
+            columnArtFrame.animate().translationX(targetPx).setDuration(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.EXIT)).start();
+        } else {
+            columnArtFrame.setTranslationX(targetPx);
+        }
+    }
 
     private void updateColumnArt(SpotifyTrack track, long nowMs) {
         if (!twoColumn || columnArt == null) return;
@@ -1269,8 +1359,20 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             columnArtRetryStartMs = nowMs;
             hideColumnOverlay();
             if (columnArtFrame != null) {
-                columnArtFrame.animate().cancel();
-                columnArtFrame.setTranslationX(0f);
+                if (columnArtInFollowThrough) {
+                    cancelColumnArtFollowThroughTimeout();
+                    columnArtInFollowThrough = false;
+                    columnArtFrame.animate().cancel();
+                    if (com.eza.spicyex.ui.Motion.animationsEnabled()) {
+                        columnArtFrame.setTranslationX(-columnArtFollowThroughTarget);
+                        columnArtFrame.animate().translationX(0f).setDuration(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.BASE)).start();
+                    } else {
+                        columnArtFrame.setTranslationX(0f);
+                    }
+                } else {
+                    columnArtFrame.animate().cancel();
+                    columnArtFrame.setTranslationX(0f);
+                }
             }
             if (columnArtArbiter != null) columnArtArbiter.reset();
             columnCancelArmed = false;
@@ -1298,9 +1400,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         if (art == null) return;
         displayedColumnArtImageId = imageId;
-        clearColumnArtwork();
+        if (columnArtwork != null && com.eza.spicyex.ui.Motion.animationsEnabled()) {
+            android.graphics.drawable.TransitionDrawable td = new android.graphics.drawable.TransitionDrawable(
+                    new android.graphics.drawable.Drawable[]{
+                            new android.graphics.drawable.BitmapDrawable(activity.getResources(), columnArtwork),
+                            new android.graphics.drawable.BitmapDrawable(activity.getResources(), art)
+                    });
+            td.setCrossFadeEnabled(true);
+            columnArt.setImageDrawable(td);
+            td.startTransition(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.SWAP));
+        } else {
+            columnArt.setImageBitmap(art);
+        }
         columnArtwork = art;
-        columnArt.setImageBitmap(art);
         columnArt.setVisibility(VISIBLE);
         columnArt.invalidateOutline();
         columnArt.setContentDescription(
@@ -1340,6 +1452,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 else springBackColumnArt();
                 break;
             case TOGGLE:
+                if (columnArtInFollowThrough) {
+                    cancelColumnArtFollowThroughTimeout();
+                    columnArtInFollowThrough = false;
+                }
                 columnArtFrame.setTranslationX(0f);
                 if (toggleColumnTransport()) flashColumnIcon();
                 break;
@@ -1347,24 +1463,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 if (!commitColumnTrack(true)) {
                     springBackColumnArt();
                 } else {
-                    columnArtFrame.animate().cancel();
-                    columnArtFrame.animate().translationX(-columnArtFrame.getWidth())
-                            .setDuration(160L)
-                            .withEndAction(() -> columnArtFrame.animate().translationX(0f)
-                                    .setDuration(120L).start())
-                            .start();
+                    int w = columnArtFrame.getWidth();
+                    startColumnArtFollowThrough(w > 0 ? -w : -dp(180));
                 }
                 break;
             case COMMIT_PREV:
                 if (!commitColumnTrack(false)) {
                     springBackColumnArt();
                 } else {
-                    columnArtFrame.animate().cancel();
-                    columnArtFrame.animate().translationX(columnArtFrame.getWidth())
-                            .setDuration(160L)
-                            .withEndAction(() -> columnArtFrame.animate().translationX(0f)
-                                    .setDuration(120L).start())
-                            .start();
+                    int w = columnArtFrame.getWidth();
+                    startColumnArtFollowThrough(w > 0 ? w : dp(180));
                 }
                 break;
             case SPRING_BACK:
@@ -1376,6 +1484,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void springBackColumnArt() {
         if (columnArtFrame == null) return;
+        if (columnArtInFollowThrough) {
+            cancelColumnArtFollowThroughTimeout();
+            columnArtInFollowThrough = false;
+        }
         columnArtFrame.animate().cancel();
         columnArtFrame.animate().translationX(0f).setDuration(180L).start();
     }
@@ -1469,6 +1581,31 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return Math.signum(dx) * (bound + (ax - bound) * 0.3f);
     }
 
+    /** Both session publications and polling adopt the track before mounting its document. */
+    private boolean adoptTrack(SpotifyTrack track) {
+        if (track == null) return false;
+        throttledTrack = track;
+        throttledTrackAtMs = SystemClock.elapsedRealtime();
+        String uri = safe(track.uri);
+        if (uri.equals(lastUri)) return false;
+        lastUri = uri;
+        playbackClock.reset(uri);
+        clearRowCascade();
+        cancelLoadEntranceAnimation();
+        lastDisplayedProgressSecond = Long.MIN_VALUE;
+        lastDisplayedTitle = "";
+        lastDisplayedArtist = "";
+        lastDisplayedAlbum = "";
+        followState.resetActive();
+        lastLyricPositionMs = -1;
+        resetScrollForNextDocument = true;
+        document = null;
+        String id = trackIdFromUri(uri);
+        ambientController.updateForTrack(track, () -> running);
+        XpLog.log(TAG + " active track uri=" + uri + " title=\"" + safe(track.title) + "\"");
+        return true;
+    }
+
     private void updateState(float deltaSeconds) {
         SpotifyTrack track = currentTrackThrottled();
         boolean playingNow = host.isPlayerActuallyPlaying();
@@ -1495,24 +1632,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
 
         String uri = safe(track.uri);
-        if (!uri.equals(lastUri)) {
-            lastUri = uri;
-            playbackClock.reset(uri);
-            clearRowCascade();
-            cancelLoadEntranceAnimation();
-            lastDisplayedProgressSecond = Long.MIN_VALUE;
-            lastDisplayedTitle = "";
-            lastDisplayedArtist = "";
-            lastDisplayedAlbum = "";
-            followState.resetActive();
-            lastLyricPositionMs = -1;
-            resetScrollForNextDocument = true;
-            document = null;
-            String id = trackIdFromUri(uri);
-            ambientController.updateForTrack(track, () -> running);
-            XpLog.log(TAG + " active track uri=" + uri + " title=\"" + safe(track.title) + "\"");
-            showLoading("Loading lyrics…");
-            loadLyrics(track, id);
+        if (adoptTrack(track)) {
+            beginLoadingTransition(trackIdFromUri(uri));
+            loadLyrics(track, trackIdFromUri(uri));
         }
         long pos = playbackClock.getPosition(track, playingNow);
 
@@ -1717,8 +1839,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             reprocessLocalModeOnly(reason);
         }
         if (diff.needsRowRemount || (fromPanelClose && diff.hasChanges && !diff.onlyTimingChanged)) {
-            clearRenderedLineViews();
-            renderWindowForActive(followState.activeIndex() >= 0 ? followState.activeIndex() : currentWindowAnchor());
+            rebuildWithReflow(() -> {
+                clearRenderedLineViews();
+                renderWindowForActive(followState.activeIndex() >= 0 ? followState.activeIndex() : currentWindowAnchor());
+            });
         } else if (diff.needsToggleOnly) {
             updateToggleVisuals();
         }
@@ -1782,49 +1906,57 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 }
                 return;
             }
-            // A source swap for the track already on screen waits while the user holds follow;
-            // track changes always render immediately and drop any stash.
-            if (!id.equals(pendingSourceSwapUri)) {
-                pendingSourceSwap = null;
-                pendingSourceSwapUri = "";
-            }
-            if (document != null && followState.isHoldingNow() && id.equals(currentId)
-                    && id.equals(trackIdFromUri(document.trackId))) {
-                pendingSourceSwap = doc;
-                pendingSourceSwapUri = trackUri;
-                status.setText("New source ready — resume follow to apply");
-                return;
-            }
-            // A derived-layer completion republishes the whole document. When the canonical base
-            // is unchanged, absorb only the new reading/translation text into the document already
-            // on screen: swapping the object would rebuild the timeline and reset the active row
-            // and scroll position mid-song.
-            LyricsDocument mounted = document;
-            LyricsDocumentProcessor.DerivedMergeResult merge =
-                    LyricsDocumentProcessor.mergeDerivedPublication(mounted, doc);
-            if (merge != LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE) {
-                loadingTrackId = "";
-                if (merge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED) {
-                    LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
-                    refreshSecondaryRows("");
-                }
-                observeAiRequestFeedback(mounted);
-                // Provenance and failure state can change without changing displayed lyric text.
-                // Refresh controls after every same-base publication so a failed paid request is
-                // never hidden merely because Google/deterministic fallback stayed on screen.
-                updateToggleVisuals();
-                return;
-            }
-            cancelLoadEntranceAnimation();
-            document = doc;
-            pendingLoadEntrance = true;
-            loadingTrackId = "";
-            observeAiRequestFeedback(document);
-            LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
-            renderDocument(false);
-            XpLog.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider="
-                    + doc.provider + " type=" + doc.type + " lines=" + doc.lines.size());
+            adoptTrack(current);
+            commitAndRenderDocument(candidate, trackUri, doc, currentId);
         });
+    }
+
+    private void commitAndRenderDocument(LyricsSurfaceDocumentGate.Candidate candidate,
+                                         String trackUri, LyricsDocument doc, String currentId) {
+        String id = trackIdFromUri(trackUri);
+        // A source swap for the track already on screen waits while the user holds follow;
+        // track changes always render immediately and drop any stash.
+        if (!id.equals(pendingSourceSwapUri)) {
+            pendingSourceSwap = null;
+            pendingSourceSwapUri = "";
+        }
+        if (document != null && followState.isHoldingNow() && id.equals(currentId)
+                && id.equals(trackIdFromUri(document.trackId))) {
+            pendingSourceSwap = doc;
+            pendingSourceSwapUri = trackUri;
+            status.setText("New source ready — resume follow to apply");
+            return;
+        }
+        // A derived-layer completion republishes the whole document. When the canonical base
+        // is unchanged, absorb only the new reading/translation text into the document already
+        // on screen: swapping the object would rebuild the timeline and reset the active row
+        // and scroll position mid-song.
+        LyricsDocument mounted = document;
+        LyricsDocumentProcessor.DerivedMergeResult merge =
+                LyricsDocumentProcessor.mergeDerivedPublication(mounted, doc);
+        if (merge != LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE) {
+            loadingTrackId = "";
+            if (merge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED) {
+                LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
+                refreshSecondaryRows("");
+            }
+            observeAiRequestFeedback(mounted);
+            // Provenance and failure state can change without changing displayed lyric text.
+            // Refresh controls after every same-base publication so a failed paid request is
+            // never hidden merely because Google/deterministic fallback stayed on screen.
+            updateToggleVisuals();
+            return;
+        }
+        cancelLoadEntranceAnimation();
+        boolean firstMount = document == null;
+        document = doc;
+        pendingLoadEntrance = firstMount;
+        loadingTrackId = "";
+        observeAiRequestFeedback(document);
+        LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
+        renderDocument(false);
+        XpLog.log(TAG + " lyrics loaded source=" + doc.fetchSource + " provider="
+                + doc.provider + " type=" + doc.type + " lines=" + doc.lines.size());
     }
 
     private boolean isCurrentProcessingResult(String id, int generation, LyricsDocument snapshot) {
@@ -1861,6 +1993,38 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (!isBlank(message)) status.setText(message);
     }
 
+    private void beginLoadingTransition(String id) {
+        if (songChangeHadSkeleton && id.equals(loadingTrackId)) return;
+        cancelLoadEntranceAnimation();
+        cancelSongChangeTransitions();
+        loadingTrackId = id;
+        songChangeHadSkeleton = true;
+        showLoading("Loading lyrics…");
+    }
+
+    private void cancelSongChangeTransitions() {
+        if (lyricsScroll != null) {
+            lyricsScroll.animate().cancel();
+            lyricsScroll.setAlpha(1f);
+            lyricsScroll.setTranslationY(0f);
+        }
+        songChangeHadSkeleton = false;
+    }
+
+    private void startSongChangeEnterAnimation() {
+        if (lyricsScroll == null) return;
+        lyricsScroll.animate().cancel();
+        lyricsScroll.setAlpha(0f);
+        lyricsScroll.setTranslationY(0f);
+        lyricsScroll.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.SWAP))
+                .setInterpolator(com.eza.spicyex.ui.Motion.decel())
+                .withLayer()
+                .start();
+    }
+
     private void showLoading(String message) {
         rowMountController.reset();
         followState.resetActive();
@@ -1868,6 +2032,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void showError(String error) {
+        songChangeHadSkeleton = false;
         document = null;
         loadingTrackId = "";
         pendingSourceSwap = null;
@@ -1875,7 +2040,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         rowMountController.reset();
         followState.resetActive();
         // An instrumental track has no lyrics to show and never will, so it gets its own note
-        // rather than a lookup error. Ads never reach here: the ad card owns the column.
+        // rather than a lookup error.
         if (com.eza.spicyex.lyrics.InstrumentalTracks.isInstrumental(host.getCurrentTrackSafely())) {
             emptyStateController.showInstrumental(lyricsColumn);
             status.setText(uiText("lyrics_instrumental", "Instrumental"));
@@ -1934,9 +2099,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // moment later the follow-tick's own setActiveLine() re-anchored the window to the real
         // position with no reveal at all - the rows the user actually sees just popped in. Anchor
         // to wherever playback already is so the reveal targets the rows that are really shown.
-        // Apple Music only: every other style still opens the window on row 0, as it did before.
         int initialAnchor = 0;
-        if (appleStyle() && !staticDoc) {
+        if (!staticDoc) {
             SpotifyTrack currentForAnchor = host.getCurrentTrackSafely();
             long anchorPos = currentForAnchor == null ? -1
                     : playbackClock.getPosition(currentForAnchor, host.isPlayerActuallyPlaying());
@@ -1948,17 +2112,20 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         renderWindowForActive(initialAnchor);
         loadEntranceAnchor = initialAnchor;
+        boolean shouldEnter = pendingLoadEntrance && hasRenderedDocument && songChangeHadSkeleton;
+        boolean appleEntranceStarted = false;
         if (pendingLoadEntrance) {
             pendingLoadEntrance = false;
-            if (config != null && Boolean.TRUE.equals(config.get(Settings.LOAD_LIFT_ANIMATION))
-                    && appleStyle()) {
+            if (!shouldEnter && config != null && Boolean.TRUE.equals(config.get(Settings.LOAD_LIFT_ANIMATION))
+                    && appleStyle() && com.eza.spicyex.ui.Motion.animationsEnabled()) {
                 // Hide now, synchronously, before this mount is ever measured or drawn. The reveal
                 // itself can only start once the rows have a height, i.e. one layout pass later -
                 // by which point they have already been painted at full brightness for a frame,
                 // and the fade then started from a flash.
                 loadEntranceAttempts = 0;
                 hideRowsForPendingEntrance();
-                lyricsFrame.post(this::startLoadEntranceAnimation);
+                queueLoadEntrance(false);
+                appleEntranceStarted = true;
             }
         }
         if (resetScrollForNextDocument) {
@@ -1971,6 +2138,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             // down to the anchor put a visible lurch right under the load reveal.
             scrollSpring = null;
             if (initialAnchor <= 0) lyricsScroll.scrollTo(0, 0);
+        }
+
+        songChangeHadSkeleton = false;
+        hasRenderedDocument = true;
+
+        if (!appleEntranceStarted) styleRowsNow();
+        if (shouldEnter && !appleEntranceStarted && com.eza.spicyex.ui.Motion.animationsEnabled()) {
+            startSongChangeEnterAnimation();
+        } else if (lyricsScroll != null && !appleEntranceStarted) {
+            lyricsScroll.animate().cancel();
+            lyricsScroll.setAlpha(1f);
+            lyricsScroll.setTranslationY(0f);
         }
     }
 
@@ -1986,6 +2165,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      *  stomped mid-flight (the load flicker), and ending the fade at a flat 1 would then snap back
      *  down to the row's real dimmed opacity. Publishing a 0..1 factor the renderer multiplies in
      *  makes the reveal a fade toward each row's natural brightness instead. */
+    private Runnable pendingEntranceStart;
+
+    private void queueLoadEntrance(boolean nextFrame) {
+        if (pendingEntranceStart != null) lyricsFrame.removeCallbacks(pendingEntranceStart);
+        LyricsDocument expected = document;
+        pendingEntranceStart = () -> {
+            pendingEntranceStart = null;
+            if (running && document == expected) startLoadEntranceAnimation();
+        };
+        if (nextFrame) lyricsFrame.postOnAnimation(pendingEntranceStart);
+        else lyricsFrame.post(pendingEntranceStart);
+    }
+
     private void startLoadEntranceAnimation() {
         if (document == null) return;
         // A cache hit can mount rows before the first measure pass. Retry on the next frame
@@ -2008,7 +2200,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 return;
             }
             hideRowsForPendingEntrance();
-            lyricsFrame.postOnAnimation(this::startLoadEntranceAnimation);
+            queueLoadEntrance(true);
             return;
         }
         clearRowCascade();
@@ -2917,6 +3109,141 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return bestIndex;
     }
 
+    /** Long-press-to-share: quotes the nearest lyric row, or falls back to a plain track card
+     *  when there's no usable line under the touch (no document, or an empty/dot row). */
+    /** The mounted lyric row actually under a scroll-view touch Y (with a little slack), or -1. */
+    private int appliedLineIndexUnder(float yInScroll) {
+        if (document == null || document.appliedLines == null || scrollController == null) return -1;
+        int contentY = scrollController.contentYForTouch(yInScroll);
+        int slack = dp(8);
+        for (int i : rowMountController.mountedIndices()) {
+            if (i < 0 || i >= document.appliedLines.size()) continue;
+            AppliedLine line = document.appliedLines.get(i);
+            View row = line == null ? null : rowMountController.attachedRowView(line);
+            if (row == null || row.getHeight() <= 0) continue;
+            int center = scrollController.rowCenterInContent(row);
+            int half = row.getHeight() / 2 + slack;
+            if (contentY >= center - half && contentY <= center + half) return i;
+        }
+        return -1;
+    }
+
+    /** The lyric row under a finger that may be about to long-press it (share), and where. */
+    private View pressedLyricRow;
+    private float pressedLyricDownY;
+    private final Runnable shrinkPressedLyric = () -> {
+        View row = pressedLyricRow;
+        if (row == null || !row.isAttachedToWindow()) return;
+        // Held down, the line sinks a little, as in Apple Music, until the sheet opens. (No
+        // cancel(): a new scale animation replaces only the scale, not the row's other motion.)
+        row.animate().scaleX(0.94f).scaleY(0.94f)
+                .setDuration(Math.max(160, android.view.ViewConfiguration.getLongPressTimeout() - 60))
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
+    };
+
+    /**
+     * Apple-Music-style press feedback for long-press-to-share: a line held (not scrolled) shrinks
+     * slightly, and springs back when released, scrolled, or when the share sheet opens.
+     */
+    private void trackPressedLyric(android.view.MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case android.view.MotionEvent.ACTION_DOWN: {
+                releasePressedLyric();
+                if (config == null || !Boolean.TRUE.equals(config.get(Settings.LONG_PRESS_SHARE))) return;
+                int index = appliedLineIndexUnder(event.getY());
+                if (index < 0 || document == null) return;
+                AppliedLine line = document.appliedLines.get(index);
+                if (line == null || line.dotLine || line.text == null || line.text.trim().isEmpty()) return;
+                View row = rowMountController.attachedRowView(line);
+                if (row == null || row.getWidth() <= 0) return;
+                row.setPivotX(row.getWidth() / 2f);
+                row.setPivotY(row.getHeight() / 2f);
+                pressedLyricRow = row;
+                pressedLyricDownY = event.getY();
+                // A beat later, so a flick that starts on a line does not pulse it.
+                row.postDelayed(shrinkPressedLyric, 90);
+                break;
+            }
+            case android.view.MotionEvent.ACTION_MOVE:
+                if (pressedLyricRow != null && Math.abs(event.getY() - pressedLyricDownY) >= dp(10)) {
+                    releasePressedLyric();
+                }
+                break;
+            case android.view.MotionEvent.ACTION_UP:
+            case android.view.MotionEvent.ACTION_CANCEL:
+                releasePressedLyric();
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void releasePressedLyric() {
+        View row = pressedLyricRow;
+        pressedLyricRow = null;
+        if (row == null) return;
+        row.removeCallbacks(shrinkPressedLyric);
+        row.animate().scaleX(1f).scaleY(1f).setDuration(460)
+                .setInterpolator(new android.view.animation.OvershootInterpolator(2.2f)).start();
+    }
+
+    /**
+     * The share sheet over the lyrics. Long-pressing while the lyrics were blurred and moving was
+     * heavy: every blurred row kept re-rendering its blur under the sheet as it opened. The
+     * lyrics now hold still from the press until the sheet closes, and once the sheet's backdrop
+     * is opaque neither they nor the animated background are drawn at all.
+     */
+    private void onShareSheet(boolean showing, boolean covering) {
+        lyricsFrozen = showing;
+        if (covering != lyricsCovered) {
+            lyricsCovered = covering;
+            if (covering) ambientController.pauseAnimation();
+            else ambientController.resumeAnimation();
+            invalidate();
+        }
+    }
+
+    @Override
+    protected boolean drawChild(android.graphics.Canvas canvas, View child, long drawingTime) {
+        if (lyricsCovered && shareCardController != null && child != shareCardController.overlayView()) {
+            return false;
+        }
+        return super.drawChild(canvas, child, drawingTime);
+    }
+
+    private void shareLyricLineAt(float yInScroll) {
+        releasePressedLyric();
+        if (config == null || !Boolean.TRUE.equals(config.get(Settings.LONG_PRESS_SHARE))) return;
+        SpotifyTrack track = currentTrackThrottled();
+        if (track == null) return;
+        // Only a press on a lyric line opens the sheet. The nearest-row lookup used to pick a line
+        // however far away the touch was, so holding the empty space below the last line (or the
+        // credits) opened it too.
+        if (document != null && document.appliedLines != null && !document.appliedLines.isEmpty()
+                && appliedLineIndexUnder(yInScroll) < 0) {
+            return;
+        }
+        // Only a real lyric line opens the sheet: a null or empty document never does.
+        if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) return;
+        // Don't share during ads - only share actual songs
+        String shareTrackUri = track.uri == null ? "" : track.uri;
+        if (shareTrackUri.startsWith("spotify:ad:")) return;
+        if (shareCardController == null) {
+            shareCardController = new LyricsShareCardController(activity);
+            shareCardController.setBackgroundSnapshot(
+                    (w, h) -> ambientController.snapshotBackground(w, h));
+            shareCardController.setSheetListener(this::onShareSheet);
+        }
+        Bitmap art = SpotifyArtworkCache.snapshotLarge(track.imageId, track.uri, dp(420));
+        int index = appliedLineIndexUnder(yInScroll);
+        AppliedLine line = (document != null && index >= 0 && index < document.appliedLines.size())
+                ? document.appliedLines.get(index) : null;
+        if (line != null && line.text != null && !line.text.trim().isEmpty()) {
+            shareCardController.showForLine(this, document, track, art, index,
+                    rowMountController.attachedRowView(line));
+        }
+    }
+
     private void seekToLine(AppliedLine line, int index) {
         if (line == null || line.startMs < 0) return;
         skipAckGapStartMs = -1; // a manual tap-seek revokes the skip acknowledgement
@@ -3310,6 +3637,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void startRowCascade(float scrollDelta) {
+        if (!com.eza.spicyex.ui.Motion.systemAnimationsEnabled()) {
+            clearRowCascade();
+            return;
+        }
         if (document == null || document.appliedLines == null || Math.abs(scrollDelta) < 0.5f) return;
         if (Math.abs(scrollDelta) > glideCapPx()) return;
         int activeIndex = followState.activeIndex();
@@ -3463,6 +3794,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     /** Stops a stale document's load reveal before its row views are reused for a new document. */
     private void cancelLoadEntranceAnimation() {
+        if (pendingEntranceStart != null) lyricsFrame.removeCallbacks(pendingEntranceStart);
+        pendingEntranceStart = null;
         clearLoadEntrance();
         if (document == null || document.appliedLines == null) return;
         for (int i : rowMountController.mountedIndices()) {
@@ -4633,18 +4966,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 : uiText("lyrics_like_add", "Add to Liked Songs"));
     }
 
+    private void setToggleVisibility(View toggle, int targetVisibility) {
+        toggle.animate().cancel();
+        toggle.setAlpha(1f);
+        toggle.setVisibility(targetVisibility);
+    }
+
     private void updateToggleVisuals() {
         boolean jp = documentHasJapanese();
         boolean cn = documentHasChinese();
         boolean romanizable = documentHasRomanizableScript();
         boolean aiSoundAvailable = aiSettings.soundLayerEnabled() && aiSettings.isConfigured();
-        romanToggle.setVisibility(renderConfig.transliterationEnabled
+        setToggleVisibility(romanToggle, renderConfig.transliterationEnabled
                 && (romanizable || aiSoundAvailable) ? View.VISIBLE : View.GONE);
         updateRomanizationGlyph();
         romanToggle.setContentDescription(jp ? "Toggle Japanese reading" : cn ? "Toggle Chinese transliteration" : "Toggle transliteration");
         textFactory.styleIconChip(romanToggle, showRomanization()
                 && hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.SOUND));
-        translationToggle.setVisibility(renderConfig.translationEnabled && documentHasTranslationCandidate() ? View.VISIBLE : View.GONE);
+        setToggleVisibility(translationToggle, renderConfig.translationEnabled && documentHasTranslationCandidate() ? View.VISIBLE : View.GONE);
         textFactory.styleIconChip(translationToggle, showTranslation()
                 && hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING));
         // A new track may settle while the frame scheduler sleeps. Sync authority badges here so

@@ -399,4 +399,19 @@
     <string name="settings_label_download_language_models">언어 모델 다운로드</string>
     <string name="settings_label_lyrics_status_bar_hidden_portrait">상태 표시줄 숨기기 (세로)</string>
     <string name="settings_label_lyrics_status_bar_hidden_landscape">상태 표시줄 숨기기 (가로)</string>
+    <string name="share_hint">위로 밀어 가사 추가 · 탭하여 번역 켜기/끄기</string>
+    <string name="share_design_glass">글래스</string>
+    <string name="share_design_classic">클래식</string>
+    <string name="share_design_minimal">미니멀</string>
+    <string name="share_design_polaroid">폴라로이드</string>
+    <string name="share_backdrop_blur">흐린 아트워크</string>
+    <string name="share_backdrop_lyrics">가사 배경</string>
+    <string name="share_code_unavailable">Spotify 코드를 가져올 수 없어요</string>
+    <string name="share_save">저장</string>
+    <string name="share_share">공유</string>
+    <string name="share_full">카드에 더 이상 줄을 넣을 공간이 없어요</string>
+    <string name="share_saved">사진/SpicyEx에 저장했어요</string>
+    <string name="share_save_failed">카드를 저장하지 못했어요</string>
+    <string name="share_chooser">가사 공유</string>
+    <string name="settings_label_lyrics_long_press_share">가사를 길게 눌러 공유</string>
 </resources>

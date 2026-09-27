@@ -8,6 +8,8 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -35,6 +37,7 @@ import com.eza.spicyex.settings.SettingsWriter;
 import com.eza.spicyex.settings.SourceOrderEditor;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.ActionIconDrawable.Kind;
+import com.eza.spicyex.ui.Motion;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -68,6 +71,9 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     private final Context context;
     private final PanelStyle style;
+    private int sectionReflowGeneration;
+    private static final String TAG_SECTION_CHEVRON = "hdr:chevron";
+
     private final SettingsStore store;
     private final SettingsWriter writer;
     private final SettingRowFactory rows;
@@ -158,6 +164,14 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
             @Override public void onViewDetachedFromWindow(View v) {
                 panelAttached = false;
+                sectionReflowGeneration++;
+                if (sectionsContainer != null) {
+                    for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+                        View child = sectionsContainer.getChildAt(i);
+                        child.animate().cancel();
+                        child.setTranslationY(0f);
+                    }
+                }
                 languageModelPollQueued = false;
                 uiHandler.removeCallbacksAndMessages(null);
             }
@@ -344,13 +358,26 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         if (scrollRoot == null || sectionsContainer == null || anchorTag == null) return;
         final String tag = anchorTag;
         final int delta = anchorDelta;
-        scrollRoot.post(() -> {
-            for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
-                View child = sectionsContainer.getChildAt(i);
-                if (!tag.equals(child.getTag())) continue;
-                scrollRoot.scrollTo(0,
-                        Math.max(0, sectionsContainer.getTop() + child.getTop() - delta));
-                return;
+        final ViewTreeObserver observer = scrollRoot.getViewTreeObserver();
+        observer.addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                if (scrollRoot == null) return true;
+                ViewTreeObserver currentObserver = scrollRoot.getViewTreeObserver();
+                if (currentObserver.isAlive()) {
+                    currentObserver.removeOnPreDrawListener(this);
+                } else if (observer.isAlive()) {
+                    observer.removeOnPreDrawListener(this);
+                }
+                if (sectionsContainer == null) return true;
+                for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+                    View child = sectionsContainer.getChildAt(i);
+                    if (!tag.equals(child.getTag())) continue;
+                    scrollRoot.scrollTo(0,
+                            Math.max(0, sectionsContainer.getTop() + child.getTop() - delta));
+                    break;
+                }
+                return true;
             }
         });
     }
@@ -409,6 +436,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     }
 
     private void rebuildSections() {
+        sectionReflowGeneration++;
         if (sectionsContainer == null) return;
         captureAnchor();
         aiBadgeView = null;
@@ -422,7 +450,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
      * Gating toggles, selector picks and section folds land here; UI_LANGUAGE still takes the
      * full path because every label changes. Anchor-preserving either way.
      *
-     * <p>The header is one fixed-height row and swaps as a unit; card rows rebind by stable
+     * <p>The header is one fixed-height row and updates in place; card rows rebind by stable
      * ID (ordinary rows patch in place, composites swap in place). DEBUG carries live values
      * and re-renders its card as a unit.
      */
@@ -434,14 +462,38 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
             return;
         }
         captureAnchor();
+        Map<View, Float> previousTops = new java.util.IdentityHashMap<>();
+        if (Motion.animationsEnabled() && scrollRoot != null && sectionsContainer.isLaidOut()) {
+            for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+                View child = sectionsContainer.getChildAt(i);
+                float top = child.getTop() + child.getTranslationY() - scrollRoot.getScrollY();
+                child.animate().cancel();
+                previousTops.put(child, top);
+            }
+        }
         boolean expanded = expandedSections.contains(target.id);
         if (!expanded && PanelTags.card(target).equals(anchorTag)) {
             retargetAnchorToHeader(target);
         }
-        // The card sits directly after its header, so one removal shifts the other onto headerIdx.
-        sectionsContainer.removeViewAt(headerIdx);
-        if (target == Settings.AI) aiBadgeView = null;
-        appendSectionHeader(sectionsContainer, target, expanded, headerIdx);
+
+        View headerView = sectionsContainer.getChildAt(headerIdx);
+        if (headerView != null) {
+            View chevron = headerView.findViewWithTag(TAG_SECTION_CHEVRON);
+            if (chevron != null) {
+                float targetRotation = expanded ? 90f : 0f;
+                if (!Motion.animationsEnabled()) {
+                    chevron.animate().cancel();
+                    chevron.setRotation(targetRotation);
+                } else {
+                    chevron.animate().rotation(targetRotation).setDuration(Motion.dur(Motion.REVEAL)).start();
+                }
+            }
+            if (target == Settings.AI && aiBadgeView != null) {
+                aiBadgeView.setImageDrawable(new ActionIconDrawable(Kind.SPARKLES,
+                        aiReady() ? PanelStyle.COL_ACCENT : PanelStyle.COL_SECTION, style.density()));
+            }
+        }
+
         if (!expanded) {
             int staleCard = indexOfChildByTag(PanelTags.card(target));
             if (staleCard >= 0) sectionsContainer.removeViewAt(staleCard);
@@ -453,6 +505,28 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
             rebindCard(target, headerIdx);
         }
         restoreAnchor();
+        animateSectionReflow(previousTops);
+    }
+
+    private void animateSectionReflow(Map<View, Float> previousTops) {
+        final int generation = ++sectionReflowGeneration;
+        if (previousTops.isEmpty()) return;
+        final ViewTreeObserver observer = sectionsContainer.getViewTreeObserver();
+        observer.addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                if (observer.isAlive()) observer.removeOnPreDrawListener(this);
+                if (generation != sectionReflowGeneration || !sectionsContainer.isAttachedToWindow()) return true;
+                for (Map.Entry<View, Float> entry : previousTops.entrySet()) {
+                    View child = entry.getKey();
+                    if (child.getParent() != sectionsContainer) continue;
+                    float offset = entry.getValue() - (child.getTop() - scrollRoot.getScrollY());
+                    child.setTranslationY(Motion.animationsEnabled() ? offset : 0f);
+                    child.animate().translationY(0f).setDuration(Motion.dur(Motion.BASE))
+                            .setInterpolator(Motion.decel()).start();
+                }
+                return true;
+            }
+        });
     }
 
     /** Keyed card sync: stale rows out, the rest reused by ID and patched, missing rows built. */
@@ -610,8 +684,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         title.setAllCaps(true);
         title.setLetterSpacing(0.05f);
         row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        row.addView(style.kindView(expanded ? Kind.CHEVRON_DOWN : Kind.CHEVRON_RIGHT,
-                        PanelStyle.COL_SECTION, 16),
+        ImageView chevron = style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 16);
+        chevron.setTag(TAG_SECTION_CHEVRON);
+        chevron.setRotation(expanded ? 90f : 0f);
+        row.addView(chevron,
                 new LinearLayout.LayoutParams(style.dp(28), style.dp(28)));
         row.setOnClickListener(v -> {
             boolean nowExpanded = !expandedSections.contains(section.id);

@@ -49,6 +49,7 @@ final class LyricsShellEmptyStateController {
                     lyricsScroll.getHeight(), lyricsScroll.getPaddingTop());
             lyricsColumn.addView(skeleton, skeletonLp);
             alignLoadingStart(lyricsScroll, lyricsColumn, skeleton);
+            skeleton.setAlpha(1f);
             return;
         }
         TextView loading = textFactory.createText(
@@ -62,6 +63,7 @@ final class LyricsShellEmptyStateController {
         lyricsColumn.addView(loading, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+        loading.setAlpha(1f);
     }
 
     private void alignLoadingStart(
@@ -172,6 +174,7 @@ final class LyricsShellEmptyStateController {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         lyricsColumn.addView(errorBox, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        errorBox.setAlpha(1f);
         lyricsColumn.postDelayed(() -> {
             if (token != stateToken || errorBox.getParent() != lyricsColumn) return;
             errorBox.animate().alpha(0f).setDuration(350L).withEndAction(() -> {

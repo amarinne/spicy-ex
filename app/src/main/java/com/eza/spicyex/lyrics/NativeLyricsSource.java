@@ -32,6 +32,8 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
     private static final boolean DEBUG_LOGGING = false;
     private static final int CACHE_LIMIT = 24;
     private static final long DB_MISS_CACHE_MS = 2000L;
+    /** Synthetic line length used only for payloads that carry no timing at all. */
+    private static final long STATIC_LINE_MS = 3500L;
 
     private final Object lock = new Object();
     private final LinkedHashMap<String, LyricsDocument> byTrack = new LinkedHashMap<>();
@@ -360,32 +362,29 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
         } catch (Throwable ignored) {}
         doc.provider = firstNonBlank(nativeProviderLabel(isBlank(providerName) ? "musixmatch" : providerName),
                 "Spotify (through Musixmatch)");
-        long staticCursor = 0;
+        List<LyricsLine> parsed = new ArrayList<>();
+        List<Long> starts = new ArrayList<>();
         for (JsonElement el : arr) {
             if (el == null || !el.isJsonObject()) continue;
             JsonObject o = el.getAsJsonObject();
             String words = Json.optString(o, "words", "Words", "text", "Text");
-            long startMs = (long) Json.optDouble(o, 0d, "startTimeInMs", "startTimeMs", "startTime", "StartTime");
+            Long startMs = Json.optLongOrNull(o, "startTimeInMs", "startTimeMs",
+                    "startTime", "StartTime");
             boolean blank = isBlank(words) || words.matches("^[♪♫♬♩\\s]*$");
-            LyricsLine line = new LyricsLine();
             if (blank) {
                 if (!synced) continue;
-                line.interlude = true;
-                line.startMs = Math.max(0, startMs);
-                doc.lines.add(line);
+                LyricsLine interlude = new LyricsLine();
+                interlude.interlude = true;
+                parsed.add(interlude);
+                starts.add(startMs);
                 continue;
             }
+            LyricsLine line = new LyricsLine();
             line.text = words;
-            if (synced) {
-                line.startMs = Math.max(0, startMs);
-                line.endMs = 0;
-            } else {
-                line.startMs = staticCursor;
-                line.endMs = staticCursor + 3500;
-                staticCursor += 3500;
-            }
-            doc.lines.add(line);
+            parsed.add(line);
+            starts.add(startMs);
         }
+        assignLineTimes(parsed, starts, synced, doc.lines);
         if (doc.lines.isEmpty()) return null;
         finalizeParsedDocument(doc);
         return doc;
@@ -593,46 +592,127 @@ public final class NativeLyricsSource implements LyricsRepository.NativeLyricsPr
     /** Shared element loop for Spotify lines JSON: words plus optional start times. */
     private static void parseJsonLineElements(JsonArray arr, LyricsDocument doc) {
         if (arr == null || doc == null) return;
-        long staticCursor = 0;
-        boolean anyTimed = false;
+        // Each start time stays nullable until the whole payload is classified. The synthetic
+        // static grid is legitimate only when NO line carries a timestamp. Inventing one for a
+        // single untimed line inside an otherwise synced payload places that line at an unrelated
+        // moment, and LyricTimeline then stretches it across the gap to the next real start, so
+        // one missing key can swallow the opening of the song.
+        List<LyricsLine> parsed = new ArrayList<>();
+        List<Long> starts = new ArrayList<>();
         for (JsonElement el : arr) {
             if (el == null || !el.isJsonObject()) continue;
             JsonObject o = el.getAsJsonObject();
             String words = Json.optString(o, "words", "Words", "text", "Text");
-            long startMs = (long) Json.optDouble(o, 0d, "startTimeInMs", "startTimeMs",
+            Long startMs = Json.optLongOrNull(o, "startTimeInMs", "startTimeMs",
                     "startTime", "StartTime");
-            if (startMs > 0) anyTimed = true;
             boolean blank = isBlank(words) || words.matches("^[\u266A\u266B\u266C\u2669\\s]*$");
-            LyricsLine line = new LyricsLine();
             if (blank) {
-                if (startMs <= 0) continue;
-                line.interlude = true;
-                line.startMs = Math.max(0, startMs);
-                doc.lines.add(line);
+                if (startMs == null || startMs <= 0) continue;
+                LyricsLine interlude = new LyricsLine();
+                interlude.interlude = true;
+                interlude.startMs = Math.max(0, startMs);
+                parsed.add(interlude);
+                starts.add(startMs);
                 continue;
             }
+            LyricsLine line = new LyricsLine();
             line.text = words;
-            if (startMs > 0) {
-                line.startMs = Math.max(0, startMs);
-                line.endMs = 0;
-            } else {
-                line.startMs = staticCursor;
-                line.endMs = staticCursor + 3500;
-                staticCursor += 3500;
-            }
-            doc.lines.add(line);
+            parsed.add(line);
+            starts.add(startMs);
         }
-        doc.type = anyTimed ? "Line" : "Static";
-        if (!anyTimed) {
-            for (int i = doc.lines.size() - 1; i >= 0; i--) {
-                if (doc.lines.get(i).interlude) doc.lines.remove(i);
-            }
-        }
+        assignLineTimes(parsed, starts, anyTimed(starts), doc.lines);
+        doc.type = anyTimed(starts) ? "Line" : "Static";
         if (!doc.lines.isEmpty()) {
             int firstVocal = LyricTimeline.firstNonInterludeIndex(doc.lines);
             LyricsLine anchor = firstVocal >= 0 ? doc.lines.get(firstVocal) : doc.lines.get(0);
             doc.startTimeMs = Math.max(0, anchor.startMs);
         }
+    }
+
+    /** True when at least one line carries a positive, readable timestamp. */
+    private static boolean anyTimed(List<Long> starts) {
+        for (Long start : starts) {
+            if (start != null && start > 0) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Give every line a start time without ever inventing one unrelated to the song.
+     *
+     * <p>A synthetic static grid is used only when the payload carries no timing at all, which is
+     * the genuinely static case. Otherwise a line whose timestamp was absent or unreadable is
+     * placed between its timed neighbours: reading it as 0 would pin the line to the start of the
+     * song, and {@link LyricTimeline} would then stretch it across the gap to the next real start,
+     * so one unreadable field could swallow the opening. Placing it instead of dropping it keeps
+     * the words on screen and bounds the error to the correct region of the track.
+     */
+    private static void assignLineTimes(List<LyricsLine> parsed, List<Long> starts,
+                                        boolean synced, List<LyricsLine> out) {
+        if (!synced) {
+            long staticCursor = 0;
+            for (LyricsLine line : parsed) {
+                line.startMs = staticCursor;
+                line.endMs = staticCursor + STATIC_LINE_MS;
+                staticCursor += STATIC_LINE_MS;
+                out.add(line);
+            }
+            return;
+        }
+        long median = medianGap(starts);
+        int total = parsed.size();
+        int placed = 0;
+        int i = 0;
+        while (i < total) {
+            if (starts.get(i) != null) {
+                out.add(timedLine(parsed.get(i), starts.get(i)));
+                i++;
+                continue;
+            }
+            // Spread a run of untimed lines evenly across the gap its timed neighbours leave, so
+            // the run stays ordered and never reaches the next real start.
+            int runStart = i;
+            while (i < total && starts.get(i) == null) i++;
+            int runLength = i - runStart;
+            placed += runLength;
+            Long before = runStart > 0 ? starts.get(runStart - 1) : null;
+            Long after = i < total ? starts.get(i) : null;
+            long base = before == null ? 0 : before;
+            boolean bounded = after != null && after > base;
+            long span = bounded ? after - base : 0;
+            for (int k = 0; k < runLength; k++) {
+                long at = bounded
+                        ? base + span * (k + 1) / (runLength + 1)
+                        : base + median * (k + 1);
+                out.add(timedLine(parsed.get(runStart + k), at));
+            }
+        }
+        if (placed > 0) {
+            Diagnostics.event(TAG, "placed " + placed
+                    + " line(s) with no readable timestamp between timed neighbours");
+        }
+    }
+
+    /** Left at {@code endMs} 0 so LyricTimeline fills it from the next start; see its contract
+     *  on adapters not pre-filling synthetic end times. */
+    private static LyricsLine timedLine(LyricsLine line, long startMs) {
+        line.startMs = Math.max(0, startMs);
+        line.endMs = 0;
+        return line;
+    }
+
+    /** Median positive gap between consecutive timed lines: this document's typical line length. */
+    private static long medianGap(List<Long> starts) {
+        List<Long> gaps = new ArrayList<>();
+        Long previous = null;
+        for (Long start : starts) {
+            if (start == null) continue;
+            if (previous != null && start > previous) gaps.add(start - previous);
+            previous = start;
+        }
+        if (gaps.isEmpty()) return STATIC_LINE_MS;
+        gaps.sort(null);
+        return gaps.get(gaps.size() / 2);
     }
 
     private LyricsDocument buildNativeLyricsDocument(SpotifyTrack track, Object candidate, Object[] ctorArgs, String sourceTag) {

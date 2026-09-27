@@ -13,8 +13,10 @@ import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.RectF;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.TransitionDrawable;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.TypedValue;
@@ -23,6 +25,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -37,6 +40,7 @@ import com.eza.spicyex.lyrics.LyricsTextFactory;
 import com.eza.spicyex.lyrics.PanelMediaMode;
 import com.eza.spicyex.lyrics.SpotifyArtworkCache;
 import com.eza.spicyex.ui.ActionIconDrawable;
+import com.eza.spicyex.ui.Motion;
 
 /**
  * Owns the fullscreen track-info readout (spec E′): a transparent anchoring plane with a standing
@@ -169,8 +173,21 @@ final class TrackInfoReadoutController {
     private String lastTitle = "";
     private String lastArtist = "";
     private String lastContentDescription = "";
+    private static final java.util.concurrent.ScheduledThreadPoolExecutor ART_WORKER =
+            new java.util.concurrent.ScheduledThreadPoolExecutor(1);
+    static { ART_WORKER.setRemoveOnCancelPolicy(true); }
+    private final android.os.Handler artHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private java.util.concurrent.Future<?> artworkTask;
+    private int artworkGeneration;
+    private boolean artworkPending;
+    private final java.util.Map<ImageView, Runnable> artTransitionEnds = new java.util.HashMap<>();
+    private String displayedImageId = "";
     private Bitmap currentArtwork;
     private Bitmap sideArtwork;
+    private int textAnimSeq;
+    private ArtTouchFrame followThroughFrame;
+    private int followThroughTargetDp;
+    private final Runnable followThroughTimeoutRunnable = this::onFollowThroughTimeout;
     private int bottomArtDpF = ART_BOTTOM_DP;
     private int topArtDpF = ART_TOP_PORTRAIT_DP;
     private long trackChangeMs;
@@ -507,6 +524,7 @@ final class TrackInfoReadoutController {
         applyArtSize();
         layoutTopRow();
         if (modeChanged) {
+            cancelArtworkRequest();
             resetVisuals();
         }
         if (!enabled) {
@@ -552,25 +570,19 @@ final class TrackInfoReadoutController {
         }
     }
 
-    /** Clears every readout image and recycles owned bitmaps (views first, then recycle). */
+    /** Clears every readout image and drops references (views first, then drop). */
     private void clearArtwork() {
-        topArt.setImageBitmap(null);
-        bottomArt.setImageBitmap(null);
-        sideArt.setImageBitmap(null);
-        if (currentArtwork != null) {
-            try {
-                currentArtwork.recycle();
-            } catch (Throwable ignored) {
-            }
-            currentArtwork = null;
+        cancelArtworkRequest();
+        for (java.util.Map.Entry<ImageView, Runnable> end : artTransitionEnds.entrySet()) {
+            end.getKey().removeCallbacks(end.getValue());
         }
-        if (sideArtwork != null) {
-            try {
-                sideArtwork.recycle();
-            } catch (Throwable ignored) {
-            }
-            sideArtwork = null;
-        }
+        artTransitionEnds.clear();
+        displayedImageId = "";
+        topArt.setImageDrawable(null);
+        bottomArt.setImageDrawable(null);
+        sideArt.setImageDrawable(null);
+        currentArtwork = null;
+        sideArtwork = null;
     }
 
     private String currentArtSize() {
@@ -699,32 +711,87 @@ final class TrackInfoReadoutController {
     /** Updates texts/artwork on track change (with throttled retry on miss); cheap otherwise. */
     void onTrackChanged(SpotifyTrack track) {
         String uri = track == null || track.uri == null ? "" : track.uri;
+        String imageId = track == null || track.imageId == null ? "" : track.imageId;
         long now = android.os.SystemClock.elapsedRealtime();
         lastTrack = track;
         if (!uri.equals(lastUri)) {
+            cancelArtworkRequest();
             lastUri = uri;
             trackChangeMs = now;
             resetVisuals();
-            if (artworkEnabled) attemptArtwork(track);
+            if (artworkEnabled) {
+                if (imageId.isEmpty()) {
+                    clearArtwork();
+                    artMissing = false;
+                } else if (imageId.equals(displayedImageId)) {
+                    artMissing = false;
+                    handleTrackChangeFollowThrough();
+                } else {
+                    attemptArtwork(track);
+                }
+            }
         } else if (artworkEnabled && artMissing && now - trackChangeMs < ART_RETRY_WINDOW_MS
                 && now - lastArtAttemptMs > ART_RETRY_GAP_MS) {
             attemptArtwork(track);
+        } else if (artworkEnabled && artMissing && now - trackChangeMs >= ART_RETRY_WINDOW_MS) {
+            // The previous cover stays while the new one loads; once retries give up it would
+            // otherwise keep showing the wrong song.
+            clearArtwork();
+            artMissing = false;
         }
         String title = track == null ? "Waiting for Spotify track…" : emptyFallback(track.title);
         String artist = track == null ? "" : emptyFallback(track.artist);
-        if (!title.equals(lastTitle)) {
-            lastTitle = title;
-            topTitle.setText(title);
-            bottomTitle.setText(title);
-            sideTitle.setText(title);
-        }
-        if (!artist.equals(lastArtist)) {
-            lastArtist = artist;
-            topArtist.setText(artist);
-            bottomArtist.setText(artist);
-            sideArtist.setText(artist);
-        }
+        updateTexts(title, artist);
         updateContentDescriptions();
+    }
+
+    private void updateTexts(String title, String artist) {
+        if (title.equals(lastTitle) && artist.equals(lastArtist)) {
+            return;
+        }
+        lastTitle = title;
+        lastArtist = artist;
+        cancelTextAnimations();
+        applyTextsDirectly(title, artist);
+        resetTextAlphas();
+    }
+
+    private boolean isTitleView(TextView tv) {
+        return tv == topTitle || tv == bottomTitle || tv == sideTitle;
+    }
+
+    private void applyTextsDirectly(String title, String artist) {
+        topTitle.setText(title);
+        bottomTitle.setText(title);
+        sideTitle.setText(title);
+        topArtist.setText(artist);
+        bottomArtist.setText(artist);
+        sideArtist.setText(artist);
+    }
+
+    private void cancelTextAnimations() {
+        textAnimSeq++;
+        for (TextView tv : new TextView[]{
+                topTitle, topArtist, bottomTitle, bottomArtist, sideTitle, sideArtist
+        }) {
+            if (tv != null) {
+                try {
+                    tv.animate().cancel();
+                    tv.animate().withEndAction(null);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    }
+
+    private void resetTextAlphas() {
+        for (TextView tv : new TextView[]{
+                topTitle, topArtist, bottomTitle, bottomArtist, sideTitle, sideArtist
+        }) {
+            if (tv != null) {
+                tv.setAlpha(1f);
+            }
+        }
     }
 
     void onPlayingChanged(boolean playing) {
@@ -739,6 +806,12 @@ final class TrackInfoReadoutController {
         cancelArmed = false;
         activeFrame = null;
         cancelDragApply();
+        cancelFollowThroughTimeout();
+        followThroughFrame = null;
+        cancelTextAnimations();
+        // A cancelled fade skips its end action, which is where the newest text is applied.
+        applyTextsDirectly(lastTitle, lastArtist);
+        resetTextAlphas();
         bottomArtFrame.removeCallbacks(hideOverlayRunnable);
         topArtFrame.removeCallbacks(hideOverlayRunnable);
         sideArtFrame.removeCallbacks(hideOverlayRunnable);
@@ -755,71 +828,95 @@ final class TrackInfoReadoutController {
 
     // -- artwork ------------------------------------------------------------------
 
+    private void cancelArtworkRequest() {
+        artworkGeneration++;
+        if (artworkTask != null) artworkTask.cancel(false);
+        artworkTask = null;
+        artworkPending = false;
+    }
+
     private void attemptArtwork(SpotifyTrack track) {
+        if (artworkPending) return;
         lastArtAttemptMs = android.os.SystemClock.elapsedRealtime();
-        // Snapshot only the active surfaces: an inactive miss must not cause retry churn,
-        // and Off snapshots nothing at all.
         boolean needSmall = topBox.getVisibility() == View.VISIBLE
                 || bottomBox.getVisibility() == View.VISIBLE;
         boolean needSide = sideBox.getVisibility() == View.VISIBLE;
-        Bitmap rounded = currentArtwork;
-        Bitmap sideRounded = sideArtwork;
-        if (track != null && needSmall) {
-            try {
-                Bitmap raw = SpotifyArtworkCache.snapshot(track.imageId, track.uri);
-                if (currentArtwork != null) {
-                    try {
-                        currentArtwork.recycle();
-                    } catch (Throwable ignored) {
+        if ((!needSmall && !needSide) || track == null) return;
+        String imageId = track.imageId == null ? "" : track.imageId;
+        String uri = track.uri == null ? "" : track.uri;
+        int smallSize = dp(bottomArtDpF);
+        int sideSize = dp(sideArtDp);
+        int generation = ++artworkGeneration;
+        artworkPending = true;
+        artMissing = true;
+        artworkTask = ART_WORKER.submit(() -> {
+            Bitmap small = prepareArtwork(imageId, uri, smallSize, false, needSmall);
+            Bitmap side = prepareArtwork(imageId, uri, sideSize, true, needSide);
+            artHandler.post(() -> {
+                if (generation != artworkGeneration || !uri.equals(lastUri) || !artworkEnabled) {
+                    if (small != null) small.recycle();
+                    if (side != null) side.recycle();
+                    return;
+                }
+                artworkPending = false;
+                artworkTask = null;
+                if (small != null) {
+                    setArtTransition(topArt, currentArtwork, small);
+                    setArtTransition(bottomArt, currentArtwork, small);
+                    currentArtwork = small;
+                }
+                if (side != null) {
+                    setArtTransition(sideArt, sideArtwork, side);
+                    sideArtwork = side;
+                }
+                artMissing = (needSmall && small == null) || (needSide && side == null);
+                if (!artMissing) {
+                    displayedImageId = imageId;
+                    handleTrackChangeFollowThrough();
+                    if (lastTrack != null) {
+                        updateTexts(emptyFallback(lastTrack.title), emptyFallback(lastTrack.artist));
                     }
-                    currentArtwork = null;
                 }
-                if (raw != null) {
-                    int sizePx = dp(bottomArtDpF);
-                    rounded = roundBitmap(raw, sizePx, 0);
-                    raw.recycle();
-                } else {
-                    rounded = null;
-                }
-            } catch (Throwable ignored) {
-                rounded = null;
-            }
+            });
+        });
+    }
+
+    private static Bitmap prepareArtwork(String imageId, String uri, int size, boolean large,
+                                          boolean needed) {
+        if (!needed) return null;
+        Bitmap raw = null;
+        try {
+            raw = large ? SpotifyArtworkCache.snapshotLarge(imageId, uri, size)
+                    : SpotifyArtworkCache.snapshot(imageId, uri);
+            return raw == null ? null : roundBitmap(raw, large ? raw.getWidth() : size, 0);
+        } catch (RuntimeException unavailable) {
+            return null;
+        } finally {
+            if (raw != null) raw.recycle();
         }
-        if (track != null && needSide) {
-            try {
-                Bitmap large = SpotifyArtworkCache.snapshotLarge(track.imageId, track.uri,
-                        dp(sideArtDp));
-                if (sideArtwork != null) {
-                    try {
-                        sideArtwork.recycle();
-                    } catch (Throwable ignored) {
-                    }
-                    sideArtwork = null;
-                }
-                if (large != null) {
-                    sideRounded = roundBitmap(large, large.getWidth(), 0);
-                    large.recycle();
-                } else {
-                    sideRounded = null;
-                }
-            } catch (Throwable ignored) {
-                sideRounded = null;
-            }
+    }
+
+    private void setArtTransition(ImageView view, Bitmap oldBmp, Bitmap newBmp) {
+        if (view == null || newBmp == null) return;
+        Runnable previous = artTransitionEnds.remove(view);
+        if (previous != null) view.removeCallbacks(previous);
+        if (oldBmp != null && Motion.animationsEnabled()) {
+            TransitionDrawable td = new TransitionDrawable(new Drawable[]{
+                    new BitmapDrawable(activity.getResources(), oldBmp),
+                    new BitmapDrawable(activity.getResources(), newBmp)
+            });
+            td.setCrossFadeEnabled(true);
+            view.setImageDrawable(td);
+            td.startTransition(Motion.dur(Motion.SWAP));
+            Runnable finish = () -> {
+                if (view.getDrawable() == td) view.setImageBitmap(newBmp);
+                artTransitionEnds.remove(view);
+            };
+            artTransitionEnds.put(view, finish);
+            view.postDelayed(finish, Motion.dur(Motion.SWAP));
+        } else {
+            view.setImageBitmap(newBmp);
         }
-        currentArtwork = rounded;
-        sideArtwork = sideRounded;
-        // Detach views before publishing: a recycled bitmap must never stay referenced.
-        topArt.setImageBitmap(null);
-        bottomArt.setImageBitmap(null);
-        sideArt.setImageBitmap(null);
-        if (needSmall) {
-            topArt.setImageBitmap(rounded);
-            bottomArt.setImageBitmap(rounded);
-        }
-        if (needSide) {
-            sideArt.setImageBitmap(sideRounded);
-        }
-        artMissing = (needSmall && rounded == null) || (needSide && sideRounded == null);
     }
 
     /** Rounds once per track change so drag frames never pay for an outline mask. */
@@ -845,6 +942,10 @@ final class TrackInfoReadoutController {
             }
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
+                if (frame == followThroughFrame) {
+                    cancelFollowThroughTimeout();
+                    followThroughFrame = null;
+                }
                 frame.animate().cancel();
                 if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) {
                     arbiter.reset();
@@ -955,15 +1056,60 @@ final class TrackInfoReadoutController {
     }
 
     private void springBack(ArtTouchFrame frame) {
+        if (frame == null) return;
+        if (frame == followThroughFrame) {
+            cancelFollowThroughTimeout();
+            followThroughFrame = null;
+        }
         frame.animate().cancel();
         frame.animate().translationX(0f).setDuration(SETTLE_ANIM_MS).start();
     }
 
     private void followThrough(ArtTouchFrame frame, int targetDp) {
+        if (frame == null) return;
+        cancelFollowThroughTimeout();
+        followThroughFrame = frame;
+        followThroughTargetDp = targetDp;
+        frame.postDelayed(followThroughTimeoutRunnable, 400L);
         frame.animate().cancel();
-        frame.animate().translationX(dp(targetDp)).setDuration(160L)
-                .withEndAction(() -> frame.animate().translationX(0f).setDuration(120L).start())
-                .start();
+        if (Motion.animationsEnabled()) {
+            frame.animate().translationX(dp(targetDp)).setDuration(Motion.dur(Motion.EXIT)).start();
+        } else {
+            frame.setTranslationX(dp(targetDp));
+        }
+    }
+
+    private void onFollowThroughTimeout() {
+        if (followThroughFrame == null) return;
+        ArtTouchFrame frame = followThroughFrame;
+        followThroughFrame = null;
+        frame.animate().cancel();
+        if (Motion.animationsEnabled()) {
+            frame.animate().translationX(0f).setDuration(Motion.dur(Motion.BASE)).start();
+        } else {
+            frame.setTranslationX(0f);
+        }
+    }
+
+    private void cancelFollowThroughTimeout() {
+        if (followThroughFrame != null) {
+            followThroughFrame.removeCallbacks(followThroughTimeoutRunnable);
+        }
+    }
+
+    private void handleTrackChangeFollowThrough() {
+        if (followThroughFrame == null) return;
+        ArtTouchFrame frame = followThroughFrame;
+        int targetDp = followThroughTargetDp;
+        cancelFollowThroughTimeout();
+        followThroughFrame = null;
+        frame.animate().cancel();
+        if (Motion.animationsEnabled()) {
+            frame.setTranslationX(dp(-targetDp));
+            frame.animate().translationX(0f).setDuration(Motion.dur(Motion.BASE)).start();
+        } else {
+            frame.setTranslationX(0f);
+        }
     }
 
     private boolean commitTrack(boolean next) {
@@ -1051,12 +1197,12 @@ final class TrackInfoReadoutController {
         cancelArmed = false;
         activeFrame = null;
         cancelDragApply();
-        cancelFrameAnimation(topArtFrame);
-        cancelFrameAnimation(bottomArtFrame);
-        cancelFrameAnimation(sideArtFrame);
-        topArtFrame.setTranslationX(0f);
-        bottomArtFrame.setTranslationX(0f);
-        sideArtFrame.setTranslationX(0f);
+        for (ArtTouchFrame f : new ArtTouchFrame[]{topArtFrame, bottomArtFrame, sideArtFrame}) {
+            if (f != followThroughFrame) {
+                cancelFrameAnimation(f);
+                f.setTranslationX(0f);
+            }
+        }
         hideOverlays();
     }
 

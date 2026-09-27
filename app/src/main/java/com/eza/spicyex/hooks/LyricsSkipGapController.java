@@ -12,6 +12,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageButton;
 
 import com.eza.spicyex.ui.ActionIconDrawable;
+import com.eza.spicyex.ui.Motion;
 
 /** Owns the floating "skip intro/outro gap" affordance, stacked above jump-to-current. */
 final class LyricsSkipGapController {
@@ -19,6 +20,7 @@ final class LyricsSkipGapController {
     static final int STACK_OFFSET_DP = 52;
 
     private final ImageButton button;
+    private boolean shown;
 
     private LyricsSkipGapController(ImageButton button) {
         this.button = button;
@@ -52,11 +54,44 @@ final class LyricsSkipGapController {
     }
 
     void update(boolean show) {
-        int targetVisibility = show ? View.VISIBLE : View.GONE;
-        if (button.getVisibility() != targetVisibility) {
-            button.setVisibility(targetVisibility);
+        if (show == shown) return;
+        shown = show;
+        button.setEnabled(show);
+
+        button.animate().cancel();
+        if (!Motion.animationsEnabled()) {
+            button.setVisibility(show ? View.VISIBLE : View.GONE);
+            button.setAlpha(show ? 0.92f : 0f);
+            button.setScaleX(1f);
+            button.setScaleY(1f);
+            return;
         }
-        button.setAlpha(show ? 0.92f : 0f);
+
+        if (show) {
+            if (button.getVisibility() != View.VISIBLE) {
+                button.setAlpha(0f);
+                button.setScaleX(0.9f);
+                button.setScaleY(0.9f);
+            }
+            button.setVisibility(View.VISIBLE);
+            button.animate()
+                    .alpha(0.92f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(Motion.dur(Motion.REVEAL))
+                    .withEndAction(null)
+                    .start();
+        } else {
+            button.animate()
+                    .alpha(0f)
+                    .setDuration(Motion.dur(Motion.EXIT))
+                    .withEndAction(() -> {
+                        if (!shown) {
+                            button.setVisibility(View.GONE);
+                        }
+                    })
+                    .start();
+        }
     }
 
     /** Keeps the stack above the bottom track-info readout; mirrors the jump chip margin. */

@@ -23,4 +23,9 @@ final class NativeSpicyShellView extends FrameLayout {
     void stop() {
         delegate.stop();
     }
+
+    /** Lets the layout editor take a back press first (close its sheet, then itself). */
+    boolean consumeBack() {
+        return delegate.consumeBack();
+    }
 }

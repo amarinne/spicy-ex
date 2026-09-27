@@ -305,7 +305,7 @@ final class NowPlayingLyricController {
             projectionRevision.incrementAndGet();
             artworkTargetHost.invalidate();
             artworkTargetRefreshesRemaining = artworkWasVisible ? 3 : 0;
-            card.clear();
+            card.clearAnimated();
             lastIdx = Integer.MIN_VALUE;
             placeholderShown = false;
             nextFetchAllowedMs = 0L;
@@ -347,7 +347,7 @@ final class NowPlayingLyricController {
         if (lines == null || lines.isEmpty()) return;
         int idx = LyricTimeline.findPrimaryActiveRow(lines, pos);
         if (idx < 0 || idx >= lines.size()) {
-            if (lastIdx != -1) { card.clear(); lastIdx = -1; }
+            if (lastIdx != -1) { card.clearAnimated(); lastIdx = -1; }
             return;
         }
         AppliedLine cur = lines.get(idx);

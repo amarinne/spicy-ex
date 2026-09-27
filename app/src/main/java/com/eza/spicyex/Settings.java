@@ -95,6 +95,13 @@ public final class Settings {
             "lyrics_status_bar_hidden_landscape", LYRICS, "Hide status bar (landscape)", false
     );
 
+    // Holding a lyric line opens a share card for it (see LyricsShareCardController). Off by
+    // default: long-pressing the lyrics did nothing before, and a held finger while reading
+    // should not start throwing up sheets unexpectedly.
+    public static final Setting<Boolean> LONG_PRESS_SHARE = boolSetting(
+            "lyrics_long_press_share", LYRICS, "Long-press a line to share", false
+    );
+
     public static final IntegerSetting SYNC_OFFSET_MS = intSetting(
             "lyric_sync_offset_ms", LYRICS, "Sync offset",
             0, -5000, 5000, 100
@@ -366,6 +373,15 @@ public final class Settings {
             "lyric_animation_style", ANIMATION, "Animation style",
             "Gradient wash",
             "Gradient wash", "Spotlight", "Apple Music"
+    );
+
+    // Chrome transition pacing, separate from lyric playback timing. Instant skips UI
+    // transitions (fastest, least motion); Fast halves the standard durations; Relaxed
+    // keeps full durations. Playback-driven highlighting never consults this setting.
+    public static final Setting<String> TRANSITION_FEEL = enumSetting(
+            "lyrics_transition_feel", ANIMATION, "Transition feel",
+            "Fast",
+            "Instant", "Fast", "Relaxed"
     );
 
     // Apple-owned sub-section (R3). Visible only while ANIMATION_STYLE is Apple Music; each key

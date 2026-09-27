@@ -2,6 +2,7 @@ package com.eza.spicyex.ui;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.view.View;
 import android.view.ViewPropertyAnimator;
 import android.view.animation.AccelerateInterpolator;
@@ -25,6 +26,97 @@ public final class Motion {
     public static final int BASE = 200;
     public static final int EXIT = 160;
     public static final int SLOW = 260;
+    public static final int REVEAL = 150;
+    public static final int SWAP = 240;
+    public static final int BACKDROP = 600;
+
+    /** Transition feel values; must match {@code Settings.TRANSITION_FEEL} allowed values. */
+    public static final String FEEL_INSTANT = "Instant";
+    public static final String FEEL_FAST = "Fast";
+    public static final String FEEL_RELAXED = "Relaxed";
+
+    private static final String PREFS_NAME = "SpotifyPlus";
+    private static final String KEY_TRANSITION_FEEL = "lyrics_transition_feel";
+
+    private static volatile String feel = FEEL_FAST;
+    private static volatile boolean initialized;
+
+    /**
+     * Loads the persisted transition feel and keeps it live. Safe to call repeatedly;
+     * only the first call registers the preference listener.
+     */
+    public static void initialize(android.content.Context context) {
+        if (context == null) return;
+        try {
+            android.content.Context app = context.getApplicationContext();
+            android.content.SharedPreferences prefs =
+                    app.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE);
+            feel = sanitizeFeel(prefs.getString(KEY_TRANSITION_FEEL, FEEL_FAST));
+            if (!initialized) {
+                initialized = true;
+                prefs.registerOnSharedPreferenceChangeListener(
+                        (changed, key) -> {
+                            if (KEY_TRANSITION_FEEL.equals(key)) {
+                                feel = sanitizeFeel(changed.getString(key, FEEL_FAST));
+                            }
+                        });
+            }
+        } catch (Throwable ignored) {
+            // Runtime chrome must never crash Spotify during startup.
+        }
+    }
+
+    /** Overrides the feel in tests or when the caller already holds the config value. */
+    public static void setTransitionFeel(String value) {
+        feel = sanitizeFeel(value);
+    }
+
+    private static String sanitizeFeel(String value) {
+        if (FEEL_INSTANT.equals(value) || FEEL_RELAXED.equals(value)) return value;
+        return FEEL_FAST;
+    }
+
+    /**
+     * Whether the OS allows animations at all (reduced motion / animator scale).
+     * Returns {@link ValueAnimator#areAnimatorsEnabled()}, or true if that call throws.
+     */
+    public static boolean systemAnimationsEnabled() {
+        try {
+            return ValueAnimator.areAnimatorsEnabled();
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    /**
+     * Whether module chrome transitions may run. Instant feel skips them while
+     * preserving playback-driven lyric timing, which never consults this gate.
+     */
+    public static boolean animationsEnabled() {
+        return systemAnimationsEnabled() && !FEEL_INSTANT.equals(feel);
+    }
+
+    /**
+     * Scales a token duration for the current feel. Relaxed keeps current values;
+     * Fast halves them; Instant collapses to zero (callers normally skip instead).
+     */
+    public static int dur(int base) {
+        if (FEEL_INSTANT.equals(feel)) return 0;
+        if (FEEL_RELAXED.equals(feel)) return base;
+        return Math.max(1, base / 2);
+    }
+
+    public static long dur(long base) {
+        return dur((int) base);
+    }
+
+    public static Interpolator decel() {
+        return DECEL;
+    }
+
+    public static Interpolator accel() {
+        return ACCEL;
+    }
 
     private static final Interpolator DECEL = new DecelerateInterpolator();
     private static final Interpolator ACCEL = new AccelerateInterpolator();
@@ -48,7 +140,7 @@ public final class Motion {
         view.setScaleY(0.94f);
         view.setAlpha(0f);
         view.animate().scaleX(1f).scaleY(1f).alpha(1f)
-                .setDuration(BASE).setInterpolator(DECEL)
+                .setDuration(dur(BASE)).setInterpolator(DECEL)
                 .withLayer()
                 .start();
     }
@@ -105,7 +197,7 @@ public final class Motion {
             view.addOnAttachStateChangeListener(detachGuard);
             animator = view.animate();
             animator.alpha(0f).scaleX(0.94f).scaleY(0.94f)
-                    .setDuration(EXIT).setInterpolator(ACCEL)
+                    .setDuration(dur(EXIT)).setInterpolator(ACCEL)
                     .withLayer()
                     .setListener(new AnimatorListenerAdapter() {
                         @Override public void onAnimationCancel(Animator animation) {

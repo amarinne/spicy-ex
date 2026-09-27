@@ -2,15 +2,19 @@ package com.eza.spicyex.hooks;
 
 import android.app.Activity;
 import android.app.Dialog;
-import android.graphics.drawable.ColorDrawable;
+import android.transition.ChangeBounds;
+import android.transition.TransitionManager;
+import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
+import android.widget.FrameLayout;
 
 import com.eza.spicyex.SettingsPanel;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.beautifullyrics.entities.VsyncFrameScheduler;
 import com.eza.spicyex.lyrics.LyricsAmbientController;
 import com.eza.spicyex.ui.Motion;
+import com.eza.spicyex.ui.PanelSurface;
 
 import com.eza.spicyex.xposed.XpLog;
 
@@ -49,32 +53,56 @@ final class LyricsSettingsDialogController {
         try {
             Dialog dialog = new Dialog(activity);
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-            Window window = dialog.getWindow();
+            PanelSurface.configureWindow(dialog.getWindow());
+
+            final PanelSurface[] surfaceRef = new PanelSurface[1];
             final View[] panelRef = new View[1];
             SettingsPanel panel = new SettingsPanel(activity, new SettingsStore(activity),
                     () -> halfMode, () -> {
                         halfMode = !halfMode;
-                        applySize(window);
-                    }, () -> Motion.exitCardThen(panelRef[0], dialog::isShowing, dialog::dismiss),
+                        PanelSurface surface = surfaceRef[0];
+                        View card = panelRef[0];
+                        if (surface != null && card != null) {
+                            float targetDim = halfMode ? 0.1f : 0.5f;
+                            if (Motion.animationsEnabled()) {
+                                TransitionManager.beginDelayedTransition(surface,
+                                        new ChangeBounds().setDuration(Motion.dur(Motion.BASE)));
+                                surface.animateDim(targetDim, Motion.dur(Motion.BASE));
+                            } else {
+                                surface.setDim(targetDim);
+                            }
+                            applyCardSize(card, halfMode);
+                        }
+                    }, () -> {
+                        if (surfaceRef[0] != null) {
+                            surfaceRef[0].exit(null);
+                        }
+                    },
                     host::clearLyricsCache, onResyncTiming);
             panel.setLyricsHost(host);
             final View panelView = panel.build();
             panelRef[0] = panelView;
-            // Back routes through the animated exit; outside-tap keeps platform behavior
-            // (cancelability untouched, per motion-audit lifecycle contract).
+
+            PanelSurface surface = new PanelSurface(activity, dialog, panelView,
+                    halfMode ? 0.1f : 0.5f);
+            surfaceRef[0] = surface;
+
+            applyCardSize(panelView, halfMode);
+
+            // Back and outside-scrim taps route through the unified animated exit.
             dialog.setOnKeyListener((d, keyCode, event) -> {
                 if (keyCode == android.view.KeyEvent.KEYCODE_BACK
                         && event.getAction() == android.view.KeyEvent.ACTION_UP) {
-                    Motion.exitCardThen(panelView, dialog::isShowing, dialog::dismiss);
+                    if (surfaceRef[0] != null) {
+                        surfaceRef[0].exit(null);
+                    }
                     return true;
                 }
                 return false;
             });
-            dialog.setContentView(panelView);
-            if (window != null) {
-                window.setBackgroundDrawable(new ColorDrawable(android.graphics.Color.TRANSPARENT));
-                applySize(window);
-            }
+
+            dialog.setContentView(surface);
+
             dialog.setOnDismissListener(d -> {
                 frameScheduler.start();
                 // Source toggles and order are saved inside the panel; the session re-seats the
@@ -82,20 +110,27 @@ final class LyricsSettingsDialogController {
                 host.reconcileLyricsSources();
                 onClosed.run();
             });
+
             dialog.show();
-            Motion.enterCard(panelView);
+            PanelSurface.configureWindow(dialog.getWindow());
+            surface.enter(halfMode ? 0.1f : 0.5f);
         } catch (Throwable t) {
             XpLog.log(logTag + " settings dialog failed: " + t);
         }
     }
 
-    private void applySize(Window window) {
-        if (window == null) return;
+    private void applyCardSize(View card, boolean half) {
         android.util.DisplayMetrics dm = activity.getResources().getDisplayMetrics();
         int w = (int) (dm.widthPixels * 0.92f);
-        int h = (int) (dm.heightPixels * (halfMode ? 0.45f : 0.84f));
-        window.setLayout(w, h);
-        window.setGravity(halfMode ? android.view.Gravity.TOP : android.view.Gravity.CENTER);
-        window.setDimAmount(halfMode ? 0.1f : 0.5f);
+        int h = (int) (dm.heightPixels * (half ? 0.45f : 0.84f));
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) card.getLayoutParams();
+        if (lp == null) {
+            lp = new FrameLayout.LayoutParams(w, h);
+        } else {
+            lp.width = w;
+            lp.height = h;
+        }
+        lp.gravity = half ? (Gravity.TOP | Gravity.CENTER_HORIZONTAL) : Gravity.CENTER;
+        card.setLayoutParams(lp);
     }
 }
