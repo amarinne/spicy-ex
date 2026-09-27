@@ -255,6 +255,7 @@ public final class LyricsDocumentProcessor {
         target.includesTranslation = source.includesTranslation;
         target.romanizationPending = source.romanizationPending;
         target.translationPending = source.translationPending;
+        target.translationFailed = source.translationFailed;
         target.processingPending = source.processingPending;
         target.readingFromAi = source.readingFromAi;
         target.translationFromAi = source.translationFromAi;

@@ -16,6 +16,12 @@ public final class LyricsToggleSpinnerController {
         this.translationSpinner = translationSpinner;
     }
 
+    /** Plain (not AI) failures, each shown as a red "!" on its chip until a retry or success. */
+    public void setFailed(boolean romanFailed, boolean translationFailed) {
+        romanSpinner.setFailed(romanFailed);
+        translationSpinner.setFailed(translationFailed);
+    }
+
     public void update(boolean enabled, boolean romanPending, boolean translationPending) {
         update(enabled, romanPending, translationPending, false, false);
     }

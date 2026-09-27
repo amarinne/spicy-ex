@@ -56,8 +56,14 @@ public final class PanelPolicy {
             return snapshot.animatedBackgroundAvailable()
                     && LyricsBackgroundStyle.isAnimated(snapshot.get(Settings.BACKGROUND_STYLE));
         }
+        if (setting == Settings.LYRICS_FONT_CUSTOM_PATH) {
+            return "custom".equals(snapshot.get(Settings.LYRICS_FONT));
+        }
         if (setting == Settings.LYRICS_BLUR_INTENSITY) {
             return !"Off".equals(snapshot.get(Settings.ENABLE_LINE_BLUR));
+        }
+        if (setting == Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS) {
+            return Boolean.TRUE.equals(snapshot.get(Settings.AUTO_RESUME_FOLLOW));
         }
         if (setting == Settings.LINE_SYNC_FILL) {
             return "Gradient wash".equals(snapshot.get(Settings.ANIMATION_STYLE));

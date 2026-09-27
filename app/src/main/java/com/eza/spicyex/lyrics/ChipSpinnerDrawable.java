@@ -34,6 +34,9 @@ public final class ChipSpinnerDrawable extends Drawable {
     private boolean aiActive;
     private boolean aiOutput;
     private boolean aiFailed;
+    /** An ordinary (not AI) run failed: a small red "!" on the rim, tap to retry. */
+    private boolean failed;
+    private final android.graphics.Paint failPaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
 
     private final Callback relay = new Callback() {
         @Override public void invalidateDrawable(Drawable who) { invalidateSelf(); }
@@ -100,6 +103,33 @@ public final class ChipSpinnerDrawable extends Drawable {
         return aiFailed;
     }
 
+    public void setFailed(boolean value) {
+        if (value == failed) return;
+        failed = value;
+        invalidateSelf();
+    }
+
+    public boolean isFailed() {
+        return failed;
+    }
+
+    private void drawFailedMark(Canvas canvas) {
+        android.graphics.Rect b = getBounds();
+        int size = Math.min(b.width(), b.height());
+        if (size <= 0) return;
+        float r = size * 0.17f;
+        float cx = b.right - r;
+        float cy = b.top + r;
+        failPaint.setStyle(android.graphics.Paint.Style.FILL);
+        failPaint.setColor(AI_FAILED_RED);
+        canvas.drawCircle(cx, cy, r, failPaint);
+        failPaint.setColor(0xFFFFFFFF);
+        failPaint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+        failPaint.setStrokeWidth(Math.max(1.5f, r * 0.3f));
+        canvas.drawLine(cx, cy - r * 0.5f, cx, cy + r * 0.12f, failPaint);
+        canvas.drawCircle(cx, cy + r * 0.48f, r * 0.15f, failPaint);
+    }
+
     private void updateAiBadgeTint() {
         if (aiBadge != null) {
             aiBadge.setTint(aiFailed ? AI_FAILED_RED : aiActive ? AI_RUNNING_GRAY : AI_GREEN);
@@ -148,6 +178,7 @@ public final class ChipSpinnerDrawable extends Drawable {
             return;
         }
         if ((aiFailed || aiOutput) && aiBadge != null) aiBadge.draw(canvas);
+        if (failed && !aiFailed) drawFailedMark(canvas);
     }
 
     @Override

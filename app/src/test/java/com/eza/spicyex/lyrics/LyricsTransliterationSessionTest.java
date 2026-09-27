@@ -165,7 +165,7 @@ public class LyricsTransliterationSessionTest {
                 String.class, boolean.class, boolean.class, boolean.class, boolean.class, boolean.class,
                 boolean.class, float.class,
                 boolean.class, boolean.class, boolean.class, boolean.class, boolean.class,
-                String.class, float.class, String.class, String.class, String.class, String.class, float.class,
+                String.class, float.class, String.class, String.class, String.class, String.class, String.class, float.class,
                 String.class, float.class, String.class, boolean.class, boolean.class, boolean.class,
                 String.class, String.class, String.class, String.class, String.class, String.class, String.class,
                 String.class, String.class, String.class, String.class, String.class, String.class, String.class,
@@ -175,7 +175,7 @@ public class LyricsTransliterationSessionTest {
         return ctor.newInstance(
                 LyricsBackgroundStyle.GRADIENT, true, true, false, true, true, true, 1f,
                 false, true, true, true, true,
-                "more", 1f, "Medium", "Medium", "default", "normal", 1f,
+                "more", 1f, "Medium", "Medium", "default", "", "normal", 1f,
                 "normal", 1f, "Main only", false, false, false,
                 "Spotlight word", "Off", "Top to bottom", "Fade up", "Scroll with lyric", "Grouped", "Top to bottom",
                 "cycle", SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI,

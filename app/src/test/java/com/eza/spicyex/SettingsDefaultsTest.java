@@ -19,6 +19,19 @@ public class SettingsDefaultsTest {
         assertEquals("spacious", Settings.LINE_SPACING.defaultValue);
         assertEquals("note", Settings.INTERLUDE_ICON.defaultValue);
         assertEquals("Off", Settings.AUTO_SKIP_INTRO_OUTRO.defaultValue);
+        assertEquals("spotify", Settings.LYRICS_FONT.defaultValue);
+        assertEquals(java.util.Arrays.asList("spotify", "apple", "custom"),
+                Settings.LYRICS_FONT.allowedValues);
+        assertEquals("custom", Settings.LYRICS_FONT.coerce("custom"));
+        assertEquals("spotify", Settings.LYRICS_FONT.coerce("bogus"));
+        assertEquals("", Settings.LYRICS_FONT_CUSTOM_PATH.defaultValue);
+        assertEquals(Settings.TEXT, Settings.LYRICS_FONT_CUSTOM_PATH.section);
+        assertEquals("Off", Settings.STATUS_BAR_HIDDEN_MODE.defaultValue);
+        assertEquals(Settings.LYRICS, Settings.STATUS_BAR_HIDDEN_MODE.section);
+        assertEquals(java.util.Arrays.asList("Off", "Portrait", "Landscape", "Both"),
+                Settings.STATUS_BAR_HIDDEN_MODE.allowedValues);
+        assertEquals("Both", Settings.STATUS_BAR_HIDDEN_MODE.coerce("Both"));
+        assertEquals("Off", Settings.STATUS_BAR_HIDDEN_MODE.coerce("bogus"));
         assertEquals(java.util.Arrays.asList("Off", "On demand", "Auto"),
                 Settings.AUTO_SKIP_INTRO_OUTRO.allowedValues);
         assertEquals("Auto", Settings.AUTO_SKIP_INTRO_OUTRO.coerce("Auto"));
@@ -43,11 +56,17 @@ public class SettingsDefaultsTest {
         assertFalse(Settings.LINE_SLIDE_ANIMATION.defaultValue);
         assertTrue(Settings.APPLE_LIFT.defaultValue);
         assertEquals(Settings.APPLE, Settings.APPLE_LIFT.section);
-        assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);
-        assertFalse(Settings.FOLLOW_CHIP_ANIMATION.defaultValue);
-        assertEquals(Settings.LYRICS, Settings.FOLLOW_CHIP_ANIMATION.section);
-        assertFalse(Settings.FOLLOW_CHIP_PROGRESS.defaultValue);
-        assertEquals(Settings.LYRICS, Settings.FOLLOW_CHIP_PROGRESS.section);
+        assertFalse(Settings.AUTO_RESUME_FOLLOW.defaultValue);
+        assertEquals(3, (int) Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.defaultValue);
+        assertEquals(Settings.LYRICS, Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.section);
+        assertEquals("Auto", Settings.SKIP_CHIP_STYLE.defaultValue);
+        assertEquals("Right", Settings.SKIP_CHIP_POSITION.defaultValue);
+        assertEquals("Right", Settings.FOLLOW_CHIP_POSITION.defaultValue);
+        assertEquals("Auto", Settings.FOLLOW_CHIP_STYLE.defaultValue);
+        assertEquals(Settings.INTERNAL, Settings.SKIP_CHIP_STYLE.section);
+        assertEquals(Settings.INTERNAL, Settings.SKIP_CHIP_POSITION.section);
+        assertEquals(Settings.INTERNAL, Settings.FOLLOW_CHIP_POSITION.section);
+        assertEquals(Settings.INTERNAL, Settings.FOLLOW_CHIP_STYLE.section);
         assertFalse(Settings.HYPERGLOW_ENABLED.defaultValue);
         assertEquals("en", Settings.UI_LANGUAGE.defaultValue);
         // Default stays Google draft until device comparison proves another flow better; adding

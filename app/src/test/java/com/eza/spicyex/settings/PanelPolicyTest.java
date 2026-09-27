@@ -193,6 +193,26 @@ public class PanelPolicyTest {
     }
 
     @Test
+    public void customFontPathNeedsCustomFont() {
+        PanelSnapshot custom = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.LYRICS_FONT, "custom").build();
+        assertTrue(PanelPolicy.shouldRender(Settings.LYRICS_FONT_CUSTOM_PATH, custom));
+        PanelSnapshot spotify = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.LYRICS_FONT, "spotify").build();
+        assertFalse(PanelPolicy.shouldRender(Settings.LYRICS_FONT_CUSTOM_PATH, spotify));
+    }
+
+    @Test
+    public void autoResumeDelayNeedsAutoResumeFollow() {
+        PanelSnapshot followOn = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.AUTO_RESUME_FOLLOW, true).build();
+        assertTrue(PanelPolicy.shouldRender(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS, followOn));
+        PanelSnapshot followOff = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.AUTO_RESUME_FOLLOW, false).build();
+        assertFalse(PanelPolicy.shouldRender(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS, followOff));
+    }
+
+    @Test
     public void blurIntensityNeedsDistanceBlurActive() {
         PanelSnapshot blurSlight = PanelSnapshot.builder().allCapabilities()
                 .put(Settings.ENABLE_LINE_BLUR, "Slight").build();

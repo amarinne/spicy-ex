@@ -403,7 +403,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         ambientController.applySettings(renderConfig.backgroundStyle, renderConfig.forceDarkBackground,
                 renderConfig.extraDarkBackground);
         if (trackInfoController != null) trackInfoController.onPreferenceChanged();
-        if (jumpToCurrentController != null) jumpToCurrentController.onPreferenceChanged();
+        if (skipGapController != null) skipGapController.onPreferenceChanged();
         if (chromeViews != null) {
             LyricsShellChromeController.applyTopMode(chromeViews, isTopReadout(),
                     chromeButtonDp(), isLandscape());
@@ -454,6 +454,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final GlyphIconDrawable romanGlyph = new GlyphIconDrawable(
             "A", android.graphics.Typeface.DEFAULT_BOLD);
     private int lyricsTopInsetPx;
+    /** Seeded from the fixed {@link NativeLyricsUtils#sideSystemPadding} guess, then refined to
+     *  the real display-cutout side inset once WindowInsets dispatch on attach. */
+    private int lyricsSideInsetPx;
+    /** Real per-side system insets (cutout, navigation bar); 0 where that edge is free. */
+    private int safeLeftInsetPx;
+    private int safeRightInsetPx;
+    /** Landscape content clearance on an edge with nothing on it. */
+    private static final int LANDSCAPE_EDGE_MIN_DP = 24;
+    private static final int LANDSCAPE_TRAILING_EDGE_MIN_DP = 12;
     /** Last anchor fraction actually applied - lets applyRenderConfigChanges() tell a real change
      *  (drag the layout editor's focus handle) from a no-op re-apply (any other setting changing)
      *  so it only forces an immediate re-scroll when the anchor itself moved. NaN so the very
@@ -501,16 +510,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean statusBarHiddenByUs;
 
     /**
-     * Hides or shows the system status bar for the lyrics screen, per orientation (Settings'
-     * "Hide status bar" rows). A swipe from the edge still shows it for a moment
+     * Hides or shows the system status bar for the lyrics screen, per the "Hide status bar"
+     * selector. A swipe from the edge still shows it for a moment
      * (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE / the pre-R sticky-immersive equivalent). See
-     * {@link NativeLyricsUtils#topSystemPadding}, which reserves the bar's height only while it
-     * shows.
+     * {@link NativeLyricsUtils#topSystemPadding}, which pins the chrome to the bar's place
+     * whether or not it is showing, so toggling never moves the layout.
      *
-     * <p>Only the hide path and the restore-after-our-own-hide path touch the window. When both
-     * rows are off this method is a no-op against the window: {@code setDecorFitsSystemWindows}
+     * <p>Only the hide path and the restore-after-our-own-hide path touch the window. With the
+     * selector off this method is a no-op against the window: {@code setDecorFitsSystemWindows}
      * and the system-bar insets stay exactly as Spotify's own page set them up, which is what
-     * this screen did before the rows existed.
+     * this screen did before the selector existed.
      */
     private void applyStatusBarPreference() {
         boolean hide = NativeLyricsUtils.statusBarHidden(activity);
@@ -521,15 +530,51 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         if (hide != statusBarHiddenByUs) {
             statusBarHiddenByUs = hide;
-            // The chrome header and the lyrics' top clearance were sized for the old state.
-            if (chromeHeader != null) {
-                chromeHeader.setPadding(chromeHeader.getPaddingLeft(), topSystemPadding(activity),
-                        chromeHeader.getPaddingRight(), chromeHeader.getPaddingBottom());
-            }
-            lyricsTopInsetPx = topSystemPadding(activity);
-            applyLyricsScrollPadding();
+            // Showing or hiding moves where the window's content starts; the layout listener
+            // re-pins everything once that relayout lands (see trackContentScreenTop).
+            reapplyTopClearance();
         }
     }
+
+    private final int[] contentLocation = new int[2];
+    private final View.OnLayoutChangeListener contentTopListener =
+            (v, l, t, r, b, ol, ot, or, ob) -> trackContentScreenTop();
+
+    /** Watches where the activity's content area sits on screen, which the status bar moves. */
+    private void watchContentScreenTop(boolean watch) {
+        View content = activity == null ? null : activity.findViewById(android.R.id.content);
+        if (content == null) return;
+        content.removeOnLayoutChangeListener(contentTopListener);
+        if (watch) {
+            content.addOnLayoutChangeListener(contentTopListener);
+            trackContentScreenTop();
+        }
+    }
+
+    private void trackContentScreenTop() {
+        View content = activity == null ? null : activity.findViewById(android.R.id.content);
+        if (content == null || !content.isAttachedToWindow()) return;
+        content.getLocationOnScreen(contentLocation);
+        int top = Math.max(0, contentLocation[1]);
+        if (top == NativeLyricsUtils.contentScreenTop) return;
+        NativeLyricsUtils.contentScreenTop = top;
+        // Posted: this runs inside a layout pass.
+        post(this::reapplyTopClearance);
+    }
+
+    /** Re-pins the header, the lyrics and the track readout below the status bar's place. */
+    private void reapplyTopClearance() {
+        if (chromeHeader != null) {
+            chromeHeader.setPadding(chromeHeader.getPaddingLeft(), topSystemPadding(activity),
+                    chromeHeader.getPaddingRight(), chromeHeader.getPaddingBottom());
+        }
+        lyricsTopInsetPx = Math.max(NativeLyricsUtils.statusBarClearance(activity), cutoutTopPx);
+        applyLyricsScrollPadding();
+        if (trackInfoController != null) trackInfoController.onPreferenceChanged();
+    }
+
+    /** A display cutout reaching lower than the status bar, when there is one. */
+    private int cutoutTopPx;
 
     private void hideStatusBar() {
         android.view.Window window = activity == null ? null : activity.getWindow();
@@ -575,20 +620,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
-    /** Minimum width/height ratio for the adaptive two-column landscape mode (PR9's gate). */
+    /** Minimum width/height ratio at which any screen counts as wide (PR9's landscape gate). */
     static final float TWO_COLUMN_ASPECT_MIN = 1.2f;
+    /** Material "medium" window width: from here a screen has room for two columns... */
+    static final float TWO_COLUMN_MIN_WIDTH_DP = 600f;
+    /** ...as long as it is not much taller than wide - an unfolded foldable, not a tall tablet. */
+    static final float TWO_COLUMN_SQUARE_ASPECT_MIN = 0.8f;
 
-    /** Two-column engages only when the adaptive setting is on, the screen reports landscape,
-     * and the aspect is genuinely wide — a separate mode from the Off/Top/Bottom readout,
-     * whose overlays stand down while it is engaged. */
-    static boolean twoColumnEngaged(boolean landscape, float aspect, boolean adaptive) {
-        if (!adaptive || !landscape) return false;
-        return aspect >= TWO_COLUMN_ASPECT_MIN;
-    }
-
-    private static float screenAspect(android.content.res.Resources res) {
-        android.util.DisplayMetrics metrics = res.getDisplayMetrics();
-        return metrics.widthPixels / (float) Math.max(1, metrics.heightPixels);
+    /**
+     * Two-column (artwork panel + lyrics) engages on landscape-shaped screens, and also on large
+     * near-square ones such as an unfolded foldable, whichever way it is held. Those used to get
+     * the phone layout, stretched: a small artwork in the corner and lyric lines 800dp long. It is
+     * a separate mode from the Off/Top/Bottom readout, whose overlays stand down while engaged.
+     */
+    static boolean twoColumnEngaged(float widthDp, float heightDp, boolean adaptive) {
+        if (!adaptive || widthDp <= 0f || heightDp <= 0f) return false;
+        float aspect = widthDp / heightDp;
+        if (aspect >= TWO_COLUMN_ASPECT_MIN) return true;
+        return widthDp >= TWO_COLUMN_MIN_WIDTH_DP && aspect >= TWO_COLUMN_SQUARE_ASPECT_MIN;
     }
 
     private LinearLayout rowContainer() {
@@ -612,38 +661,120 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     // plays, so the opening line should begin centered too, not pinned to the top). The top pad is
     // ~0.44 of the viewport — far larger than the status-bar/cutout inset, so the safe-area concern
     // is subsumed. Falls back to screen height before the scroll view is laid out.
+    /** (Re)applies contentColumn's landscape side/bottom clearance - see its construction-time
+     *  comment for why portrait drops this entirely. Split out so a later cutout-inset
+     *  refinement (see the WindowInsets listener above) can re-run it without duplicating
+     *  the padding logic. */
+    private void applyContentColumnPadding() {
+        if (contentColumn == null) return;
+        if (!isLandscape()) {
+            contentColumn.setPadding(0, 0, 0, 0);
+            return;
+        }
+        // Per side, from the real insets. A single symmetric value sized for the cutout or the
+        // navigation bar (72dp by default) also went on the free edge, leaving a wide empty strip
+        // between the lyrics and the side of the screen with nothing in it.
+        contentColumn.setPadding(
+                Math.max(dp(LANDSCAPE_EDGE_MIN_DP), safeLeftInsetPx), 0,
+                Math.max(dp(LANDSCAPE_TRAILING_EDGE_MIN_DP), safeRightInsetPx), dp(16));
+    }
+
+    /**
+     * Rows carry the side inset in their own padding (so blur/glow can bleed past it), fixed when
+     * the row is built. The real inset only arrives with the window insets after attach, so rows
+     * built before that - the first screen, interlude rows - kept the provisional value and sat
+     * against the screen edge. Brings every built row to the current inset.
+     */
+    private void applyRowSideInsets() {
+        if (document == null || document.appliedLines == null) return;
+        int wanted = isLandscape() ? 0 : lyricsSideInsetPx;
+        for (com.eza.spicyex.lyrics.AppliedLine line : document.appliedLines) {
+            View view = LyricsLineViewState.rowView(line);
+            if (!(view instanceof com.eza.spicyex.lyrics.BlurredRowLayout)) continue;
+            com.eza.spicyex.lyrics.BlurredRowLayout row = (com.eza.spicyex.lyrics.BlurredRowLayout) view;
+            int delta = wanted - row.horizontalOffsetPx;
+            if (delta == 0) continue;
+            row.horizontalOffsetPx = wanted;
+            row.setPaddingRelative(Math.max(0, row.getPaddingStart() + delta), row.getPaddingTop(),
+                    Math.max(0, row.getPaddingEnd() + delta), row.getPaddingBottom());
+        }
+    }
+
+    /** {left, right} system insets: bars plus display cutout, per edge. */
+    private static int[] safeSideInsets(android.view.WindowInsets insets) {
+        if (insets == null) return new int[]{0, 0};
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(
+                        android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+                return new int[]{bars.left, bars.right};
+            }
+            int left = insets.getSystemWindowInsetLeft();
+            int right = insets.getSystemWindowInsetRight();
+            if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
+                left = Math.max(left, insets.getDisplayCutout().getSafeInsetLeft());
+                right = Math.max(right, insets.getDisplayCutout().getSafeInsetRight());
+            }
+            return new int[]{left, right};
+        } catch (Throwable t) {
+            return new int[]{0, 0};
+        }
+    }
+
     private void applyLyricsScrollPadding() {
         if (lyricsScroll == null) return;
         int safeTop = lyricsTopInsetPx + dp(lyricsTopPaddingDp());
+        // The lyrics frame itself now reaches the true screen edges, so the reading margin
+        // lives on the scroll view's own padding in portrait; landscape keeps it clear of
+        // the control column instead (see applyLandscapeChromeClearance).
+        int sidePad = isLandscape() ? 0 : lyricsSideInsetPx;
         if (scrollController != null) {
             scrollController.applyCenterPadding(
                     safeTop,
                     dp(lyricsBottomPaddingDp()),
                     getResources().getDisplayMetrics().heightPixels,
-                    dp(56));
+                    dp(56), sidePad);
+            applyLandscapeChromeClearance();
             return;
         }
         int viewport = lyricsScroll.getHeight();
         if (viewport <= 0) viewport = getResources().getDisplayMetrics().heightPixels;
         int center = Math.max(0, viewport / 2 - dp(56));
         lyricsScroll.setPadding(0, Math.max(safeTop, center), 0, Math.max(dp(lyricsBottomPaddingDp()), center));
+        applyLandscapeChromeClearance();
     }
 
-    private int computeSafeTopInset(WindowInsets insets) {
-        if (insets == null) return lyricsTopInsetPx;
+    /** In landscape the control buttons stand in a column at the trailing edge, over the lyrics.
+     *  Long lines used to run underneath them; wrap before that column instead. */
+    private void applyLandscapeChromeClearance() {
+        if (lyricsScroll == null || !isLandscape()) return;
+        int clearance = dp(chromeButtonDp() + 16);
+        boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+        lyricsScroll.setPadding(rtl ? clearance : 0, lyricsScroll.getPaddingTop(),
+                rtl ? 0 : clearance, lyricsScroll.getPaddingBottom());
+    }
+
+    /** Real left/right safe inset (system bars + display cutout - a corner punch-hole or curved/
+     *  waterfall edge shows up here in landscape). Returns the larger of the two sides so the same
+     *  padding value can be applied symmetrically, matching how {@code sideSystemPadding} is used
+     *  today. Never shrinks below the fixed guess - a device with no real cutout just keeps it. */
+    private int computeSafeSideInset(android.view.WindowInsets insets) {
+        if (insets == null) return lyricsSideInsetPx;
         try {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets bars = insets.getInsets(
-                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-                return bars.top;
+                        android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+                return Math.max(lyricsSideInsetPx, Math.max(bars.left, bars.right));
             }
-            int top = insets.getSystemWindowInsetTop();
+            int left = insets.getSystemWindowInsetLeft();
+            int right = insets.getSystemWindowInsetRight();
             if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
-                top = Math.max(top, insets.getDisplayCutout().getSafeInsetTop());
+                left = Math.max(left, insets.getDisplayCutout().getSafeInsetLeft());
+                right = Math.max(right, insets.getDisplayCutout().getSafeInsetRight());
             }
-            return top;
+            return Math.max(lyricsSideInsetPx, Math.max(left, right));
         } catch (Throwable t) {
-            return lyricsTopInsetPx;
+            return lyricsSideInsetPx;
         }
     }
 
@@ -677,10 +808,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         this.config = SpotifyPlusConfig.from(activity);
         // Construction-time layout decision: rotation remounts the shell, and the adaptive
         // toggle takes effect on the next open (same contract as PR9's landscape layout).
-        this.twoColumn = twoColumnEngaged(
-                activity.getResources().getConfiguration().orientation
-                        == android.content.res.Configuration.ORIENTATION_LANDSCAPE,
-                screenAspect(activity.getResources()),
+        android.content.res.Configuration screen = activity.getResources().getConfiguration();
+        this.twoColumn = twoColumnEngaged(screen.screenWidthDp, screen.screenHeightDp,
                 config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT));
         this.aiSettings = new AiSettings(activity);
         this.styleBatcher = new FrameStyleBatcher(activity);
@@ -724,7 +853,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         showTranslation = config.get(Settings.NATIVE_SPICY_TRANSLATION);
         // Seed with a status-bar-height estimate; the WindowInsets listener refines it with the
         // real safe-area top (status bar + display cutout) once insets dispatch on attach.
-        lyricsTopInsetPx = topSystemPadding(activity);
+        lyricsTopInsetPx = NativeLyricsUtils.statusBarClearance(activity);
+        lyricsSideInsetPx = sideSystemPadding(activity);
 
         setBackground(ambientController.pageBackground());
         setClickable(true);
@@ -737,11 +867,35 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         contentColumn.setGravity(twoColumn ? Gravity.CENTER_VERTICAL : Gravity.CENTER_HORIZONTAL);
         contentColumn.setClipChildren(false);
         contentColumn.setClipToPadding(false);
-        contentColumn.setPadding(sideSystemPadding(activity), 0, sideSystemPadding(activity), dp(isLandscape() ? 16 : 10));
+        // Portrait: title/subtitle/progress/status are GONE here (the track-info readout owns
+        // song text; see TrackInfoReadoutController), so the only persistently visible child is
+        // lyricsFrame itself - outer padding here just insets its background/blur surface from
+        // the true screen edges, reading as a visible border. Individual lyric rows already carry
+        // their own small text-safety padding (LyricsRowViewFactory#leadingPadding), so this
+        // outer padding is redundant for portrait and is dropped; landscape/two-column keep it,
+        // since its column gutters are sized assuming it's present.
+        applyContentColumnPadding();
         addView(contentColumn, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         if (twoColumn) {
-            landscapeLeftColumn = new LinearLayout(activity);
+            landscapeLeftColumn = new LinearLayout(activity) {
+                /** Centres the art-and-info block in the column: once the cover is sized by the
+                 *  height rather than the width, the spare width is split evenly on both sides
+                 *  (it all used to pile up on one side, leaving the cover hugging the edge), and
+                 *  the text below spans exactly the cover's width. */
+                @Override
+                protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+                    super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+                    if (columnArtFrame == null) return;
+                    int content = View.MeasureSpec.getSize(widthMeasureSpec);
+                    int side = columnArtFrame.getMeasuredWidth();
+                    int inset = side > 0 ? Math.max(0, (content - side) / 2) : 0;
+                    if (inset != getPaddingLeft() || inset != getPaddingRight()) {
+                        setPadding(inset, getPaddingTop(), inset, getPaddingBottom());
+                        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+                    }
+                }
+            };
             landscapeLeftColumn.setOrientation(LinearLayout.VERTICAL);
             // START keeps the art frame's left edge flush with the song-info text below
             // it; CENTER_VERTICAL centers the fitted stack in the column.
@@ -942,6 +1096,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 () -> cycleTransliterationMode(prefs),
                 () -> {
                     if (renderConfig != null && !renderConfig.translationEnabled) return;
+                    if (translationFailedNow()) {
+                        retryTranslation();
+                        return;
+                    }
                     boolean wasVisible = showTranslation();
                     boolean hasDisplayedMeaning = hasLayerOutput(
                             com.eza.spicyex.lyrics.session.LayerKind.MEANING);
@@ -1144,11 +1302,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 activity,
                 lyricsFrame,
                 textFactory,
-                config,
                 this::resumeFollowCurrentLine);
         skipGapController = LyricsSkipGapController.attach(
                 activity,
                 lyricsFrame,
+                config,
+                () -> config == null ? Settings.FOLLOW_CHIP_POSITION.defaultValue
+                        : config.get(Settings.FOLLOW_CHIP_POSITION),
                 this::skipCurrentGap);
         trackInfoController = TrackInfoReadoutController.attach(
                 activity,
@@ -1180,13 +1340,33 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         statusLp.topMargin = dp(0);
         rowContainer().addView(status, statusLp);
 
-        // Refine the lyric top inset from real window insets (status bar + cutout) once they
-        // dispatch on attach. Returned unconsumed so nothing else is starved of insets.
+        // Refine the lyric top/side insets from real window insets (status bar + cutout) once
+        // they dispatch on attach. Returned unconsumed so nothing else is starved of insets.
         setOnApplyWindowInsetsListener((v, insets) -> {
-            int top = computeSafeTopInset(insets);
-            if (top > 0 && top != lyricsTopInsetPx) {
-                lyricsTopInsetPx = top;
+            // The bar's place, not the visible insets: those lose the bar while it is hidden, and
+            // the lyrics used to follow them up. Only a cutout deeper than the bar adds to it.
+            int cutout = 0;
+            if (android.os.Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
+                cutout = insets.getDisplayCutout().getSafeInsetTop();
+            }
+            cutoutTopPx = cutout;
+            int wanted = Math.max(NativeLyricsUtils.statusBarClearance(activity), cutout);
+            if (wanted != lyricsTopInsetPx) {
+                lyricsTopInsetPx = wanted;
                 applyLyricsScrollPadding();
+            }
+            int side = computeSafeSideInset(insets);
+            if (side != lyricsSideInsetPx) {
+                lyricsSideInsetPx = side;
+                applyLyricsScrollPadding();
+            }
+            int[] edges = safeSideInsets(insets);
+            if (edges[0] != safeLeftInsetPx || edges[1] != safeRightInsetPx) {
+                safeLeftInsetPx = edges[0];
+                safeRightInsetPx = edges[1];
+                applyContentColumnPadding();
+                applyLyricsScrollPadding();
+                applyRowSideInsets();
             }
             return insets;
         });
@@ -1203,6 +1383,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         cancelSongChangeTransitions();
         applyStatusBarPreference();
         com.eza.spicyex.lyrics.LanguageModelPack.setReadyListener(languageModelReadyListener);
+        watchContentScreenTop(true);
         ambientController.start();
         revealChrome();
         documentGate.start();
@@ -1217,6 +1398,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     void stop() {
         dbgEnter("NativeSpicyShellView.stop");
         running = false;
+        watchContentScreenTop(false);
         setKeepScreenOn(false);
         cancelLoadEntranceAnimation();
         cancelSongChangeTransitions();
@@ -1617,7 +1799,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             setTextIfChanged(subtitle, "Player state hook has not emitted yet");
             setTextIfChanged(progress, "--:--");
             setTextIfChanged(status, "Native Spicy renderer mounted. Waiting for player state.");
-            skipGapController.update(false);
+            skipGapController.hide();
             updateFrameDemand(false, false);
             return;
         }
@@ -1676,7 +1858,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             if (staticDoc) {
                 // Reassert static styling after remounts and late secondary-text updates. Static
                 // rows have synthetic layout timings, never a karaoke-active row.
-                skipGapController.update(false);
+                skipGapController.hide();
                 frameRenderer.applyStatic(document, rowMountController.mountedIndices(), mountedRowsHost);
             } else {
                 long lyricPos = adjustedLyricPositionMs(pos);
@@ -3845,11 +4027,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void maybeAutoResumeFollow(int activeIndex, SpotifyTrack track, long lyricPos) {
         if (!autoResumeFollow) return;
-        if (!followState.canAutoResumeNow(750)) return;
+        int delaySeconds = config == null ? Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.defaultValue
+                : config.get(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS);
+        if (!followState.canAutoResumeNow(delaySeconds * 1000L)) return;
         if (document == null || document.appliedLines == null || activeIndex < 0 || activeIndex >= document.appliedLines.size()) return;
-        AppliedLine line = document.appliedLines.get(activeIndex);
-        View row = rowMountController.attachedRowView(line);
-        if (row == null || scrollController == null || !scrollController.isRowVisible(row, dp(5))) return;
+        // No visibility guard here: when the user has scrolled away the active row is
+        // off-screen (or unmounted) by definition. setActiveLine below re-renders the
+        // window and scrolls back, exactly like tapping the chip. Guarding on the row
+        // being visible meant the cooldown could complete without ever resuming.
         followState.clearHold();
         if (flushPendingSourceSwap()) return;
         returnToCurrentPending = true;
@@ -3866,7 +4051,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             LyricsLineViewState.requestFrame(document.appliedLines.get(index));
         }
     }
-
     private void resumeFollowCurrentLine() {
         if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) return;
         SpotifyTrack track = host.getCurrentTrackSafely();
@@ -3984,6 +4168,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean translationAiFailed = !translationAiPending
                 && !aiFailureToken(com.eza.spicyex.lyrics.session.LayerKind.MEANING).isEmpty()
                 && translationToggle.getVisibility() == View.VISIBLE;
+        toggleSpinnerController.setFailed(false, translationFailedNow());
         toggleSpinnerController.update(renderConfig.toggleSpinnerEnabled, romanPending,
                 translationPending,
                 hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.SOUND)
@@ -3991,6 +4176,28 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 hasAiLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING)
                         && showTranslation(),
                 romanAiPending, translationAiPending, romanAiFailed, translationAiFailed);
+    }
+
+    /**
+     * The translation did not come and nothing stands in for it (an AI failure has its own red
+     * mark and review path). The chip shows a red "!", and a tap retries instead of toggling.
+     */
+    private boolean translationFailedNow() {
+        return document != null && document.translationFailed && !document.translationPending
+                && showTranslation() && translationToggle.getVisibility() == View.VISIBLE
+                && aiFailureToken(com.eza.spicyex.lyrics.session.LayerKind.MEANING).isEmpty()
+                && !hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+    }
+
+    private void retryTranslation() {
+        // Shown as running at once; the session republishes when the retry settles.
+        document.translationFailed = false;
+        document.translationPending = true;
+        host.refreshLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+        updateToggleSpinners();
+        android.widget.Toast.makeText(activity,
+                uiText("lyrics_translation_retrying", "Retrying translation…"),
+                android.widget.Toast.LENGTH_SHORT).show();
     }
 
     /** Desktop's primary-click policy, applied before the normal visibility toggle. */
@@ -4598,8 +4805,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void updateJumpToCurrentVisibility() {
         boolean show = document != null && followState.activeIndex() >= 0 && followState.isHoldingNow();
         jumpToCurrentController.update(show);
-        if (show && host.isPlayerActuallyPlaying()) {
-            jumpToCurrentController.setProgress(followState.autoResumeProgress(750L));
+        if (show && autoResumeFollow && host.isPlayerActuallyPlaying()) {
+            int delaySeconds = config == null ? Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.defaultValue
+                    : config.get(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS);
+            jumpToCurrentController.setProgress(followState.autoResumeProgress(delaySeconds * 1000L));
         } else if (show) {
             jumpToCurrentController.fadeProgress();
         }
@@ -4616,7 +4825,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         String mode = config == null ? "Off" : config.get(Settings.AUTO_SKIP_INTRO_OUTRO);
         if ("Off".equals(mode)) {
             skipAckGapStartMs = -1;
-            skipGapController.update(false);
+            skipGapController.hide();
             lastSkipSeenPosMs = lyricPos;
             return;
         }
@@ -4633,11 +4842,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean acked = target != null && skipAckGapStartMs >= 0
                 && target.gapStartMs == skipAckGapStartMs;
         if ("Auto".equals(mode)) {
-            skipGapController.update(false);
+            skipGapController.hide();
             if (target != null && !acked && playingNow && host.canSeek()) performSkipSeek(target, uri);
             return;
         }
-        skipGapController.update(target != null && !acked && host.canSeek());
+        // host.canSeek() reflects the *current* PlaybackState, which can flip moment to moment
+        // (e.g. an ad starting), so this is re-checked every tick rather than cached - a chip
+        // offering a seek that would just be silently ignored is worse than no chip at all.
+        if (target != null && !acked && host.canSeek()) {
+            skipGapController.show(SkipGapPolicy.defaultLabel(target.kind));
+        } else {
+            skipGapController.hide();
+        }
     }
 
     /** On-demand chip tap: seek past the currently active gap, if it is still there. */
@@ -4651,6 +4867,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void performSkipSeek(SkipGapPolicy.SkipTarget target, String uri) {
+        // TRAILING gaps mean "next track" — skip immediately instead of seeking to near the end.
+        if (target.kind == SkipGapPolicy.GapKind.TRAILING) {
+            host.skipToNextTrack();
+            skipGapController.hide();
+            return;
+        }
         long playbackMs = renderConfig == null
                 ? Math.max(0, target.targetMs)
                 : renderConfig.playbackPositionForLyricMs(target.targetMs);
@@ -4661,10 +4883,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             skipAckGapStartMs = target.gapStartMs;
             lastSkipSeenPosMs = target.targetMs;
             XpLog.log(TAG + " skip gap startMs=" + target.gapStartMs + " targetMs=" + target.targetMs);
-            skipGapController.update(false);
-        } else {
-            skipGapController.update(true);
         }
+        skipGapController.hide();
     }
 
     private void cycleTransliterationMode(SharedPreferences prefs) {

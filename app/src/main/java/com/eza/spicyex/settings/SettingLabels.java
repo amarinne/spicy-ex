@@ -53,6 +53,9 @@ public final class SettingLabels {
         if (setting == Settings.FURIGANA_BRIGHTNESS || setting == Settings.FURIGANA_POSITION_PERCENT) {
             return value + "%";
         }
+        if (setting == Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS) {
+            return value + "s";
+        }
         if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM || setting == Settings.LINE_SPACING_CUSTOM
                 || setting == Settings.LIVE_CARD_TEXT_SIZE_CUSTOM
                 || setting == Settings.TRACK_INFO_TEXT_SIZE_CUSTOM) {

@@ -103,6 +103,13 @@ final class LyricsSettingsDialogController {
 
             dialog.setContentView(surface);
 
+            // Re-fit when the window changes shape while open (rotation, fold/unfold, split
+            // screen); the dialog outlives those changes, and a size fitted to the old shape
+            // is wrong in the new one.
+            surface.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+                if ((r - l) != (or - ol) || (b - t) != (ob - ot)) applyCardSize(panelView, halfMode);
+            });
+
             dialog.setOnDismissListener(d -> {
                 frameScheduler.start();
                 // Source toggles and order are saved inside the panel; the session re-seats the
@@ -119,10 +126,44 @@ final class LyricsSettingsDialogController {
         }
     }
 
+    /** A settings list reads best at phone width; wider just makes every row a long empty bar. */
+    private static final int PANEL_MAX_WIDTH_DP = 560;
+    private static final int PANEL_MAX_HEIGHT_DP = 860;
+    /** From this width the half mode becomes a side sheet instead of a top strip. */
+    private static final int SIDE_SHEET_MIN_WIDTH_DP = 600;
+
+    /**
+     * Fits the panel to the window it is in. Always a centred card of at most phone width, so a
+     * landscape phone, an unfolded foldable or a tablet gets a readable panel rather than one
+     * stretched edge to edge. Half mode keeps the lyrics visible: on a phone the panel docks to
+     * the top, and wherever there is room beside it it becomes a side sheet, since a top strip on
+     * a short landscape screen leaves space for neither.
+     */
     private void applyCardSize(View card, boolean half) {
         android.util.DisplayMetrics dm = activity.getResources().getDisplayMetrics();
-        int w = (int) (dm.widthPixels * 0.92f);
-        int h = (int) (dm.heightPixels * (half ? 0.45f : 0.84f));
+        float density = dm.density;
+        int screenW = dm.widthPixels;
+        int screenH = dm.heightPixels;
+        int maxW = Math.round(PANEL_MAX_WIDTH_DP * density);
+        boolean sideSheet = half && screenW / density >= SIDE_SHEET_MIN_WIDTH_DP;
+        int w;
+        int h;
+        int gravity;
+        if (sideSheet) {
+            w = Math.min(maxW, Math.round(screenW * 0.48f));
+            h = Math.round(screenH * 0.94f);
+            gravity = android.view.Gravity.END | android.view.Gravity.CENTER_VERTICAL;
+        } else if (half) {
+            w = Math.min(maxW, Math.round(screenW * 0.94f));
+            h = Math.round(screenH * 0.45f);
+            gravity = android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL;
+        } else {
+            w = Math.min(maxW, Math.round(screenW * 0.92f));
+            boolean shortScreen = screenH < screenW;
+            h = Math.min(Math.round(PANEL_MAX_HEIGHT_DP * density),
+                    Math.round(screenH * (shortScreen ? 0.92f : 0.84f)));
+            gravity = android.view.Gravity.CENTER;
+        }
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) card.getLayoutParams();
         if (lp == null) {
             lp = new FrameLayout.LayoutParams(w, h);
@@ -130,7 +171,7 @@ final class LyricsSettingsDialogController {
             lp.width = w;
             lp.height = h;
         }
-        lp.gravity = half ? (Gravity.TOP | Gravity.CENTER_HORIZONTAL) : Gravity.CENTER;
+        lp.gravity = gravity;
         card.setLayoutParams(lp);
     }
 }

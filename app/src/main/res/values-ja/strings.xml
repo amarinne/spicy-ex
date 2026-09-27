@@ -21,6 +21,11 @@
     <string name="settings_label_lyric_tap_seek_mode">リリックスをタップしてシーク</string>
     <string name="settings_label_lyric_stay_on_track_change">トラック変更時にリリックス画面を保持</string>
     <string name="settings_label_lyric_auto_resume_follow">リリックスの自動追従を再開</string>
+    <string name="settings_label_lyric_auto_resume_follow_delay_seconds">自動追従再開までの遅延</string>
+    <string name="settings_label_lyric_follow_chip_position">追従チップの位置</string>
+    <string name="settings_label_lyric_follow_chip_style">追従チップのスタイル</string>
+    <string name="settings_label_lyric_skip_chip_position">スキップチップの位置</string>
+    <string name="settings_label_lyric_skip_chip_style">スキップチップのスタイル</string>
     <string name="settings_label_lyric_auto_skip_intro_outro">自動イントロ/アウトロスキップ</string>
     <string name="settings_label_mini_player_lyrics_icon">ミニプレイヤーにリリックスアイコンを表示</string>
     <string name="settings_label_lyric_liked_songs_button">「お気に入りの曲」に追加ボタン</string>
@@ -82,6 +87,13 @@
     <string name="settings_label_line_spacing_custom">カスタム間隔</string>
     <string name="settings_label_lyrics_weight">リリックス太さ</string>
     <string name="settings_label_lyrics_font">リリックスフォント</string>
+    <string name="settings_label_lyrics_font_custom_path">カスタムフォントファイル</string>
+    <string name="settings_lyrics_font_path_absent">未設定</string>
+    <string name="settings_lyrics_font_path_edit">フォントパスを編集</string>
+    <string name="settings_lyrics_font_check_title">フォント言語チェック</string>
+    <string name="settings_lyrics_font_check_result">結果</string>
+    <string name="settings_lyrics_font_check_all_covered">対応する全ての言語をカバーしています</string>
+    <string name="settings_lyrics_font_check_missing">次の言語はフォールバックで表示</string>
     <string name="settings_label_lyrics_text_size">リリックステキストサイズ</string>
     <string name="settings_label_lyrics_text_size_custom">カスタムサイズ</string>
     <string name="settings_label_lyrics_adaptive_text_size">適応型テキストサイズ</string>
@@ -131,6 +143,7 @@
     <string name="settings_label_lyrics_blur_intensity">ぼかしの強さ</string>
     <string name="settings_label_lyrics_furigana_brightness">ふりがなの明るさ</string>
     <string name="settings_label_lyrics_furigana_position_percent">ふりがなの位置</string>
+    <string name="lyrics_translation_retrying">翻訳を再試行しています…</string>
     <string name="lyrics_instrumental">インストゥルメンタル</string>
     <string name="settings_label_lyrics_transliteration_enabled">リリックスを音字</string>
     <string name="settings_label_lyric_aligned_per_word_romaji">各単語の下に音字を付ける</string>

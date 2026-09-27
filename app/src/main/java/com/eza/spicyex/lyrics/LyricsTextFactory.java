@@ -99,6 +99,37 @@ public final class LyricsTextFactory {
             return resolved;
         }
 
+        if ("custom".equals(normalizedFamily)) {
+            String path = config == null ? "" : safe(config.get(Settings.LYRICS_FONT_CUSTOM_PATH));
+            if (path.isEmpty()) {
+                normalizedFamily = "spotify";
+            } else {
+                String key = "lyric|custom|" + path;
+                Typeface cached = typefaceCache.get(key);
+                if (cached == null) {
+                    java.io.File file = new java.io.File(path);
+                    if (file.isFile()) {
+                        try {
+                            cached = Typeface.createFromFile(file);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    if (cached == null) {
+                        // Not a real file on disk - try it as an installed/system font family
+                        // name instead (e.g. "sans-serif-medium", "serif", "casual"). Typeface#
+                        // create() never throws for an unknown name, it just falls back to the
+                        // platform default, so this always yields *something* rather than the
+                        // silent "looks like nothing happened" of an empty/bad path.
+                        cached = Typeface.create(path, Typeface.NORMAL);
+                    }
+                    typefaceCache.put(key, cached);
+                }
+                // A standalone font file has no separate weight files the way the bundled
+                // families do - synthetic bold is the only way to honor a Bold/Medium request.
+                return Typeface.create(cached, "Regular".equals(weight) ? Typeface.NORMAL : Typeface.BOLD);
+            }
+        }
+
         String font = "Regular".equals(weight) ? "spotify_mix_ui_regular"
                 : "Bold".equals(weight) ? "spotify_mix_ui_title_extrabold"
                 : "spotify_mix_ui_bold"; // Medium — Spotify's bold reads as a clean medium next to extrabold

@@ -25,6 +25,14 @@ public final class LyricsScrollController {
     }
 
     public void applyCenterPadding(int safeTopPx, int bottomPaddingPx, int fallbackViewportHeightPx, int rowHalfPx) {
+        applyCenterPadding(safeTopPx, bottomPaddingPx, fallbackViewportHeightPx, rowHalfPx, 0);
+    }
+
+    /** @param sidePaddingPx horizontal inset for the lyric text itself - kept here rather than on
+     *  an outer container so the container's own background/blur surface can still reach the
+     *  true screen edges while the text keeps a safe reading margin. */
+    public void applyCenterPadding(int safeTopPx, int bottomPaddingPx, int fallbackViewportHeightPx,
+            int rowHalfPx, int sidePaddingPx) {
         if (scrollView == null) return;
         int viewport = scrollView.getHeight();
         if (viewport <= 0) viewport = fallbackViewportHeightPx;
@@ -38,7 +46,11 @@ public final class LyricsScrollController {
             topAnchor = Math.max(0, Math.round(viewport * anchorFraction) - rowHalfPx);
             bottomAnchor = Math.max(0, Math.round(viewport * (1f - anchorFraction)) - rowHalfPx);
         }
-        scrollView.setPadding(0, Math.max(safeTopPx, topAnchor), 0, Math.max(bottomPaddingPx, bottomAnchor));
+        // Horizontal padding is removed from the scroll container itself and moved to individual
+        // rows (see LyricsRowViewFactory) so the rows can reach the true screen edges for unclipped
+        // blur/glow effects while the text keeps its margin.
+        scrollView.setPadding(0, Math.max(safeTopPx, topAnchor),
+                0, Math.max(bottomPaddingPx, bottomAnchor));
     }
 
     /** Where the active line rests vertically, as a fraction of the viewport height (0 = top edge,

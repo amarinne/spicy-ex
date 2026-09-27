@@ -21,6 +21,11 @@
     <string name="settings_label_lyric_tap_seek_mode">가사를 탭해 해당 위치로 이동</string>
     <string name="settings_label_lyric_stay_on_track_change">다음 곡에서도 가사 화면 유지</string>
     <string name="settings_label_lyric_auto_resume_follow">현재 가사로 자동 복귀</string>
+    <string name="settings_label_lyric_auto_resume_follow_delay_seconds">현재 가사로 복귀하기까지 대기 시간</string>
+    <string name="settings_label_lyric_follow_chip_position">‘현재 가사로’ 버튼 위치</string>
+    <string name="settings_label_lyric_follow_chip_style">‘현재 가사로’ 버튼 스타일</string>
+    <string name="settings_label_lyric_skip_chip_position">건너뛰기 버튼 위치</string>
+    <string name="settings_label_lyric_skip_chip_style">건너뛰기 버튼 스타일</string>
     <string name="settings_label_lyric_auto_skip_intro_outro">인트로·아웃트로 자동 건너뛰기</string>
     <string name="settings_label_mini_player_lyrics_icon">미니 플레이어에 가사 아이콘 표시</string>
     <string name="settings_label_lyric_liked_songs_button">좋아요 표시한 곡 버튼</string>
@@ -82,6 +87,13 @@
     <string name="settings_label_line_spacing_custom">직접 설정한 간격</string>
     <string name="settings_label_lyrics_weight">가사 굵기</string>
     <string name="settings_label_lyrics_font">가사 글꼴</string>
+    <string name="settings_label_lyrics_font_custom_path">글꼴 파일 직접 지정</string>
+    <string name="settings_lyrics_font_path_absent">설정 안 됨</string>
+    <string name="settings_lyrics_font_path_edit">글꼴 경로 수정</string>
+    <string name="settings_lyrics_font_check_title">글꼴 언어 지원 확인</string>
+    <string name="settings_lyrics_font_check_result">결과</string>
+    <string name="settings_lyrics_font_check_all_covered">지원하는 모든 언어를 표시할 수 있습니다</string>
+    <string name="settings_lyrics_font_check_missing">대체 글꼴로 표시되는 언어</string>
     <string name="settings_label_lyrics_text_size">가사 글자 크기</string>
     <string name="settings_label_lyrics_text_size_custom">직접 설정한 크기</string>
     <string name="settings_label_lyrics_adaptive_text_size">화면에 맞춰 글자 크기 조절</string>
@@ -131,6 +143,7 @@
     <string name="settings_label_lyrics_blur_intensity">흐림 강도</string>
     <string name="settings_label_lyrics_furigana_brightness">후리가나 밝기</string>
     <string name="settings_label_lyrics_furigana_position_percent">후리가나 위치</string>
+    <string name="lyrics_translation_retrying">번역 다시 시도 중…</string>
     <string name="lyrics_instrumental">연주곡</string>
     <string name="settings_label_lyrics_transliteration_enabled">가사 발음 표기</string>
     <string name="settings_label_lyric_aligned_per_word_romaji">단어마다 아래에 발음 표기</string>
@@ -397,8 +410,7 @@
     <string name="settings_label_apple_cascade_speed">슬라이드 속도</string>
     <string name="settings_label_apple_spring_strength">탄성 강도</string>
     <string name="settings_label_download_language_models">언어 모델 다운로드</string>
-    <string name="settings_label_lyrics_status_bar_hidden_portrait">상태 표시줄 숨기기 (세로)</string>
-    <string name="settings_label_lyrics_status_bar_hidden_landscape">상태 표시줄 숨기기 (가로)</string>
+    <string name="settings_label_lyrics_status_bar_hidden_mode">상태 표시줄 숨기기</string>
     <string name="share_hint">위로 밀어 가사 추가 · 탭하여 번역 켜기/끄기</string>
     <string name="share_design_glass">글래스</string>
     <string name="share_design_classic">클래식</string>

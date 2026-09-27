@@ -22,8 +22,11 @@
     <string name="settings_label_lyric_tap_seek_mode">Tap lyric to seek</string>
     <string name="settings_label_lyric_stay_on_track_change">Stay in lyric screen on song change</string>
     <string name="settings_label_lyric_auto_resume_follow">Auto-resume lyric follow</string>
-    <string name="settings_label_lyric_follow_chip_animation">Follow chip animation</string>
-    <string name="settings_label_lyric_follow_chip_progress">Follow chip progress bar</string>
+    <string name="settings_label_lyric_auto_resume_follow_delay_seconds">Auto-resume follow delay</string>
+    <string name="settings_label_lyric_follow_chip_position">Follow-lyrics chip position</string>
+    <string name="settings_label_lyric_follow_chip_style">Follow-lyrics chip style</string>
+    <string name="settings_label_lyric_skip_chip_position">Skip chip position</string>
+    <string name="settings_label_lyric_skip_chip_style">Skip chip style</string>
     <string name="settings_label_lyric_auto_skip_intro_outro">Auto-skip intro/outro</string>
     <string name="settings_label_mini_player_lyrics_icon">Show lyrics icon on mini player</string>
     <string name="settings_label_lyric_liked_songs_button">Add to Liked Songs button</string>
@@ -92,6 +95,13 @@
     <string name="settings_label_line_spacing_custom">Custom spacing</string>
     <string name="settings_label_lyrics_weight">Lyric weight</string>
     <string name="settings_label_lyrics_font">Lyric font</string>
+    <string name="settings_label_lyrics_font_custom_path">Custom font file</string>
+    <string name="settings_lyrics_font_path_absent">Not set</string>
+    <string name="settings_lyrics_font_path_edit">Edit font path</string>
+    <string name="settings_lyrics_font_check_title">Font language check</string>
+    <string name="settings_lyrics_font_check_result">Result</string>
+    <string name="settings_lyrics_font_check_all_covered">Covers every supported language</string>
+    <string name="settings_lyrics_font_check_missing">Falls back for</string>
     <string name="settings_label_lyrics_text_size">Lyric text size</string>
     <string name="settings_label_lyrics_text_size_custom">Custom size</string>
     <string name="settings_label_lyrics_adaptive_text_size">Adaptive text size</string>
@@ -152,6 +162,8 @@
 
     <!-- Selector values. Stored values remain locale-independent. -->
     <string name="settings_option_off">Off</string>
+    <string name="settings_option_portrait">Portrait</string>
+    <string name="settings_option_landscape">Landscape</string>
     <string name="settings_option_slight">Slight</string>
     <string name="settings_option_heavy">Heavy</string>
     <string name="settings_option_single_tap">Single tap</string>
@@ -429,9 +441,9 @@
     <string name="settings_label_apple_spring_strength">Spring strength</string>
     <string name="settings_action_resync_timing">Reset lyrics sync</string>
     <string name="settings_resync_timing_done">Lyrics sync reset</string>
+    <string name="lyrics_translation_retrying">Retrying translation…</string>
     <string name="lyrics_instrumental">Instrumental</string>
-    <string name="settings_label_lyrics_status_bar_hidden_portrait">Hide status bar (portrait)</string>
-    <string name="settings_label_lyrics_status_bar_hidden_landscape">Hide status bar (landscape)</string>
+    <string name="settings_label_lyrics_status_bar_hidden_mode">Hide status bar</string>
     <string name="settings_label_lyrics_blur_intensity">Blur intensity</string>
     <string name="settings_label_lyrics_furigana_brightness">Furigana brightness</string>
     <string name="settings_label_lyrics_furigana_position_percent">Furigana position</string>

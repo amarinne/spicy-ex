@@ -56,18 +56,18 @@ public final class Settings {
             "lyric_stay_on_track_change", LYRICS, "Stay in lyric screen on song change", true
     );
 
+    // Manual scrolls suspend follow until the floating jump button is tapped. Auto-resume
+    // is opt-in: when on, follow returns by itself after the delay below.
     public static final Setting<Boolean> AUTO_RESUME_FOLLOW = boolSetting(
-            "lyric_auto_resume_follow", LYRICS, "Auto-resume lyric follow", true
+            "lyric_auto_resume_follow", LYRICS, "Auto-resume lyric follow", false
     );
 
-    // Enable/disable dynamic animation for follow chip entrance and exit
-    public static final Setting<Boolean> FOLLOW_CHIP_ANIMATION = boolSetting(
-            "lyric_follow_chip_animation", LYRICS, "Follow chip animation", false
-    );
-
-    // Show progress bar on follow chip indicating time remaining
-    public static final Setting<Boolean> FOLLOW_CHIP_PROGRESS = boolSetting(
-            "lyric_follow_chip_progress", LYRICS, "Follow chip progress bar", false
+    // Cooldown, in seconds, after a manual scroll settles before auto-resuming follow - see
+    // NativeSpicyShellViewImpl#maybeAutoResumeFollow. 3s is close to the old hardcoded 2.5s,
+    // rounded to a whole second so the stepper reads cleanly.
+    public static final IntegerSetting AUTO_RESUME_FOLLOW_DELAY_SECONDS = intSetting(
+            "lyric_auto_resume_follow_delay_seconds", LYRICS, "Auto-resume follow delay",
+            3, 1, 10, 1
     );
 
     // Intro/outro skip: Off hides the affordance entirely; On demand shows a chevrons-right
@@ -79,21 +79,55 @@ public final class Settings {
             "Off", "On demand", "Auto"
     );
 
+    // How the "On demand" skip chip presents itself: a plain icon, a permanently-labelled pill,
+    // or Auto (opens as a labelled pill so an unexplained chevron icon doesn't have to speak for
+    // itself, then collapses to the icon after a few seconds so it stops competing with the
+    // lyrics for attention).
+    public static final Setting<String> SKIP_CHIP_STYLE = enumSetting(
+            "lyric_skip_chip_style", INTERNAL, "Skip chip style", "Auto",
+            "Icon", "Label", "Auto"
+    );
+
+    // Which side the skip chip floats above the jump-to-current control at (always along the
+    // bottom edge). The two only stack vertically when both share the same horizontal anchor -
+    // see FOLLOW_CHIP_POSITION.
+    public static final Setting<String> SKIP_CHIP_POSITION = enumSetting(
+            "lyric_skip_chip_position", INTERNAL, "Skip chip position", "Right",
+            "Left", "Center", "Right"
+    );
+
+    // Which side the "Follow lyrics" jump-to-current chip floats along the bottom edge at.
+    // Edited from the layout editor's Follow-lyrics element; hidden from the normal settings
+    // panel so the editor remains the single place a user can move this chip visually.
+    public static final Setting<String> FOLLOW_CHIP_POSITION = enumSetting(
+            "lyric_follow_chip_position", INTERNAL, "Follow-lyrics chip position", "Right",
+            "Left", "Center", "Right"
+    );
+
+    // How the "Follow lyrics" chip presents itself - same three states as SKIP_CHIP_STYLE
+    // (a plain icon, a permanently-labelled pill, or Auto: labelled pill that collapses to the
+    // icon after a few seconds). Edited from the layout editor's Follow-lyrics element.
+    public static final Setting<String> FOLLOW_CHIP_STYLE = enumSetting(
+            "lyric_follow_chip_style", INTERNAL, "Follow-lyrics chip style", "Auto",
+            "Icon", "Label", "Auto"
+    );
+
     // Adds a button to Spotify's persistent mini player (every non-lyrics screen) that jumps
     // straight to the native fullscreen lyrics - see LyricsActivityTakeoverHook.
     public static final Setting<Boolean> MINI_PLAYER_LYRICS_ICON = boolSetting(
             "mini_player_lyrics_icon", LYRICS, "Show lyrics icon on mini player", false
     );
 
-    // Whether the lyrics screen keeps the status bar hidden, per orientation. A swipe from the
-    // edge still shows it for a moment.
-    public static final Setting<Boolean> STATUS_BAR_HIDDEN_PORTRAIT = boolSetting(
-            "lyrics_status_bar_hidden_portrait", LYRICS, "Hide status bar (portrait)", false
+    // Which orientations keep the status bar hidden on the lyrics screen. A swipe from the
+    // edge still shows it for a moment. Migrated from the portrait/landscape bool pair, so
+    // existing choices carry over.
+    public static final Setting<String> STATUS_BAR_HIDDEN_MODE = enumSetting(
+            "lyrics_status_bar_hidden_mode", LYRICS, "Hide status bar", "Off",
+            "Off", "Portrait", "Landscape", "Both"
     );
 
-    public static final Setting<Boolean> STATUS_BAR_HIDDEN_LANDSCAPE = boolSetting(
-            "lyrics_status_bar_hidden_landscape", LYRICS, "Hide status bar (landscape)", false
-    );
+    static final String LEGACY_STATUS_BAR_HIDDEN_PORTRAIT = "lyrics_status_bar_hidden_portrait";
+    static final String LEGACY_STATUS_BAR_HIDDEN_LANDSCAPE = "lyrics_status_bar_hidden_landscape";
 
     // Holding a lyric line opens a share card for it (see LyricsShareCardController). Off by
     // default: long-pressing the lyrics did nothing before, and a held finger while reading
@@ -256,7 +290,17 @@ public final class Settings {
     public static final Setting<String> LYRICS_FONT = enumSetting(
             "lyrics_font", TEXT, "Lyric font",
             "spotify",
-            "spotify", "apple"
+            "spotify", "apple", "custom"
+    );
+
+    // Absolute file path to a user-supplied .ttf/.otf, used when LYRICS_FONT == "custom". Entered
+    // by hand (see PanelDialogs#promptLyricsFontPath) rather than a system file picker - this
+    // module has no Activity of its own to receive a picker result from inside Spotify's process.
+    // A custom font is validated on save (see LyricsFontValidator) so the user is warned up front
+    // about which of the app's supported scripts it doesn't cover; unsupported scripts still fall
+    // back correctly at render time regardless (LyricsTextFactory's per-script fallback chain).
+    public static final Setting<String> LYRICS_FONT_CUSTOM_PATH = stringSetting(
+            "lyrics_font_custom_path", TEXT, "Custom font file", ""
     );
 
     public static final Setting<String> LYRICS_TEXT_SIZE = enumSetting(

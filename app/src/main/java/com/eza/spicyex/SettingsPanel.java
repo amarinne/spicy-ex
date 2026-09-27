@@ -405,6 +405,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
             spicyTokenRow(content);
             return;
         }
+        if (setting == Settings.LYRICS_FONT_CUSTOM_PATH) {
+            lyricsFontPathRow(content);
+            return;
+        }
         if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) {
             downloadLanguageModelsRow(content);
             return;
@@ -729,6 +733,45 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                 masked.isEmpty() ? uiStrings.get("settings_spicy_token_absent", "Not set") : masked,
                 false, Settings.SPICY_MANUAL_TOKEN.key, v -> dialogs.promptSpicyToken(),
                 actions.toArray(new AiSettingsRows.IconAction[0]));
+    }
+
+    private void lyricsFontPathRow(LinearLayout content) {
+        String path = store.get(Settings.LYRICS_FONT_CUSTOM_PATH);
+        String display = path == null || path.isEmpty()
+                ? uiStrings.get("settings_lyrics_font_path_absent", "Not set") : path;
+        List<AiSettingsRows.IconAction> actions = new ArrayList<>();
+        actions.add(new AiSettingsRows.IconAction(Kind.EDIT,
+                uiStrings.get("settings_lyrics_font_path_edit", "Edit font path"),
+                v -> dialogs.promptLyricsFontPath()));
+        rows.aiFieldRow(content, uiStrings.setting(Settings.LYRICS_FONT_CUSTOM_PATH),
+                display, false, Settings.LYRICS_FONT_CUSTOM_PATH.key,
+                v -> dialogs.promptLyricsFontPath(),
+                actions.toArray(new AiSettingsRows.IconAction[0]));
+        String coverage = fontCoverageSummaryForPanel(path);
+        if (!coverage.isEmpty()) {
+            TextView cov = style.text(coverage, 12, PanelStyle.COL_SUMMARY, false);
+            cov.setPadding(style.dp(52), 0, style.dp(16), style.dp(12));
+            content.addView(cov, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        }
+    }
+
+    private String fontCoverageSummaryForPanel(String path) {
+        if (path == null || path.isEmpty()) return "";
+        android.graphics.Typeface typeface = null;
+        java.io.File file = new java.io.File(path);
+        if (file.isFile()) {
+            try {
+                typeface = android.graphics.Typeface.createFromFile(file);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (typeface == null) typeface = android.graphics.Typeface.create(path, android.graphics.Typeface.NORMAL);
+        java.util.List<String> missing = com.eza.spicyex.lyrics.LyricsFontValidator.missingScripts(typeface);
+        return missing.isEmpty()
+                ? uiStrings.get("settings_lyrics_font_check_all_covered", "Covers every supported language")
+                : uiStrings.get("settings_lyrics_font_check_missing", "Falls back for") + ": "
+                        + String.join(", ", missing);
     }
 
     private void refreshLanguageModelDownloadStatus() {

@@ -36,6 +36,9 @@ public final class LegacyDocumentComposer {
         projected.includesTranslation = session.meaning.artifact != null && !session.meaning.artifact.isEmpty();
         projected.romanizationPending = session.sound.status == LayerStatus.PROCESSING;
         projected.translationPending = session.meaning.status == LayerStatus.PROCESSING;
+        // FAILED is only the status when nothing is displayed (a failure over a shown artifact
+        // stays CACHED), so this is "the translation did not come, and nothing stands in for it".
+        projected.translationFailed = session.meaning.status == LayerStatus.FAILED;
         projected.readingAiPending = projected.romanizationPending
                 && session.sound.authority == LayerAuthority.AI;
         projected.translationAiPending = projected.translationPending

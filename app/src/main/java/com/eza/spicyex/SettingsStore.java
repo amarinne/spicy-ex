@@ -31,6 +31,9 @@ public final class SettingsStore implements TypedStore {
         migrateLikedSongsButton(prefs);
         migrateLineBlurLevel(prefs);
         migratePanelMediaControls(prefs);
+        migrateRemovedAppleCjkWrapFix(prefs);
+        migrateRemovedFollowChipToggles(prefs);
+        migrateStatusBarHiddenMode(prefs);
     }
 
     static synchronized void migrateLikedSongsButton(SharedPreferences prefs) {
@@ -61,6 +64,27 @@ public final class SettingsStore implements TypedStore {
         prefs.edit().putString(Settings.PANEL_MEDIA_CONTROLS.key, on ? "Single tap" : "Off").apply();
     }
 
+    static final String REMOVED_APPLE_CJK_WRAP_FIX_KEY = "lyric_apple_cjk_wrap_fix";
+
+    static synchronized void migrateRemovedAppleCjkWrapFix(SharedPreferences prefs) {
+        if (!prefs.contains(REMOVED_APPLE_CJK_WRAP_FIX_KEY)) return;
+        prefs.edit().remove(REMOVED_APPLE_CJK_WRAP_FIX_KEY).apply();
+    }
+
+    static final String REMOVED_FOLLOW_CHIP_ANIMATION_KEY = "lyric_follow_chip_animation";
+    static final String REMOVED_FOLLOW_CHIP_PROGRESS_KEY = "lyric_follow_chip_progress";
+
+    static synchronized void migrateRemovedFollowChipToggles(SharedPreferences prefs) {
+        SharedPreferences.Editor editor = null;
+        if (prefs.contains(REMOVED_FOLLOW_CHIP_ANIMATION_KEY)) {
+            editor = prefs.edit().remove(REMOVED_FOLLOW_CHIP_ANIMATION_KEY);
+        }
+        if (prefs.contains(REMOVED_FOLLOW_CHIP_PROGRESS_KEY)) {
+            editor = (editor != null ? editor : prefs.edit()).remove(REMOVED_FOLLOW_CHIP_PROGRESS_KEY);
+        }
+        if (editor != null) editor.apply();
+    }
+
     /**
      * Bool-to-enum migration for the blur level: stored {@code true} keeps the legacy look as
      * {@code Slight}, {@code false} becomes {@code Off}. Already-migrated strings pass through.
@@ -71,6 +95,36 @@ public final class SettingsStore implements TypedStore {
         if (raw instanceof String) return;
         boolean on = Boolean.TRUE.equals(raw);
         prefs.edit().putString(Settings.ENABLE_LINE_BLUR.key, on ? "Slight" : "Off").apply();
+    }
+
+    /**
+     * Bool-pair-to-enum migration for the status-bar mode: stored portrait/landscape choices
+     * combine into Off/Portrait/Landscape/Both. Already-migrated strings pass through, and the
+     * legacy keys are removed.
+     */
+    static synchronized void migrateStatusBarHiddenMode(SharedPreferences prefs) {
+        boolean hasPortrait = prefs.contains(Settings.LEGACY_STATUS_BAR_HIDDEN_PORTRAIT);
+        boolean hasLandscape = prefs.contains(Settings.LEGACY_STATUS_BAR_HIDDEN_LANDSCAPE);
+        if (!hasPortrait && !hasLandscape) return;
+        Map<String, ?> values = prefs.getAll();
+        boolean portrait = hasPortrait && Boolean.TRUE.equals(values.get(Settings.LEGACY_STATUS_BAR_HIDDEN_PORTRAIT));
+        boolean landscape = hasLandscape && Boolean.TRUE.equals(values.get(Settings.LEGACY_STATUS_BAR_HIDDEN_LANDSCAPE));
+        SharedPreferences.Editor editor = prefs.edit();
+        if (hasPortrait) editor.remove(Settings.LEGACY_STATUS_BAR_HIDDEN_PORTRAIT);
+        if (hasLandscape) editor.remove(Settings.LEGACY_STATUS_BAR_HIDDEN_LANDSCAPE);
+        if (prefs.contains(Settings.STATUS_BAR_HIDDEN_MODE.key)) {
+            editor.apply();
+            return;
+        }
+        String mode = Settings.STATUS_BAR_HIDDEN_MODE.defaultValue;
+        if (portrait && landscape) {
+            mode = "Both";
+        } else if (portrait) {
+            mode = "Portrait";
+        } else if (landscape) {
+            mode = "Landscape";
+        }
+        editor.putString(Settings.STATUS_BAR_HIDDEN_MODE.key, mode).apply();
     }
 
     public <T> T get(Settings.Setting<T> setting) {

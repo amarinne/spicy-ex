@@ -36,6 +36,7 @@ public final class LyricsRenderConfig {
     public final String lyricWeight;
     public final String liveCardWeight;
     public final String lyricsFont;
+    public final String lyricsFontCustomPath;
     public final String lyricsTextSizeMode;
     public final float lyricsTextSizeMultiplier;
     public final boolean adaptiveTextSizeEnabled;
@@ -97,6 +98,7 @@ public final class LyricsRenderConfig {
             String lyricWeight,
             String liveCardWeight,
             String lyricsFont,
+            String lyricsFontCustomPath,
             String lyricsTextSizeMode,
             float lyricsTextSizeMultiplier,
             boolean adaptiveTextSizeEnabled,
@@ -159,6 +161,7 @@ public final class LyricsRenderConfig {
         this.lyricWeight = safe(lyricWeight);
         this.liveCardWeight = safe(liveCardWeight);
         this.lyricsFont = safe(lyricsFont);
+        this.lyricsFontCustomPath = safe(lyricsFontCustomPath);
         this.lyricsTextSizeMode = safe(lyricsTextSizeMode);
         this.lyricsTextSizeMultiplier = lyricsTextSizeMultiplier;
         this.adaptiveTextSizeEnabled = adaptiveTextSizeEnabled;
@@ -202,7 +205,7 @@ public final class LyricsRenderConfig {
             boolean toggleSpinnerEnabled, boolean attachTransliterationToWords,
             boolean transliterationEnabled, boolean adaptiveSectioningEnabled,
             String lineSpacingMode, float lineSpacingMultiplier, String lyricWeight,
-            String liveCardWeight, String lyricsFont, String lyricsTextSizeMode,
+            String liveCardWeight, String lyricsFont, String lyricsFontCustomPath, String lyricsTextSizeMode,
             float lyricsTextSizeMultiplier, String liveCardTextSizeMode,
             float liveCardTextSizeMultiplier, String liveCardSecondaryMode,
             boolean liveCardShowTransliteration, boolean liveCardShowTranslation,
@@ -222,7 +225,7 @@ public final class LyricsRenderConfig {
                 false, glowBlurEnabled,
                 lineBlurEnabled, false, blurQuality, interludeNoteIcon, toggleSpinnerEnabled,
                 attachTransliterationToWords, transliterationEnabled, adaptiveSectioningEnabled,
-                lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont,
+                lineSpacingMode, lineSpacingMultiplier, lyricWeight, liveCardWeight, lyricsFont, "",
                 lyricsTextSizeMode, lyricsTextSizeMultiplier, true, liveCardTextSizeMode,
                 liveCardTextSizeMultiplier, liveCardSecondaryMode, liveCardShowTransliteration,
                 liveCardShowTranslation, liveCardMinimalAnimation, liveCardAnimationMode,
@@ -310,6 +313,7 @@ public final class LyricsRenderConfig {
                 shell.lyricWeight(),
                 shell.liveCardWeight(),
                 get(cfg, Settings.LYRICS_FONT),
+                get(cfg, Settings.LYRICS_FONT_CUSTOM_PATH),
                 shell.lyricsTextSizeMode(),
                 shell.lyricsTextSizeMultiplier(),
                 shell.adaptiveTextSizeEnabled(),
@@ -400,6 +404,7 @@ public final class LyricsRenderConfig {
                 lyricWeight,
                 liveCardWeight,
                 lyricsFont,
+                lyricsFontCustomPath,
                 lyricsTextSizeMode,
                 lyricsTextSizeMultiplier,
                 adaptiveTextSizeEnabled,

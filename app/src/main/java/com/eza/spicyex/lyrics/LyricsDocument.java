@@ -37,6 +37,8 @@ public class LyricsDocument {
     public boolean processingPending;
     public boolean romanizationPending;
     public boolean translationPending;
+    /** The translation run failed and nothing is shown for it: the toggle offers a retry. */
+    public boolean translationFailed;
     public boolean includesRomanization;
     public boolean includesTranslation;
     /**
@@ -91,6 +93,7 @@ public class LyricsDocument {
         copy.processingPending = source.processingPending;
         copy.romanizationPending = source.romanizationPending;
         copy.translationPending = source.translationPending;
+        copy.translationFailed = source.translationFailed;
         copy.includesRomanization = source.includesRomanization;
         copy.includesTranslation = source.includesTranslation;
         copy.readingFromAi = source.readingFromAi;
