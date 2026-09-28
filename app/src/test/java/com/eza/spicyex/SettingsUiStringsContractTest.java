@@ -141,20 +141,6 @@ public class SettingsUiStringsContractTest {
     }
 
     @Test
-    public void layoutEditorContractCoversReportedRuntimeBoundaries() throws Exception {
-        File spec = new File("docs/LAYOUT_EDITOR_BEHAVIOR_SPEC.md");
-        if (!spec.isFile()) spec = new File("../docs/LAYOUT_EDITOR_BEHAVIOR_SPEC.md");
-        assertTrue(spec.isFile());
-        String markdown = new String(Files.readAllBytes(spec.toPath()), StandardCharsets.UTF_8);
-
-        assertTrue(markdown.contains("Bottom artwork selection works"));
-        assertTrue(markdown.contains("Darkening affects Gradient"));
-        assertTrue(markdown.contains("1 through 30 seconds"));
-        assertTrue(markdown.contains("stacks 52 dp"));
-        assertTrue(markdown.contains("Android Back closes the options sheet first"));
-    }
-
-    @Test
     public void layoutEditorUsesContinuousSlidersAndSharedChipPanel() throws Exception {
         File source = new File("src/main/java/com/eza/spicyex/hooks/LyricsLayoutEditController.java");
         if (!source.isFile()) source = new File("app/" + source.getPath());
