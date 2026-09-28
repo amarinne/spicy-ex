@@ -61,15 +61,10 @@ public final class LyricQualityRanker {
         return 0;
     }
 
-    public static boolean prefer(LyricsDocument candidate, LyricsDocument currentBest) {
-        return score(candidate) > score(currentBest);
-    }
-
     /**
      * Auto-ranking comparison, kept deliberately simple: sync level wins first (syllable >
      * word > line > static/none), ties break by source (Apple Music > Spotify > LRCLIB >
-     * unknown). Poisoned candidates never win. Source order mode uses {@link #prefer} via
-     * fetch position instead.
+     * unknown). Poisoned candidates never win. Source order mode follows fetch position.
      */
     public static boolean preferAuto(LyricsDocument candidate, LyricsDocument currentBest) {
         if (candidate == null || candidate.spicyPoisoned) return false;

@@ -243,7 +243,7 @@ public final class SettingRowFactory {
     /** Patches a reused ordinary row: value, availability copy, and interactive state. */
     public void patchRow(View row, Settings.Setting<?> setting, PanelSnapshot snapshot) {
         boolean unavailable = PanelPolicy.unavailable(setting, snapshot);
-        SettingUiSpec.RowKind kind = SettingsUiSchema.specOf(setting).kind;
+        SettingUiSpec.RowKind kind = SettingsUiSchema.kindOf(setting);
         if (kind == SettingUiSpec.RowKind.TEXT_FIELD && setting instanceof Settings.StringSetting) {
             EditText field = findEditText(row);
             if (field != null && !field.isFocused()) {

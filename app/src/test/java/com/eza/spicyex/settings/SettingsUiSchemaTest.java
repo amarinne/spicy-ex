@@ -22,27 +22,15 @@ public class SettingsUiSchemaTest {
     }
 
     @Test
-    public void rowIdIsThePreferenceKey() {
-        assertEquals(Settings.TAP_SEEK_MODE.key,
-                SettingsUiSchema.specOf(Settings.TAP_SEEK_MODE).rowId);
-        assertEquals(Settings.CACHE_SIZE.key,
-                SettingsUiSchema.specOf(Settings.CACHE_SIZE).rowId);
-    }
-
-    @Test
     public void kindsMatchRendererDispatch() {
         assertEquals(SettingUiSpec.RowKind.TOGGLE,
-                SettingsUiSchema.specOf(Settings.TRANSLATION_ENABLED).kind);
+                SettingsUiSchema.kindOf(Settings.TRANSLATION_ENABLED));
         assertEquals(SettingUiSpec.RowKind.STEPPER,
-                SettingsUiSchema.specOf(Settings.SYNC_OFFSET_MS).kind);
+                SettingsUiSchema.kindOf(Settings.SYNC_OFFSET_MS));
         assertEquals(SettingUiSpec.RowKind.SINGLE_SELECT,
-                SettingsUiSchema.specOf(Settings.TAP_SEEK_MODE).kind);
+                SettingsUiSchema.kindOf(Settings.TAP_SEEK_MODE));
         assertEquals(SettingUiSpec.RowKind.SINGLE_SELECT,
-                SettingsUiSchema.specOf(Settings.UI_LANGUAGE).kind);
-        assertEquals(CommitPolicy.CONFIRMING,
-                SettingsUiSchema.specOf(Settings.TRANSLATION_TARGET).commitPolicy);
-        assertEquals(CommitPolicy.DEBOUNCED,
-                SettingsUiSchema.specOf(Settings.SYNC_OFFSET_MS).commitPolicy);
+                SettingsUiSchema.kindOf(Settings.UI_LANGUAGE));
     }
 
     @Test

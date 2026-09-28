@@ -435,7 +435,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
             return;
         }
         // Renderer dispatch follows the UI schema; composite rows above stay hand-built.
-        SettingUiSpec.RowKind kind = SettingsUiSchema.specOf(setting).kind;
+        SettingUiSpec.RowKind kind = SettingsUiSchema.kindOf(setting);
         if (kind == SettingUiSpec.RowKind.TOGGLE && setting instanceof Settings.BooleanSetting) {
             rows.switchRow(content, (Settings.BooleanSetting) setting);
         } else if (kind == SettingUiSpec.RowKind.STEPPER && setting instanceof Settings.IntegerSetting) {

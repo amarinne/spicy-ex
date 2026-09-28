@@ -4,9 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import com.eza.spicyex.lyrics.LyricsCandidateSelector;
-import com.eza.spicyex.lyrics.LyricsDocument;
-import com.eza.spicyex.lyrics.LyricsLine;
+import com.eza.spicyex.lyrics.LyricQualityRanker;
 
 import org.junit.Test;
 
@@ -55,18 +53,9 @@ public class LyricsSourceRankingTest {
 
     @Test
     public void candidateSyncLevelMatchesAutoOrder() {
-        assertEquals(3, LyricsCandidateSelector.syncLevel(doc("Syllable")));
-        assertEquals(2, LyricsCandidateSelector.syncLevel(doc("Word")));
-        assertEquals(1, LyricsCandidateSelector.syncLevel(doc("Line")));
-        assertEquals(0, LyricsCandidateSelector.syncLevel(doc("Static")));
-    }
-
-    private static LyricsDocument doc(String type) {
-        LyricsDocument doc = new LyricsDocument();
-        doc.type = type;
-        LyricsLine line = new LyricsLine();
-        line.text = "hello";
-        doc.lines.add(line);
-        return doc;
+        assertEquals(3, LyricQualityRanker.syncLevel("Syllable"));
+        assertEquals(2, LyricQualityRanker.syncLevel("Word"));
+        assertEquals(1, LyricQualityRanker.syncLevel("Line"));
+        assertEquals(0, LyricQualityRanker.syncLevel("Static"));
     }
 }

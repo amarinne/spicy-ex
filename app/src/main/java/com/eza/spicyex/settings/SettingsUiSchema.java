@@ -117,12 +117,12 @@ public final class SettingsUiSchema {
         return items;
     }
 
-    public static SettingUiSpec specOf(Settings.Setting<?> setting) {
-        return SettingUiSpec.of(setting);
+    public static SettingUiSpec.RowKind kindOf(Settings.Setting<?> setting) {
+        return SettingUiSpec.kindOf(setting);
     }
 
     /** True for settings rendered by explicit composite rows rather than a kind renderer. */
     public static boolean isComposite(Settings.Setting<?> setting) {
-        return specOf(setting).kind == SettingUiSpec.RowKind.COMPOSITE;
+        return kindOf(setting) == SettingUiSpec.RowKind.COMPOSITE;
     }
 }

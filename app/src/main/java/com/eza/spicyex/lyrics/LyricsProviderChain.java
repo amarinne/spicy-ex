@@ -11,12 +11,6 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 final class LyricsProviderChain {
     private final int generation;
     private final String cachedRaw;
-    /**
-     * Auto ranking compares sync level first (syllable > word > line > static) and only
-     * then the source score; source-order mode keeps pure score comparison because the
-     * fetch position already encodes the user's order.
-     */
-    private final boolean syncFirst;
     private final List<String> candidatesSeen = new ArrayList<>();
     /** Fallback stages the acquisition plan allows for this fetch. */
     boolean amllAllowed = true;
@@ -25,25 +19,17 @@ final class LyricsProviderChain {
     private LyricsDocument pendingStatic;
     private Source pendingStaticSource;
     private String pendingStaticRaw;
-    private boolean staticAlreadyShown;
     private boolean deliveredCached;
     private boolean deliveredCachedSynced;
     private LyricsDocument nativeBaseline;
 
     LyricsProviderChain(int generation, String cachedRaw) {
-        this(generation, cachedRaw, true);
-    }
-
-    LyricsProviderChain(int generation, String cachedRaw, boolean syncFirst) {
         this.generation = generation;
         this.cachedRaw = cachedRaw;
-        this.syncFirst = syncFirst;
     }
 
     private boolean prefer(LyricsDocument candidate, LyricsDocument currentBest) {
-        return syncFirst
-                ? LyricQualityRanker.preferAuto(candidate, currentBest)
-                : LyricQualityRanker.prefer(candidate, currentBest);
+        return LyricQualityRanker.preferAuto(candidate, currentBest);
     }
 
     Decision acceptCached(LyricsDocument doc) {
@@ -56,7 +42,7 @@ final class LyricsProviderChain {
         }
         if (result instanceof Static) {
             Static statik = (Static) result;
-            holdStatic(statik.document, statik.source, null, false);
+            holdStatic(statik.document, statik.source, null);
             addCandidate(Source.CACHE);
             return Decision.holdStatic();
         }
@@ -89,7 +75,7 @@ final class LyricsProviderChain {
                 return Decision.continueAfter(synced, pendingStatic);
             }
             String rawToCache = safe(raw).equals(safe(cachedRaw)) ? null : raw;
-            holdStatic(synced.document, synced.source, rawToCache, false);
+            holdStatic(synced.document, synced.source, rawToCache);
             return Decision.continueAfter(synced, pendingStatic);
         }
         if (result instanceof Static) {
@@ -99,7 +85,7 @@ final class LyricsProviderChain {
                 return Decision.continueAfter(statik, pendingStatic);
             }
             String rawToCache = safe(raw).equals(safe(cachedRaw)) ? null : raw;
-            holdStatic(statik.document, statik.source, rawToCache, false);
+            holdStatic(statik.document, statik.source, rawToCache);
             return Decision.continueAfter(statik, pendingStatic);
         }
         if (deliveredCachedSynced) return Decision.suppress();
@@ -116,10 +102,9 @@ final class LyricsProviderChain {
         if (nativeBaseline == null) nativeBaseline = nativeDoc;
         if (pendingStatic != null) {
             LyricsDocument winner = prefer(nativeDoc, pendingStatic) ? nativeDoc : pendingStatic;
-            if (staticAlreadyShown) return Decision.suppress();
             if (!isWordOrBetter(winner) && (amllAllowed || lrclibAllowed)) {
                 holdStatic(winner, winner == nativeDoc ? Source.NATIVE : pendingStaticSource,
-                        winner == nativeDoc ? null : pendingStaticRaw, false);
+                        winner == nativeDoc ? null : pendingStaticRaw);
                 return Decision.continueAfter(result, pendingStatic);
             }
             if (winner == nativeDoc) {
@@ -130,7 +115,7 @@ final class LyricsProviderChain {
         if (isWordOrBetter(nativeDoc)) {
             return Decision.deliver(nativeDoc, false, null, false);
         }
-        holdStatic(nativeDoc, Source.NATIVE, null, false);
+        holdStatic(nativeDoc, Source.NATIVE, null);
         return Decision.holdStatic();
     }
 
@@ -152,7 +137,6 @@ final class LyricsProviderChain {
         if (winner == lrclibDoc) {
             return Decision.deliver(lrclibDoc, false, null, false);
         }
-        if (staticAlreadyShown) return Decision.suppress();
         return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
     }
 
@@ -166,7 +150,7 @@ final class LyricsProviderChain {
         LyricsDocument amllDoc = result.document();
         if (pendingStatic == null) {
             if (!isWordOrBetter(amllDoc) && lrclibAllowed) {
-                holdStatic(amllDoc, Source.AMLL, null, false);
+                holdStatic(amllDoc, Source.AMLL, null);
                 return Decision.continueAfter(result, pendingStatic);
             }
             return Decision.deliver(amllDoc, false, null, false);
@@ -174,13 +158,12 @@ final class LyricsProviderChain {
         LyricsDocument winner = prefer(amllDoc, pendingStatic) ? amllDoc : pendingStatic;
         if (!isWordOrBetter(winner) && lrclibAllowed) {
             holdStatic(winner, winner == amllDoc ? Source.AMLL : pendingStaticSource,
-                    winner == amllDoc ? null : pendingStaticRaw, false);
+                    winner == amllDoc ? null : pendingStaticRaw);
             return Decision.continueAfter(result, pendingStatic);
         }
         if (winner == amllDoc) {
             return Decision.deliver(amllDoc, false, null, false);
         }
-        if (staticAlreadyShown) return Decision.suppress();
         return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
     }
 
@@ -188,7 +171,6 @@ final class LyricsProviderChain {
     Decision acceptAmllError(String error) {
         Result result = new TransientFailure(Source.AMLL, error);
         if (pendingStatic != null) {
-            if (staticAlreadyShown) return Decision.suppress();
             return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
         }
         return finishWithoutStatic(result, error);
@@ -199,7 +181,6 @@ final class LyricsProviderChain {
                 ? new Empty(Source.LRCLIB, true)
                 : new TransientFailure(Source.LRCLIB, error);
         if (pendingStatic != null) {
-            if (staticAlreadyShown) return Decision.suppress();
             return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
         }
         return finishWithoutStatic(result, error);
@@ -211,10 +192,6 @@ final class LyricsProviderChain {
 
     LyricsDocument pendingStatic() {
         return pendingStatic;
-    }
-
-    boolean staticAlreadyShown() {
-        return staticAlreadyShown;
     }
 
     String pendingStaticRaw() {
@@ -265,11 +242,10 @@ final class LyricsProviderChain {
         return new Static(doc, source);
     }
 
-    private void holdStatic(LyricsDocument doc, Source source, String raw, boolean alreadyShown) {
+    private void holdStatic(LyricsDocument doc, Source source, String raw) {
         pendingStatic = doc;
         pendingStaticSource = source;
         pendingStaticRaw = raw;
-        staticAlreadyShown = alreadyShown;
     }
 
     private void addCandidate(Source source) {
