@@ -17,6 +17,13 @@ public class LyricsShellEmptyStateControllerTest {
     }
 
     @Test
+    public void loadingStartsAtTheFocusPosition() {
+        // A raised focus point (30%) starts the placeholder there, not at the middle.
+        assertEquals(160, LyricsShellEmptyStateController.loadingTopMargin(1200, 200, 0.3f));
+        assertEquals(0, LyricsShellEmptyStateController.loadingTopMargin(1200, 400, 0.3f));
+    }
+
+    @Test
     public void loadingWaitsForARealViewport() {
         assertEquals(0, LyricsShellEmptyStateController.loadingTopMargin(0, 100));
     }

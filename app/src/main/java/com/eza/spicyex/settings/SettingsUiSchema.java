@@ -51,7 +51,6 @@ public final class SettingsUiSchema {
             Settings.MINI_PLAYER_LYRICS_ICON,
             Settings.STATUS_BAR_HIDDEN_MODE,
             Settings.LONG_PRESS_SHARE,
-            Settings.SHARE_GESTURE_HINT,
             Settings.SYNC_OFFSET_MS,
             Settings.HYPERGLOW_ENABLED,
             // Lyrics sources

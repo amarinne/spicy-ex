@@ -38,17 +38,28 @@ final class LyricsShellEmptyStateController {
     }
 
     void showLoading(ScrollView lyricsScroll, LinearLayout lyricsColumn, String message) {
+        showLoading(lyricsScroll, lyricsColumn, message, 0.5f, 0);
+    }
+
+    /**
+     * @param anchorFraction where the current line rests (the focus position), so the skeleton
+     *                       starts where the lyrics will rather than always at the middle
+     * @param sideInsetPx    the side margin the lyric rows keep
+     */
+    void showLoading(ScrollView lyricsScroll, LinearLayout lyricsColumn, String message,
+                     float anchorFraction, int sideInsetPx) {
         stateToken++;
         lyricsColumn.removeAllViews();
         if (config.get(Settings.SHOW_SKELETON)) {
             LyricsSkeletonView skeleton = new LyricsSkeletonView(activity);
+            skeleton.setHorizontalInsetPx(sideInsetPx);
             LinearLayout.LayoutParams skeletonLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             skeletonLp.topMargin = loadingTopMargin(
-                    lyricsScroll.getHeight(), lyricsScroll.getPaddingTop());
+                    lyricsScroll.getHeight(), lyricsScroll.getPaddingTop(), anchorFraction);
             lyricsColumn.addView(skeleton, skeletonLp);
-            alignLoadingStart(lyricsScroll, lyricsColumn, skeleton);
+            alignLoadingStart(lyricsScroll, lyricsColumn, skeleton, anchorFraction);
             skeleton.setAlpha(1f);
             return;
         }
@@ -69,7 +80,8 @@ final class LyricsShellEmptyStateController {
     private void alignLoadingStart(
             ScrollView lyricsScroll,
             LinearLayout lyricsColumn,
-            View loadingView
+            View loadingView,
+            float anchorFraction
     ) {
         Runnable align = () -> {
             if (loadingView.getParent() != lyricsColumn) return;
@@ -77,7 +89,7 @@ final class LyricsShellEmptyStateController {
             if (!(rawParams instanceof LinearLayout.LayoutParams)) return;
             LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) rawParams;
             int topMargin = loadingTopMargin(
-                    lyricsScroll.getHeight(), lyricsScroll.getPaddingTop());
+                    lyricsScroll.getHeight(), lyricsScroll.getPaddingTop(), anchorFraction);
             if (params.topMargin != topMargin) {
                 params.topMargin = topMargin;
                 loadingView.setLayoutParams(params);
@@ -91,8 +103,15 @@ final class LyricsShellEmptyStateController {
     }
 
     static int loadingTopMargin(int viewportHeightPx, int paddingTopPx) {
+        return loadingTopMargin(viewportHeightPx, paddingTopPx, 0.5f);
+    }
+
+    /** Top margin that starts the loading placeholder at the focus position. */
+    static int loadingTopMargin(int viewportHeightPx, int paddingTopPx, float anchorFraction) {
         if (viewportHeightPx <= 0) return 0;
-        return Math.max(0, viewportHeightPx / 2 - Math.max(0, paddingTopPx));
+        float fraction = Float.isNaN(anchorFraction) ? 0.5f
+                : Math.max(0f, Math.min(1f, anchorFraction));
+        return Math.max(0, Math.round(viewportHeightPx * fraction) - Math.max(0, paddingTopPx));
     }
 
     /**

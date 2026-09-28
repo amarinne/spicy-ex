@@ -161,8 +161,6 @@
     <string name="settings_option_heavy">強</string>
     <string name="settings_option_single_tap">シングルタップ</string>
     <string name="settings_option_double_tap">ダブルタップ</string>
-    <string name="settings_option_every_time">毎回</string>
-    <string name="settings_option_first_few_times">最初の数回だけ</string>
     <string name="settings_option_fullscreen">全画面</string>
     <string name="settings_option_artwork">アートワーク</string>
     <string name="settings_option_regular">標準</string>
@@ -444,7 +442,6 @@
     <string name="settings_layout_editor_background_quality_hint">値を下げると画質は粗くなりますが、GPU負荷は下がります。</string>
     <string name="settings_layout_editor_blur_intensity_hint">0%でオフ。値を上げるほど離れた行が強くぼけます。</string>
     <string name="lyrics_follow_chip_label">歌詞を追従</string>
-    <string name="settings_label_lyrics_share_gesture_hint">共有画面のジェスチャーヒント</string>
     <string name="settings_section_pip">ピクチャー・イン・ピクチャー</string>
     <string name="settings_label_lyrics_pip_shape">ウィンドウの形</string>
     <string name="settings_label_lyrics_pip_controls">再生コントロール</string>

@@ -138,12 +138,6 @@ public final class Settings {
 
     // The share sheet's swipe-up demonstration (see LyricsShareCardController#teaseNextLine):
     // two passes the first few times then one, on every open, or never.
-    public static final Setting<String> SHARE_GESTURE_HINT = enumSetting(
-            "lyrics_share_gesture_hint", LYRICS, "Share sheet gesture hint",
-            "First few times",
-            "First few times", "Every time", "Off"
-    );
-
     public static final IntegerSetting SYNC_OFFSET_MS = intSetting(
             "lyric_sync_offset_ms", LYRICS, "Sync offset",
             0, -5000, 5000, 100

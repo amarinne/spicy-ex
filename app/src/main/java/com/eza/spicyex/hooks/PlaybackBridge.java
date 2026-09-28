@@ -110,7 +110,11 @@ final class PlaybackBridge {
                         currentMediaSession = new WeakReference<>((MediaSession) param.thisObject);
                         PlaybackState playbackState = (PlaybackState) param.args[0];
                         if (playbackState == null) return;
-                        isPlaying = playbackState.getState() == PlaybackState.STATE_PLAYING;
+                        // Buffering is playback on its way (around a seek, a track change), not
+                        // a pause; the user's pause is PAUSED.
+                        int s = playbackState.getState();
+                        isPlaying = s == PlaybackState.STATE_PLAYING
+                                || s == PlaybackState.STATE_BUFFERING;
                         long position = playbackState.getPosition();
                         if (position >= 0) {
                             mediaPositionMs = position;
@@ -127,6 +131,9 @@ final class PlaybackBridge {
         try {
             MediaController controller = transportController();
             if (controller == null) return false;
+            // A seek the session does not offer is dropped by Spotify; sending it anyway moved
+            // the lyrics (and the forced position below) to a place playback never went.
+            if (!canSeek()) return false;
             controller.getTransportControls().seekTo(positionMs);
             forcePosition(positionMs);
             return true;
@@ -292,6 +299,10 @@ final class PlaybackBridge {
     }
 
     private static final String[] PAUSED_ACCESSOR_NAMES = {"isPaused", "paused"};
+    /** PlayerState's "a track is playing" flag (true while paused too; paused is separate). */
+    private static final String[] PLAYING_ACCESSOR_NAMES = {"isPlaying", "playing"};
+    private Class<?> playingAccessorOwner;
+    private Method[] playingAccessorCache;
     private static final Method[] NO_PAUSED_ACCESSORS = new Method[0];
     /** Resolved once per PlayerState class - see {@link #pausedAccessors}. */
     private Class<?> pausedAccessorOwner;
@@ -314,14 +325,30 @@ final class PlaybackBridge {
             return pausedAccessorCache;
         }
         pausedAccessorOwner = stateClass;
-        pausedAccessorCache = NO_PAUSED_ACCESSORS;
-        ArrayList<Method> found = new ArrayList<>(PAUSED_ACCESSOR_NAMES.length);
-        for (String name : PAUSED_ACCESSOR_NAMES) {
+        pausedAccessorCache = booleanAccessors(stateClass, PAUSED_ACCESSOR_NAMES);
+        return pausedAccessorCache;
+    }
+
+    /** Same one-time resolution as {@link #pausedAccessors}, for the playing flag. */
+    private Method[] playingAccessors(Class<?> stateClass) {
+        if (stateClass == playingAccessorOwner && playingAccessorCache != null) {
+            return playingAccessorCache;
+        }
+        playingAccessorOwner = stateClass;
+        playingAccessorCache = booleanAccessors(stateClass, PLAYING_ACCESSOR_NAMES);
+        return playingAccessorCache;
+    }
+
+    private static Method[] booleanAccessors(Class<?> stateClass, String[] names) {
+        ArrayList<Method> found = new ArrayList<>(names.length);
+        for (String name : names) {
             for (Class<?> current = stateClass; current != null && current != Object.class;
                     current = current.getSuperclass()) {
                 try {
                     Method candidate = current.getDeclaredMethod(name);
                     if (Modifier.isStatic(candidate.getModifiers())) continue;
+                    Class<?> type = candidate.getReturnType();
+                    if (type != boolean.class && type != Boolean.class) continue;
                     candidate.setAccessible(true);
                     found.add(candidate);
                     break;
@@ -329,27 +356,49 @@ final class PlaybackBridge {
                 }
             }
         }
-        if (!found.isEmpty()) pausedAccessorCache = found.toArray(new Method[0]);
-        return pausedAccessorCache;
+        return found.isEmpty() ? NO_PAUSED_ACCESSORS : found.toArray(new Method[0]);
     }
 
 
+    /**
+     * Spotify's own PlayerState decides when it can be read: playing and not paused. The media
+     * session is only the fallback. Its state is PLAYING alone, so the BUFFERING it posts around a
+     * seek - and keeps posting after a seek Spotify rejected, while the song plays on - read as
+     * paused: the screen showed paused and the lyrics stopped during playback.
+     */
     boolean isPlayerActuallyPlaying() {
-        if (!isPlaying) return false;
         try {
             Object state = References.playerState == null ? null : References.playerState.get();
             if (state != null) {
-                for (Method paused : pausedAccessors(state.getClass())) {
-                    try {
-                        Object result = paused.invoke(state);
-                        if (result instanceof Boolean && (Boolean) result) return false;
-                    } catch (Throwable ignored) {
-                    }
-                }
+                Boolean fromState = playerStatePlaying(state);
+                if (fromState != null) return fromState;
             }
         } catch (Throwable ignored) {
         }
-        return true;
+        return isPlaying;
+    }
+
+    /** Playing per the PlayerState's own accessors; null when this build exposes neither. */
+    private Boolean playerStatePlaying(Object state) {
+        Method[] paused = pausedAccessors(state.getClass());
+        Method[] playing = playingAccessors(state.getClass());
+        if (paused.length == 0 && playing.length == 0) return null;
+        for (Method accessor : paused) {
+            try {
+                Object result = accessor.invoke(state);
+                if (result instanceof Boolean && (Boolean) result) return Boolean.FALSE;
+            } catch (Throwable ignored) {
+            }
+        }
+        for (Method accessor : playing) {
+            try {
+                Object result = accessor.invoke(state);
+                if (result instanceof Boolean && !(Boolean) result) return Boolean.FALSE;
+            } catch (Throwable ignored) {
+            }
+        }
+        // Only paused accessors: not paused is playing only if the session agrees it is active.
+        return playing.length > 0 || isPlaying ? Boolean.TRUE : null;
     }
 
     private void forcePosition(long positionMs) {

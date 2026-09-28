@@ -1801,10 +1801,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     /** Both session publications and polling adopt the track before mounting its document. */
     private boolean adoptTrack(SpotifyTrack track) {
         if (track == null) return false;
+        String uri = safe(track.uri);
+        // Only a new track restarts the throttle window. updateState() adopts the throttled track
+        // on every frame; restarting the window each time meant it never elapsed while lyrics
+        // animated, the track was never read again, and a skip left the screen on the old song
+        // (its lyrics replaying against the new song's position).
+        if (uri.equals(lastUri)) return false;
         throttledTrack = track;
         throttledTrackAtMs = SystemClock.elapsedRealtime();
-        String uri = safe(track.uri);
-        if (uri.equals(lastUri)) return false;
         lastUri = uri;
         playbackClock.reset(uri);
         clearRowCascade();
@@ -2279,7 +2283,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void showLoading(String message) {
         rowMountController.reset();
         followState.resetActive();
-        emptyStateController.showLoading(lyricsScroll, lyricsColumn, message);
+        // Where the lyrics will be: the focus position, inside the rows' side margin.
+        emptyStateController.showLoading(lyricsScroll, lyricsColumn, message,
+                resolveFocusAnchorFraction(), isLandscape() ? 0 : lyricsSideInsetPx);
     }
 
     private void showError(String error) {
@@ -3122,15 +3128,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             if (last != null && last.getHeight() > 0) {
                 int focusLimit = Math.max(0, scrollController.centeredScrollTarget(
                         last, dp(56), true));
-                // Stopping at the focus point alone would leave the clickable "Lyrics source: …"
-                // footer below the fold with no way to scroll to it. Add the distance from the last
-                // line's bottom edge to the footer's own bottom edge (the trailing virtual spacer
-                // is inside that span) so the footer comes fully into view and can be tapped.
-                // ElasticScrollView still clamps at the real content range, so this can only ever
-                // shorten a song whose footer already fits on screen.
-                int footerBottom = sourceFooter.getTop() + sourceFooter.getHeight();
-                int lastBottom = Math.round(contentTop(last)) + last.getHeight();
-                limit = focusLimit + Math.max(0, footerBottom - lastBottom);
+                // Stopping at the focus point alone could leave the clickable "Lyrics source: …"
+                // footer below the fold. Scroll on only as far as it takes to bring the footer's
+                // text into view at the bottom edge - not by the footer's whole span, whose large
+                // bottom padding let the list run on into empty space past the last line.
+                int footerTextBottom = sourceFooter.getTop() + sourceFooter.getHeight()
+                        - sourceFooter.getPaddingBottom();
+                int visible = lyricsScroll.getHeight() - lyricsScroll.getPaddingTop();
+                int revealFooter = footerTextBottom + dp(24) - visible;
+                limit = Math.max(focusLimit, revealFooter);
             }
         }
         scroll.setScrollEndLimit(limit);
@@ -3259,6 +3265,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             rebuildWithReflow(rebuild);
             return;
         }
+        if (fadeOutAsGhosts(leaving)) {
+            // The text fades as a snapshot on top while the rebuild closes its space right away:
+            // fading first and closing after read as two separate steps.
+            rebuildWithReflow(rebuild);
+            return;
+        }
         LyricsDocument before = document;
         for (View view : leaving) {
             view.animate().cancel();
@@ -3275,6 +3287,82 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             else rebuild.run();
         };
         handler.postDelayed(pendingSecondaryRebuild, SECONDARY_HIDE_MS);
+    }
+
+    /**
+     * Snapshots leaving translation/reading text into the lyrics frame's overlay, where it stays
+     * put on screen and fades out while the rows below spring up over its place.
+     *
+     * @return false when nothing could be snapshotted (animations off, no frame); the caller then
+     *         falls back to fading the views before the rebuild
+     */
+    private boolean fadeOutAsGhosts(List<View> leaving) {
+        if (lyricsFrame == null || !com.eza.spicyex.ui.Motion.animationsEnabled()) return false;
+        int[] frameLoc = new int[2];
+        lyricsFrame.getLocationInWindow(frameLoc);
+        List<android.graphics.drawable.BitmapDrawable> ghosts = new java.util.ArrayList<>();
+        List<Integer> alphas = new java.util.ArrayList<>();
+        int[] loc = new int[2];
+        for (View view : leaving) {
+            int w = view.getWidth();
+            int h = view.getHeight();
+            if (w <= 0 || h <= 0 || !view.isShown()) continue;
+            float alpha = 1f;
+            for (View v = view; v != null && v != lyricsFrame; v = v.getParent() instanceof View
+                    ? (View) v.getParent() : null) {
+                alpha *= v.getAlpha();
+            }
+            if (alpha <= 0.01f) continue;
+            Bitmap bitmap;
+            try {
+                bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            } catch (Throwable outOfMemory) {
+                continue;
+            }
+            view.draw(new android.graphics.Canvas(bitmap));
+            view.getLocationInWindow(loc);
+            android.graphics.drawable.BitmapDrawable ghost =
+                    new android.graphics.drawable.BitmapDrawable(getResources(), bitmap);
+            int left = loc[0] - frameLoc[0];
+            int top = loc[1] - frameLoc[1];
+            ghost.setBounds(left, top, left + w, top + h);
+            int base = Math.round(255 * Math.min(1f, alpha));
+            ghost.setAlpha(base);
+            lyricsFrame.getOverlay().add(ghost);
+            ghosts.add(ghost);
+            alphas.add(base);
+        }
+        if (ghosts.isEmpty()) return false;
+        android.animation.ValueAnimator fade = android.animation.ValueAnimator.ofFloat(1f, 0f);
+        fade.setDuration(SECONDARY_HIDE_MS * 2);
+        fade.setInterpolator(SECONDARY_REVEAL_EASE);
+        fade.addUpdateListener(animation -> {
+            float f = (float) animation.getAnimatedValue();
+            for (int i = 0; i < ghosts.size(); i++) ghosts.get(i).setAlpha(Math.round(alphas.get(i) * f));
+            lyricsFrame.invalidate();
+        });
+        fade.addListener(new android.animation.AnimatorListenerAdapter() {
+            private boolean done;
+
+            private void remove() {
+                if (done) return;
+                done = true;
+                for (android.graphics.drawable.BitmapDrawable ghost : ghosts) {
+                    lyricsFrame.getOverlay().remove(ghost);
+                    ghost.getBitmap().recycle();
+                }
+            }
+
+            @Override public void onAnimationEnd(android.animation.Animator animation) {
+                remove();
+            }
+
+            @Override public void onAnimationCancel(android.animation.Animator animation) {
+                remove();
+            }
+        });
+        fade.start();
+        return true;
     }
 
     private List<View> mountedTranslationViews() {
@@ -3898,8 +3986,22 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return ROW_CASCADE_MAX_OFFSET_PX;
     }
 
+    /** The user set animations off (developer options or accessibility "remove animations"). */
+    private boolean animatorScaleOff() {
+        try {
+            return android.provider.Settings.Global.getFloat(activity.getContentResolver(),
+                    android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private void startRowCascade(float scrollDelta) {
-        if (!com.eza.spicyex.ui.Motion.systemAnimationsEnabled()) {
+        // Only an explicit "animations off" (animator scale 0) drops the cascade. Not
+        // Motion.systemAnimationsEnabled(): battery saver turns that false as well, which left the
+        // follow as a bare scroll whenever it was on. The cascade is stepped by the lyric frame
+        // loop, not by animators, so battery saver has nothing to turn off here.
+        if (animatorScaleOff()) {
             clearRowCascade();
             return;
         }

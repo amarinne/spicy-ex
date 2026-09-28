@@ -29,11 +29,20 @@ public final class LyricsSkeletonView extends View {
     private LinearGradient shimmer;
     private ValueAnimator animator;
     private float sweep;
+    /** Side margin the lyric rows keep (system insets), so the bars line up with the text. */
+    private int horizontalInsetPx;
 
     public LyricsSkeletonView(Context context) {
         super(context);
         density = context.getResources().getDisplayMetrics().density;
         barPaint.setColor(0x1FFFFFFF);
+    }
+
+    public void setHorizontalInsetPx(int px) {
+        int inset = Math.max(0, px);
+        if (inset == horizontalInsetPx) return;
+        horizontalInsetPx = inset;
+        invalidate();
     }
 
     private int dp(float value) {
@@ -67,10 +76,10 @@ public final class LyricsSkeletonView extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        int contentWidth = getWidth() - dp(12);
+        int contentWidth = getWidth() - 2 * horizontalInsetPx - dp(12);
         if (contentWidth <= 0) return;
         float radius = dp(9);
-        float left = dp(6);
+        float left = horizontalInsetPx + dp(6);
         if (shimmer != null) {
             shimmerMatrix.setTranslate((sweep * 2f - 1f) * getWidth(), 0f);
             shimmer.setLocalMatrix(shimmerMatrix);

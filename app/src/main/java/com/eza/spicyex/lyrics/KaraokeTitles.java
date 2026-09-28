@@ -6,7 +6,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Karaoke, off-vocal and instrumental versions carry the original song's title plus a version
+ * Karaoke, off-vocal and instrumental versions (piano and music-box covers included) carry the original song's title plus a version
  * tag, and no lyrics of their own anywhere. Searching the text sources with the tag removed finds
  * the original's lyrics, which is exactly what a karaoke track is for. See
  * {@code Settings#KARAOKE_ORIGINAL_LYRICS}. Only search-based providers (QQ, NetEase) may
@@ -21,8 +21,16 @@ import java.util.regex.Pattern;
  * original is usually listed without them.
  */
 public final class KaraokeTitles {
+    /** Instrumental arrangements of a song, usually released by another artist (a cover). */
+    private static final String COVER_WORDS =
+            "piano|music box|orgel|orchestral|8[ -]?bit|lullaby|ピアノ|オルゴール|피아노|오르골";
     private static final String VERSION_WORDS =
-            "karaoke|off[ -]?vocal|instrumental|inst\\.?|backing track|伴奏|カラオケ|オフボーカル|インスト";
+            "karaoke|off[ -]?vocal|instrumental|inst\\.?|backing track|伴奏|カラオケ|オフボーカル|インスト|"
+                    + COVER_WORDS;
+    /** "[Piano Version]", "(Music Box)": the tag of an instrumental cover. */
+    private static final Pattern COVER_TAG = Pattern.compile(
+            "[(\\[（【][^)\\]）】]*?(?:" + COVER_WORDS + ")[^)\\]）】]*[)\\]）】]|\\s[-–—]\\s[^-–—]*?(?:"
+                    + COVER_WORDS + ")", Pattern.CASE_INSENSITIVE);
     /** "(Karaoke Version)", "[Off Vocal]", "（カラオケ）", "(Inst.)"... */
     private static final Pattern BRACKET_TAG = Pattern.compile(
             "\\s*[(\\[（【][^)\\]）】]*?(?:" + VERSION_WORDS + ")[^)\\]）】]*[)\\]）】]",
@@ -65,8 +73,12 @@ public final class KaraokeTitles {
         if (!originalLyrics || track == null || !isKaraokeVersion(track.title)) return track;
         String performer = performer(track.title);
         if (performer == null) performer = performer(track.album);
+        // A piano/music-box cover is released under the arranger's name, which says nothing about
+        // who sang the original: like a karaoke label, it is left out of the search.
+        boolean cover = COVER_TAG.matcher(track.title).find();
         String artist = performer != null ? performer
-                : track.artist != null && LABEL_ARTIST.matcher(track.artist).find() ? "" : track.artist;
+                : track.artist != null && (cover || LABEL_ARTIST.matcher(track.artist).find())
+                        ? "" : track.artist;
         String title = PERFORMED_BY.matcher(track.title).replaceAll("");
         title = BRACKET_TAG.matcher(title).replaceAll("");
         title = DASH_TAG.matcher(title).replaceAll("");

@@ -1028,19 +1028,14 @@ final class LyricsShareCardController {
         clock.start();
     }
 
-    /** "Share sheet gesture hint": a full demonstration (two passes) the first few times and one
-     *  pass after that, the full one every time, or none. Does not count this showing. */
+    /** Times the gesture hint plays before it stops for good. */
+    private static final int HINT_SHOWINGS = 3;
+
+    /** The share-sheet gesture hint: a full demonstration (two passes) the first few times the
+     *  sheet opens, then never again - it teaches the gesture, it is not a standing nudge.
+     *  Does not count this showing. */
     private int hintPasses() {
-        String mode;
-        try {
-            mode = com.eza.spicyex.SpotifyPlusConfig.from(activity)
-                    .get(com.eza.spicyex.Settings.SHARE_GESTURE_HINT);
-        } catch (Throwable ignored) {
-            mode = "First few times";
-        }
-        if ("Off".equals(mode)) return 0;
-        if ("Every time".equals(mode)) return 2;
-        return hintShownCount() < 3 ? 2 : 1;
+        return hintShownCount() < HINT_SHOWINGS ? 2 : 0;
     }
 
     /** {@link #hintPasses} for the hint about to play, counting it as shown. */
