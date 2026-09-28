@@ -113,7 +113,7 @@
     <string name="settings_label_lyrics_panel_media_controls">앨범 아트 재생 컨트롤</string>
     <string name="settings_label_lyric_animation_style">애니메이션 스타일</string>
     <string name="settings_label_lyric_apple_fade_passed_lines">지나간 줄 흐리게</string>
-    <string name="settings_label_lyric_apple_compact_text">글자 크기 줄이기</string>
+    <string name="settings_label_lyric_apple_compact_text">Apple 스타일 글자 비율</string>
     <string name="settings_label_lyric_line_slide_animation">Apple Music 스타일 슬라이드</string>
     <string name="settings_label_lyric_apple_lift">Apple 떠오름 효과</string>
     <string name="settings_label_lyric_word_bounce">단어 강조 효과</string>
@@ -161,6 +161,8 @@
     <string name="settings_option_heavy">강하게</string>
     <string name="settings_option_single_tap">한 번 탭</string>
     <string name="settings_option_double_tap">두 번 탭</string>
+    <string name="settings_option_every_time">매번</string>
+    <string name="settings_option_first_few_times">처음 몇 번만</string>
     <string name="settings_option_fullscreen">전체 화면</string>
     <string name="settings_option_artwork">앨범 아트</string>
     <string name="settings_option_regular">보통</string>
@@ -423,6 +425,7 @@
     <string name="share_save_failed">카드를 저장하지 못했어요</string>
     <string name="share_chooser">가사 공유</string>
     <string name="settings_label_lyrics_long_press_share">가사를 길게 눌러 공유</string>
+    <string name="settings_label_lyrics_share_gesture_hint">공유 화면 제스처 힌트</string>
     <string name="settings_label_lyrics_show_fullscreen_back_button">뒤로 버튼 표시</string>
     <string name="settings_layout_editor_options_button">옵션</string>
     <string name="settings_layout_editor_close">닫기</string>

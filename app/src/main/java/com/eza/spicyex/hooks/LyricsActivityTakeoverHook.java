@@ -658,7 +658,7 @@ final class LyricsActivityTakeoverHook {
                 centreY = (connLoc[1] - contentLoc[1]) + connectButton.getHeight() / 2f;
             } else {
                 int row = normal == null ? barHeight : normal;
-                centreY = barTopInContent + barHeight - row / 2f;
+                centreY = controlRowCenterY(barTopInContent, barHeight, row);
             }
             button.setY(centreY - side / 2f);
             // This button is a floating overlay, not a real MotionLayout participant, so the
@@ -678,6 +678,10 @@ final class LyricsActivityTakeoverHook {
         } catch (Throwable t) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " reposition mini player button failed: " + t);
         }
+    }
+
+    static float controlRowCenterY(float barTop, int barHeight, int normalRowHeight) {
+        return barTop + barHeight - normalRowHeight / 2f;
     }
 
     private View createMiniPlayerLyricsButton(Activity activity) {

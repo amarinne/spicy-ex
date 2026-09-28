@@ -265,7 +265,7 @@
     <string name="settings_label_lyrics_adaptive_landscape_layout">Адаптивный интерфейс в горизонтальном режиме</string>
     <string name="settings_label_lyrics_panel_media_controls">Панель управления медиа</string>
     <string name="settings_label_lyric_apple_fade_passed_lines">Fade passed lines</string>
-    <string name="settings_label_lyric_apple_compact_text">Компактный размер текста</string>
+    <string name="settings_label_lyric_apple_compact_text">Пропорции текста Apple Music</string>
     <string name="settings_label_lyric_line_slide_animation">Apple Music-style slide</string>
     <string name="settings_label_lyric_apple_lift">Apple lift</string>
     <string name="settings_option_lyric_word_bounce_style_apple_lift">Apple lift</string>

@@ -131,9 +131,9 @@ final class PlaybackBridge {
         try {
             MediaController controller = transportController();
             if (controller == null) return false;
-            // A seek the session does not offer is dropped by Spotify; sending it anyway moved
-            // the lyrics (and the forced position below) to a place playback never went.
-            if (!canSeek()) return false;
+            // Check this controller's current capability before forcing the lyric position.
+            PlaybackState state = controller.getPlaybackState();
+            if (state == null || (state.getActions() & PlaybackState.ACTION_SEEK_TO) == 0) return false;
             controller.getTransportControls().seekTo(positionMs);
             forcePosition(positionMs);
             return true;
@@ -370,7 +370,7 @@ final class PlaybackBridge {
         try {
             Object state = References.playerState == null ? null : References.playerState.get();
             if (state != null) {
-                Boolean fromState = playerStatePlaying(state);
+                Boolean fromState = playerStatePlaying(state, isPlaying);
                 if (fromState != null) return fromState;
             }
         } catch (Throwable ignored) {
@@ -379,10 +379,11 @@ final class PlaybackBridge {
     }
 
     /** Playing per the PlayerState's own accessors; null when this build exposes neither. */
-    private Boolean playerStatePlaying(Object state) {
+    Boolean playerStatePlaying(Object state, boolean sessionPlaying) {
         Method[] paused = pausedAccessors(state.getClass());
         Method[] playing = playingAccessors(state.getClass());
         if (paused.length == 0 && playing.length == 0) return null;
+        boolean sawPlaying = false;
         for (Method accessor : paused) {
             try {
                 Object result = accessor.invoke(state);
@@ -393,12 +394,15 @@ final class PlaybackBridge {
         for (Method accessor : playing) {
             try {
                 Object result = accessor.invoke(state);
-                if (result instanceof Boolean && !(Boolean) result) return Boolean.FALSE;
+                if (result instanceof Boolean) {
+                    sawPlaying = true;
+                    if (!(Boolean) result) return Boolean.FALSE;
+                }
             } catch (Throwable ignored) {
             }
         }
         // Only paused accessors: not paused is playing only if the session agrees it is active.
-        return playing.length > 0 || isPlaying ? Boolean.TRUE : null;
+        return sawPlaying || sessionPlaying ? Boolean.TRUE : null;
     }
 
     private void forcePosition(long positionMs) {
