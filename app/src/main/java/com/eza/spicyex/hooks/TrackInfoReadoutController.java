@@ -728,7 +728,7 @@ final class TrackInfoReadoutController {
                                 MeasureSpec.getSize(heightMeasureSpec) - reserve));
                         if (owner != null) {
                             owner.columnArtFitSide = side;
-                            side = columnCoverSidePx(side, owner.currentArtSize(),
+                            side = columnCoverSidePx(side, owner.columnArtSize(),
                                     dp(owner.currentCustomArtSizeDp()));
                             // The bitmap the next cover is snapshotted at follows the real fit.
                             owner.columnArtDpF = Math.max(1, Math.round(side / density));
@@ -1206,6 +1206,20 @@ final class TrackInfoReadoutController {
         this.skipGapController = skipGapController;
     }
 
+    /** The art size that caps the two-column cover: only one chosen in landscape. A portrait
+     *  Custom size (a small readout cover) read through to landscape and shrank the column cover
+     *  to it; the column is a different placement, so it keeps its fitted size until the art
+     *  size is changed in landscape itself. */
+    private String columnArtSize() {
+        try {
+            return config.hasOwnLandscapeValue(Settings.TRACK_INFO_ART_SIZE)
+                    || config.hasOwnLandscapeValue(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP)
+                    ? currentArtSize() : Settings.TRACK_INFO_ART_SIZE.defaultValue;
+        } catch (Throwable ignored) {
+            return Settings.TRACK_INFO_ART_SIZE.defaultValue;
+        }
+    }
+
     private int currentCustomArtSizeDp() {
         try {
             return config.get(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP);
@@ -1362,7 +1376,7 @@ final class TrackInfoReadoutController {
             adaptive = Settings.TRACK_INFO_TEXT_SIZE_ADAPTIVE.defaultValue;
         }
         if (adaptive) {
-            float artDp = "Custom".equals(currentArtSize())
+            float artDp = "Custom".equals(columnArtSize())
                     ? Math.min(READOUT_MAX_ART_DP, currentCustomArtSizeDp()) : 96f;
             return columnTrackTextScale(null, 0, true, artDp);
         }

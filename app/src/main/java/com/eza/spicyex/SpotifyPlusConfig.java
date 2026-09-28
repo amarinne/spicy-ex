@@ -61,6 +61,13 @@ public final class SpotifyPlusConfig {
         }
     }
 
+    /** An orientation-specific setting has its own landscape value (it was changed while in
+     *  landscape), rather than reading through to the portrait one. False in portrait. */
+    public boolean hasOwnLandscapeValue(Settings.Setting<?> setting) {
+        String landscapeKey = Settings.landscapeKey(appContext, setting);
+        return landscapeKey != null && hostPrefs.contains(landscapeKey);
+    }
+
     private Object readRaw(String key, Settings.Setting<?> setting) {
         if (setting instanceof Settings.BooleanSetting) {
             return hostPrefs.getBoolean(key, (Boolean) setting.defaultValue);

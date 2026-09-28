@@ -106,6 +106,18 @@ public class KaraokeTitlesTest {
     }
 
     @Test
+    public void pianoCoversSearchTheOriginalWithoutTheArranger() {
+        SpotifyTrack cover = track(
+                "A Cruel Angel's Thesis (From \"Neon Genesis Evangelion\") [Piano Version]",
+                "Fonzi M, KitsuneMelodies, HalcyonMusic");
+        assertTrue(KaraokeTitles.isKaraokeVersion(cover.title));
+        SpotifyTrack search = KaraokeTitles.forLyricsSearch(cover, true);
+        assertEquals("A Cruel Angel's Thesis", search.title);
+        assertEquals("", search.artist);
+        assertEquals("Song", KaraokeTitles.forLyricsSearch(track("Song - Music Box Version", "A"), true).title);
+    }
+
+    @Test
     public void performerTags() {
         assertEquals("Owl City", KaraokeTitles.performer("Karaoke Hits in the Style of Owl City"));
         assertNull(KaraokeTitles.performer("Zootopia (Original Soundtrack)"));
