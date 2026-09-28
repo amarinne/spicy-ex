@@ -41,8 +41,15 @@ public final class SettingLabels {
 
     public static String formatStepper(Settings.IntegerSetting setting, int value) {
         if (setting == Settings.EXTRA_DARK_BACKGROUND
+                || setting == Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT
                 || setting == Settings.LYRICS_BLUR_INTENSITY) {
             return value + "%";
+        }
+        if (setting == Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP) {
+            return value + "dp";
+        }
+        if (setting == Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS) {
+            return value + "s";
         }
         if (setting == Settings.BACKGROUND_RENDER_QUALITY) {
             return value + "%";
@@ -52,9 +59,6 @@ public final class SettingLabels {
         }
         if (setting == Settings.FURIGANA_BRIGHTNESS || setting == Settings.FURIGANA_POSITION_PERCENT) {
             return value + "%";
-        }
-        if (setting == Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS) {
-            return value + "s";
         }
         if (setting == Settings.LYRICS_TEXT_SIZE_CUSTOM || setting == Settings.LINE_SPACING_CUSTOM
                 || setting == Settings.LIVE_CARD_TEXT_SIZE_CUSTOM

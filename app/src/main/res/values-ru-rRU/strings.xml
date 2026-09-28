@@ -11,8 +11,6 @@
     
     <string name="settings_section_lyrics">Поведение</string>
     <string name="settings_section_lyrics_sources">Источники текстов</string>
-    <string name="settings_section_now_playing">Карточка Now Playing</string>
-    <string name="settings_section_lyrics_screen">Экран Текста</string>
     <string name="settings_section_transliteration">Чтение &amp; Транслитерация</string>
     <string name="settings_section_translation">Перевод</string>
     <string name="settings_section_debug">О Spicy EX &amp; Диагностика</string>
@@ -274,4 +272,5 @@
     <string name="settings_label_lyric_extra_dark_background">Затемнить фон</string>
     <string name="settings_option_slight">Лёгкое</string>
     <string name="settings_option_heavy">Тяжёлое</string>
+    <string name="lyrics_follow_chip_label">Следовать за текстом</string>
 </resources>

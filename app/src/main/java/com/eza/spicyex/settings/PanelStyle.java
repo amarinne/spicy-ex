@@ -113,9 +113,8 @@ public final class PanelStyle {
     /** Tinted lucide icon view; decorative by default (row text carries the meaning). */
     public ImageView kindView(Kind kind, int color, int sizeDp) {
         ImageView view = new ImageView(context);
-        view.setImageDrawable(new ActionIconDrawable(kind, color, density()));
-        int pad = dp(Math.max(2, 22 - sizeDp) / 4);
-        view.setPadding(pad, pad, pad, pad);
+        view.setImageDrawable(new ActionIconDrawable(kind, color, density(), sizeDp));
+        view.setScaleType(ImageView.ScaleType.CENTER);
         view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         return view;
     }

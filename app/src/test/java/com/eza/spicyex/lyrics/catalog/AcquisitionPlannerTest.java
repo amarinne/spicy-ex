@@ -24,7 +24,8 @@ public class AcquisitionPlannerTest {
     private static final String TRACK = "track1";
     private static final long NOW = 10L * 24L * 60L * 60L * 1000L;
     private static final CatalogPolicy AUTO = new CatalogPolicy(Arrays.asList(SourceId.APPLE,
-            SourceId.SPOTIFY_NATIVE, SourceId.AMLL, SourceId.LRCLIB, SourceId.QQ), false);
+            SourceId.SPOTIFY_NATIVE, SourceId.AMLL, SourceId.LRCLIB, SourceId.QQ,
+            SourceId.NETEASE), false);
 
     private static CatalogState state(CatalogSelection selection, ProviderRecord... records) {
         return state(selection, new CatalogCandidate[0], records);
@@ -58,26 +59,45 @@ public class AcquisitionPlannerTest {
     }
 
     @Test
-    public void anUnseenTrackAsksEveryAutomaticSourceButNotExplicitCheckSources() {
+    public void anUnseenTrackAsksEveryEnabledSource() {
         Plan plan = plan(CatalogState.empty(TRACK), AUTO, true);
 
         assertTrue(plan.fetches());
         assertEquals("no-seat", plan.reason);
         assertEquals(Arrays.asList(SourceId.APPLE, SourceId.SPOTIFY_NATIVE, SourceId.AMLL,
-                SourceId.LRCLIB), plan.scope.sources);
-        assertFalse(plan.scope.allows(SourceId.QQ));
+                SourceId.LRCLIB, SourceId.QQ, SourceId.NETEASE), plan.scope.sources);
     }
 
     @Test
-    public void aWordOrSyllableSeatRevisitCostsNoRequest() {
+    public void aWordOrSyllableSeatRevisitCostsNoRequestAfterEnabledSourcesAnswered() {
         for (TimingLevel good : new TimingLevel[]{TimingLevel.SYLLABLE, TimingLevel.WORD}) {
             CatalogCandidate seat = seated(SourceId.APPLE, good);
-            Plan plan = plan(state(auto(seat), new CatalogCandidate[]{seat}), AUTO, true);
+            Plan plan = plan(state(auto(seat), new CatalogCandidate[]{seat},
+                    answered(SourceId.APPLE, ProviderStatus.AVAILABLE, NOW, 1),
+                    answered(SourceId.SPOTIFY_NATIVE, ProviderStatus.AVAILABLE, NOW, 1),
+                    answered(SourceId.AMLL, ProviderStatus.AVAILABLE, NOW, 1),
+                    answered(SourceId.LRCLIB, ProviderStatus.AVAILABLE, NOW, 1),
+                    answered(SourceId.QQ, ProviderStatus.AVAILABLE, NOW, 1),
+                    answered(SourceId.NETEASE, ProviderStatus.AVAILABLE, NOW, 1)), AUTO, true);
 
             assertFalse(good.name(), plan.fetches());
             assertEquals(good.name(), "final-seat", plan.reason);
             assertEquals(good.name(), 0L, plan.retryAtMs);
         }
+    }
+
+    @Test
+    public void aFinalSeatStillChecksNewlyEnabledSources() {
+        CatalogCandidate seat = seated(SourceId.APPLE, TimingLevel.WORD);
+        Plan plan = plan(state(auto(seat), new CatalogCandidate[]{seat},
+                answered(SourceId.APPLE, ProviderStatus.AVAILABLE, NOW, 1),
+                answered(SourceId.SPOTIFY_NATIVE, ProviderStatus.AVAILABLE, NOW, 1),
+                answered(SourceId.AMLL, ProviderStatus.AVAILABLE, NOW, 1),
+                answered(SourceId.LRCLIB, ProviderStatus.AVAILABLE, NOW, 1)), AUTO, true);
+
+        assertTrue(plan.fetches());
+        assertEquals("enabled-source-probe", plan.reason);
+        assertEquals(Arrays.asList(SourceId.QQ, SourceId.NETEASE), plan.scope.sources);
     }
 
     @Test
@@ -100,7 +120,9 @@ public class AcquisitionPlannerTest {
         Plan after = plan(state(auto(line), new CatalogCandidate[]{line},
                 answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, justAsked, 1),
                 answered(SourceId.AMLL, ProviderStatus.AVAILABLE, justAsked, 1),
-                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1)), AUTO, true);
+                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1),
+                answered(SourceId.QQ, ProviderStatus.NOT_FOUND, justAsked, 1),
+                answered(SourceId.NETEASE, ProviderStatus.NOT_FOUND, justAsked, 1)), AUTO, true);
 
         assertFalse(after.fetches());
         assertEquals("upgrade-suppressed", after.reason);
@@ -130,7 +152,9 @@ public class AcquisitionPlannerTest {
         Plan after = plan(state(auto(plain), new CatalogCandidate[]{plain},
                 answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, justAsked, 1),
                 answered(SourceId.AMLL, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1)), AUTO, true);
+                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1),
+                answered(SourceId.QQ, ProviderStatus.NOT_FOUND, justAsked, 1),
+                answered(SourceId.NETEASE, ProviderStatus.NOT_FOUND, justAsked, 1)), AUTO, true);
         assertFalse(after.fetches());
         assertEquals("upgrade-suppressed", after.reason);
         assertEquals(justAsked + AcquisitionPlanner.NOT_FOUND_RETRY_MS, after.retryAtMs);
@@ -142,7 +166,9 @@ public class AcquisitionPlannerTest {
         CatalogState missed = state(CatalogSelection.auto(TRACK),
                 answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, justAsked, 1),
                 answered(SourceId.AMLL, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1));
+                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1),
+                answered(SourceId.QQ, ProviderStatus.NOT_FOUND, justAsked, 1),
+                answered(SourceId.NETEASE, ProviderStatus.NOT_FOUND, justAsked, 1));
 
         Plan visit = plan(missed, AUTO, true);
         assertTrue(visit.fetches());
@@ -215,6 +241,16 @@ public class AcquisitionPlannerTest {
     }
 
     @Test
+    public void autoCanAskOnlyTheEnabledSearchSources() {
+        CatalogPolicy searchOnly = new CatalogPolicy(Arrays.asList(SourceId.NETEASE, SourceId.QQ),
+                false);
+        Plan plan = plan(CatalogState.empty(TRACK), searchOnly, true);
+
+        assertTrue(plan.fetches());
+        assertEquals(Arrays.asList(SourceId.NETEASE, SourceId.QQ), plan.scope.sources);
+    }
+
+    @Test
     public void ineligibleStoredKaraokeResultIsRecheckedVerbatimInSourceOrder() {
         CatalogPolicy off = new CatalogPolicy(Collections.singletonList(SourceId.QQ), true, false);
         CatalogCandidate karaoke = CatalogDecisionsTest.cand(SourceId.QQ, "song", "k1",
@@ -244,19 +280,19 @@ public class AcquisitionPlannerTest {
     public void anOwnerRefreshAsksEverySourceRegardlessOfStoredOutcomes() {
         Plan refresh = AcquisitionPlanner.refreshAll(AUTO);
         assertTrue(refresh.fetches());
-        assertEquals(4, refresh.scope.sources.size());
+        assertEquals(6, refresh.scope.sources.size());
     }
 
     @Test
-    public void theOwnerClimbForcesTheSequentialPathInBuiltInOrder() {
+    public void theOwnerClimbForcesTheSequentialPathInConfiguredOrder() {
         Plan ordered = AcquisitionPlanner.refreshAllInOrder(AUTO);
 
         assertTrue(ordered.fetches());
         assertEquals("owner-refresh-ordered", ordered.reason);
-        // Sequential, not the racing chain the automatic visit uses.
+        // Sequential, unlike the concurrent checks the automatic visit uses.
         assertTrue(ordered.scope.sourceOrderMode);
         assertEquals(Arrays.asList(SourceId.APPLE, SourceId.SPOTIFY_NATIVE, SourceId.AMLL,
-                SourceId.LRCLIB), ordered.scope.sources);
+                SourceId.LRCLIB, SourceId.QQ, SourceId.NETEASE), ordered.scope.sources);
         // The plain owner refresh must keep the automatic path's own mode.
         assertFalse(AcquisitionPlanner.refreshAll(AUTO).scope.sourceOrderMode);
     }

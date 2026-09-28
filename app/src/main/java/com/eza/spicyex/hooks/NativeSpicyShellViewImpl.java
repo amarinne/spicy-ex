@@ -45,7 +45,6 @@ import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -57,7 +56,6 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.beautifullyrics.entities.VsyncFrameScheduler;
 import com.eza.spicyex.lyrics.AppliedLine;
-import com.eza.spicyex.lyrics.ArtGestureArbiter;
 import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.ChipSpinnerDrawable;
 import com.eza.spicyex.lyrics.FrameStyleBatcher;
@@ -84,7 +82,6 @@ import com.eza.spicyex.lyrics.LyricsSecondaryRowUpdater;
 import com.eza.spicyex.lyrics.LyricsShellLifecycle;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsShellSettings;
-import com.eza.spicyex.lyrics.PanelMediaMode;
 import com.eza.spicyex.lyrics.SkipGapPolicy;
 import com.eza.spicyex.lyrics.LyricsSpaceView;
 import com.eza.spicyex.lyrics.LyricsSurfaceRowPlanner;
@@ -117,8 +114,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             () -> handler.post(this::reprocessForInstalledLanguageModels);
     private final TextView title;
     private final TextView subtitle;
-    /** Two-column panel album line (null in portrait, where the readout owns song info). */
-    private final TextView albumLine;
     private final TextView progress;
     private final TextView status;
     private final ImageButton romanToggle;
@@ -264,35 +259,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private LinearLayout contentColumn;
     /** Non-null only in the adaptive two-column landscape mode; owns header/lyrics/status. */
     private LinearLayout landscapeRightColumn;
-    /** Non-null only in the adaptive two-column landscape mode; art + song info column. */
+    /** Non-null only in the adaptive two-column landscape mode; hosts the readout's column
+     *  placement (cover + song info) beside the lyrics column. */
     private LinearLayout landscapeLeftColumn;
-    /** Square frame hosting the panel art plus its play/pause overlay. */
-    private FrameLayout columnArtFrame;
-    /** Non-null only in the adaptive two-column landscape mode; left square artwork panel. */
-    private ImageView columnArt;
-    private View columnScrim;
-    private ImageButton columnOverlayButton;
-    private android.graphics.drawable.Drawable columnPlayIcon;
-    private android.graphics.drawable.Drawable columnPauseIcon;
-    private Boolean lastColumnOverlayPlaying;
-    private final Runnable hideColumnOverlayRunnable = this::hideColumnOverlay;
-    private String panelMediaMode = PanelMediaMode.SINGLE_TAP;
-    private ArtGestureArbiter columnArtArbiter;
-    private float columnArtDownRawX;
-    private float columnArtDownRawY;
-    private float columnArtDragBoundPx;
-    /** Slow second tap while the overlay is up dismisses it without toggling (readout parity). */
-    private boolean columnCancelArmed;
-    private Bitmap columnArtwork;
-    private String lastColumnArtImageId = "";
-    /** Image id actually on screen; lags the track while the new cover is still fetching. */
-    private String displayedColumnArtImageId = "";
-    private long lastColumnArtAttemptMs;
-    private long columnArtRetryStartMs;
     /** Construction-time two-column decision (rotation remounts, same as the readout). */
     private final boolean twoColumn;
     private ViewGroup chromeHeader;
     private LyricsShellChromeController.ChromeViews chromeViews;
+    private LyricsLayoutEditController.EditorHandle layoutEditorHandle;
+    private boolean clusterLayoutListenerAdded;
+    private boolean chromeLayoutApplied;
+    private boolean chromeLayoutTop;
+    private boolean chromeLayoutLandscape;
+    private int chromeLayoutSize = -1;
     private final Runnable hideChromeRunnable = this::hideChrome;
     private boolean scrollInProgress;
     private boolean scrollSettleScheduled;
@@ -335,9 +314,22 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean scrollWindowRenderScheduled;
     private boolean resetScrollForNextDocument;
     private boolean showTranslation;
+    /** Layout editor's Demo toggle - see enableDemoMode()/disableDemoMode(). While active,
+     *  updateState() stands down entirely so the real per-frame track/lyrics pipeline can't
+     *  clobber (or be clobbered by) the synthetic preview content. */
+    private boolean demoModeActive;
+    private SpotifyTrack demoTrack;
+    private Bitmap demoArtBitmap;
+    private long demoStartElapsedMs;
 
     private void hideChrome() {
-        if (running && chromeHeader != null && !"Always on".equals(fullscreenControlsMode())) {
+        // The editor's top-control capture is a real editing target. Never fade its source out
+        // underneath the outline; close() calls revealChrome() after removing the editor, which
+        // resumes the configured timer from a clean baseline.
+        boolean editorAttached = findViewWithTag(LyricsLayoutEditController.OVERLAY_TAG) != null;
+        if (running && chromeHeader != null
+                && LyricsLayoutEditorRuntimePolicy.chromeAutoHideAllowed(
+                        editorAttached, fullscreenControlsTimeoutSeconds())) {
             chromeRevealAnimating = false;
             chromeHeader.animate().alpha(0f).setDuration(240L).start();
         }
@@ -391,22 +383,27 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
             (prefs, key) -> schedulePreferenceRefresh();
 
-    private void refreshPreferences() {
+    /** Package-private so the in-place layout editor can force a synchronous re-apply right
+     *  after a live write, instead of waiting on the async SharedPreferences-listener round trip
+     *  (registerPreferenceListener's callback is posted, not immediate) - without this, reading
+     *  real view geometry back right after a write sees stale pre-change values. */
+    void refreshPreferences() {
         preferenceRefreshPosted = false;
         if (!running) return;
         applyStatusBarPreference();
         likedMode = config.get(Settings.LIKED_SONGS_BUTTON);
         refreshLikedButton(currentTrackThrottled());
-        panelMediaMode = config.get(Settings.PANEL_MEDIA_CONTROLS);
-        if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) hideColumnOverlay();
         applyRenderConfigChanges("preference changed", false);
         ambientController.applySettings(renderConfig.backgroundStyle, renderConfig.forceDarkBackground,
                 renderConfig.extraDarkBackground);
         if (trackInfoController != null) trackInfoController.onPreferenceChanged();
+        if (jumpToCurrentController != null) jumpToCurrentController.onPreferenceChanged();
         if (skipGapController != null) skipGapController.onPreferenceChanged();
         if (chromeViews != null) {
-            LyricsShellChromeController.applyTopMode(chromeViews, isTopReadout(),
-                    chromeButtonDp(), isLandscape());
+            LyricsShellChromeController.applyClusterPosition(chromeViews,
+                    "Left".equals(config.get(Settings.CHROME_CLUSTER_POSITION)));
+            chromeLayoutApplied = false;
+            refreshChromeClusterSpacing();
             applyBackVisibility();
         }
         revealChrome();
@@ -424,9 +421,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     /** Two-column owns the left edge with its panel art; Back stays gone while engaged
      * (applyTopMode would otherwise restore it on every preference change). */
     private void applyBackVisibility() {
-        if (twoColumn && chromeViews != null && chromeViews.back != null) {
-            chromeViews.back.setVisibility(GONE);
-        }
+        if (chromeViews == null || chromeViews.back == null) return;
+        boolean show = Boolean.TRUE.equals(config.get(Settings.SHOW_FULLSCREEN_BACK_BUTTON));
+        chromeViews.back.setVisibility(show && !twoColumn && !isTopReadout() ? VISIBLE : GONE);
     }
     private long lastKeepAliveArmMs;
     // Unsynced (plain) lyrics: no per-line timing, so don't auto-follow or karaoke-wash — render every
@@ -486,9 +483,68 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     };
 
+    /** Opens the direct-manipulation layout editor as an overlay directly on this shell (same
+     *  view hierarchy as the real artwork/lyrics, not a separate window) - see
+     *  LyricsLayoutEditController. Called from the settings panel's "Layout editor…" row via
+     *  LyricsSettingsDialogController, after that dialog has already closed itself. */
+    private void enterLayoutEditMode() {
+        enterLayoutEditMode(false);
+    }
+
+    private void enterLayoutEditMode(boolean cardMode) {
+        // When the settings dialog dismisses, its window-teardown can momentarily detach the
+        // shell's content parent. If the shell is not yet attached, defer so the overlay gets
+        // a proper layout pass instead of being silently added to an invisible subtree.
+        if (!isAttachedToWindow()) {
+            post(() -> enterLayoutEditMode(cardMode));
+            return;
+        }
+        // Suppliers, not captured Views: which real frame is "current" can change (a position
+        // change moves the artwork/text to a different view - top/bottom/side/column are all
+        // separate objects), so the editor re-queries these after anything that could change them.
+        LyricsLayoutEditController.EditableChip skipChip = new LyricsLayoutEditController.EditableChip(
+                () -> skipGapController == null ? null : skipGapController.view(),
+                () -> { if (skipGapController != null) skipGapController.showForEditing(); },
+                () -> { if (skipGapController != null) skipGapController.restoreAfterEditing(); });
+        LyricsLayoutEditController.EditableChip followChip = new LyricsLayoutEditController.EditableChip(
+                () -> jumpToCurrentController == null ? null : jumpToCurrentController.view(),
+                () -> { if (jumpToCurrentController != null) jumpToCurrentController.showForEditing(); },
+                () -> { if (jumpToCurrentController != null) jumpToCurrentController.restoreAfterEditing(); });
+        layoutEditorHandle = new LyricsLayoutEditController.Request()
+                .activity(activity)
+                .shellRoot(this)
+                .artFrameSupplier(() -> trackInfoController == null
+                        ? null : trackInfoController.currentArtFrame())
+                .trackTextFrameSupplier(() -> trackInfoController == null
+                        ? null : trackInfoController.currentTextFrame())
+                .focusArea(lyricsFrame)
+                .mountedRowsHostSupplier(() -> mountedRowsHost)
+                .chromeClusterSupplier(() -> chromeViews == null ? null : chromeViews.configCluster)
+                .backButtonSupplier(() -> chromeViews == null ? null : chromeViews.back)
+                .landscape(isLandscape() || twoColumn)
+                .twoColumn(twoColumn)
+                .focusFraction(this::resolveFocusAnchorFraction)
+                .artSizeMaxDp(() -> twoColumn && trackInfoController != null
+                        && trackInfoController.columnFitSidePx() > 0
+                        ? Math.round(trackInfoController.columnFitSidePx()
+                                / getResources().getDisplayMetrics().density)
+                        : TrackInfoReadoutController.READOUT_MAX_ART_DP)
+                .applyPreferences(this::refreshPreferences)
+                .onChromeReveal(this::revealChrome)
+                .onClosed(() -> {
+                    LyricsLayoutEditorReopenPolicy.clear();
+                    layoutEditorHandle = null;
+                })
+                .enableDemoData(this::enableDemoMode)
+                .disableDemoData(this::disableDemoMode)
+                .skipChip(skipChip)
+                .followChip(followChip)
+                .cardMode(cardMode)
+                .show();
+    }
 
     boolean consumeBack() {
-        return consumeShareSheetBack();
+        return consumeShareSheetBack() || consumeLayoutEditorBack();
     }
 
     /** Back closes the lyric share sheet first, like any other sheet over the lyrics. */
@@ -498,6 +554,201 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (!shareCardController.closePickerIfOpen()) shareCardController.dismiss();
         return true;
     }
+
+    private boolean consumeLayoutEditorBack() {
+        LyricsLayoutEditController.EditorHandle editor = layoutEditorHandle;
+        if (editor == null || !editor.onBackPressed()) {
+            layoutEditorHandle = null;
+            LyricsLayoutEditorReopenPolicy.clear();
+            return false;
+        }
+        return true;
+    }
+
+    // -- agent layout probe (debug only) -------------------------------------------
+    // Reached only from the file command channel, which itself starts only on a debug build and
+    // only while its arm file exists (see AgentCommandChannel). Nothing here is wired into any
+    // user-facing path, opening the editor goes through the same enterLayoutEditMode() the
+    // settings row does, and every reading is a plain read of views already on screen.
+
+    /** @return false when the editor is already open, so a caller can tell it did not change. */
+    boolean agentOpenEditor(boolean card) {
+        if (layoutEditorHandle != null) return false;
+        enterLayoutEditMode(card);
+        return true;
+    }
+
+    boolean agentCloseEditor() {
+        LyricsLayoutEditorReopenPolicy.clear();
+        LyricsLayoutEditController.EditorHandle editor = layoutEditorHandle;
+        if (editor == null) return false;
+        editor.agentClose();
+        return true;
+    }
+
+    boolean agentSelectElement(String name) {
+        LyricsLayoutEditController.EditorHandle editor = layoutEditorHandle;
+        return editor != null && editor.agentSelect(name);
+    }
+
+    /**
+     * Reads the live screen and the open editor as one JSON line, or null when it could not be
+     * built. Never throws: the channel turns a thrown probe into an {@code error} reply, and a
+     * half-built report would be a plausible-looking wrong answer.
+     */
+    String agentLayoutReport() {
+        try {
+            LayoutProbeReport report = new LayoutProbeReport();
+            report.rect("screen", agentScreenRect());
+            report.number("density", getResources().getDisplayMetrics().density);
+            report.text("orientation", isLandscape() ? "landscape" : "portrait");
+            report.flag("two_column", twoColumn);
+            report.flag("editor_open", layoutEditorHandle != null);
+            report.number("chrome_alpha", chromeHeader == null ? 0f : chromeHeader.getAlpha());
+            report.rect("artwork", LyricsLayoutEditController.screenRectOf(agentArtworkFrame()));
+            report.rect("track_text", LyricsLayoutEditController.screenRectOf(agentTrackTextFrame()));
+            report.rect("dock", LyricsLayoutEditController.screenRectOf(
+                    chromeViews == null ? null : chromeViews.configCluster));
+            report.rect("back", LyricsLayoutEditController.screenRectOf(
+                    chromeViews == null ? null : chromeViews.back));
+            report.rect("lyrics_frame", LyricsLayoutEditController.screenRectOf(lyricsFrame));
+            addChipFact(report, "skip", skipGapController == null ? null : skipGapController.view());
+            addChipFact(report, "follow",
+                    jumpToCurrentController == null ? null : jumpToCurrentController.view());
+            addFocusAnchorFact(report);
+            addLyricRowFacts(report);
+            LyricsLayoutEditController.EditorHandle editor = layoutEditorHandle;
+            if (editor != null) editor.agentReport(report);
+            return reportJson(report);
+        } catch (Throwable t) {
+            XpLog.log("[SpicyLayoutProbe] report failed: " + t);
+            return null;
+        }
+    }
+
+    /** Whichever art frame is really showing, and its title/artist(/album) block - the readout
+     *  knows: the two-column column is one of its own placements. */
+    private View agentArtworkFrame() {
+        return trackInfoController == null ? null : trackInfoController.currentArtFrame();
+    }
+
+    private View agentTrackTextFrame() {
+        return trackInfoController == null ? null : trackInfoController.currentTextFrame();
+    }
+
+    /** This shell is the editor overlay's parent, so it is also the only parent a chip could
+     *  share with it - a chip nested anywhere else is under the overlay by Android's own tree
+     *  order and cannot out-draw it however high its z is. */
+    private void addChipFact(LayoutProbeReport report, String name, View chip) {
+        report.rect("chip." + name, LyricsLayoutEditController.screenRectOf(chip));
+        if (chip == null) return;
+        report.number("z.chip." + name, Math.round(chip.getZ()));
+        report.flag("chip." + name + ".sibling", chip.getParent() == this);
+    }
+
+    /** Where the focus line is drawn, per the anchor the shell actually scrolled to. */
+    private void addFocusAnchorFact(LayoutProbeReport report) {
+        int[] lyrics = LyricsLayoutEditController.screenRectOf(lyricsFrame);
+        if (lyrics == null) return;
+        float fraction = resolveFocusAnchorFraction();
+        report.number("focus_anchor_y", Math.round(lyrics[1] + fraction * (lyrics[3] - lyrics[1])));
+    }
+
+    private void addLyricRowFacts(LayoutProbeReport report) {
+        if (mountedRowsHost == null) return;
+        for (int i = 0; i < mountedRowsHost.getChildCount(); i++) {
+            addLyricRowFact(report, mountedRowsHost.getChildAt(i));
+        }
+    }
+
+    /** A mounted row's text content: its own bounds minus its line-spacing padding, which is how
+     *  the editor's own hit test and per-row outlines measure a row. */
+    private static void addLyricRowFact(LayoutProbeReport report, View row) {
+        int[] bounds = LyricsLayoutEditController.screenRectOf(row);
+        if (bounds == null) return;
+        int left = bounds[0] + row.getPaddingLeft();
+        int top = bounds[1] + row.getPaddingTop();
+        int right = bounds[2] - row.getPaddingRight();
+        int bottom = bounds[3] - row.getPaddingBottom();
+        if (right <= left || bottom <= top) {
+            // No padding, or it consumed the whole row: the full bounds are the honest answer.
+            report.lyricRow(bounds);
+            return;
+        }
+        report.lyricRow(new int[]{left, top, right, bottom});
+    }
+
+    /** The shell's own screen rect, which is the display's content area rather than the whole
+     *  panel, so a probe can tell a control that ran off screen from one that is merely near it. */
+    private int[] agentScreenRect() {
+        int[] loc = new int[2];
+        getLocationOnScreen(loc);
+        int width = getWidth() > 0 ? getWidth() : getResources().getDisplayMetrics().widthPixels;
+        int height = getHeight() > 0 ? getHeight() : getResources().getDisplayMetrics().heightPixels;
+        return new int[]{loc[0], loc[1], loc[0] + width, loc[1] + height};
+    }
+
+    private static String reportJson(LayoutProbeReport report) throws Exception {
+        org.json.JSONObject json = new org.json.JSONObject();
+        for (Map.Entry<String, int[]> entry : report.rects().entrySet()) {
+            int[] rect = entry.getValue();
+            json.put(entry.getKey(), new org.json.JSONArray()
+                    .put(rect[0]).put(rect[1]).put(rect[2]).put(rect[3]));
+        }
+        for (Map.Entry<String, Object> entry : report.facts().entrySet()) {
+            json.put(entry.getKey(), entry.getValue());
+        }
+        org.json.JSONArray rows = new org.json.JSONArray();
+        for (int[] row : report.lyricRows()) {
+            rows.put(new org.json.JSONArray().put(row[0]).put(row[1]).put(row[2]).put(row[3]));
+        }
+        json.put("lyric_rows", rows);
+        org.json.JSONArray violations = new org.json.JSONArray();
+        for (String violation : report.violations()) violations.put(violation);
+        json.put("violations", violations);
+        return json.toString();
+    }
+
+    /** Layout editor's Demo toggle: swaps in a synthetic track/artwork/lyrics document so the
+     *  editor previews something even with nothing (useful) actually playing. See
+     *  {@link #updateState}'s early-return guard, which stands the real per-frame pipeline down
+     *  for the duration so it can't race this synthetic content. */
+    private void enableDemoMode() {
+        if (demoModeActive) return;
+        demoModeActive = true;
+        if (demoTrack == null) demoTrack = DemoLyricsContent.demoTrack();
+        if (demoArtBitmap == null) demoArtBitmap = DemoLyricsContent.demoArtBitmap();
+        document = DemoLyricsContent.demoDocument();
+        demoStartElapsedMs = SystemClock.elapsedRealtime();
+        clearRowCascade();
+        followState.resetActive();
+        resetScrollForNextDocument = true;
+        pendingLoadEntrance = true;
+        renderDocument();
+        if (trackInfoController != null) trackInfoController.showDemoTrack(demoTrack, demoArtBitmap);
+        skipGapController.show(SkipGapPolicy.defaultLabel(SkipGapPolicy.GapKind.LEADING));
+        jumpToCurrentController.update(true);
+    }
+
+    /** Reverts everything {@link #enableDemoMode} touched; the next real per-frame update (now
+     *  unfrozen) repaints title/artwork/lyrics from the real track normally. */
+    private void disableDemoMode() {
+        if (!demoModeActive) return;
+        demoModeActive = false;
+        skipGapController.hide();
+        jumpToCurrentController.restoreAfterEditing();
+        if (trackInfoController != null) trackInfoController.clearDemoArt();
+        // The demo strings went into the readout's own text stack (two-column included); the real
+        // per-frame update only repaints a field whose last-displayed value differs, so the
+        // trackers have to be cleared here or the demo text would survive the toggle.
+        lastDisplayedTitle = "";
+        lastDisplayedArtist = "";
+        lastDisplayedAlbum = "";
+        document = null;
+        lastUri = "";
+        showLoading("Waiting for Spotify track…");
+    }
+
     private boolean isLandscape() {
         return getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
     }
@@ -667,7 +918,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      *  the padding logic. */
     private void applyContentColumnPadding() {
         if (contentColumn == null) return;
-        if (!isLandscape()) {
+        if (!isLandscape() && !twoColumn) {
             contentColumn.setPadding(0, 0, 0, 0);
             return;
         }
@@ -675,7 +926,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // navigation bar (72dp by default) also went on the free edge, leaving a wide empty strip
         // between the lyrics and the side of the screen with nothing in it.
         contentColumn.setPadding(
-                Math.max(dp(LANDSCAPE_EDGE_MIN_DP), safeLeftInsetPx), 0,
+                Math.max(dp(LANDSCAPE_EDGE_MIN_DP), safeLeftInsetPx),
+                0,
                 Math.max(dp(LANDSCAPE_TRAILING_EDGE_MIN_DP), safeRightInsetPx), dp(16));
     }
 
@@ -687,17 +939,21 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      */
     private void applyRowSideInsets() {
         if (document == null || document.appliedLines == null) return;
-        int wanted = isLandscape() ? 0 : lyricsSideInsetPx;
         for (com.eza.spicyex.lyrics.AppliedLine line : document.appliedLines) {
-            View view = LyricsLineViewState.rowView(line);
-            if (!(view instanceof com.eza.spicyex.lyrics.BlurredRowLayout)) continue;
-            com.eza.spicyex.lyrics.BlurredRowLayout row = (com.eza.spicyex.lyrics.BlurredRowLayout) view;
-            int delta = wanted - row.horizontalOffsetPx;
-            if (delta == 0) continue;
-            row.horizontalOffsetPx = wanted;
-            row.setPaddingRelative(Math.max(0, row.getPaddingStart() + delta), row.getPaddingTop(),
-                    Math.max(0, row.getPaddingEnd() + delta), row.getPaddingBottom());
+            applyRowSideInset(LyricsLineViewState.rowView(line));
         }
+    }
+
+    /** Portrait keeps the reading margin on the row itself; the column and scroller carry none. */
+    private void applyRowSideInset(View view) {
+        if (!(view instanceof com.eza.spicyex.lyrics.BlurredRowLayout)) return;
+        com.eza.spicyex.lyrics.BlurredRowLayout row = (com.eza.spicyex.lyrics.BlurredRowLayout) view;
+        int wanted = isLandscape() ? 0 : lyricsSideInsetPx;
+        int delta = wanted - row.horizontalOffsetPx;
+        if (delta == 0) return;
+        row.horizontalOffsetPx = wanted;
+        row.setPaddingRelative(Math.max(0, row.getPaddingStart() + delta), row.getPaddingTop(),
+                Math.max(0, row.getPaddingEnd() + delta), row.getPaddingBottom());
     }
 
     /** {left, right} system insets: bars plus display cutout, per edge. */
@@ -744,14 +1000,74 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         applyLandscapeChromeClearance();
     }
 
-    /** In landscape the control buttons stand in a column at the trailing edge, over the lyrics.
-     *  Long lines used to run underneath them; wrap before that column instead. */
+    /** In landscape or two-column the control buttons can stand in a vertical rail at the
+     *  trailing edge, over the lyrics. Long lines used to run underneath them; wrap before
+     *  that column instead. */
     private void applyLandscapeChromeClearance() {
-        if (lyricsScroll == null || !isLandscape()) return;
-        int clearance = dp(chromeButtonDp() + 16);
-        boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
-        lyricsScroll.setPadding(rtl ? clearance : 0, lyricsScroll.getPaddingTop(),
-                rtl ? 0 : clearance, lyricsScroll.getPaddingBottom());
+        if (lyricsScroll == null || (!isLandscape() && !twoColumn)) return;
+        int fallbackPx = dp(chromeButtonDp() + 16);
+        int gapPx = dp(12);
+
+        int scrollLeft = 0;
+        int scrollRight = 0;
+        int railLeft = 0;
+        int railTop = 0;
+        int railRight = 0;
+        int railBottom = 0;
+
+        View cluster = chromeViews == null ? null : chromeViews.configCluster;
+        try {
+            if (lyricsScroll.getWidth() > 0 && lyricsScroll.getHeight() > 0) {
+                int[] scrollLoc = new int[2];
+                lyricsScroll.getLocationOnScreen(scrollLoc);
+                scrollLeft = scrollLoc[0];
+                scrollRight = scrollLeft + lyricsScroll.getWidth();
+            }
+            if (cluster != null && cluster.getWidth() > 0 && cluster.getHeight() > 0) {
+                int[] clusterLoc = new int[2];
+                cluster.getLocationOnScreen(clusterLoc);
+                railLeft = clusterLoc[0];
+                railTop = clusterLoc[1];
+                railRight = railLeft + cluster.getWidth();
+                railBottom = railTop + cluster.getHeight();
+            }
+        } catch (Throwable ignored) {
+        }
+
+        int[] pads = railClearancePx(scrollLeft, scrollRight, railLeft, railTop, railRight, railBottom, gapPx, fallbackPx);
+        int leftPad = pads[0];
+        int rightPad = pads[1];
+
+        if (leftPad != lyricsScroll.getPaddingLeft() || rightPad != lyricsScroll.getPaddingRight()) {
+            lyricsScroll.setPadding(leftPad, lyricsScroll.getPaddingTop(), rightPad, lyricsScroll.getPaddingBottom());
+        }
+    }
+
+    static int[] railClearancePx(int scrollLeft, int scrollRight, int railLeft,
+            int railTop, int railRight, int railBottom, int gapPx, int fallbackPx) {
+        int scrollWidth = scrollRight - scrollLeft;
+        int railWidth = railRight - railLeft;
+        int railHeight = railBottom - railTop;
+
+        if (railWidth <= 0 || railHeight <= 0 || scrollWidth <= 0) {
+            return new int[]{0, fallbackPx};
+        }
+
+        boolean isVerticalRail = railHeight > railWidth;
+        boolean overlaps = railRight > scrollLeft && railLeft < scrollRight;
+        boolean onLeft = (railLeft + railRight) < (scrollLeft + scrollRight);
+
+        if (isVerticalRail && overlaps) {
+            if (onLeft) {
+                int pad = Math.max(0, (railRight - scrollLeft) + gapPx);
+                return new int[]{pad, 0};
+            } else {
+                int pad = Math.max(0, (scrollRight - railLeft) + gapPx);
+                return new int[]{0, pad};
+            }
+        }
+
+        return onLeft ? new int[]{fallbackPx, 0} : new int[]{0, fallbackPx};
     }
 
     /** Real left/right safe inset (system bars + display cutout - a corner punch-hole or curved/
@@ -823,10 +1139,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         this.ambientController = new LyricsAmbientController(activity, HTTP, config);
         this.settingsDialogController = new LyricsSettingsDialogController(
                 activity, frameScheduler, ambientController, host, this::onSettingsClosed,
+                mode -> enterLayoutEditMode(mode == com.eza.spicyex.SettingsPanel.EDITOR_CARD),
                 this::resyncLyricsTiming, TAG);
         this.emptyStateController = new LyricsShellEmptyStateController(activity, config, textFactory);
         this.shellLifecycle = new LyricsShellLifecycle(activity, () -> {
-            if (consumeShareSheetBack()) return;
+            if (consumeShareSheetBack() || consumeLayoutEditorBack()) return;
             host.markExplicitLyricsExit(activity);
             activity.finish();
         });
@@ -878,27 +1195,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         addView(contentColumn, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         if (twoColumn) {
-            landscapeLeftColumn = new LinearLayout(activity) {
-                /** Centres the art-and-info block in the column: once the cover is sized by the
-                 *  height rather than the width, the spare width is split evenly on both sides
-                 *  (it all used to pile up on one side, leaving the cover hugging the edge), and
-                 *  the text below spans exactly the cover's width. */
-                @Override
-                protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-                    super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-                    if (columnArtFrame == null) return;
-                    int content = View.MeasureSpec.getSize(widthMeasureSpec);
-                    int side = columnArtFrame.getMeasuredWidth();
-                    int inset = side > 0 ? Math.max(0, (content - side) / 2) : 0;
-                    if (inset != getPaddingLeft() || inset != getPaddingRight()) {
-                        setPadding(inset, getPaddingTop(), inset, getPaddingBottom());
-                        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-                    }
-                }
-            };
+            landscapeLeftColumn = new LinearLayout(activity);
             landscapeLeftColumn.setOrientation(LinearLayout.VERTICAL);
-            // START keeps the art frame's left edge flush with the song-info text below
-            // it; CENTER_VERTICAL centers the fitted stack in the column.
             landscapeLeftColumn.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
             landscapeLeftColumn.setClipChildren(false);
             landscapeLeftColumn.setClipToPadding(false);
@@ -910,164 +1208,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             leftLp.setMargins(0, dp(40), dp(20), dp(24));
             leftLp.gravity = Gravity.CENTER_VERTICAL;
             contentColumn.addView(landscapeLeftColumn, leftLp);
-            // Square art at full column width when it fits, flush left with the song
-            // info. On short screens it shrinks so title/artist/album always have
-            // measured room — the whole stack fits inside the column, nothing is
-            // pushed off the bottom edge.
-            columnArtFrame = new FrameLayout(activity) {
-                @Override
-                protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-                    int width = MeasureSpec.getSize(widthMeasureSpec);
-                    int side = width;
-                    if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
-                        int reserve = dp(8);
-                        if (title != null && title.getVisibility() != GONE) {
-                            title.measure(widthMeasureSpec,
-                                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
-                            reserve += title.getMeasuredHeight();
-                        }
-                        if (subtitle != null && subtitle.getVisibility() != GONE) {
-                            subtitle.measure(widthMeasureSpec,
-                                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
-                            reserve += subtitle.getMeasuredHeight();
-                        }
-                        if (albumLine != null && albumLine.getVisibility() != GONE) {
-                            albumLine.measure(widthMeasureSpec,
-                                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
-                            reserve += albumLine.getMeasuredHeight();
-                        }
-                        side = Math.min(width, Math.max(0,
-                                MeasureSpec.getSize(heightMeasureSpec) - reserve));
-                    }
-                    int squareSpec = MeasureSpec.makeMeasureSpec(Math.max(0, side),
-                            MeasureSpec.EXACTLY);
-                    super.onMeasure(squareSpec, squareSpec);
-                }
-            };
-            columnArt = new ImageView(activity);
-            columnArt.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            columnArt.setVisibility(GONE);
-            columnArt.setClipToOutline(true);
-            columnArt.setElevation(dp(16));
-            final int columnArtRadiusPx = dp(20);
-            columnArt.setOutlineProvider(new android.view.ViewOutlineProvider() {
-                @Override
-                public void getOutline(View view, android.graphics.Outline outline) {
-                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), columnArtRadiusPx);
-                }
-            });
-            columnArtFrame.addView(columnArt, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            columnScrim = new View(activity);
-            android.graphics.drawable.GradientDrawable columnScrimBg =
-                    new android.graphics.drawable.GradientDrawable();
-            columnScrimBg.setColor(0x73000000);
-            columnScrimBg.setCornerRadius(columnArtRadiusPx);
-            columnScrim.setBackground(columnScrimBg);
-            columnScrim.setVisibility(GONE);
-            // No click listener: the scrim must stay non-clickable so taps fall through
-            // to the art touch handler below. A clickable scrim would swallow the second
-            // tap (hiding the overlay instead of toggling) and break Single-tap mode.
-            columnArtFrame.addView(columnScrim, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            float columnDensity = activity.getResources().getDisplayMetrics().density;
-            columnPlayIcon = new com.eza.spicyex.ui.ActionIconDrawable(
-                    com.eza.spicyex.ui.ActionIconDrawable.Kind.PLAY,
-                    Color.rgb(232, 232, 238), columnDensity);
-            columnPauseIcon = new TrackInfoReadoutController.PauseBarsDrawable(
-                    Color.rgb(232, 232, 238));
-            columnOverlayButton = new ImageButton(activity);
-            columnOverlayButton.setBackgroundColor(Color.TRANSPARENT);
-            columnOverlayButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-            columnOverlayButton.setVisibility(GONE);
-            columnOverlayButton.setFocusable(false);
-            columnOverlayButton.setOnClickListener(v -> {
-                host.togglePlayPause();
-                updateColumnOverlayIcon(host.isPlayerActuallyPlaying());
-                scheduleColumnOverlayHide();
-                revealChrome();
-            });
-            int columnOverlaySize = dp(56);
-            columnArtFrame.addView(columnOverlayButton, new FrameLayout.LayoutParams(
-                    columnOverlaySize, columnOverlaySize, Gravity.CENTER));
-            columnArt.setClickable(true);
-            columnArt.setFocusable(true);
-            columnArt.setOnClickListener(v -> {
-                if (PanelMediaMode.revealOnSingleTap(panelMediaMode)) {
-                    showColumnOverlay();
-                } else if (PanelMediaMode.DOUBLE_TAP.equals(panelMediaMode)) {
-                    host.togglePlayPause();
-                    flashColumnIcon();
-                }
-                revealChrome();
-            });
-            panelMediaMode = config.get(Settings.PANEL_MEDIA_CONTROLS);
-            android.view.ViewConfiguration vc = android.view.ViewConfiguration.get(activity);
-            columnArtArbiter = new ArtGestureArbiter(vc.getScaledTouchSlop(),
-                    android.view.ViewConfiguration.getDoubleTapTimeout(), dp(32),
-                    android.os.SystemClock::elapsedRealtime);
-            // Listener lives on the art itself (it fills the frame, so frame-level
-            // touches would never fire); drags translate the whole frame so the
-            // overlay travels with the cover. Click stays for TalkBack/keyboard.
-            columnArt.setOnTouchListener((v, event) -> {
-                if (event.getPointerCount() > 1) {
-                    columnArtArbiter.onCancel();
-                    columnCancelArmed = false;
-                    columnArtFrame.setTranslationX(0f);
-                    return true;
-                }
-                int action = event.getActionMasked();
-                if (action == MotionEvent.ACTION_DOWN) {
-                    // Chrome reveal is not a media control; it always applies.
-                    revealChrome();
-                    if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) return true;
-                    columnArtFrame.animate().cancel();
-                    columnArtDownRawX = event.getRawX();
-                    columnArtDownRawY = event.getRawY();
-                    columnArtDragBoundPx = columnArtFrame.getWidth();
-                    long now = android.os.SystemClock.elapsedRealtime();
-                    if (columnOverlayVisible() && !columnArtArbiter.isDoubleTapCandidate(now)) {
-                        // Tap around the button dismisses the overlay; it must not toggle.
-                        columnArtArbiter.reset();
-                        columnCancelArmed = true;
-                    } else {
-                        columnArtArbiter.onDown(now);
-                    }
-                    return true;
-                }
-                if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) return true;
-                if (action == MotionEvent.ACTION_MOVE) {
-                    ArtGestureArbiter.Output out = columnArtArbiter.onMove(
-                            event.getRawX() - columnArtDownRawX,
-                            event.getRawY() - columnArtDownRawY);
-                    if (out == ArtGestureArbiter.Output.DRAG_UPDATE) {
-                        columnCancelArmed = false;
-                        hideColumnOverlay();
-                        columnArtFrame.setTranslationX(clampedColumnDrag(columnArtArbiter.dragDxPx()));
-                    }
-                    return true;
-                }
-                if (action == MotionEvent.ACTION_UP) {
-                    if (columnCancelArmed) {
-                        columnCancelArmed = false;
-                        hideColumnOverlay();
-                        return true;
-                    }
-                    handleColumnArtUp(columnArtArbiter.onUp());
-                    return true;
-                }
-                if (action == MotionEvent.ACTION_CANCEL) {
-                    columnArtArbiter.onCancel();
-                    columnCancelArmed = false;
-                    columnArtFrame.setTranslationX(0f);
-                    return true;
-                }
-                return true;
-            });
-            LinearLayout.LayoutParams artFrameLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            artFrameLp.gravity = Gravity.START;
-            landscapeLeftColumn.addView(columnArtFrame, artFrameLp);
+            // The cover and song info themselves are the readout's column placement (see
+            // TrackInfoReadoutController#columnView): it is added below, once the readout is
+            // attached, so all four placements are built by one component.
             landscapeRightColumn = new LinearLayout(activity);
             landscapeRightColumn.setOrientation(LinearLayout.VERTICAL);
             landscapeRightColumn.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -1089,7 +1232,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 chromeButton,
                 isLandscape(),
                 isTopReadout(),
+                "Left".equals(config.get(Settings.CHROME_CLUSTER_POSITION)),
                 () -> {
+                    if (consumeLayoutEditorBack()) return;
                     host.markExplicitLyricsExit(activity);
                     activity.finish();
                 },
@@ -1129,9 +1274,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         chromeHeader = chrome.header;
         chromeViews = chrome;
         applyBackVisibility();
+        attachClusterLayoutListener();
         romanToggle = chrome.romanToggle;
         translationToggle = chrome.translationToggle;
         likeButton = chrome.likeButton;
+        if (chrome.settingsButton != null) {
+            chrome.settingsButton.setOnLongClickListener(v -> {
+                enterLayoutEditMode();
+                return true;
+            });
+        }
         refreshLikedButton(null);
         romanToggle.setOnClickListener(v -> {
             if (SoundToggleRouter.forGesture(false)
@@ -1150,52 +1302,25 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         });
         updateToggleVisuals();
 
-        title = textFactory.createText(activity, "Waiting for Spotify track…", twoColumn ? 20 : 18, Color.WHITE, textFactory.resolveTypeface(true));
+        // Legacy-GONE song-info views: the readout owns song text in every layout now, two-column
+        // included (its column placement carries the cover, title, artist and album). They stay
+        // only so the per-frame update has somewhere to write when they are shown.
+        title = textFactory.createText(activity, "Waiting for Spotify track…", 18, Color.WHITE, textFactory.resolveTypeface(true));
         title.setVisibility(GONE);
-        title.setGravity(twoColumn ? Gravity.START : Gravity.CENTER);
+        title.setGravity(Gravity.CENTER);
         title.setMaxLines(1);
         title.setAlpha(0.92f);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        // Panel song info sits flush against the art above it.
-        titleLp.topMargin = dp(twoColumn ? 8 : 0);
-        if (twoColumn) {
-            setupPanelMarquee(title);
-            landscapeLeftColumn.addView(title, titleLp);
-        } else {
-            rowContainer().addView(title, titleLp);
-        }
+        rowContainer().addView(title, titleLp);
 
-        subtitle = textFactory.createText(activity, "Open playback, then fullscreen lyrics", twoColumn ? 15 : 13, Color.rgb(190, 190, 190), textFactory.resolveTypeface(false));
+        subtitle = textFactory.createText(activity, "Open playback, then fullscreen lyrics", 13, Color.rgb(190, 190, 190), textFactory.resolveTypeface(false));
         subtitle.setVisibility(GONE);
-        subtitle.setGravity(twoColumn ? Gravity.START : Gravity.CENTER);
+        subtitle.setGravity(Gravity.CENTER);
         subtitle.setMaxLines(1);
         subtitle.setAlpha(0.72f);
         LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         subtitleLp.topMargin = dp(0);
-        if (twoColumn) {
-            setupPanelMarquee(subtitle);
-            landscapeLeftColumn.addView(subtitle, subtitleLp);
-            // These views are legacy-GONE everywhere else (the readout owns song info in
-            // portrait); the panel is their only owner, so it must show them itself.
-            title.setVisibility(VISIBLE);
-            subtitle.setVisibility(VISIBLE);
-        } else {
-            rowContainer().addView(subtitle, subtitleLp);
-        }
-
-        if (twoColumn) {
-            albumLine = textFactory.createText(activity, "", 14, Color.rgb(150, 150, 150), textFactory.resolveTypeface(false));
-            albumLine.setVisibility(VISIBLE);
-            albumLine.setGravity(Gravity.START);
-            albumLine.setMaxLines(1);
-            albumLine.setAlpha(0.6f);
-            setupPanelMarquee(albumLine);
-            LinearLayout.LayoutParams albumLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            albumLp.topMargin = dp(0);
-            landscapeLeftColumn.addView(albumLine, albumLp);
-        } else {
-            albumLine = null;
-        }
+        rowContainer().addView(subtitle, subtitleLp);
 
         lyricsScroll = new com.eza.spicyex.lyrics.ElasticScrollView(activity);
         // Rubber-banding and the shortened scroll end are Apple Music's; every other animation
@@ -1298,14 +1423,17 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         });
         lyricsScroll.addView(lyricsColumn, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         lyricsFrame.addView(lyricsScroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        FrameLayout floatingChipHost = twoColumn ? this : lyricsFrame;
         jumpToCurrentController = LyricsJumpToCurrentController.attach(
                 activity,
-                lyricsFrame,
+                floatingChipHost,
                 textFactory,
+                config,
+                uiStrings(),
                 this::resumeFollowCurrentLine);
         skipGapController = LyricsSkipGapController.attach(
                 activity,
-                lyricsFrame,
+                floatingChipHost,
                 config,
                 () -> config == null ? Settings.FOLLOW_CHIP_POSITION.defaultValue
                         : config.get(Settings.FOLLOW_CHIP_POSITION),
@@ -1318,8 +1446,31 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 host,
                 config,
                 this::revealChrome,
-                twoColumn);
+                twoColumn,
+                chrome.header,
+                chrome.headerTitle);
         trackInfoController.setSkipGapController(skipGapController);
+        // Two-column: the readout's column placement (cover + song info, one component with the
+        // other three) goes into the left column this shell owns, in place of the lyric stack it
+        // used to draw itself. Hiding it (Track info position Off) collapses the left column and
+        // the lyrics column takes the width.
+        if (twoColumn && trackInfoController.columnView() != null) {
+            landscapeLeftColumn.addView(trackInfoController.columnView(),
+                    new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT));
+            // The readout set the box's visibility before it had a parent to mirror it onto.
+            landscapeLeftColumn.setVisibility(trackInfoController.columnView().getVisibility());
+        }
+        // TrackInfoReadoutController.attach() just added topBox/bottomBox/sideBox as later
+        // siblings of chromeHeader on this same shellRoot, so in Top position they paint (and
+        // steal touches) over the roman/translate/like/settings cluster wherever the two
+        // overlap. The chrome row must stay the topmost child so those buttons stay reachable.
+        // While the layout editor is open, its dock capture deliberately sits above this header
+        // so the real settings/reading actions cannot fire while selecting the grouped Dock
+        // element. Outside the editor, keep the header above readout overlays as usual.
+        if (findViewWithTag(LyricsLayoutEditController.OVERLAY_TAG) == null) {
+            chromeHeader.bringToFront();
+        }
         LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
         scrollLp.topMargin = 0;
         rowContainer().addView(lyricsFrame, scrollLp);
@@ -1359,6 +1510,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             if (side != lyricsSideInsetPx) {
                 lyricsSideInsetPx = side;
                 applyLyricsScrollPadding();
+                applyRowSideInsets();
             }
             int[] edges = safeSideInsets(insets);
             if (edges[0] != safeLeftInsetPx || edges[1] != safeRightInsetPx) {
@@ -1372,6 +1524,19 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         });
     }
 
+
+    // Runnable trigger callback intended for instant live UI refreshes when an async CDN network image downloads
+    private final Runnable artworkDownloadListener = () -> {
+        if (running) {
+            handler.post(() -> {
+                if (running) {
+                    // A frame is all that is needed: the readout owns every art surface now, and
+                    // its own retry loop re-reads the network cache on the next update.
+                    frameScheduler.requestFrame();
+                }
+            });
+        }
+    };
     void start() {
         dbgEnter("NativeSpicyShellView.start");
         if (running) return;
@@ -1381,6 +1546,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         setKeepScreenOn(true);
         hasRenderedDocument = false;
         cancelSongChangeTransitions();
+        synchronized (TrackInfoReadoutController.ART_NETWORK_LISTENERS) {
+            TrackInfoReadoutController.ART_NETWORK_LISTENERS.add(artworkDownloadListener);
+        }
         applyStatusBarPreference();
         com.eza.spicyex.lyrics.LanguageModelPack.setReadyListener(languageModelReadyListener);
         watchContentScreenTop(true);
@@ -1393,6 +1561,28 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         playbackClock.reset("");
         updateState(1f / 60f);
         frameScheduler.start();
+        if (LyricsLayoutEditorReopenPolicy.hasPending()) {
+            post(this::checkPendingLayoutEditorReopen);
+        }
+    }
+
+    private void checkPendingLayoutEditorReopen() {
+        if (!LyricsLayoutEditorReopenPolicy.hasPending()) return;
+        if (!running) return;
+        if (layoutEditorHandle != null) return;
+        if (!isAttachedToWindow()) {
+            post(this::checkPendingLayoutEditorReopen);
+            return;
+        }
+        LyricsLayoutEditorReopenPolicy.PendingReopen pending =
+                LyricsLayoutEditorReopenPolicy.consume(SystemClock.elapsedRealtime());
+        if (pending == null) return;
+        enterLayoutEditMode(pending.cardMode);
+        post(() -> {
+            if (layoutEditorHandle != null && pending.selectedName != null && !pending.selectedName.isEmpty()) {
+                layoutEditorHandle.agentSelect(pending.selectedName, false);
+            }
+        });
     }
 
     void stop() {
@@ -1402,6 +1592,22 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         setKeepScreenOn(false);
         cancelLoadEntranceAnimation();
         cancelSongChangeTransitions();
+        // The layout editor is an in-shell full-screen touch layer. It normally removes itself
+        // through Save/Cancel, but a lyrics screen teardown can bypass that path. Remove any
+        // stale instance before this shell is reused so it can never intercept the next screen's
+        // settings/reading touches.
+        View staleLayoutEditor = findViewWithTag(LyricsLayoutEditController.OVERLAY_TAG);
+        if (layoutEditorHandle != null && staleLayoutEditor != null
+                && (staleLayoutEditor.getParent() != null || staleLayoutEditor.isAttachedToWindow())) {
+            LyricsLayoutEditorReopenPolicy.record(
+                    layoutEditorHandle.isCardMode(),
+                    layoutEditorHandle.selectedName(),
+                    SystemClock.elapsedRealtime());
+        }
+        if (staleLayoutEditor != null && staleLayoutEditor.getParent() instanceof ViewGroup) {
+            ((ViewGroup) staleLayoutEditor.getParent()).removeView(staleLayoutEditor);
+        }
+        layoutEditorHandle = null;
         // Hand the status bar back only if this screen took it; Spotify's window is otherwise
         // left as it found it.
         if (statusBarHiddenByUs) {
@@ -1414,6 +1620,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         lyricRequest = null;
         if (sessionSubscription != null) sessionSubscription.close();
         sessionSubscription = null;
+        synchronized (TrackInfoReadoutController.ART_NETWORK_LISTENERS) {
+            TrackInfoReadoutController.ART_NETWORK_LISTENERS.remove(artworkDownloadListener);
+        }
         unregisterPreferenceListener();
         toggleSpinnerController.reset();
         shellLifecycle.stop();
@@ -1424,6 +1633,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         returnToCurrentPending = false;
         clearScrollSubpixel();
         ambientController.stop();
+        TrackInfoReadoutController.trimMemory();
         handler.removeCallbacks(idleFrameProbe);
         visuallySettledFrames = 0;
         playbackClock.reset("");
@@ -1434,22 +1644,21 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         chromeRevealAnimating = false;
         if (chromeHeader != null) chromeHeader.animate().cancel();
         if (trackInfoController != null) trackInfoController.teardown();
-        hideColumnOverlay();
-        cancelColumnArtFollowThroughTimeout();
-        columnArtInFollowThrough = false;
-        if (columnArtFrame != null) {
-            columnArtFrame.animate().cancel();
-            columnArtFrame.setTranslationX(0f);
-        }
-        clearColumnArtwork();
-        lastColumnArtImageId = "";
-        displayedColumnArtImageId = "";
         clearPendingStyleWrites();
     }
 
     private void revealChrome() {
         if (chromeHeader == null) return;
         handler.removeCallbacks(hideChromeRunnable);
+        // Track/art readout overlays can be reattached after the header (preference changes,
+        // rotation, and layout-editor entry all do this). Restore the real chrome's z-order at
+        // the same moment as its visibility so the first DOWN reaches the settings button and
+        // Android can observe its long-press sequence.
+        chromeHeader.bringToFront();
+        // The layout editor stays above the header: its Cancel/Save buttons sit exactly over the
+        // real back button, and its dock outline over the chrome cluster.
+        View layoutEditor = findViewWithTag(LyricsLayoutEditController.OVERLAY_TAG);
+        if (layoutEditor != null) layoutEditor.bringToFront();
         chromeHeader.setVisibility(View.VISIBLE);
         if (chromeHeader.getAlpha() < 0.99f && !chromeRevealAnimating) {
             chromeRevealAnimating = true;
@@ -1460,19 +1669,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             chromeHeader.setAlpha(1f);
             chromeRevealAnimating = false;
         }
-        long delay;
-        switch (fullscreenControlsMode()) {
-            case "5 seconds": delay = 5000L; break;
-            case "10 seconds": delay = 10000L; break;
-            case "30 seconds": delay = 30000L; break;
-            default: return;
-        }
-        handler.postDelayed(hideChromeRunnable, delay);
+        int timeoutSeconds = fullscreenControlsTimeoutSeconds();
+        if (!LyricsLayoutEditorRuntimePolicy.chromeAutoHideAllowed(
+                layoutEditor != null, timeoutSeconds)) return;
+        handler.postDelayed(hideChromeRunnable, timeoutSeconds * 1000L);
     }
 
-    private String fullscreenControlsMode() {
+    private int fullscreenControlsTimeoutSeconds() {
         return new com.eza.spicyex.lyrics.LyricsShellSettings(activity, config)
-                .fullscreenControlsMode();
+                .fullscreenControlsTimeoutSeconds();
     }
 
     // The reflective player-state walk in host.getCurrentTrackSafely() is too expensive for every
@@ -1485,282 +1690,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             throttledTrackAtMs = now;
         }
         return throttledTrack;
-    }
-
-    /** Feeds the two-column artwork panel from the shared cache; snapshots are
-     * caller-owned copies. The previous cover stays on screen until the new one
-     * arrives (no clear-and-gap on song change); a cover that never arrives gives
-     * up after ~10s rather than showing the wrong track forever. */
-    private static final long COLUMN_ART_RETRY_WINDOW_MS = 10_000L;
-    private int columnArtFollowThroughTarget;
-    private boolean columnArtInFollowThrough;
-    private final Runnable columnArtTimeoutRunnable = this::onColumnArtTimeout;
-
-    private void onColumnArtTimeout() {
-        if (!columnArtInFollowThrough || columnArtFrame == null) return;
-        columnArtInFollowThrough = false;
-        if (!columnArtFrame.isAttachedToWindow()) {
-            columnArtFrame.setTranslationX(0f);
-            return;
-        }
-        columnArtFrame.animate().cancel();
-        if (com.eza.spicyex.ui.Motion.animationsEnabled()) {
-            columnArtFrame.animate().translationX(0f).setDuration(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.BASE)).start();
-        } else {
-            columnArtFrame.setTranslationX(0f);
-        }
-    }
-
-    private void cancelColumnArtFollowThroughTimeout() {
-        if (columnArtFrame != null) {
-            columnArtFrame.removeCallbacks(columnArtTimeoutRunnable);
-        }
-    }
-
-    private void startColumnArtFollowThrough(int targetPx) {
-        if (columnArtFrame == null) return;
-        cancelColumnArtFollowThroughTimeout();
-        columnArtFollowThroughTarget = targetPx;
-        columnArtInFollowThrough = true;
-        columnArtFrame.postDelayed(columnArtTimeoutRunnable, 400L);
-        columnArtFrame.animate().cancel();
-        if (com.eza.spicyex.ui.Motion.animationsEnabled()) {
-            columnArtFrame.animate().translationX(targetPx).setDuration(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.EXIT)).start();
-        } else {
-            columnArtFrame.setTranslationX(targetPx);
-        }
-    }
-
-    private void updateColumnArt(SpotifyTrack track, long nowMs) {
-        if (!twoColumn || columnArt == null) return;
-        String imageId = track == null ? "" : safe(track.imageId);
-        String uri = track == null ? "" : safe(track.uri);
-        if (!imageId.equals(lastColumnArtImageId)) {
-            lastColumnArtImageId = imageId;
-            lastColumnArtAttemptMs = 0;
-            columnArtRetryStartMs = nowMs;
-            hideColumnOverlay();
-            if (columnArtFrame != null) {
-                if (columnArtInFollowThrough) {
-                    cancelColumnArtFollowThroughTimeout();
-                    columnArtInFollowThrough = false;
-                    columnArtFrame.animate().cancel();
-                    if (com.eza.spicyex.ui.Motion.animationsEnabled()) {
-                        columnArtFrame.setTranslationX(-columnArtFollowThroughTarget);
-                        columnArtFrame.animate().translationX(0f).setDuration(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.BASE)).start();
-                    } else {
-                        columnArtFrame.setTranslationX(0f);
-                    }
-                } else {
-                    columnArtFrame.animate().cancel();
-                    columnArtFrame.setTranslationX(0f);
-                }
-            }
-            if (columnArtArbiter != null) columnArtArbiter.reset();
-            columnCancelArmed = false;
-            if (imageId.isEmpty()) {
-                displayedColumnArtImageId = "";
-                clearColumnArtwork();
-                columnArt.setVisibility(GONE);
-            }
-        }
-        if (imageId.isEmpty() || imageId.equals(displayedColumnArtImageId)) return;
-        if (nowMs - columnArtRetryStartMs > COLUMN_ART_RETRY_WINDOW_MS) {
-            displayedColumnArtImageId = imageId;
-            clearColumnArtwork();
-            columnArt.setVisibility(GONE);
-            return;
-        }
-        if (nowMs - lastColumnArtAttemptMs < 1000) return;
-        lastColumnArtAttemptMs = nowMs;
-        Bitmap art = null;
-        try {
-            android.util.DisplayMetrics metrics = activity.getResources().getDisplayMetrics();
-            int panelPx = (int) (metrics.widthPixels * 0.8f / 1.95f);
-            art = SpotifyArtworkCache.snapshotLarge(imageId, uri, panelPx);
-        } catch (Throwable ignored) {
-        }
-        if (art == null) return;
-        displayedColumnArtImageId = imageId;
-        if (columnArtwork != null && com.eza.spicyex.ui.Motion.animationsEnabled()) {
-            android.graphics.drawable.TransitionDrawable td = new android.graphics.drawable.TransitionDrawable(
-                    new android.graphics.drawable.Drawable[]{
-                            new android.graphics.drawable.BitmapDrawable(activity.getResources(), columnArtwork),
-                            new android.graphics.drawable.BitmapDrawable(activity.getResources(), art)
-                    });
-            td.setCrossFadeEnabled(true);
-            columnArt.setImageDrawable(td);
-            td.startTransition(com.eza.spicyex.ui.Motion.dur(com.eza.spicyex.ui.Motion.SWAP));
-        } else {
-            columnArt.setImageBitmap(art);
-        }
-        columnArtwork = art;
-        columnArt.setVisibility(VISIBLE);
-        columnArt.invalidateOutline();
-        columnArt.setContentDescription(
-                emptyFallback(track.title, "Unknown title") + " — " + emptyFallback(track.artist, "Unknown artist"));
-    }
-
-    private void clearColumnArtwork() {
-        if (columnArt != null) columnArt.setImageBitmap(null);
-        if (columnArtwork != null) {
-            try {
-                columnArtwork.recycle();
-            } catch (Throwable ignored) {
-            }
-            columnArtwork = null;
-        }
-    }
-
-    /** Single-line marquee for the narrow two-column song-info texts. */
-    private static void setupPanelMarquee(TextView view) {
-        view.setSingleLine(true);
-        view.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
-        view.setMarqueeRepeatLimit(-1);
-        view.setHorizontalFadingEdgeEnabled(true);
-        view.setSelected(true);
-    }
-
-    /** Panel art gestures share the readout's arbitration: single tap reveals the
-     * play/pause overlay in Single-tap mode (a slow second tap on the art dismisses it,
-     * a quick second tap or a button tap toggles), double-tap toggles immediately with a brief
-     * icon pulse, horizontal drag past ~32dp commits prev/next with follow-through,
-     * release inside snaps back. Off disables gestures and swipe entirely. */
-    private void handleColumnArtUp(ArtGestureArbiter.Output out) {
-        if (columnArtFrame == null) return;
-        switch (out) {
-            case REVEAL:
-                if (PanelMediaMode.revealOnSingleTap(panelMediaMode)) showColumnOverlay();
-                else springBackColumnArt();
-                break;
-            case TOGGLE:
-                if (columnArtInFollowThrough) {
-                    cancelColumnArtFollowThroughTimeout();
-                    columnArtInFollowThrough = false;
-                }
-                columnArtFrame.setTranslationX(0f);
-                if (toggleColumnTransport()) flashColumnIcon();
-                break;
-            case COMMIT_NEXT:
-                if (!commitColumnTrack(true)) {
-                    springBackColumnArt();
-                } else {
-                    int w = columnArtFrame.getWidth();
-                    startColumnArtFollowThrough(w > 0 ? -w : -dp(180));
-                }
-                break;
-            case COMMIT_PREV:
-                if (!commitColumnTrack(false)) {
-                    springBackColumnArt();
-                } else {
-                    int w = columnArtFrame.getWidth();
-                    startColumnArtFollowThrough(w > 0 ? w : dp(180));
-                }
-                break;
-            case SPRING_BACK:
-            default:
-                springBackColumnArt();
-                break;
-        }
-    }
-
-    private void springBackColumnArt() {
-        if (columnArtFrame == null) return;
-        if (columnArtInFollowThrough) {
-            cancelColumnArtFollowThroughTimeout();
-            columnArtInFollowThrough = false;
-        }
-        columnArtFrame.animate().cancel();
-        columnArtFrame.animate().translationX(0f).setDuration(180L).start();
-    }
-
-    private void showColumnOverlay() {
-        if (columnScrim == null || columnOverlayButton == null) return;
-        updateColumnOverlayIcon(host.isPlayerActuallyPlaying());
-        columnScrim.setVisibility(VISIBLE);
-        columnOverlayButton.setVisibility(VISIBLE);
-        columnScrim.animate().cancel();
-        columnOverlayButton.animate().cancel();
-        columnScrim.setAlpha(0f);
-        columnScrim.animate().alpha(1f).setDuration(150L).start();
-        columnOverlayButton.setAlpha(0f);
-        columnOverlayButton.setScaleX(0.6f);
-        columnOverlayButton.setScaleY(0.6f);
-        columnOverlayButton.animate().alpha(1f).setDuration(150L).start();
-        columnOverlayButton.animate().scaleX(1f).scaleY(1f).setDuration(260L)
-                .setInterpolator(new android.view.animation.OvershootInterpolator(2.0f))
-                .start();
-        scheduleColumnOverlayHide();
-    }
-
-    private void scheduleColumnOverlayHide() {
-        handler.removeCallbacks(hideColumnOverlayRunnable);
-        handler.postDelayed(hideColumnOverlayRunnable, 1800L);
-    }
-
-    /** Brief play/pause icon pulse with no scrim (double-tap feedback). */
-    private void flashColumnIcon() {
-        if (columnOverlayButton == null) return;
-        updateColumnOverlayIcon(host.isPlayerActuallyPlaying());
-        if (columnScrim != null) {
-            columnScrim.animate().cancel();
-            columnScrim.setVisibility(GONE);
-        }
-        columnOverlayButton.setVisibility(VISIBLE);
-        columnOverlayButton.animate().cancel();
-        columnOverlayButton.setAlpha(0f);
-        columnOverlayButton.setScaleX(1f);
-        columnOverlayButton.setScaleY(1f);
-        columnOverlayButton.animate().alpha(1f).setDuration(150L).start();
-        handler.removeCallbacks(hideColumnOverlayRunnable);
-        handler.postDelayed(hideColumnOverlayRunnable, 400L);
-    }
-
-    private void hideColumnOverlay() {
-        if (columnArtFrame != null) handler.removeCallbacks(hideColumnOverlayRunnable);
-        if (columnScrim != null) {
-            columnScrim.animate().cancel();
-            columnScrim.setVisibility(GONE);
-        }
-        if (columnOverlayButton != null) {
-            columnOverlayButton.animate().cancel();
-            columnOverlayButton.setVisibility(GONE);
-        }
-    }
-
-    private void updateColumnOverlayIcon(boolean playing) {
-        if (columnOverlayButton == null) return;
-        if (Boolean.valueOf(playing).equals(lastColumnOverlayPlaying)) return;
-        lastColumnOverlayPlaying = playing;
-        columnOverlayButton.setImageDrawable(playing ? columnPauseIcon : columnPlayIcon);
-    }
-
-    private boolean columnOverlayVisible() {
-        return columnScrim != null && columnScrim.getVisibility() == VISIBLE;
-    }
-
-    private boolean toggleColumnTransport() {
-        try {
-            return host.togglePlayPause();
-        } catch (Throwable ignored) {
-            return false;
-        }
-        // No optimistic icon flip; updateState() applies observed playing state.
-    }
-
-    private boolean commitColumnTrack(boolean next) {
-        try {
-            return next ? host.skipToNextTrack() : host.skipToPreviousTrack();
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    private float clampedColumnDrag(float dx) {
-        float bound = Math.max(1f, columnArtDragBoundPx);
-        float ax = Math.abs(dx);
-        if (ax <= bound) return dx;
-        return Math.signum(dx) * (bound + (ax - bound) * 0.3f);
     }
 
     /** Both session publications and polling adopt the track before mounting its document. */
@@ -1789,6 +1718,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void updateState(float deltaSeconds) {
+        if (demoModeActive) {
+            // A dedicated, self-contained animation path - not the real per-track pipeline below,
+            // which must never see the demo track's sentinel URI (it would read as a real track
+            // change and try to fetch lyrics for it through the real host).
+            updateDemoFrame(deltaSeconds);
+            return;
+        }
         SpotifyTrack track = currentTrackThrottled();
         boolean playingNow = host.isPlayerActuallyPlaying();
         ambientController.setPlaying(playingNow);
@@ -1830,21 +1766,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (!trackArtist.equals(lastDisplayedArtist) || !trackAlbum.equals(lastDisplayedAlbum)) {
             lastDisplayedArtist = trackArtist;
             lastDisplayedAlbum = trackAlbum;
-            if (twoColumn && albumLine != null) {
-                setTextIfChanged(subtitle, trackArtist);
-                setTextIfChanged(albumLine, trackAlbum);
-            } else {
-                setTextIfChanged(subtitle, trackArtist + " • " + trackAlbum);
-            }
+            setTextIfChanged(subtitle, trackArtist + " • " + trackAlbum);
         }
         if (trackInfoController != null) {
+            // Every layout's song text lives in the readout, the two-column column included.
             trackInfoController.onTrackChanged(track);
             trackInfoController.onPlayingChanged(playingNow);
-        }
-        updateColumnArt(track, SystemClock.elapsedRealtime());
-        if (twoColumn && columnOverlayButton != null
-                && columnOverlayButton.getVisibility() == VISIBLE) {
-            updateColumnOverlayIcon(playingNow);
         }
         updateLikedButton(track);
         long displayedSecond = Math.max(0L, pos) / 1000L;
@@ -1907,6 +1834,33 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         updateFrameDemand(playingNow, rendererPending);
     }
 
+    /** Demo mode's whole per-frame job: a synthetic clock looping over the demo document's
+     *  duration, driving the same active-row and animation calls the real pipeline uses once it
+     *  already has a position and a document - everything upstream of that (track-change
+     *  detection, lyric fetch, ad handling) never runs, since none of it makes sense for a fake
+     *  track with a sentinel URI. */
+    private void updateDemoFrame(float deltaSeconds) {
+        if (document == null) {
+            updateFrameDemand(false, false);
+            return;
+        }
+        long lyricPos = (SystemClock.elapsedRealtime() - demoStartElapsedMs)
+                % Math.max(1L, document.durationMs);
+        int nextActive = LyricTimeline.findPrimaryActiveRow(document.appliedLines, lyricPos);
+        if (nextActive != followState.activeIndex()) {
+            setActiveLine(nextActive, lyricPos, demoTrack);
+        }
+        boolean userScrollHeld = followState.isHoldingNow();
+        long visibleRange = scrollController != null
+                ? scrollController.visibleLineRange(rowHeightPrefix(), document.appliedLines.size())
+                : LyricsScrollController.ALL_LINES;
+        frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
+                renderConfig, lyricPos, nextActive, deltaSeconds, userScrollHeld,
+                LyricsScrollController.rangeStart(visibleRange),
+                LyricsScrollController.rangeEnd(visibleRange));
+        updateFrameDemand(true, false);
+    }
+
     /**
      * @param rendererPending rows the frame pass just drew that still have a spring to drain;
      *                         computed by the caller so it sees the same viewport as the pass
@@ -1944,27 +1898,36 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private boolean showRomanization() {
+        // The layout editor's demo preview forces every reading on regardless of the user's own
+        // per-language toggles below - its whole point is showing what the layout looks like
+        // across every supported script, which most real configs don't have all enabled at once.
+        if (demoModeActive) return true;
         return renderConfig != null && renderConfig.transliterationEnabled
                 && transliterationSession != null && transliterationSession.showRomanization();
     }
 
     private boolean showTranslation() {
+        if (demoModeActive) return true;
         return renderConfig != null && renderConfig.translationEnabled && showTranslation;
     }
 
     private String japaneseReadingMode() {
+        if (demoModeActive) return "furigana_romaji";
         return transliterationSession == null ? "" : transliterationSession.japaneseReadingMode();
     }
 
     private String chineseMode() {
+        if (demoModeActive) return "pinyin";
         return transliterationSession == null ? "" : transliterationSession.chineseMode();
     }
 
     private String koreanMode() {
+        if (demoModeActive) return com.eza.spicyex.lyrics.KoreanDisplayMode.RR_STANDARD.value;
         return transliterationSession == null ? "" : transliterationSession.koreanMode();
     }
 
     private String cyrillicMode() {
+        if (demoModeActive) return "Russian";
         return transliterationSession == null ? "" : transliterationSession.cyrillicMode();
     }
 
@@ -2282,7 +2245,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // position with no reveal at all - the rows the user actually sees just popped in. Anchor
         // to wherever playback already is so the reveal targets the rows that are really shown.
         int initialAnchor = 0;
-        if (!staticDoc) {
+        if (!staticDoc && !demoModeActive) {
             SpotifyTrack currentForAnchor = host.getCurrentTrackSafely();
             long anchorPos = currentForAnchor == null ? -1
                     : playbackClock.getPosition(currentForAnchor, host.isPlayerActuallyPlaying());
@@ -2680,11 +2643,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 document,
                 LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(
                         renderConfig, showRomanization(), showTranslation(), japaneseReadingMode()));
-        return rowViewFactory.build(rowPlan.line, rowPlan.options,
+        LinearLayout row = rowViewFactory.build(rowPlan.line, rowPlan.options,
                 this::segmentRomanizedText, () -> {
             invalidateRowHeightPrefix();
             updateVirtualSpacerHeights();
         });
+        applyRowSideInset(row);
+        return row;
     }
 
     private String segmentRomanizedText(AppliedLine line, SyllableSegment segment,
@@ -2804,7 +2769,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      */
     private void styleRowsNow() {
         try {
-            if (document == null || renderConfig == null
+            if (document == null || renderConfig == null || demoModeActive
                     || document.appliedLines == null || document.appliedLines.isEmpty()) return;
             if (staticDoc) {
                 frameRenderer.applyStatic(document, rowMountController.mountedIndices(), mountedRowsHost);
@@ -3417,6 +3382,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             shareCardController.setSheetListener(this::onShareSheet);
         }
         Bitmap art = SpotifyArtworkCache.snapshotLarge(track.imageId, track.uri, dp(420));
+        if (art == null && track.imageId != null && !track.imageId.isEmpty()) {
+            art = TrackInfoReadoutController.ART_NETWORK_CACHE.get(track.imageId);
+            if (art == null) TrackInfoReadoutController.fetchArtworkFromNetwork(track.imageId);
+        }
         int index = appliedLineIndexUnder(yInScroll);
         AppliedLine line = (document != null && index >= 0 && index < document.appliedLines.size())
                 ? document.appliedLines.get(index) : null;
@@ -3576,31 +3545,26 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (scroll != null) scroll.setElasticEnabled(enabled);
     }
 
-    /** Resolves Settings#LYRICS_FOCUS_POSITION to an anchor fraction for scrollController.
-     *  "Auto" preserves the pre-existing behavior (raised only while the Apple-style line-slide
-     *  animation is on); Top/Center/Bottom pin it explicitly. Raised/lowered anchors overlap the
-     *  chrome or strand space at the opposite edge in landscape, so landscape always centers
-     *  regardless of the setting. */
+    /** Resolves Settings#LYRICS_FOCUS_POSITION to an anchor fraction for scrollController. */
     private float resolveFocusAnchorFraction() {
         String pos = config == null ? "Auto" : config.get(Settings.LYRICS_FOCUS_POSITION);
-        float fraction;
-        if ("Top".equals(pos)) {
-            fraction = LyricsScrollController.RAISED_ANCHOR_FRACTION;
-        } else if ("Bottom".equals(pos)) {
-            fraction = LyricsScrollController.LOWERED_ANCHOR_FRACTION;
-        } else if ("Center".equals(pos)) {
-            fraction = LyricsScrollController.CENTER_ANCHOR_FRACTION;
-        } else if ("Custom".equals(pos)) {
-            int percent = config == null ? Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT.defaultValue
-                    : config.get(Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT);
-            fraction = Math.max(0f, Math.min(1f, percent / 100f));
-        } else {
-            fraction = slideAnimationEnabled
-                    ? LyricsScrollController.RAISED_ANCHOR_FRACTION
-                    : LyricsScrollController.CENTER_ANCHOR_FRACTION;
-        }
-        if (isLandscape()) fraction = LyricsScrollController.CENTER_ANCHOR_FRACTION;
-        return fraction;
+        int percent = config == null ? Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT.defaultValue
+                : config.get(Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT);
+        return focusAnchorFraction(pos, percent, isLandscape(), slideAnimationEnabled);
+    }
+
+    /** "Auto" keeps the pre-existing behaviour: raised only while the Apple-style line-slide
+     *  animation is on, and centred in landscape, where a raised anchor overlaps the chrome in the
+     *  short height. Top/Center/Bottom/Custom are the user's own per-orientation choice and are
+     *  honoured in every orientation; the layout editor draws its focus line from this. */
+    static float focusAnchorFraction(String pos, int customPercent, boolean landscape,
+                                     boolean slideAnimation) {
+        if ("Top".equals(pos)) return LyricsScrollController.RAISED_ANCHOR_FRACTION;
+        if ("Bottom".equals(pos)) return LyricsScrollController.LOWERED_ANCHOR_FRACTION;
+        if ("Center".equals(pos)) return LyricsScrollController.CENTER_ANCHOR_FRACTION;
+        if ("Custom".equals(pos)) return Math.max(0f, Math.min(1f, customPercent / 100f));
+        if (landscape || !slideAnimation) return LyricsScrollController.CENTER_ANCHOR_FRACTION;
+        return LyricsScrollController.RAISED_ANCHOR_FRACTION;
     }
 
     private void scrollToActiveTarget(int target, boolean instant) {
@@ -4805,6 +4769,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void updateJumpToCurrentVisibility() {
         boolean show = document != null && followState.activeIndex() >= 0 && followState.isHoldingNow();
         jumpToCurrentController.update(show);
+
+        // The countdown starts once the list is at rest: not while it is still gliding or
+        // springing back from an end, and not while paused (it starts over on resume rather
+        // than jumping ahead by the time spent paused).
+        boolean settling = scrollInProgress || (lyricsScroll instanceof com.eza.spicyex.lyrics.ElasticScrollView
+                && ((com.eza.spicyex.lyrics.ElasticScrollView) lyricsScroll).isStretched());
+        if (show && (settling || !host.isPlayerActuallyPlaying())) followState.markManualScroll();
         if (show && autoResumeFollow && host.isPlayerActuallyPlaying()) {
             int delaySeconds = config == null ? Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.defaultValue
                     : config.get(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS);
@@ -5133,22 +5104,64 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void updateLikedButton(SpotifyTrack track) {
         if (likeButton == null) return;
-        likedMode = config.get(Settings.LIKED_SONGS_BUTTON);
+        // likedMode is not re-read here: this runs on every vsync frame, and each read is a pair of
+        // SharedPreferences lookups plus the per-orientation key it builds to try first. The value
+        // is already kept current at construction and by refreshPreferences(), which the
+        // SharedPreferences change listener drives.
         refreshLikedButton(track);
     }
+
+    private void refreshChromeClusterSpacing() {
+        if (chromeViews == null) return;
+        boolean top = isTopReadout();
+        boolean landscape = isLandscape();
+        int size = chromeButtonDp();
+        // applyTopMode reorders children with remove/add. Repeating that on every vsync changes
+        // the View touch target between DOWN and UP, which cancels ordinary clicks and long
+        // presses intermittently. Rebuild only when the actual chrome layout inputs changed.
+        if (chromeLayoutApplied && chromeLayoutTop == top
+                && chromeLayoutLandscape == landscape && chromeLayoutSize == size) return;
+        LyricsShellChromeController.applyTopMode(chromeViews, top, size, landscape);
+        applyBackVisibility();
+        chromeLayoutApplied = true;
+        chromeLayoutTop = top;
+        chromeLayoutLandscape = landscape;
+        chromeLayoutSize = size;
+        attachClusterLayoutListener();
+        applyLandscapeChromeClearance();
+    }
+
+    private void attachClusterLayoutListener() {
+        if (clusterLayoutListenerAdded || chromeViews == null || chromeViews.configCluster == null) return;
+        chromeViews.configCluster.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            applyLandscapeChromeClearance();
+        });
+        clusterLayoutListenerAdded = true;
+    }
+
 
     private void refreshLikedButton(SpotifyTrack track) {
         if (likeButton == null) return;
         com.eza.spicyex.ui.ActionIconDrawable.Kind kind =
                 com.eza.spicyex.ui.ActionIconDrawable.likedSongsKind(likedMode);
-        if (kind == null) {
-            likeButton.setVisibility(View.GONE);
+        // An ad (or any non-song, e.g. a podcast episode) can never be saved - showing the button
+        // there just invites a tap that does nothing but pop the "unavailable" toast.
+        if (kind == null || (track != null && !SpotifyCollectionAction.isSong(track))) {
+            if (likeButton.getVisibility() != View.GONE) {
+                likeButton.setVisibility(View.GONE);
+                chromeLayoutApplied = false;
+            }
+            refreshChromeClusterSpacing();
             lastLikedSaved = null;
             lastLikedKind = null;
             pendingLikedUri = "";
             return;
         }
-        likeButton.setVisibility(View.VISIBLE);
+        if (likeButton.getVisibility() != View.VISIBLE) {
+            likeButton.setVisibility(View.VISIBLE);
+            chromeLayoutApplied = false;
+        }
+        refreshChromeClusterSpacing();
         boolean saved = track != null && track.saved;
         if (track != null && !pendingLikedUri.isEmpty()) {
             if (!pendingLikedUri.equals(safe(track.uri))) {

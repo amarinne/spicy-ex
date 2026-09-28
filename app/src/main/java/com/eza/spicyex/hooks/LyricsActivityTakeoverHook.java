@@ -153,10 +153,10 @@ final class LyricsActivityTakeoverHook {
             handleLegacyActivityBack((Activity) param.thisObject, param);
         });
 
-        // Back keys reach views before any onBackPressed override runs: a view that
-        // consumes KEYCODE_BACK and finishes directly would otherwise bypass the
-        // explicit-exit marking while still hitting the finish suppression below.
-        // Record only; Spotify's handling runs untouched.
+        // Back keys reach views before any onBackPressed override runs. On the legacy path
+        // (notably the API-32 Fold), offer Back-up to owned shell layers first; otherwise an open
+        // editor sheet is skipped and Spotify exits the whole lyrics activity. When no shell
+        // layer consumes it, record Back-down and leave Spotify's normal handling untouched.
         XpHooks.findBefore(Activity.class, "dispatchKeyEvent", "takeover:Activity#dispatchKeyEvent", param -> {
             handleActivityKeyForBack((Activity) param.thisObject, param);
         }, KeyEvent.class);
@@ -275,6 +275,16 @@ final class LyricsActivityTakeoverHook {
         if (activity == null || !isLyricsFullscreenActivity(activity)) return;
         if (param.args == null || param.args.length == 0 || !(param.args[0] instanceof KeyEvent)) return;
         KeyEvent event = (KeyEvent) param.args[0];
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK
+                && event.getAction() == KeyEvent.ACTION_UP
+                && shouldInterceptLyricsBack(nativeLyricsSessionActive, hasNativeSpicyRoot(activity))
+                && shellConsumesBack(activity)) {
+            synchronized (BACK_PRESS_UNTIL_MS) {
+                BACK_PRESS_UNTIL_MS.remove(activity);
+            }
+            param.setResult(true);
+            return;
+        }
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_DOWN) {
             synchronized (BACK_PRESS_UNTIL_MS) {
                 BACK_PRESS_UNTIL_MS.put(activity, SystemClock.elapsedRealtime() + BACK_PRESS_EXIT_WINDOW_MS);

@@ -25,7 +25,7 @@ public class SettingsDefaultsTest {
         assertEquals("custom", Settings.LYRICS_FONT.coerce("custom"));
         assertEquals("spotify", Settings.LYRICS_FONT.coerce("bogus"));
         assertEquals("", Settings.LYRICS_FONT_CUSTOM_PATH.defaultValue);
-        assertEquals(Settings.TEXT, Settings.LYRICS_FONT_CUSTOM_PATH.section);
+        assertEquals(Settings.INTERNAL, Settings.LYRICS_FONT_CUSTOM_PATH.section); // edited in the layout editor
         assertEquals("Off", Settings.STATUS_BAR_HIDDEN_MODE.defaultValue);
         assertEquals(Settings.LYRICS, Settings.STATUS_BAR_HIDDEN_MODE.section);
         assertEquals(java.util.Arrays.asList("Off", "Portrait", "Landscape", "Both"),
@@ -55,7 +55,7 @@ public class SettingsDefaultsTest {
         assertTrue(Settings.APPLE_COMPACT_TEXT.defaultValue);
         assertFalse(Settings.LINE_SLIDE_ANIMATION.defaultValue);
         assertTrue(Settings.APPLE_LIFT.defaultValue);
-        assertEquals(Settings.APPLE, Settings.APPLE_LIFT.section);
+        assertEquals(Settings.INTERNAL, Settings.APPLE_LIFT.section); // edited in the layout editor
         assertFalse(Settings.AUTO_RESUME_FOLLOW.defaultValue);
         assertEquals(3, (int) Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.defaultValue);
         assertEquals(Settings.LYRICS, Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.section);

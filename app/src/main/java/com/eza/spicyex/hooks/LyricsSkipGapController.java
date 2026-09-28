@@ -41,11 +41,11 @@ final class LyricsSkipGapController {
     private static final long COLLAPSE_DELAY_MS = 3200L;
     private static final long COLLAPSE_DURATION_MS = 260L;
     private static final long HIDE_DURATION_MS = 240L;
-    private static final int ICON_SIZE_DP = 40;
+    private static final int CHIP_HEIGHT_DP = 44;
     private static final int TEXT_COLOR = Color.rgb(232, 232, 238);
     private static final int SIDE_MARGIN_DP = 16;
-    /** Vertical distance between the two stacked chips: 40dp chip + 8dp gap. */
-    private static final int STACK_OFFSET_DP = 48;
+    /** Vertical distance between the two stacked chips: 44dp chip + 8dp gap. */
+    private static final int STACK_OFFSET_DP = 52;
 
     private final SpotifyPlusConfig config;
     private final LinearLayout pill;
@@ -66,10 +66,14 @@ final class LyricsSkipGapController {
     // still visible, decline to reset it, and leave a half-faded collapsed circle on screen.
     private boolean visible;
     private ValueAnimator widthAnimator;
+    private int baselineBottomMarginDp = 24;
     private int bottomMarginDp = 24 + STACK_OFFSET_DP;
     /** Set only by {@link #showForEditing()}, so {@link #restoreAfterEditing()} never hides a
      *  chip a real skip gap put up on its own. */
     private boolean editingForcedVisible;
+    /** Real gap state continues updating while the editor pins a preview on screen. */
+    private boolean requestedVisible;
+    private String requestedLabel = "";
 
     private LyricsSkipGapController(SpotifyPlusConfig config, LinearLayout pill, TextView label,
             FrameLayout.LayoutParams lp, Runnable onTap, Supplier<String> jumpPositionSupplier) {
@@ -122,7 +126,7 @@ final class LyricsSkipGapController {
         pill.addView(label, labelLp);
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(ICON_SIZE_DP), Gravity.BOTTOM | Gravity.END);
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(CHIP_HEIGHT_DP), Gravity.BOTTOM | Gravity.END);
         parent.addView(pill, lp);
 
         LyricsSkipGapController controller = new LyricsSkipGapController(
@@ -146,10 +150,7 @@ final class LyricsSkipGapController {
         position = nextPosition == null ? Settings.SKIP_CHIP_POSITION.defaultValue : nextPosition;
         applyPosition();
 
-        // Ensure bottom margins are re-calculated based on the new position constraint.
-        // We use the baseline bottom margin value derived from its current state.
-        int jumpMargin = bottomMarginDp - (isStacked() ? STACK_OFFSET_DP : 0);
-        setBottomMarginDp(Math.max(24, jumpMargin));
+        applyBottomMargin();
     }
 
     /** True when this chip and the jump-to-current chip share the same horizontal anchor, so they
@@ -186,9 +187,14 @@ final class LyricsSkipGapController {
 
     /** Keeps the stack above the bottom track-info readout; mirrors the jump chip margin. */
     void setBottomMarginDp(int jumpMarginDp) {
+        baselineBottomMarginDp = jumpMarginDp;
+        applyBottomMargin();
+    }
+
+    private void applyBottomMargin() {
         // Only stack vertically when both chips share the same horizontal anchor. Otherwise the
         // skip chip stays pinned to its own baseline rather than floating in space.
-        int target = isStacked() ? jumpMarginDp + STACK_OFFSET_DP : jumpMarginDp;
+        int target = isStacked() ? baselineBottomMarginDp + STACK_OFFSET_DP : baselineBottomMarginDp;
         if (target == bottomMarginDp && lp.bottomMargin == dp(target)) return;
         bottomMarginDp = target;
         lp.bottomMargin = dp(target);
@@ -204,9 +210,8 @@ final class LyricsSkipGapController {
      *  edited even with no real skip gap active right now. A no-op if a real gap already has it
      *  showing - {@link #restoreAfterEditing()} must never hide that. */
     void showForEditing() {
-        if (visible) return;
         editingForcedVisible = true;
-        show(SkipGapPolicy.defaultLabel(SkipGapPolicy.GapKind.LEADING));
+        if (!visible) showInternal(SkipGapPolicy.defaultLabel(SkipGapPolicy.GapKind.LEADING));
         pill.removeCallbacks(collapse);
     }
 
@@ -215,13 +220,20 @@ final class LyricsSkipGapController {
     void restoreAfterEditing() {
         if (!editingForcedVisible) return;
         editingForcedVisible = false;
-        hide();
+        if (requestedVisible) showInternal(requestedLabel);
+        else hideInternal();
     }
 
     /** Shows the chip with the given label, or updates the label of an already-shown chip
      *  without replaying the appear animation. */
     void show(String labelText) {
         String text = labelText == null ? "" : labelText;
+        requestedVisible = true;
+        requestedLabel = text;
+        showInternal(text);
+    }
+
+    private void showInternal(String text) {
         boolean appearing = !visible;
         if (!appearing && text.equals(shownLabel)) return;
 
@@ -261,7 +273,8 @@ final class LyricsSkipGapController {
         label.setAlpha(value ? 0f : 1f);
         ViewGroup.LayoutParams pillLp = pill.getLayoutParams();
         if (pillLp != null) {
-            pillLp.width = value ? dp(ICON_SIZE_DP) : ViewGroup.LayoutParams.WRAP_CONTENT;
+            pillLp.width = value ? dp(CHIP_HEIGHT_DP) : ViewGroup.LayoutParams.WRAP_CONTENT;
+            pillLp.height = dp(CHIP_HEIGHT_DP);
             pill.setLayoutParams(pillLp);
         }
         pill.setPadding(value ? 0 : dp(10), 0, value ? 0 : dp(10), 0);
@@ -276,7 +289,7 @@ final class LyricsSkipGapController {
     private void collapseToIcon() {
         if (collapsed || pill.getVisibility() != View.VISIBLE) return;
         int startWidth = pill.getWidth();
-        int endWidth = dp(ICON_SIZE_DP);
+        int endWidth = dp(CHIP_HEIGHT_DP);
         if (startWidth <= endWidth) {
             setCollapsed(true);
             return;
@@ -303,6 +316,14 @@ final class LyricsSkipGapController {
     }
 
     void hide() {
+        requestedVisible = false;
+        requestedLabel = "";
+        if (LyricsLayoutEditorRuntimePolicy.chipShouldBeVisible(
+                requestedVisible, editingForcedVisible)) return;
+        hideInternal();
+    }
+
+    private void hideInternal() {
         pill.removeCallbacks(collapse);
         if (!visible) return;
         visible = false;
@@ -338,7 +359,7 @@ final class LyricsSkipGapController {
     private static GradientDrawable pillBackground() {
         GradientDrawable background = new GradientDrawable();
         background.setShape(GradientDrawable.RECTANGLE);
-        background.setCornerRadius(dp(ICON_SIZE_DP) / 2f);
+        background.setCornerRadius(dp(CHIP_HEIGHT_DP) / 2f);
         background.setColor(Color.argb(48, 255, 255, 255));
         background.setStroke(dp(1), Color.argb(52, 255, 255, 255));
         return background;

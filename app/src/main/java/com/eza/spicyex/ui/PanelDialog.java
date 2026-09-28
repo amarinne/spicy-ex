@@ -276,6 +276,7 @@ public final class PanelDialog {
     public View iconAction(LinearLayout row, ActionIconDrawable.Kind icon,
                            String contentDescription, final Runnable action) {
         ImageButton button = iconButton(icon, contentDescription, action);
+        button.setPadding(dp(12), dp(12), dp(12), dp(12));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(44));
         params.leftMargin = dp(6);
         row.addView(button, params);
@@ -658,6 +659,7 @@ public final class PanelDialog {
         if (option.icon != null) {
             icon = new ImageView(context);
             icon.setImageDrawable(new ActionIconDrawable(option.icon, COL_TITLE, density()));
+            icon.setPadding(dp(6), dp(6), dp(6), dp(6));
             icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             row.addView(icon, new LinearLayout.LayoutParams(dp(32), dp(32)));
             row.setContentDescription(option.label + option.suffix);

@@ -73,6 +73,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     private final PanelStyle style;
     private int sectionReflowGeneration;
     private static final String TAG_SECTION_CHEVRON = "hdr:chevron";
+    private static final String TAG_LAYOUT_EDITOR_ACTION = "action:layout_editor";
+    private static final String TAG_CARD_EDITOR_ACTION = "action:card_editor";
 
     private final SettingsStore store;
     private final SettingsWriter writer;
@@ -82,6 +84,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     private final java.util.function.BooleanSupplier isHalfSize;
     private final Runnable onToggleSize;
     private final Runnable onClose;
+    /** Opens the layout editor: {@link #EDITOR_LYRICS} or {@link #EDITOR_CARD}. */
+    private final java.util.function.IntConsumer onOpenLayoutEditor;
+    public static final int EDITOR_LYRICS = 1;
+    public static final int EDITOR_CARD = 2;
     private final java.util.function.Consumer<CacheClearKind> onClearCache;
     private final Runnable onResyncTiming;
     private com.eza.spicyex.hooks.LyricsHost lyricsHost;
@@ -120,6 +126,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
     public SettingsPanel(Context context, SettingsStore store,
                          java.util.function.BooleanSupplier isHalfSize,
                          Runnable onToggleSize, Runnable onClose,
+                         java.util.function.IntConsumer onOpenLayoutEditor,
                          java.util.function.Consumer<CacheClearKind> onClearCache,
                          Runnable onResyncTiming) {
         this.context = context;
@@ -132,6 +139,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         this.isHalfSize = isHalfSize;
         this.onToggleSize = onToggleSize;
         this.onClose = onClose;
+        this.onOpenLayoutEditor = onOpenLayoutEditor;
         this.onClearCache = onClearCache;
         this.onResyncTiming = onResyncTiming;
         writer.ensureBackgroundStyleMigrated(store.get(Settings.ENABLE_BACKGROUND));
@@ -237,6 +245,13 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         if (expandedSections.contains(Settings.DEBUG.id)) appendDebugCard(content, -1);
     }
 
+    /** Closes this dialog (its usual animated exit), then hands off to the shell: the layout
+     *  editor is an overlay on the real lyrics screen, not a separate window. */
+    private void openEditor(int mode) {
+        if (onClose != null) onClose.run();
+        if (onOpenLayoutEditor != null) onOpenLayoutEditor.accept(mode);
+    }
+
     private LinkedHashMap<Settings.Section, List<Settings.Setting<?>>> groupVisibleSettings() {
         PanelSnapshot snapshot = captureSnapshot();
         LinkedHashMap<Settings.Section, List<Settings.Setting<?>>> grouped = new LinkedHashMap<>();
@@ -251,6 +266,10 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                     grouped.put(section, items);
                 }
                 items.add(setting);
+            }
+            // The layout-editor section keeps its editor entries even if every row is hidden.
+            if (section == Settings.LYRICS_SCREEN && !grouped.containsKey(section)) {
+                grouped.put(section, new ArrayList<>());
             }
         }
         return grouped;
@@ -298,6 +317,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         LinearLayout card = style.newCard();
         card.setTag(PanelTags.card(section));
         for (Settings.Setting<?> setting : items) renderSetting(card, setting);
+        appendEditorActionRows(card, section);
         if (section == Settings.AI && aiAvailable()) {
             // Dynamic AI rows churn with setup state; they live in their own tagged block so
             // keyed rebinding refreshes them as a unit without touching ordinary rows.
@@ -592,6 +612,34 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
             }
         }
         refreshAiDynamicBlock(card, target);
+        syncEditorActionRows(card, target);
+    }
+
+    /** Keeps non-setting editor launch rows present on both full renders and keyed section
+     * rebuilds. These rows have no preference key, so the ordinary RowSyncPlan cannot own them. */
+    private void syncEditorActionRows(LinearLayout card, Settings.Section section) {
+        removeChildByTag(card, TAG_LAYOUT_EDITOR_ACTION);
+        removeChildByTag(card, TAG_CARD_EDITOR_ACTION);
+        appendEditorActionRows(card, section);
+    }
+
+    private void appendEditorActionRows(LinearLayout card, Settings.Section section) {
+        if (section != Settings.LYRICS_SCREEN) return;
+        // Everything about how the lyrics screen and the now-playing card look is edited on the
+        // screen itself; tap behaviour and transition feel stay in the ordinary settings rows.
+        rows.actionRow(card, Kind.ALIGN_VERTICAL_DISTRIBUTE_CENTER,
+                uiStrings.get("settings_layout_editor", "Layout editor…"),
+                v -> openEditor(EDITOR_LYRICS));
+        card.getChildAt(card.getChildCount() - 1).setTag(TAG_LAYOUT_EDITOR_ACTION);
+        rows.actionRow(card, Kind.ALIGN_VERTICAL_DISTRIBUTE_CENTER,
+                uiStrings.get("settings_card_editor", "Now playing card editor…"),
+                v -> openEditor(EDITOR_CARD));
+        card.getChildAt(card.getChildCount() - 1).setTag(TAG_CARD_EDITOR_ACTION);
+    }
+
+    private static void removeChildByTag(LinearLayout parent, String tag) {
+        View child = findChildByTag(parent, tag);
+        if (child != null) parent.removeView(child);
     }
 
     /** AI dynamic rows re-render as one tagged block; ordinary AI settings rows patch by key. */

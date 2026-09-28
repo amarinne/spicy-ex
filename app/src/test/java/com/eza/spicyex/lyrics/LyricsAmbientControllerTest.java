@@ -18,4 +18,11 @@ public class LyricsAmbientControllerTest {
         assertEquals(1, LyricsAmbientController.calculateInSampleSize(-1, -1, 384));
         assertEquals(1, LyricsAmbientController.calculateInSampleSize(800, 400, 0));
     }
+
+    @Test
+    public void extraDarkAppliesToAnyBackgroundStyle() {
+        assertEquals(0.65f, LyricsAmbientController.backgroundBrightness(true, 35), 0.0001f);
+        assertEquals(1f, LyricsAmbientController.backgroundBrightness(false, 35), 0.0001f);
+        assertEquals(0f, LyricsAmbientController.backgroundBrightness(true, 150), 0.0001f);
+    }
 }

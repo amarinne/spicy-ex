@@ -327,20 +327,19 @@ public final class GoogleEnhancer {
     }
 
     /**
-     * Cancels every queued and running call carrying {@code cancelTag}. Called when a lane run is
-     * retired by a track, source, or configuration change, so an abandoned run stops costing
-     * requests instead of merely having its callback ignored.
+     * Cancels the calls carrying {@code cancelTag} that have not been sent yet. Called when a
+     * lane run is retired by a track, source, or configuration change.
+     *
+     * <p>A call already on its way is left to finish: Google has counted it either way, and
+     * finishing is what writes its lines to the cache - the run that replaced this one (the
+     * same song, restarted because a better copy of its lyrics arrived) then finds them there,
+     * or joins the same request in flight, instead of asking again. Cancelling it made every
+     * restart cost another request.
      */
     public static int cancelTagged(OkHttpClient http, String cancelTag) {
         if (http == null || cancelTag == null || cancelTag.isEmpty()) return 0;
         int cancelled = 0;
         for (okhttp3.Call call : http.dispatcher().queuedCalls()) {
-            if (cancelTag.equals(call.request().tag(String.class))) {
-                call.cancel();
-                cancelled++;
-            }
-        }
-        for (okhttp3.Call call : http.dispatcher().runningCalls()) {
             if (cancelTag.equals(call.request().tag(String.class))) {
                 call.cancel();
                 cancelled++;
@@ -353,7 +352,56 @@ public final class GoogleEnhancer {
         return executeRequest(request, http).body;
     }
 
+    /** Requests on the wire, by URL: an identical request joins the one in flight. */
+    private static final Map<String, java.util.concurrent.CompletableFuture<HttpResult>> IN_FLIGHT =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long JOIN_TIMEOUT_MS = 30_000L;
+
+    /**
+     * {@link #sendRequest}, but a request identical to one already on the wire (same text, same
+     * languages - a lane restarted for the same song) waits for that one's answer instead of
+     * sending its own.
+     */
     private static HttpResult executeRequest(Request request, OkHttpClient http) {
+        if (request == null) return sendRequest(null, http);
+        return joinInFlight(request.url().toString(), () -> sendRequest(request, http));
+    }
+
+    /** Runs {@code send} unless a call under {@code key} is already running; then shares its answer. */
+    static HttpResult joinInFlight(String key, java.util.function.Supplier<HttpResult> send) {
+        java.util.concurrent.CompletableFuture<HttpResult> mine = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.CompletableFuture<HttpResult> theirs = IN_FLIGHT.putIfAbsent(key, mine);
+        if (theirs != null) {
+            try {
+                HttpResult shared = theirs.get(JOIN_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                HttpResult copy = new HttpResult();
+                copy.body = shared.body;
+                copy.status = shared.status;
+                copy.failureReason = shared.failureReason;
+                copy.attempts = 0; // this caller sent nothing
+                return copy;
+            } catch (Throwable ignored) {
+                HttpResult failed = new HttpResult();
+                failed.failureReason = "joined_request_failed";
+                return failed;
+            }
+        }
+        HttpResult result = null;
+        try {
+            result = send.get();
+            return result;
+        } finally {
+            IN_FLIGHT.remove(key, mine);
+            HttpResult done = result;
+            if (done == null) {
+                done = new HttpResult();
+                done.failureReason = "failed";
+            }
+            mine.complete(done);
+        }
+    }
+
+    private static HttpResult sendRequest(Request request, OkHttpClient http) {
         HttpResult result = new HttpResult();
         if (http == null || request == null) {
             result.failureReason = "client_unavailable";
@@ -566,7 +614,7 @@ public final class GoogleEnhancer {
         public String failureReason = "";
     }
 
-    private static final class HttpResult {
+    static final class HttpResult {
         String body = "";
         int attempts;
         int status;

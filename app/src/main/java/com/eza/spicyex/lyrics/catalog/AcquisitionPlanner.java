@@ -6,7 +6,6 @@ import com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId;
 import com.eza.spicyex.lyrics.catalog.CatalogSource.TimingLevel;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -16,7 +15,7 @@ import java.util.List;
  *
  * <p>Rules:
  * <ul>
- *   <li>A manual pin, or a synced complete seat, is final: revisiting it costs no request.</li>
+     *   <li>A manual pin is final. A complete Auto seat still checks newly enabled sources.</li>
  *   <li>With no seat, or a static/incomplete one, only sources whose stored outcome is due are
  *       asked. The retry horizon per outcome lives in {@link #dueAtMs} and nowhere else.</li>
  *   <li>Spotify native is local and free, so it is eligible once per visit regardless of state.</li>
@@ -73,18 +72,18 @@ public final class AcquisitionPlanner {
         boolean pinned = seat != null && !rendered.temporary
                 && state.selection.mode == SelectionMode.MANUAL;
         if (pinned) return none(0L, "manual-pin");
-        if (seat != null && seat.complete && seat.timingLevel.isFinalQuality()) {
-            return none(0L, "final-seat");
-        }
-        boolean upgradeProbe = seat != null;
+        boolean finalSeat = seat != null && seat.complete && seat.timingLevel.isFinalQuality();
+        boolean upgradeProbe = seat != null && !finalSeat;
         List<SourceId> due = new ArrayList<>();
         long nextDue = 0L;
         for (SourceId source : autoSources(p)) {
+            ProviderRecord record = state.provider(source);
             if (source == SourceId.SPOTIFY_NATIVE) {
-                if (includeLocal) due.add(source);
+                if (includeLocal && (!finalSeat
+                        || record.status == CatalogSource.ProviderStatus.NOT_CHECKED
+                        || record.status == CatalogSource.ProviderStatus.NEEDS_REFRESH)) due.add(source);
                 continue;
             }
-            ProviderRecord record = state.provider(source);
             long at = record.status == CatalogSource.ProviderStatus.AVAILABLE
                     && hasOnlyPolicyIneligibleCandidates(state, p, source)
                     ? 0L : dueAtMs(record, upgradeProbe);
@@ -99,11 +98,12 @@ public final class AcquisitionPlanner {
             if (source != SourceId.SPOTIFY_NATIVE) anyNetwork = true;
         }
         if (due.isEmpty() || (upgradeProbe && !anyNetwork)) {
-            return none(nextDue, upgradeProbe ? "upgrade-suppressed" : "no-seat-suppressed");
+            return none(nextDue, finalSeat ? "final-seat"
+                    : upgradeProbe ? "upgrade-suppressed" : "no-seat-suppressed");
         }
         return new Plan(Action.FETCH, new AcquisitionScope(due, p.sourceOrderMode,
                 p.karaokeOriginalLyrics), nextDue,
-                upgradeProbe ? "upgrade-probe" : "no-seat");
+                finalSeat ? "enabled-source-probe" : upgradeProbe ? "upgrade-probe" : "no-seat");
     }
 
     /**
@@ -120,11 +120,10 @@ public final class AcquisitionPlanner {
     }
 
     /**
-     * An owner-requested re-ask of the whole quality chain, walked strictly in the built-in order
-     * (Apple, Spotify native, AMLL, LRCLIB).
+     * An owner-requested re-ask of every enabled source, walked in configured order.
      *
      * <p>This is the escape hatch for a track whose stored sources were never asked. It forces the
-     * sequential path rather than the automatic visit's racing provider chain, so the outcome
+     * sequential path rather than the automatic visit's concurrent provider checks, so the outcome
      * reflects the configured preference instead of whichever adapter happened to answer first.
      *
      * <p>It is a preference walk, not a quality escalation: {@code attemptOrderedSource} recurses on
@@ -176,18 +175,11 @@ public final class AcquisitionPlanner {
     }
 
     /**
-     * Sources an automatic visit may ask, in ask order. Auto uses the built-in quality chain
-     * (Apple, native, AMLL, LRCLIB); QQ and NetEase are explicit-check sources there. Source order
-     * asks every enabled source in the owner's order.
+     * Sources an automatic visit may ask, in the configured order. Selection still follows the
+     * configured ranking mode after provider outcomes are stored.
      */
     static List<SourceId> autoSources(CatalogPolicy policy) {
-        if (policy.sourceOrderMode) return policy.enabledOrder;
-        List<SourceId> out = new ArrayList<>();
-        for (SourceId source : new SourceId[]{SourceId.APPLE, SourceId.SPOTIFY_NATIVE,
-                SourceId.AMLL, SourceId.LRCLIB}) {
-            if (policy.enabled(source)) out.add(source);
-        }
-        return Collections.unmodifiableList(out);
+        return policy.enabledOrder;
     }
 
     private static boolean hasOnlyPolicyIneligibleCandidates(CatalogState state,

@@ -138,7 +138,9 @@ public final class LyricsAmbientController {
         boolean enabled = LyricsBackgroundStyle.usesTexture(normalized);
         boolean animated = LyricsBackgroundStyle.isAnimated(normalized);
         textureEnabled = enabled;
-        applyExtraDark(enabled && forceDark, extraDark);
+        // The page gradient is a real background too. Darkening used to be gated by texture mode,
+        // so the editor control visibly did nothing in the default Gradient mode.
+        applyExtraDark(forceDark, extraDark);
         if (animatedParent != null && enabled && animatedBackground == null) {
             createAnimatedLayer(animatedParent, forceDark, animated);
         } else if (forceDark != animatedForceDark) {
@@ -170,7 +172,7 @@ public final class LyricsAmbientController {
     public void attachAnimatedLayer(FrameLayout parent, String style, boolean forceDark, int extraDark) {
         animatedParent = parent;
         textureEnabled = LyricsBackgroundStyle.usesTexture(style);
-        applyExtraDark(textureEnabled && forceDark, extraDark);
+        applyExtraDark(forceDark, extraDark);
         if (!FeatureAvailability.animatedBackgroundAvailable()) return;
         if (parent == null || !LyricsBackgroundStyle.usesTexture(style)) return;
         createAnimatedLayer(parent, forceDark, LyricsBackgroundStyle.isAnimated(style));
@@ -187,8 +189,7 @@ public final class LyricsAmbientController {
 
     /** Scale only the completed background, including the artwork-loading fallback. */
     private void applyExtraDark(boolean enabled, int level) {
-        enabled &= FeatureAvailability.animatedBackgroundAvailable();
-        float factor = enabled ? Math.max(0f, Math.min(1f, 1f - level / 100f)) : 1f;
+        float factor = backgroundBrightness(enabled, level);
         if (factor == backgroundBrightness) return;
         backgroundBrightness = factor;
         if (factor != 1f) {
@@ -199,6 +200,10 @@ public final class LyricsAmbientController {
             extraDarkFilter = null;
         }
         pageBackground.setColorFilter(extraDarkFilter);
+    }
+
+    static float backgroundBrightness(boolean enabled, int level) {
+        return enabled ? Math.max(0f, Math.min(1f, 1f - level / 100f)) : 1f;
     }
 
     private void createAnimatedLayer(FrameLayout parent, boolean forceDark, boolean animated) {

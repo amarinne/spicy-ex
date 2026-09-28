@@ -45,6 +45,7 @@ public final class ActionIconDrawable extends Drawable {
 
     private final Kind kind;
     private final boolean filled;
+    private final int intrinsicSizePx;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     public ActionIconDrawable(Kind kind, int color, float density) {
@@ -52,8 +53,17 @@ public final class ActionIconDrawable extends Drawable {
     }
 
     public ActionIconDrawable(Kind kind, int color, float density, boolean filled) {
+        this(kind, color, density, filled, -1);
+    }
+
+    public ActionIconDrawable(Kind kind, int color, float density, int sizeDp) {
+        this(kind, color, density, false, Math.round(sizeDp * density));
+    }
+
+    private ActionIconDrawable(Kind kind, int color, float density, boolean filled, int intrinsicSizePx) {
         this.kind = kind == null ? Kind.CHECK : kind;
         this.filled = filled;
+        this.intrinsicSizePx = intrinsicSizePx;
         paint.setColor(color);
         paint.setStyle(filled ? Paint.Style.FILL_AND_STROKE : Paint.Style.STROKE);
         // Stroke width lives in 24-unit path coordinates (lucide's native 2), applied after
@@ -128,6 +138,8 @@ public final class ActionIconDrawable extends Drawable {
         paint.setColor(color);
         invalidateSelf();
     }
+    @Override public int getIntrinsicWidth() { return intrinsicSizePx; }
+    @Override public int getIntrinsicHeight() { return intrinsicSizePx; }
     @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
     @Override public void setColorFilter(ColorFilter colorFilter) {
         paint.setColorFilter(colorFilter);

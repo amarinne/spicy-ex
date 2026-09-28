@@ -35,44 +35,48 @@ public final class LyricsShellSettings {
         return fallback;
     }
 
-    public String fullscreenControlsMode() {
-        String fallback = config == null ? "Always on" : config.get(Settings.FULLSCREEN_CONTROLS);
+    /** 0 means the controls remain visible; otherwise the whole-second hide delay. */
+    public int fullscreenControlsTimeoutSeconds() {
+        String fallback = config == null ? Settings.FULLSCREEN_CONTROLS.defaultValue
+                : config.get(Settings.FULLSCREEN_CONTROLS);
         try {
             SharedPreferences prefs = prefs();
             if (prefs != null && prefs.contains(Settings.FULLSCREEN_CONTROLS.key)) {
                 String value = prefs.getString(Settings.FULLSCREEN_CONTROLS.key, fallback);
-                if ("5 seconds".equals(value) || "10 seconds".equals(value)
-                        || "30 seconds".equals(value) || "Always on".equals(value)) return value;
+                return parseFullscreenControlsSeconds(value);
             }
         } catch (Throwable ignored) { }
-        return fallback;
+        return parseFullscreenControlsSeconds(fallback);
+    }
+
+    /** Accepts all canonical values plus the four values shipped by the old preset control. */
+    public static int parseFullscreenControlsSeconds(String value) {
+        if (value == null || "Always".equalsIgnoreCase(value)
+                || "Always on".equalsIgnoreCase(value)) return 0;
+        String digits = value.trim().replaceAll("[^0-9]", "");
+        if (digits.isEmpty()) return 0;
+        try {
+            return Math.max(1, Math.min(30, Integer.parseInt(digits)));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    public static String fullscreenControlsValue(int seconds) {
+        if (seconds <= 0 || seconds > 30) return "Always";
+        return seconds == 1 ? "1 second" : seconds + " seconds";
     }
 
     public String lineSpacingMode() {
-        String fallback = config == null ? "more" : config.get(Settings.LINE_SPACING);
-        try {
-            SharedPreferences prefs = prefs();
-            if (prefs != null && prefs.contains(Settings.LINE_SPACING.key)) {
-                return normalizeLineSpacingMode(prefs.getString(Settings.LINE_SPACING.key, fallback));
-            }
-        } catch (Throwable ignored) {
-        }
-        return normalizeLineSpacingMode(fallback);
+        // Through the config, not the raw key: this is a per-orientation setting (see Settings).
+        return normalizeLineSpacingMode(config == null ? "more" : config.get(Settings.LINE_SPACING));
     }
 
     public float lineSpacingMultiplier() {
         String spacing = lineSpacingMode();
         if ("custom".equals(spacing)) {
-            int fallback = config == null ? Settings.LINE_SPACING_CUSTOM.defaultValue
+            int hundredths = config == null ? Settings.LINE_SPACING_CUSTOM.defaultValue
                     : config.get(Settings.LINE_SPACING_CUSTOM);
-            int hundredths = fallback;
-            try {
-                SharedPreferences prefs = prefs();
-                if (prefs != null && prefs.contains(Settings.LINE_SPACING_CUSTOM.key)) {
-                    hundredths = prefs.getInt(Settings.LINE_SPACING_CUSTOM.key, fallback);
-                }
-            } catch (Throwable ignored) {
-            }
             return Math.max(0f, Math.min(5f, hundredths / 100f));
         }
         // Widened spread so the setting is clearly visible (previously 0.82–1.45 barely moved the
@@ -109,32 +113,38 @@ public final class LyricsShellSettings {
     }
 
     public String lyricsTextSizeMode() {
-        String fallback = SettingsValueNormalizer.normalizeTextSizeMode(config == null ? "" : config.get(Settings.LYRICS_TEXT_SIZE));
-        try {
-            SharedPreferences prefs = prefs();
-            if (prefs != null && prefs.contains(Settings.LYRICS_TEXT_SIZE.key)) {
-                return SettingsValueNormalizer.normalizeTextSizeMode(prefs.getString(Settings.LYRICS_TEXT_SIZE.key, fallback));
-            }
-        } catch (Throwable ignored) {
-        }
-        return fallback;
+        return SettingsValueNormalizer.normalizeTextSizeMode(
+                config == null ? "" : config.get(Settings.LYRICS_TEXT_SIZE));
     }
 
+    /**
+     * A landscape screen is about half as tall, so a size chosen in portrait shows only two or
+     * three lines there. Until the user sets a landscape size of their own (see
+     * Settings#landscapeKey), landscape uses the portrait choice scaled to fit instead.
+     */
+    public static final float LANDSCAPE_FIT_SCALE = 0.78f;
+
     public float lyricsTextSizeMultiplier() {
+        float base;
         if ("custom".equals(lyricsTextSizeMode())) {
-            int fallback = config == null ? Settings.LYRICS_TEXT_SIZE_CUSTOM.defaultValue
+            int hundredths = config == null ? Settings.LYRICS_TEXT_SIZE_CUSTOM.defaultValue
                     : config.get(Settings.LYRICS_TEXT_SIZE_CUSTOM);
-            int hundredths = fallback;
-            try {
-                SharedPreferences prefs = prefs();
-                if (prefs != null && prefs.contains(Settings.LYRICS_TEXT_SIZE_CUSTOM.key)) {
-                    hundredths = prefs.getInt(Settings.LYRICS_TEXT_SIZE_CUSTOM.key, fallback);
-                }
-            } catch (Throwable ignored) {
-            }
-            return Math.max(0f, Math.min(5f, hundredths / 100f));
+            base = Math.max(0f, Math.min(5f, hundredths / 100f));
+        } else {
+            base = SettingsValueNormalizer.textSizeMultiplierFor(lyricsTextSizeMode());
         }
-        return SettingsValueNormalizer.textSizeMultiplierFor(lyricsTextSizeMode());
+        return inheritsPortraitSize() ? base * LANDSCAPE_FIT_SCALE : base;
+    }
+
+    private boolean inheritsPortraitSize() {
+        try {
+            String landscapeKey = Settings.landscapeKey(context, Settings.LYRICS_TEXT_SIZE);
+            if (landscapeKey == null) return false;
+            SharedPreferences prefs = prefs();
+            return prefs == null || !prefs.contains(landscapeKey);
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     public boolean adaptiveTextSizeEnabled() {

@@ -2,8 +2,6 @@
     <string name="settings_locale_code">zh-CN</string>
     <string name="settings_locale_name">简体中文</string>
     <string name="settings_section_lyrics">行为</string>
-    <string name="settings_section_now_playing">正在播放卡片</string>
-    <string name="settings_section_lyrics_screen">歌词界面</string>
     <string name="settings_section_transliteration">读音与转写</string>
     <string name="settings_section_translation">翻译</string>
     <string name="settings_section_debug">关于与诊断</string>
@@ -314,4 +312,5 @@
     <string name="settings_action_clear_ai_cache">清除 AI 结果</string>
     <string name="settings_ai_response_too_large">响应内容过大</string>
     <string name="lyrics_ai_model_used">模型：%1$s</string>
+    <string name="lyrics_follow_chip_label">跟随歌词</string>
 </resources>

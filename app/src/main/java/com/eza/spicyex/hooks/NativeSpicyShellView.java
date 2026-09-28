@@ -28,4 +28,25 @@ final class NativeSpicyShellView extends FrameLayout {
     boolean consumeBack() {
         return delegate.consumeBack();
     }
+
+    // -- agent layout probe (debug only) ---------------------------------------
+    // Thin forwards so the command channel can find the shell by walking the decor view and talk
+    // to it without reaching into the delegate. See AgentCommandChannel for the gate.
+
+    boolean agentOpenEditor(boolean card) {
+        return delegate.agentOpenEditor(card);
+    }
+
+    boolean agentCloseEditor() {
+        return delegate.agentCloseEditor();
+    }
+
+    boolean agentSelectElement(String name) {
+        return delegate.agentSelectElement(name);
+    }
+
+    /** One JSON line of live geometry plus rule violations, or null if it could not be built. */
+    String agentLayoutReport() {
+        return delegate.agentLayoutReport();
+    }
 }

@@ -90,6 +90,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             bridgeCoordinator.start();
             // Debug builds only, and inert until the arm file exists. See AgentCommandChannel.
             AgentCommandChannel.start(this, applicationContext);
+            ActivityResultBridge.install();
             Diagnostics.event("bootstrap", "hook_ready",
                     Diagnostics.context("result", "main_process"));
         } else {

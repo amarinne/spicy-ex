@@ -495,18 +495,7 @@ final class LyricsSessionManager {
             notifyState(snapshot());
         }
         try {
-            fetchCoordinator.fetchLyrics(context, requestedTrack, requestedGeneration, scope,
-                    new NativeSpicyLyricsHook.LyricsResultCallback() {
-                        @Override public void onSuccess(LyricsDocument result) {
-                            acceptProviderResult(requestedTrack, requestedUri,
-                                    requestedGeneration, result, null);
-                        }
-
-                        @Override public void onError(String error) {
-                            handler.post(() -> acceptError(requestedTrack, requestedUri,
-                                    requestedGeneration, error));
-                        }
-                    });
+            fetchAutomaticSources(requestedTrack, requestedUri, requestedGeneration, scope);
         } catch (Throwable launchFailed) {
             // A fetch that never starts must not keep the fetch gate armed: that strands the
             // session on stale rows with every later maybeFetch declining to run.
@@ -516,6 +505,55 @@ final class LyricsSessionManager {
             pendingPlan = launched;
             nextFetchAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
         }
+    }
+
+    /** Auto asks every due configured source; the catalog ranks their stored results. */
+    private void fetchAutomaticSources(SpotifyTrack requestedTrack, String requestedUri,
+                                       int requestedGeneration, AcquisitionScope scope) {
+        if (scope.sourceOrderMode) {
+            fetchCoordinator.fetchLyrics(context, requestedTrack, requestedGeneration, scope,
+                    automaticResult(requestedTrack, requestedUri, requestedGeneration));
+            return;
+        }
+        java.util.concurrent.atomic.AtomicInteger remaining =
+                new java.util.concurrent.atomic.AtomicInteger(scope.sources.size());
+        java.util.concurrent.atomic.AtomicBoolean delivered =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        NativeSpicyLyricsHook.LyricsResultCallback result =
+                new NativeSpicyLyricsHook.LyricsResultCallback() {
+                    @Override public void onSuccess(LyricsDocument document) {
+                        delivered.set(true);
+                        acceptProviderResult(requestedTrack, requestedUri, requestedGeneration,
+                                document, null);
+                        remaining.decrementAndGet();
+                    }
+
+                    @Override public void onError(String error) {
+                        if (remaining.decrementAndGet() == 0 && !delivered.get()) {
+                            handler.post(() -> acceptError(requestedTrack, requestedUri,
+                                    requestedGeneration, error));
+                        }
+                    }
+                };
+        for (CatalogSource.SourceId source : scope.sources) {
+            fetchCoordinator.fetchCatalogSource(context, requestedTrack, requestedGeneration,
+                    source, result);
+        }
+    }
+
+    private NativeSpicyLyricsHook.LyricsResultCallback automaticResult(
+            SpotifyTrack requestedTrack, String requestedUri, int requestedGeneration) {
+        return new NativeSpicyLyricsHook.LyricsResultCallback() {
+            @Override public void onSuccess(LyricsDocument result) {
+                acceptProviderResult(requestedTrack, requestedUri, requestedGeneration,
+                        result, null);
+            }
+
+            @Override public void onError(String error) {
+                handler.post(() -> acceptError(requestedTrack, requestedUri,
+                        requestedGeneration, error));
+            }
+        };
     }
 
     /** Re-reads the stored state once a held-back source becomes due, then plans again. */

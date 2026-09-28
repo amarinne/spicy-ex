@@ -75,6 +75,7 @@ public final class PanelPickerPopup {
                 ImageView check = new ImageView(context);
                 check.setImageDrawable(new ActionIconDrawable(ActionIconDrawable.Kind.CHECK,
                         PanelDialog.COL_ACCENT, density));
+                check.setPadding(dp(density, 5), dp(density, 5), dp(density, 5), dp(density, 5));
                 row.addView(check, new LinearLayout.LayoutParams(dp(density, 30), dp(density, 30)));
             }
             row.setOnClickListener(v -> {

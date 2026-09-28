@@ -116,6 +116,60 @@ public class SettingsUiStringsContractTest {
     }
 
     @Test
+    public void layoutEditorActionsSurviveIncrementalSectionRebuilds() throws Exception {
+        File source = new File("src/main/java/com/eza/spicyex/SettingsPanel.java");
+        if (!source.isFile()) source = new File("app/" + source.getPath());
+        assertTrue(source.isFile());
+        String java = new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8);
+
+        assertTrue(java.contains("appendEditorActionRows(card, section);"));
+        assertTrue(java.contains("syncEditorActionRows(card, target);"));
+        assertTrue(java.contains("TAG_LAYOUT_EDITOR_ACTION"));
+        assertTrue(java.contains("TAG_CARD_EDITOR_ACTION"));
+    }
+
+    @Test
+    public void legacyBackKeyOffersOwnedLyricsLayersFirst() throws Exception {
+        File source = new File("src/main/java/com/eza/spicyex/hooks/LyricsActivityTakeoverHook.java");
+        if (!source.isFile()) source = new File("app/" + source.getPath());
+        assertTrue(source.isFile());
+        String java = new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8);
+
+        assertTrue(java.contains("event.getAction() == KeyEvent.ACTION_UP"));
+        assertTrue(java.contains("&& shellConsumesBack(activity)"));
+        assertTrue(java.contains("param.setResult(true);"));
+    }
+
+    @Test
+    public void layoutEditorContractCoversReportedRuntimeBoundaries() throws Exception {
+        File spec = new File("docs/LAYOUT_EDITOR_BEHAVIOR_SPEC.md");
+        if (!spec.isFile()) spec = new File("../docs/LAYOUT_EDITOR_BEHAVIOR_SPEC.md");
+        assertTrue(spec.isFile());
+        String markdown = new String(Files.readAllBytes(spec.toPath()), StandardCharsets.UTF_8);
+
+        assertTrue(markdown.contains("Bottom artwork selection works"));
+        assertTrue(markdown.contains("Darkening affects Gradient"));
+        assertTrue(markdown.contains("1 through 30 seconds"));
+        assertTrue(markdown.contains("stacks 52 dp"));
+        assertTrue(markdown.contains("Android Back closes the options sheet first"));
+    }
+
+    @Test
+    public void layoutEditorUsesContinuousSlidersAndSharedChipPanel() throws Exception {
+        File source = new File("src/main/java/com/eza/spicyex/hooks/LyricsLayoutEditController.java");
+        if (!source.isFile()) source = new File("app/" + source.getPath());
+        assertTrue(source.isFile());
+        String java = new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8);
+
+        assertFalse(java.contains("presetSliderRow"));
+        assertFalse(java.contains("snapBand"));
+        assertTrue(java.contains("private void buildChipOptions()"));
+        assertTrue(java.contains("Settings.SHOW_FULLSCREEN_BACK_BUTTON"));
+        assertTrue(java.contains("value == 0 ? \"Off\" : \"Heavy\""));
+        assertTrue(java.contains("values.length == 4"));
+    }
+
+    @Test
     public void zhLocaleCoversEveryAiStringSoTheAiPanelNeverFallsBackToEnglish() throws Exception {
         Set<String> names = stringNames("src/main/res/values-zh-rCN/strings.xml");
         int covered = 0;
