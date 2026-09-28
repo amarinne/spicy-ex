@@ -491,6 +491,15 @@ final class TrackInfoReadoutController {
     }
 
     /** Re-reads settings (call at mount and from the preference listener). */
+    /** The readout box on screen right now (top, bottom or side), or null when there is none
+     *  (Off, or Header mode, where it lives in the chrome header). */
+    View currentReadoutBox() {
+        if (sideBox.getVisibility() == View.VISIBLE) return sideBox;
+        if (topBox.getVisibility() == View.VISIBLE) return topBox;
+        if (bottomBox.getVisibility() == View.VISIBLE) return bottomBox;
+        return null;
+    }
+
     void onPreferenceChanged() {
         panelMediaMode = readPanelMediaMode(config);
         if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) hideOverlays();

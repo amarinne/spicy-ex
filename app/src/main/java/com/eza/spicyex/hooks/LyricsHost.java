@@ -43,6 +43,9 @@ public interface LyricsHost {
 
     void markExplicitLyricsExit(Activity activity);
 
+    /** Settings.PIP_ON_CLOSE: true when closing the lyrics screen opened PiP instead. */
+    boolean openLyricsPipOnClose(Activity activity);
+
     // Re-arm the "keep lyrics activity open across track changes" window. The shell calls this
     // periodically while mounted so the suppression window never lapses mid-session; it auto-
     // expires shortly after the shell stops calling (teardown), which re-enables normal finish().

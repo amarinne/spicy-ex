@@ -32,7 +32,8 @@ public final class SettingsUiSchema {
                 Settings.APPLE,
                 Settings.TRANSLITERATION,
                 Settings.TRANSLATION,
-                Settings.AI));
+                Settings.AI,
+                Settings.PIP));
     }
 
     /**
@@ -137,7 +138,13 @@ public final class SettingsUiSchema {
             Settings.AI_TRANSLATION_PIPELINE,
             Settings.AI_PRONUNCIATION_MODE,
             Settings.AI_PRONUNCIATION_SOURCE,
-            Settings.AI_BUTTON_BEHAVIOR));
+            Settings.AI_BUTTON_BEHAVIOR,
+            // Picture-in-picture
+            Settings.PIP_ON_CLOSE,
+            Settings.PIP_SHAPE,
+            Settings.PIP_CONTROLS,
+            Settings.PIP_FOCUS,
+            Settings.PIP_LEAVE_SPOTIFY));
 
     /** Every renderable setting, in panel row order. */
     public static List<Settings.Setting<?>> orderedSettings() {

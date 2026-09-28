@@ -419,4 +419,22 @@
     <string name="share_saved">ピクチャ/SpicyExに保存しました</string>
     <string name="share_save_failed">カードを保存できませんでした</string>
     <string name="share_chooser">歌詞を共有</string>
+    <string name="settings_section_pip">ピクチャー・イン・ピクチャー</string>
+    <string name="settings_label_lyrics_pip_shape">ウィンドウの形</string>
+    <string name="settings_label_lyrics_pip_controls">再生コントロール</string>
+    <string name="settings_label_lyrics_pip_focus">現在の行の位置</string>
+    <string name="settings_label_lyrics_pip_leave_spotify">前のアプリに戻る</string>
+    <string name="settings_option_lyrics_pip_shape_portrait">縦長 (3:4)</string>
+    <string name="settings_option_lyrics_pip_shape_square">正方形 (1:1)</string>
+    <string name="settings_option_lyrics_pip_shape_tall">細長 (9:16)</string>
+    <string name="settings_option_lyrics_pip_focus_same_as_lyrics_screen">歌詞画面と同じ</string>
+    <string name="settings_option_lyrics_pip_focus_center">中央</string>
+    <string name="settings_search_lyrics_pip_shape">pip サイズ, 比率, 正方形, 縦長</string>
+    <string name="settings_search_lyrics_pip_controls">pip ボタン, 再生 一時停止, 次の曲, 前の曲</string>
+    <string name="settings_search_lyrics_pip_focus">pip フォーカス, 現在の歌詞, 中央</string>
+    <string name="settings_search_lyrics_pip_leave_spotify">pip ホーム, バックグラウンド, 戻る</string>
+    <string name="settings_option_lyrics_pip_shape_landscape">横長 (4:3)</string>
+    <string name="settings_option_lyrics_pip_shape_wide">ワイド (16:9)</string>
+    <string name="settings_label_lyrics_pip_on_close">歌詞を閉じたらPiPで開く</string>
+    <string name="settings_search_lyrics_pip_on_close">戻る pip, 自動 pip, 歌詞を閉じる, 最小化</string>
 </resources>

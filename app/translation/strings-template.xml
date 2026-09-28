@@ -559,4 +559,22 @@
     <string name="share_pick_count" formatted="false">%1$d selected</string>
     <string name="share_done">Done</string>
     <string name="settings_label_lyrics_long_press_share">Long-press a line to share</string>
+    <string name="settings_section_pip">Picture-in-picture</string>
+    <string name="settings_label_lyrics_pip_shape">Window shape</string>
+    <string name="settings_label_lyrics_pip_controls">Playback controls</string>
+    <string name="settings_label_lyrics_pip_focus">Current line position</string>
+    <string name="settings_label_lyrics_pip_leave_spotify">Return to the previous app</string>
+    <string name="settings_option_lyrics_pip_shape_portrait">Portrait (3:4)</string>
+    <string name="settings_option_lyrics_pip_shape_square">Square (1:1)</string>
+    <string name="settings_option_lyrics_pip_shape_tall">Tall (9:16)</string>
+    <string name="settings_option_lyrics_pip_focus_same_as_lyrics_screen">Same as lyrics screen</string>
+    <string name="settings_option_lyrics_pip_focus_center">Center</string>
+    <string name="settings_search_lyrics_pip_shape">pip size, ratio, aspect, square, portrait</string>
+    <string name="settings_search_lyrics_pip_controls">pip buttons, play pause, next, previous</string>
+    <string name="settings_search_lyrics_pip_focus">pip focus, active line, center</string>
+    <string name="settings_search_lyrics_pip_leave_spotify">pip home, background, go back, leave spotify</string>
+    <string name="settings_option_lyrics_pip_shape_landscape">Landscape (4:3)</string>
+    <string name="settings_option_lyrics_pip_shape_wide">Wide (16:9)</string>
+    <string name="settings_label_lyrics_pip_on_close">Continue in picture-in-picture when leaving lyrics</string>
+    <string name="settings_search_lyrics_pip_on_close">pip on back, auto pip, close lyrics, minimize, keep lyrics</string>
 </resources>

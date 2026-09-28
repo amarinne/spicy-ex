@@ -16,6 +16,10 @@ public final class PanelPolicy {
     }
 
     public static boolean shouldRender(Settings.Setting<?> setting, PanelSnapshot snapshot) {
+        // The rest of the PiP section only matters while leaving lyrics opens PiP.
+        if (setting.section == Settings.PIP && setting != Settings.PIP_ON_CLOSE) {
+            return Boolean.TRUE.equals(snapshot.get(Settings.PIP_ON_CLOSE));
+        }
         if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) return !snapshot.languageModelReady();
         if ((setting.section == Settings.TRANSLITERATION || setting.section == Settings.TRANSLATION)
                 && !snapshot.languageModelReady()) return false;
@@ -199,7 +203,8 @@ public final class PanelPolicy {
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     public static boolean shouldRebuildSectionAfterChange(Settings.Setting<?> setting) {
-        return setting == Settings.AI_ENABLED
+        return setting == Settings.PIP_ON_CLOSE
+                || setting == Settings.AI_ENABLED
                 || setting == Settings.AI_PROVIDER
                 || setting == Settings.TRANSLATION_ENABLED
                 || setting == Settings.TRANSLITERATION_ENABLED

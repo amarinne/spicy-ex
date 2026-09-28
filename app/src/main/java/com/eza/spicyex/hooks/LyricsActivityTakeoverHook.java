@@ -223,6 +223,7 @@ final class LyricsActivityTakeoverHook {
         param.setResult(null);
         // The lyrics screen closes its own layers first (share sheet, line picker, editor).
         if (shellConsumesBack(activity)) return;
+        if (host.openLyricsPipOnClose(activity)) return;
         markExplicitLyricsExit(activity);
         activity.finish();
     }
@@ -310,6 +311,7 @@ final class LyricsActivityTakeoverHook {
                 // never saw a back press and back closed the whole lyrics screen mid-edit. Ask
                 // the shell first: the editor's sheet closes, then the editor, then the screen.
                 if (shellConsumesBack(activity)) return;
+                if (host.openLyricsPipOnClose(activity)) return;
                 markExplicitLyricsExit(activity);
                 activity.finish();
             };

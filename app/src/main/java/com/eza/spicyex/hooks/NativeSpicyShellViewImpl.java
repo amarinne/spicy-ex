@@ -336,6 +336,134 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean resetScrollForNextDocument;
     private boolean showTranslation;
 
+    /** Shown in a picture-in-picture window (LyricsPipController): no touch reaches it, so
+     *  every control is left out - the header and the skip/follow chips. */
+    private boolean pipPresentation;
+    /** The full screen's height, kept while in PiP: the shell is laid out at full-screen size
+     *  and scaled down, but the activity's own metrics shrink to the PiP window. */
+    private int pipScreenHeightPx;
+    /** Rows of the layout PiP crops off the top (room for a status bar it doesn't have). */
+    private int pipCropTopPx;
+    /** The focus line's place mapped into the PiP lyrics area; NaN until measured. */
+    private float pipAnchorFraction = Float.NaN;
+
+    boolean hasLyricsDocument() {
+        return document != null;
+    }
+
+    void setPipPresentation(int screenHeightPx, int cropTopPx) {
+        boolean first = !pipPresentation;
+        pipPresentation = true;
+        pipScreenHeightPx = screenHeightPx;
+        pipCropTopPx = Math.max(0, cropTopPx);
+        // Where the content sits on screen is shared with the full-screen shell; a PiP window's
+        // position must not become it.
+        watchContentScreenTop(false);
+        if (first) {
+            // Lines leaving the top dissolve into the background under the header instead of
+            // being cut at its edge. The mask erases the lyrics area's own layer, so whatever
+            // background is behind (it moves with the artwork) shows through - nothing is
+            // painted over it.
+            lyricsFrame.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+            pipTopFade = new PipEdgeFade(dp(PIP_TOP_FADE_DP));
+            lyricsFrame.getOverlay().add(pipTopFade);
+            addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> post(this::fitLyricsBelowPipHeader));
+        }
+        if (chromeHeader != null) {
+            chromeHeader.animate().cancel();
+            chromeHeader.setVisibility(View.GONE);
+        }
+        if (skipGapController != null) skipGapController.hide();
+        if (jumpToCurrentController != null) jumpToCurrentController.update(false);
+    }
+
+    private PipEdgeFade pipTopFade;
+    private static final int PIP_TOP_FADE_DP = 72;
+    /** About half a lyric line: the focus point is a line's middle, not its top. */
+    private static final int PIP_FOCUS_HALF_LINE_DP = 48;
+
+    /** Fades out what is under its top {@code length} pixels (drawn in the owner's own layer). */
+    private static final class PipEdgeFade extends android.graphics.drawable.Drawable {
+        private final int length;
+        private final android.graphics.Paint paint = new android.graphics.Paint();
+        private int shaderHeight = -1;
+
+        PipEdgeFade(int length) {
+            this.length = length;
+            paint.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT));
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas canvas) {
+            android.graphics.Rect b = getBounds();
+            if (b.isEmpty()) return;
+            if (shaderHeight != length) {
+                shaderHeight = length;
+                paint.setShader(new android.graphics.LinearGradient(0, 0, 0, length,
+                        Color.BLACK, Color.TRANSPARENT, android.graphics.Shader.TileMode.CLAMP));
+            }
+            canvas.drawRect(b.left, b.top, b.right, b.top + length, paint);
+        }
+
+        @Override public void setAlpha(int alpha) { }
+        @Override public void setColorFilter(android.graphics.ColorFilter filter) { }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
+    }
+
+    /** In PiP the track readout at the top is a header, not an overlay: the lyrics area starts
+     *  below it, so no line ever runs under the artwork or title. */
+    private void fitLyricsBelowPipHeader() {
+        if (!pipPresentation || lyricsFrame == null || trackInfoController == null) return;
+        int headerBottom = 0;
+        View frame = trackInfoController.currentReadoutBox();
+        if (frame != null && frame.isShown() && frame.getHeight() > 0) {
+            android.graphics.Rect r = new android.graphics.Rect(0, 0, frame.getWidth(), frame.getHeight());
+            offsetDescendantRectToMyCoords(frame, r);
+            if (r.top < getHeight() / 2) headerBottom = Math.max(headerBottom, r.bottom);
+        }
+        if (!(lyricsFrame.getLayoutParams() instanceof ViewGroup.MarginLayoutParams)
+                || !(lyricsFrame.getParent() instanceof View)) return;
+        ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) lyricsFrame.getLayoutParams();
+        android.graphics.Rect parent = new android.graphics.Rect(0, 0, 1, 1);
+        offsetDescendantRectToMyCoords((View) lyricsFrame.getParent(), parent);
+        int wanted = headerBottom <= 0 ? 0 : Math.max(0, headerBottom - parent.top - lyricsFrame.getPaddingTop() + dp(10));
+        if (lp.topMargin != wanted) {
+            lp.topMargin = wanted;
+            lyricsFrame.setLayoutParams(lp);
+            return; // measured again on the layout this causes
+        }
+        if (pipTopFade != null) {
+            pipTopFade.setBounds(0, 0, lyricsFrame.getWidth(), lyricsFrame.getHeight());
+            lyricsFrame.invalidate();
+        }
+        applyPipAnchor(parent.top + lp.topMargin, lyricsFrame.getHeight());
+    }
+
+    /** The focus setting is where on the screen the current line rests. In PiP it rests at the
+     *  same height of the visible window - not of the lyrics area, which starts lower there -
+     *  kept inside the lyrics area. */
+    private void applyPipAnchor(int areaTop, int areaHeight) {
+        int visible = getHeight() - pipCropTopPx;
+        if (scrollController == null || areaHeight <= 0 || visible <= 0) return;
+        float wantedY = "Center".equals(config.get(Settings.PIP_FOCUS))
+                ? areaTop + areaHeight / 2f
+                : pipCropTopPx + baseFocusAnchorFraction() * visible;
+        // Never inside the top fade: the current line would be half dissolved.
+        float clearOfFade = (PIP_TOP_FADE_DP + PIP_FOCUS_HALF_LINE_DP) * getResources().getDisplayMetrics().density;
+        float min = Math.max(0.12f, clearOfFade / areaHeight);
+        float fraction = Math.max(min, Math.min(0.88f, (wantedY - areaTop) / areaHeight));
+        if (Math.abs(fraction - pipAnchorFraction) < 0.005f) return;
+        pipAnchorFraction = fraction;
+        scrollController.setAnchorFraction(fraction);
+        lastAppliedAnchorFraction = fraction;
+        applyLyricsScrollPadding();
+    }
+
+    private int screenHeightPx() {
+        return pipPresentation && pipScreenHeightPx > 0
+                ? pipScreenHeightPx : getResources().getDisplayMetrics().heightPixels;
+    }
+
     private void hideChrome() {
         if (running && chromeHeader != null && !"Always on".equals(fullscreenControlsMode())) {
             chromeRevealAnimating = false;
@@ -499,6 +627,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return true;
     }
     private boolean isLandscape() {
+        // A PiP shell is laid out once, for the window's shape, and scaled: the host's own
+        // orientation (it changes as the window does) must not switch it halfway.
+        if (pipLayout == PIP_LAYOUT_LANDSCAPE) return true;
+        if (pipPresentation || pipLayout == PIP_LAYOUT_PORTRAIT) return false;
         return getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
     }
 
@@ -732,13 +864,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             scrollController.applyCenterPadding(
                     safeTop,
                     dp(lyricsBottomPaddingDp()),
-                    getResources().getDisplayMetrics().heightPixels,
+                    screenHeightPx(),
                     dp(56), sidePad);
             applyLandscapeChromeClearance();
             return;
         }
         int viewport = lyricsScroll.getHeight();
-        if (viewport <= 0) viewport = getResources().getDisplayMetrics().heightPixels;
+        if (viewport <= 0) viewport = screenHeightPx();
         int center = Math.max(0, viewport / 2 - dp(56));
         lyricsScroll.setPadding(0, Math.max(safeTop, center), 0, Math.max(dp(lyricsBottomPaddingDp()), center));
         applyLandscapeChromeClearance();
@@ -748,7 +880,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      *  Long lines used to run underneath them; wrap before that column instead. */
     private void applyLandscapeChromeClearance() {
         if (lyricsScroll == null || !isLandscape()) return;
-        int clearance = dp(chromeButtonDp() + 16);
+        // A PiP window has no controls to keep clear of.
+        int clearance = pipLayout == PIP_LAYOUT_NONE ? dp(chromeButtonDp() + 16) : 0;
         boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
         lyricsScroll.setPadding(rtl ? clearance : 0, lyricsScroll.getPaddingTop(),
                 rtl ? 0 : clearance, lyricsScroll.getPaddingBottom());
@@ -796,10 +929,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         updateState(dt);
     });
 
+    /** Not in a picture-in-picture host. */
+    static final int PIP_LAYOUT_NONE = 0;
+    /** PiP window of a portrait shape: the phone's portrait layout, scaled down. */
+    static final int PIP_LAYOUT_PORTRAIT = 1;
+    /** PiP window of a landscape shape: the landscape layout (two columns when that is on),
+     *  scaled down - a portrait layout stretched to a wide window made every line tiny. */
+    static final int PIP_LAYOUT_LANDSCAPE = 2;
+    private final int pipLayout;
+
     NativeSpicyShellViewImpl(LyricsHost host, Activity activity) {
+        this(host, activity, PIP_LAYOUT_NONE);
+    }
+
+    NativeSpicyShellViewImpl(LyricsHost host, Activity activity, int pipLayout) {
         super(activity);
         this.host = host;
         this.activity = activity;
+        this.pipLayout = pipLayout;
         com.eza.spicyex.ui.Motion.initialize(activity);
         this.romanSpinner = new ChipSpinnerDrawable(activity);
         this.translationSpinner = new ChipSpinnerDrawable(activity);
@@ -809,8 +956,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // Construction-time layout decision: rotation remounts the shell, and the adaptive
         // toggle takes effect on the next open (same contract as PR9's landscape layout).
         android.content.res.Configuration screen = activity.getResources().getConfiguration();
-        this.twoColumn = twoColumnEngaged(screen.screenWidthDp, screen.screenHeightDp,
-                config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT));
+        // A PiP host is still full screen (usually portrait) when the shell is built, so the
+        // window's shape decides there instead of the host's configuration.
+        this.twoColumn = pipLayout == PIP_LAYOUT_LANDSCAPE
+                ? Boolean.TRUE.equals(config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT))
+                : pipLayout == PIP_LAYOUT_NONE && twoColumnEngaged(screen.screenWidthDp,
+                        screen.screenHeightDp, config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT));
         this.aiSettings = new AiSettings(activity);
         this.styleBatcher = new FrameStyleBatcher(activity);
         this.frameRenderer = new LyricsFrameRenderer(activity, styleBatcher);
@@ -827,6 +978,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         this.emptyStateController = new LyricsShellEmptyStateController(activity, config, textFactory);
         this.shellLifecycle = new LyricsShellLifecycle(activity, () -> {
             if (consumeShareSheetBack()) return;
+            if (host.openLyricsPipOnClose(activity)) return;
             host.markExplicitLyricsExit(activity);
             activity.finish();
         });
@@ -1090,6 +1242,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 isLandscape(),
                 isTopReadout(),
                 () -> {
+                    if (host.openLyricsPipOnClose(activity)) return;
                     host.markExplicitLyricsExit(activity);
                     activity.finish();
                 },
@@ -1383,7 +1536,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         cancelSongChangeTransitions();
         applyStatusBarPreference();
         com.eza.spicyex.lyrics.LanguageModelPack.setReadyListener(languageModelReadyListener);
-        watchContentScreenTop(true);
+        if (!pipPresentation) watchContentScreenTop(true);
         ambientController.start();
         revealChrome();
         documentGate.start();
@@ -1448,7 +1601,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void revealChrome() {
-        if (chromeHeader == null) return;
+        if (chromeHeader == null || pipPresentation) return;
         handler.removeCallbacks(hideChromeRunnable);
         chromeHeader.setVisibility(View.VISIBLE);
         if (chromeHeader.getAlpha() < 0.99f && !chromeRevealAnimating) {
@@ -3582,6 +3735,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      *  chrome or strand space at the opposite edge in landscape, so landscape always centers
      *  regardless of the setting. */
     private float resolveFocusAnchorFraction() {
+        if (pipPresentation && !Float.isNaN(pipAnchorFraction)) return pipAnchorFraction;
+        return baseFocusAnchorFraction();
+    }
+
+    private float baseFocusAnchorFraction() {
         String pos = config == null ? "Auto" : config.get(Settings.LYRICS_FOCUS_POSITION);
         float fraction;
         if ("Top".equals(pos)) {
@@ -3812,6 +3970,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private float glideCapPx() {
         boolean apple = renderConfig != null && renderConfig.appleStyle;
         if (!apple) return ROW_CASCADE_MAX_OFFSET_PX;
+        if (pipPresentation && pipScreenHeightPx > 0) {
+            // The PiP lyrics area is a small part of the window; measured against it, ordinary
+            // line changes read as long jumps and skipped the slide animation.
+            return pipScreenHeightPx * 0.45f;
+        }
         if (lyricsScroll != null && lyricsScroll.getHeight() > 0) {
             return lyricsScroll.getHeight() * (isLandscape() ? 0.6f : 0.45f);
         }
@@ -4804,7 +4967,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void updateJumpToCurrentVisibility() {
         boolean show = document != null && followState.activeIndex() >= 0 && followState.isHoldingNow();
-        jumpToCurrentController.update(show);
+        jumpToCurrentController.update(show && !pipPresentation);
         if (show && autoResumeFollow && host.isPlayerActuallyPlaying()) {
             int delaySeconds = config == null ? Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.defaultValue
                     : config.get(Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS);
@@ -4849,7 +5012,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // host.canSeek() reflects the *current* PlaybackState, which can flip moment to moment
         // (e.g. an ad starting), so this is re-checked every tick rather than cached - a chip
         // offering a seek that would just be silently ignored is worse than no chip at all.
-        if (target != null && !acked && host.canSeek()) {
+        if (target != null && !acked && host.canSeek() && !pipPresentation) {
             skipGapController.show(SkipGapPolicy.defaultLabel(target.kind));
         } else {
             skipGapController.hide();
