@@ -405,8 +405,6 @@
     <string name="lyrics_ai_refined_google">Google 번역을 AI가 다듬었습니다.</string>
     <string name="lyrics_ai_from_source">원문 가사를 AI가 직접 번역했습니다.</string>
     <string name="lyrics_ai_model_used">모델: %1$s</string>
-    <string name="settings_label_lyric_follow_chip_animation">‘현재 가사로’ 버튼 애니메이션</string>
-    <string name="settings_label_lyric_follow_chip_progress">‘현재 가사로’ 버튼 진행 표시</string>
     <string name="settings_label_apple_cascade_speed">슬라이드 속도</string>
     <string name="settings_label_apple_spring_strength">탄성 강도</string>
     <string name="settings_label_download_language_models">언어 모델 다운로드</string>
