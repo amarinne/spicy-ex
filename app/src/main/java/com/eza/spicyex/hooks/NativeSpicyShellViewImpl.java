@@ -322,6 +322,75 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private Bitmap demoArtBitmap;
     private long demoStartElapsedMs;
 
+    /** Shown in a picture-in-picture window (LyricsPipController): no touch reaches it, so
+     *  every control is left out - the header and the skip/follow chips. */
+    private boolean pipPresentation;
+    /** The full screen's height, kept while in PiP: the shell is laid out at full-screen size
+     *  and scaled down, but the activity's own metrics shrink to the PiP window. */
+    private int pipScreenHeightPx;
+    /** Rows of the layout PiP crops off the top (room for a status bar it doesn't have). */
+    private int pipCropTopPx;
+    /** The focus line's place mapped into the PiP lyrics area; NaN until measured. */
+    private float pipAnchorFraction = Float.NaN;
+
+    boolean hasLyricsDocument() {
+        return document != null;
+    }
+
+    void setPipPresentation(int screenHeightPx, int cropTopPx) {
+        boolean first = !pipPresentation;
+        pipPresentation = true;
+        pipScreenHeightPx = screenHeightPx;
+        pipCropTopPx = Math.max(0, cropTopPx);
+        // Where the content sits on screen is shared with the full-screen shell; a PiP window's
+        // position must not become it.
+        watchContentScreenTop(false);
+        if (first) addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> post(this::fitPipLyrics));
+        if (trackInfoController != null) trackInfoController.setPipPresentation();
+        if (chromeHeader != null) {
+            chromeHeader.animate().cancel();
+            chromeHeader.setVisibility(View.GONE);
+        }
+        if (skipGapController != null) skipGapController.hide();
+        if (jumpToCurrentController != null) jumpToCurrentController.update(false);
+    }
+
+    /** Keep the lyrics area at full height after the readout is removed. */
+    private void fitPipLyrics() {
+        if (!pipPresentation || lyricsFrame == null) return;
+        if (!(lyricsFrame.getLayoutParams() instanceof ViewGroup.MarginLayoutParams)
+                || !(lyricsFrame.getParent() instanceof View)) return;
+        ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) lyricsFrame.getLayoutParams();
+        android.graphics.Rect parent = new android.graphics.Rect(0, 0, 1, 1);
+        offsetDescendantRectToMyCoords((View) lyricsFrame.getParent(), parent);
+        if (lp.topMargin != 0) {
+            lp.topMargin = 0;
+            lyricsFrame.setLayoutParams(lp);
+            return; // measured again on the layout this causes
+        }
+        applyPipAnchor(parent.top + lp.topMargin, lyricsFrame.getHeight());
+    }
+
+    /** Map the focus setting into the visible PiP window and keep it inside the lyrics area. */
+    private void applyPipAnchor(int areaTop, int areaHeight) {
+        int visible = getHeight() - pipCropTopPx;
+        if (scrollController == null || areaHeight <= 0 || visible <= 0) return;
+        float wantedY = "Center".equals(config.get(Settings.PIP_FOCUS))
+                ? areaTop + areaHeight / 2f
+                : pipCropTopPx + baseFocusAnchorFraction() * visible;
+        float fraction = Math.max(0.12f, Math.min(0.88f, (wantedY - areaTop) / areaHeight));
+        if (Math.abs(fraction - pipAnchorFraction) < 0.005f) return;
+        pipAnchorFraction = fraction;
+        scrollController.setAnchorFraction(fraction);
+        lastAppliedAnchorFraction = fraction;
+        applyLyricsScrollPadding();
+    }
+
+    private int screenHeightPx() {
+        return pipPresentation && pipScreenHeightPx > 0
+                ? pipScreenHeightPx : getResources().getDisplayMetrics().heightPixels;
+    }
+
     private void hideChrome() {
         // The editor's top-control capture is a real editing target. Never fade its source out
         // underneath the outline; close() calls revealChrome() after removing the editor, which
@@ -400,6 +469,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (jumpToCurrentController != null) jumpToCurrentController.onPreferenceChanged();
         if (skipGapController != null) skipGapController.onPreferenceChanged();
         if (chromeViews != null) {
+            updatePipButtonVisibility();
             LyricsShellChromeController.applyClusterPosition(chromeViews,
                     "Left".equals(config.get(Settings.CHROME_CLUSTER_POSITION)));
             chromeLayoutApplied = false;
@@ -424,6 +494,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (chromeViews == null || chromeViews.back == null) return;
         boolean show = Boolean.TRUE.equals(config.get(Settings.SHOW_FULLSCREEN_BACK_BUTTON));
         chromeViews.back.setVisibility(show && !twoColumn && !isTopReadout() ? VISIBLE : GONE);
+    }
+
+    private void updatePipButtonVisibility() {
+        if (chromeViews == null || chromeViews.pipButton == null) return;
+        boolean show = !pipPresentation && LyricsPipController.isSupported(activity)
+                && Boolean.TRUE.equals(config.get(Settings.PIP_ENABLED));
+        chromeViews.pipButton.setVisibility(show ? VISIBLE : GONE);
     }
     private long lastKeepAliveArmMs;
     // Unsynced (plain) lyrics: no per-line timing, so don't auto-follow or karaoke-wash — render every
@@ -750,6 +827,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private boolean isLandscape() {
+        // A PiP shell is laid out once, for the window's shape, and scaled: the host's own
+        // orientation (it changes as the window does) must not switch it halfway.
+        if (pipLayout == PIP_LAYOUT_LANDSCAPE) return true;
+        if (pipPresentation || pipLayout == PIP_LAYOUT_PORTRAIT) return false;
         return getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
     }
 
@@ -988,13 +1069,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             scrollController.applyCenterPadding(
                     safeTop,
                     dp(lyricsBottomPaddingDp()),
-                    getResources().getDisplayMetrics().heightPixels,
+                    screenHeightPx(),
                     dp(56), sidePad);
             applyLandscapeChromeClearance();
             return;
         }
         int viewport = lyricsScroll.getHeight();
-        if (viewport <= 0) viewport = getResources().getDisplayMetrics().heightPixels;
+        if (viewport <= 0) viewport = screenHeightPx();
         int center = Math.max(0, viewport / 2 - dp(56));
         lyricsScroll.setPadding(0, Math.max(safeTop, center), 0, Math.max(dp(lyricsBottomPaddingDp()), center));
         applyLandscapeChromeClearance();
@@ -1005,6 +1086,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      *  that column instead. */
     private void applyLandscapeChromeClearance() {
         if (lyricsScroll == null || (!isLandscape() && !twoColumn)) return;
+        if (pipPresentation) {
+            lyricsScroll.setPadding(0, lyricsScroll.getPaddingTop(), 0,
+                    lyricsScroll.getPaddingBottom());
+            return;
+        }
         int fallbackPx = dp(chromeButtonDp() + 16);
         int gapPx = dp(12);
 
@@ -1112,10 +1198,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         updateState(dt);
     });
 
+    /** Not in a picture-in-picture host. */
+    static final int PIP_LAYOUT_NONE = 0;
+    /** PiP window of a portrait shape: the phone's portrait layout, scaled down. */
+    static final int PIP_LAYOUT_PORTRAIT = 1;
+    /** PiP window of a landscape shape: the landscape layout (two columns when that is on),
+     *  scaled down - a portrait layout stretched to a wide window made every line tiny. */
+    static final int PIP_LAYOUT_LANDSCAPE = 2;
+    private final int pipLayout;
+
     NativeSpicyShellViewImpl(LyricsHost host, Activity activity) {
+        this(host, activity, PIP_LAYOUT_NONE);
+    }
+
+    NativeSpicyShellViewImpl(LyricsHost host, Activity activity, int pipLayout) {
         super(activity);
         this.host = host;
         this.activity = activity;
+        this.pipLayout = pipLayout;
         com.eza.spicyex.ui.Motion.initialize(activity);
         this.romanSpinner = new ChipSpinnerDrawable(activity);
         this.translationSpinner = new ChipSpinnerDrawable(activity);
@@ -1125,8 +1225,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // Construction-time layout decision: rotation remounts the shell, and the adaptive
         // toggle takes effect on the next open (same contract as PR9's landscape layout).
         android.content.res.Configuration screen = activity.getResources().getConfiguration();
-        this.twoColumn = twoColumnEngaged(screen.screenWidthDp, screen.screenHeightDp,
-                config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT));
+        // A PiP host is still full screen (usually portrait) when the shell is built, so the
+        // window's shape decides there instead of the host's configuration.
+        this.twoColumn = pipLayout == PIP_LAYOUT_LANDSCAPE
+                ? Boolean.TRUE.equals(config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT))
+                : pipLayout == PIP_LAYOUT_NONE && twoColumnEngaged(screen.screenWidthDp,
+                        screen.screenHeightDp, config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT));
         this.aiSettings = new AiSettings(activity);
         this.styleBatcher = new FrameStyleBatcher(activity);
         this.frameRenderer = new LyricsFrameRenderer(activity, styleBatcher);
@@ -1268,11 +1372,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     hideThenRebuild(showTranslation ? java.util.Collections.emptyList()
                             : mountedTranslationViews(), this::rebuildSecondaryRowsInPlace);
                 },
+                () -> host.openLyricsPip(activity),
                 () -> settingsDialogController.show(),
                 com.eza.spicyex.ui.ActionIconDrawable.likedSongsKind(likedMode),
                 this::onLikeTapped);
         chromeHeader = chrome.header;
         chromeViews = chrome;
+        updatePipButtonVisibility();
         applyBackVisibility();
         attachClusterLayoutListener();
         romanToggle = chrome.romanToggle;
@@ -1551,7 +1657,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         applyStatusBarPreference();
         com.eza.spicyex.lyrics.LanguageModelPack.setReadyListener(languageModelReadyListener);
-        watchContentScreenTop(true);
+        if (!pipPresentation) watchContentScreenTop(true);
         ambientController.start();
         revealChrome();
         documentGate.start();
@@ -1648,7 +1754,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void revealChrome() {
-        if (chromeHeader == null) return;
+        if (chromeHeader == null || pipPresentation) return;
         handler.removeCallbacks(hideChromeRunnable);
         // Track/art readout overlays can be reattached after the header (preference changes,
         // rotation, and layout-editor entry all do this). Restore the real chrome's z-order at
@@ -3547,6 +3653,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     /** Resolves Settings#LYRICS_FOCUS_POSITION to an anchor fraction for scrollController. */
     private float resolveFocusAnchorFraction() {
+        if (pipPresentation && !Float.isNaN(pipAnchorFraction)) return pipAnchorFraction;
+        return baseFocusAnchorFraction();
+    }
+
+    private float baseFocusAnchorFraction() {
         String pos = config == null ? "Auto" : config.get(Settings.LYRICS_FOCUS_POSITION);
         int percent = config == null ? Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT.defaultValue
                 : config.get(Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT);
@@ -3776,6 +3887,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private float glideCapPx() {
         boolean apple = renderConfig != null && renderConfig.appleStyle;
         if (!apple) return ROW_CASCADE_MAX_OFFSET_PX;
+        if (pipPresentation && pipScreenHeightPx > 0) {
+            // The PiP lyrics area is a small part of the window; measured against it, ordinary
+            // line changes read as long jumps and skipped the slide animation.
+            return pipScreenHeightPx * 0.45f;
+        }
         if (lyricsScroll != null && lyricsScroll.getHeight() > 0) {
             return lyricsScroll.getHeight() * (isLandscape() ? 0.6f : 0.45f);
         }
@@ -4768,7 +4884,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void updateJumpToCurrentVisibility() {
         boolean show = document != null && followState.activeIndex() >= 0 && followState.isHoldingNow();
-        jumpToCurrentController.update(show);
+        jumpToCurrentController.update(show && !pipPresentation);
 
         // The countdown starts once the list is at rest: not while it is still gliding or
         // springing back from an end, and not while paused (it starts over on resume rather
@@ -4820,7 +4936,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // host.canSeek() reflects the *current* PlaybackState, which can flip moment to moment
         // (e.g. an ad starting), so this is re-checked every tick rather than cached - a chip
         // offering a seek that would just be silently ignored is worse than no chip at all.
-        if (target != null && !acked && host.canSeek()) {
+        if (target != null && !acked && host.canSeek() && !pipPresentation) {
             skipGapController.show(SkipGapPolicy.defaultLabel(target.kind));
         } else {
             skipGapController.hide();

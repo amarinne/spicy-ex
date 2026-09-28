@@ -235,6 +235,7 @@ final class TrackInfoReadoutController {
     private final View topOverlayScrim;
     private final ImageButton topOverlayButton;
     private final FrameLayout sideBox;
+    private boolean pipPresentation;
     private final ArtTouchFrame sideArtFrame;
     private final ImageView sideArt;
     private final View sideOverlayScrim;
@@ -1023,6 +1024,12 @@ final class TrackInfoReadoutController {
         if (headerTitle != null) headerTitle.setVisibility(header ? View.GONE : View.VISIBLE);
     }
 
+    /** PiP shows only lyrics, regardless of the stored track-info position. */
+    void setPipPresentation() {
+        pipPresentation = true;
+        setMode("Off");
+    }
+
     /** Re-reads settings (call at mount and from the preference listener). */
     void onPreferenceChanged() {
         applyBackgroundStyle();
@@ -1043,6 +1050,7 @@ final class TrackInfoReadoutController {
     }
 
     private void setMode(String mode) {
+        if (pipPresentation) mode = "Off";
         if (mode == null) mode = "Off";
         // Two-column's left column is this readout's column placement: it shows for every stored
         // position except Off, and hiding it collapses that column (the lyrics take the width).

@@ -445,4 +445,22 @@
     <string name="settings_layout_editor_blur_intensity_hint">0%でオフ。値を上げるほど離れた行が強くぼけます。</string>
     <string name="lyrics_follow_chip_label">歌詞を追従</string>
     <string name="settings_label_lyrics_share_gesture_hint">共有画面のジェスチャーヒント</string>
+    <string name="settings_section_pip">ピクチャー・イン・ピクチャー</string>
+    <string name="settings_label_lyrics_pip_shape">ウィンドウの形</string>
+    <string name="settings_label_lyrics_pip_controls">再生コントロール</string>
+    <string name="settings_label_lyrics_pip_focus">現在の行の位置</string>
+    <string name="settings_label_lyrics_pip_leave_spotify">前のアプリに戻る</string>
+    <string name="settings_option_lyrics_pip_shape_portrait">縦長 (3:4)</string>
+    <string name="settings_option_lyrics_pip_shape_square">正方形 (1:1)</string>
+    <string name="settings_option_lyrics_pip_shape_tall">細長 (9:16)</string>
+    <string name="settings_option_lyrics_pip_focus_same_as_lyrics_screen">歌詞画面と同じ</string>
+    <string name="settings_option_lyrics_pip_focus_center">中央</string>
+    <string name="settings_search_lyrics_pip_shape">pip サイズ, 比率, 正方形, 縦長</string>
+    <string name="settings_search_lyrics_pip_controls">pip ボタン, 再生 一時停止, 次の曲, 前の曲</string>
+    <string name="settings_search_lyrics_pip_focus">pip フォーカス, 現在の歌詞, 中央</string>
+    <string name="settings_search_lyrics_pip_leave_spotify">pip ホーム, バックグラウンド, 戻る</string>
+    <string name="settings_option_lyrics_pip_shape_landscape">横長 (4:3)</string>
+    <string name="settings_option_lyrics_pip_shape_wide">ワイド (16:9)</string>
+    <string name="settings_label_lyrics_pip_enabled">PiPボタンを表示</string>
+    <string name="settings_search_lyrics_pip_enabled">pip ボタン, 歌詞を小窓で表示</string>
 </resources>

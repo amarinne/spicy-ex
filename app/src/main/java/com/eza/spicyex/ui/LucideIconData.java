@@ -74,6 +74,7 @@ public final class LucideIconData {
         PATHS.put("REFRESH", "M 3 12 C 3 7.03 7.03 3 12 3 C 14.52 3.01 16.93 3.99 18.74 5.74 L 21 8 M 21 3 L 21 8 L 16 8 M 21 12 C 21 16.97 16.97 21 12 21 C 9.48 20.99 7.07 20.01 5.26 18.26 L 3 16 M 8 16 L 3 16 L 3 21");
         // Added with the CIRCLE_CHECK manifest entry; circle converted with the generator's
         // cubic constant plus the upstream lucide circle-check-big check stroke.
+        PATHS.put("PICTURE_IN_PICTURE", "M 21 9 L 21 6 C 21 4.9 20.1 4 19 4 L 4 4 C 2.9 4 2 4.9 2 6 L 2 16 C 2 17.1 2.9 18 4 18 L 8 18 M 14 13 L 20 13 C 21.1 13 22 13.9 22 15 L 22 18 C 22 19.1 21.1 20 20 20 L 14 20 C 12.9 20 12 19.1 12 18 L 12 15 C 12 13.9 12.9 13 14 13 Z");
         PATHS.put("CIRCLE_CHECK", "M 22 12 C 22 17.52 17.52 22 12 22 C 6.48 22 2 17.52 2 12 C 2 6.48 6.48 2 12 2 C 17.52 2 22 6.48 22 12 M 9 12 L 11 14 L 15 10");
     }
 

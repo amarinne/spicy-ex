@@ -287,6 +287,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                         context, com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPICY))
                 .aiOffered(aiAvailable());
         snapshot.put(Settings.AI_ENABLED, store.get(Settings.AI_ENABLED));
+        snapshot.put(Settings.PIP_ENABLED, store.get(Settings.PIP_ENABLED));
         snapshot.put(Settings.AI_PROVIDER, store.get(Settings.AI_PROVIDER));
         snapshot.put(Settings.TRANSLATION_ENABLED, store.get(Settings.TRANSLATION_ENABLED));
         snapshot.put(Settings.TRANSLITERATION_ENABLED, store.get(Settings.TRANSLITERATION_ENABLED));

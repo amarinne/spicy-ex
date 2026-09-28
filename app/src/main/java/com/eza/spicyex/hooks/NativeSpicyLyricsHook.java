@@ -37,6 +37,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     private final LyricsActivityTakeoverHook activityTakeoverHook =
             new LyricsActivityTakeoverHook(this, nowPlayingInjector);
     private final PlaybackBridge playbackBridge = new PlaybackBridge();
+    private final LyricsPipController pipController = new LyricsPipController(this);
     private final LyricsFetchCoordinator lyricsFetchCoordinator =
             new LyricsFetchCoordinator(
                     NativeRuntime.HTTP,
@@ -74,6 +75,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         ).hook();
         playbackBridge.install(lpparm, symbols);
         activityTakeoverHook.hook();
+        pipController.hook(lpparm.classLoader());
         String processName = Application.getProcessName();
         XpLog.log(TAG + " bridge init package=" + lpparm.packageName()
                 + " appProcess=" + processName);
@@ -102,6 +104,11 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
 
     public void markExplicitLyricsExit(Activity activity) {
         activityTakeoverHook.markExplicitLyricsExit(activity);
+    }
+
+    @Override
+    public boolean openLyricsPip(Activity activity) {
+        return pipController.openFromLyrics(activity);
     }
 
     void launchNativeLyricsFullscreen(Activity activity) {

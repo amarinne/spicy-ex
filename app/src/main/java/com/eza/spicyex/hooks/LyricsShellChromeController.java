@@ -27,10 +27,9 @@ import com.eza.spicyex.ui.ActionIconDrawable;
  * Builds the fullscreen shell's top chrome row.
  *
  * <p>Default control order: cog anchored top-right. Off/Bottom: Back leading at the top-left
- * corner, then title spacer, then transliteration, translation, like, settings (reads
- * right-to-left as cog, like, translation, transliteration). Top: Back is gone (art owns the
- * corner) and the controls form a vertical rail anchored right, reading top to bottom as
- * settings, like, translation, transliteration. R1 like sits second, ahead of the reading
+ * corner, then title spacer, then transliteration, translation, like, PiP, settings. Top: Back
+ * is gone (art owns the corner) and the controls form a vertical rail anchored right, reading
+ * top to bottom as settings, PiP, like, translation, transliteration. R1 like sits ahead of the reading
  * toggles, only when enabled; Off reserves nothing. {@link Settings#CHROME_CLUSTER_POSITION}
  * mirrors this whole arrangement to the opposite edge (Back trails, cluster leads instead) in
  * every mode - see {@link #applyClusterPosition} - without changing the cluster's own internal
@@ -55,6 +54,7 @@ final class LyricsShellChromeController {
             Runnable onBack,
             Runnable onRomanToggle,
             Runnable onTranslationToggle,
+            Runnable onPip,
             Runnable onSettings,
             ActionIconDrawable.Kind likeKind,
             Runnable onLike
@@ -108,6 +108,11 @@ final class LyricsShellChromeController {
                 "Spicy EX settings", chromeButtonDp, landscape ? 11 : 12);
         settingsButton.setOnClickListener(v -> onSettings.run());
 
+        ImageButton pipButton = createRoundIconButton(activity,
+                new ActionIconDrawable(ActionIconDrawable.Kind.PICTURE_IN_PICTURE, iconColor, density),
+                "Open lyrics in picture-in-picture", chromeButtonDp, landscape ? 11 : 12);
+        pipButton.setOnClickListener(v -> onPip.run());
+
         ImageButton likeButton = createRoundIconButton(activity,
                 new ActionIconDrawable(likeKind != null ? likeKind : ActionIconDrawable.Kind.PLUS,
                         iconColor, density),
@@ -118,12 +123,13 @@ final class LyricsShellChromeController {
         configCluster.addView(romanToggle);
         configCluster.addView(translationToggle);
         configCluster.addView(likeButton);
+        configCluster.addView(pipButton);
         configCluster.addView(settingsButton);
 
         romanToggle.setForeground(romanSpinner);
         translationToggle.setForeground(translationSpinner);
         ChromeViews views = new ChromeViews(header, headerTitle, back, configCluster,
-                romanToggle, translationToggle, settingsButton, likeButton);
+                romanToggle, translationToggle, settingsButton, likeButton, pipButton);
         applyTopMode(views, topActive, chromeButtonDp, landscape);
         applyClusterPosition(views, mirrored);
         return views;
@@ -152,9 +158,8 @@ final class LyricsShellChromeController {
     /**
      * Applies the Top/Off-Bottom arrangement synchronously: call at mount and on mode
      * change only. Order follows {@code docs/FULLSCREEN_CHROME_SPEC.md}: Top is a vertical
-     * right rail (settings, like, translation, transliteration); otherwise Back leads and
-     * the row reads (transliteration, translation, like, settings) so right-to-left is
-     * cog, like, translation, transliteration. Hidden (Lite) controls and an Off like
+     * right rail (settings, PiP, like, translation, transliteration); otherwise Back leads and
+     * the row reads (transliteration, translation, like, PiP, settings). Hidden controls and an Off like
      * button reserve nothing; spacing follows visible order only.
      */
     static void applyTopMode(ChromeViews chrome, boolean topActive,
@@ -173,8 +178,10 @@ final class LyricsShellChromeController {
         // Reorder without dropping LayoutParams; order is owned by
         // docs/FULLSCREEN_CHROME_SPEC.md (cog anchored top-right, like second).
         ImageButton[] order = topActive
-                ? new ImageButton[]{chrome.settingsButton, chrome.likeButton, chrome.translationToggle, chrome.romanToggle}
-                : new ImageButton[]{chrome.romanToggle, chrome.translationToggle, chrome.likeButton, chrome.settingsButton};
+                ? new ImageButton[]{chrome.settingsButton, chrome.pipButton, chrome.likeButton,
+                        chrome.translationToggle, chrome.romanToggle}
+                : new ImageButton[]{chrome.romanToggle, chrome.translationToggle, chrome.likeButton,
+                        chrome.pipButton, chrome.settingsButton};
         for (ImageButton button : order) {
             if (button == null || chrome.configCluster.indexOfChild(button) < 0) continue;
             chrome.configCluster.removeView(button);
@@ -214,11 +221,12 @@ final class LyricsShellChromeController {
         final ImageButton translationToggle;
         final ImageButton settingsButton;
         final ImageButton likeButton;
+        final ImageButton pipButton;
 
         ChromeViews(ViewGroup header, TextView headerTitle, TextView back,
                 LinearLayout configCluster,
                 ImageButton romanToggle, ImageButton translationToggle,
-                ImageButton settingsButton, ImageButton likeButton) {
+                ImageButton settingsButton, ImageButton likeButton, ImageButton pipButton) {
             this.header = header;
             this.headerTitle = headerTitle;
             this.back = back;
@@ -227,6 +235,7 @@ final class LyricsShellChromeController {
             this.translationToggle = translationToggle;
             this.settingsButton = settingsButton;
             this.likeButton = likeButton;
+            this.pipButton = pipButton;
         }
     }
 }

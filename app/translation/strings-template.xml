@@ -632,4 +632,22 @@
     <string name="settings_layout_editor_card_caption">Now playing card</string>
     <string name="settings_layout_editor_font_pick_file">Pick file…</string>
     <string name="settings_layout_editor_font_pick_failed">Couldn\'t read that font file</string>
+    <string name="settings_section_pip">Picture-in-picture</string>
+    <string name="settings_label_lyrics_pip_shape">Window shape</string>
+    <string name="settings_label_lyrics_pip_controls">Playback controls</string>
+    <string name="settings_label_lyrics_pip_focus">Current line position</string>
+    <string name="settings_label_lyrics_pip_leave_spotify">Return to the previous app</string>
+    <string name="settings_option_lyrics_pip_shape_portrait">Portrait (3:4)</string>
+    <string name="settings_option_lyrics_pip_shape_square">Square (1:1)</string>
+    <string name="settings_option_lyrics_pip_shape_tall">Tall (9:16)</string>
+    <string name="settings_option_lyrics_pip_focus_same_as_lyrics_screen">Same as lyrics screen</string>
+    <string name="settings_option_lyrics_pip_focus_center">Center</string>
+    <string name="settings_search_lyrics_pip_shape">pip size, ratio, aspect, square, portrait</string>
+    <string name="settings_search_lyrics_pip_controls">pip buttons, play pause, next, previous</string>
+    <string name="settings_search_lyrics_pip_focus">pip focus, active line, center</string>
+    <string name="settings_search_lyrics_pip_leave_spotify">pip home, background, go back, leave spotify</string>
+    <string name="settings_option_lyrics_pip_shape_landscape">Landscape (4:3)</string>
+    <string name="settings_option_lyrics_pip_shape_wide">Wide (16:9)</string>
+    <string name="settings_label_lyrics_pip_enabled">Show picture-in-picture button</string>
+    <string name="settings_search_lyrics_pip_enabled">pip button, minimize lyrics, floating lyrics</string>
 </resources>

@@ -868,7 +868,7 @@ final class LyricsActivityTakeoverHook {
                 isNativeSpicyEnabled(activity), nativeLyricsSessionActive, explicitExit);
     }
 
-    private boolean isLyricsFullscreenActivity(Activity activity) {
+    static boolean isLyricsFullscreenActivity(Activity activity) {
         return activity != null && LYRICS_FULLSCREEN_ACTIVITY.equals(activity.getClass().getName());
     }
 

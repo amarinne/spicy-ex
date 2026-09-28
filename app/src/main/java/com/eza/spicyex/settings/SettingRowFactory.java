@@ -108,10 +108,33 @@ public final class SettingRowFactory {
                 unavailable ? host.unavailableSummary(setting) : summary);
         style.applyRowLead(row, setting.key);
         if (!unavailable) value.setTextColor(PanelStyle.COL_ACCENT);
+        if (setting == Settings.PIP_SHAPE) addShapePreview(row, setting, value);
         row.addView(style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 18),
                 new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
         row.setEnabled(!unavailable);
         if (!unavailable) row.setOnClickListener(v -> host.openSelector(setting, values, value));
+    }
+
+    /** The chosen window shape, drawn: follows the value as it changes (the summary is rewritten
+     *  in place when an option is picked, so that is what it listens to). */
+    private void addShapePreview(LinearLayout row, Settings.StringSetting setting, TextView value) {
+        PanelStyle style = host.style();
+        android.widget.ImageView shape = new android.widget.ImageView(style.context());
+        shape.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        Runnable update = () -> {
+            int[] ratio = Settings.pipShapeRatio(host.store().get(setting));
+            shape.setImageDrawable(new com.eza.spicyex.ui.AspectRectDrawable(
+                    ratio[0] / (float) ratio[1], PanelStyle.COL_ACCENT, style.density()));
+        };
+        update.run();
+        value.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
+            @Override public void afterTextChanged(android.text.Editable s) { update.run(); }
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(style.dp(30), style.dp(30));
+        lp.rightMargin = style.dp(4);
+        row.addView(shape, lp);
     }
 
     public void stepperRow(LinearLayout content, final Settings.IntegerSetting setting) {

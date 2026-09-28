@@ -28,6 +28,7 @@ public final class Settings {
     public static final Section ANIMATION = LYRICS_SCREEN;
     public static final Section BACKGROUND = LYRICS_SCREEN;
     public static final Section AI = new Section("AI", "ai");
+    public static final Section PIP = new Section("Picture-in-picture", "pip");
     public static final Section DEBUG = new Section("About & Diagnostics", "debug");
     public static final Section DISPLAY = TEXT;
     public static final Section INTERNAL = new Section("Internal", "internal");
@@ -756,6 +757,44 @@ public final class Settings {
             "ai_button_behavior", AI, "Translation button",
             "Generate AI output, then toggle",
             "Generate AI output, then toggle", "Toggle display only"
+    );
+
+    // The explicit button opens lyrics in PiP. Closing or backing out keeps its normal behavior.
+    // Off by default; the rest of the PiP section applies only while this is on.
+    public static final Setting<Boolean> PIP_ENABLED = boolSetting(
+            "lyrics_pip_enabled", PIP, "Show picture-in-picture button", false
+    );
+
+    // Window shape - see pipShapeRatio().
+    public static final Setting<String> PIP_SHAPE = enumSetting(
+            "lyrics_pip_shape", PIP, "Window shape", "Portrait",
+            "Portrait", "Square", "Tall", "Landscape", "Wide"
+    );
+
+    /** Width and height of a PIP_SHAPE value (the window and its layout share them). */
+    public static int[] pipShapeRatio(String shape) {
+        if ("Square".equals(shape)) return new int[]{1, 1};
+        if ("Tall".equals(shape)) return new int[]{9, 16};
+        if ("Landscape".equals(shape)) return new int[]{4, 3};
+        if ("Wide".equals(shape)) return new int[]{16, 9};
+        return new int[]{3, 4};
+    }
+
+    // Previous / play-pause / next in the window's own controls.
+    public static final Setting<Boolean> PIP_CONTROLS = boolSetting(
+            "lyrics_pip_controls", PIP, "Playback controls", true
+    );
+
+    // Where the current line rests: the lyrics screen's focus position, taken as a height on the
+    // window, or the middle of the lyrics area.
+    public static final Setting<String> PIP_FOCUS = enumSetting(
+            "lyrics_pip_focus", PIP, "Current line position", "Same as lyrics screen",
+            "Same as lyrics screen", "Center"
+    );
+
+    // Starting PiP sends Spotify to the background, back to the app used before it.
+    public static final Setting<Boolean> PIP_LEAVE_SPOTIFY = boolSetting(
+            "lyrics_pip_leave_spotify", PIP, "Return to the previous app", true
     );
 
     // ===================== INTERNAL (fixed defaults, not shown) =====================
