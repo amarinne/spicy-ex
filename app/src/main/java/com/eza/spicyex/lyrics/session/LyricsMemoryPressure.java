@@ -4,8 +4,8 @@ import android.content.ComponentCallbacks2;
 import android.content.Context;
 import android.content.res.Configuration;
 
-import com.eza.spicyex.lyrics.LatinLanguageGate;
-import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
+import com.eza.spicyex.lyrics.language.LatinLanguageGate;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
 
 import com.eza.spicyex.xposed.XpLog;
 
@@ -81,7 +81,7 @@ public final class LyricsMemoryPressure {
         } catch (Throwable ignored) {
         }
         try {
-            com.eza.spicyex.lyrics.ProviderTextDetectionStore.trimMemory();
+            com.eza.spicyex.lyrics.language.ProviderTextDetectionStore.trimMemory();
         } catch (Throwable ignored) {
         }
         for (Reclaimer reclaimer : RECLAIMERS) {

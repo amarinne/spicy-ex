@@ -12,7 +12,7 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.LyricTimeline;
-import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsDocument;
 

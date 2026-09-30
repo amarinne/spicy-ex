@@ -10,7 +10,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.eza.spicyex.SettingsUiStrings;
+import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.catalog.CatalogPickerModel;
 import com.eza.spicyex.lyrics.catalog.CatalogPickerState;
@@ -69,6 +69,7 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
     private LyricsSessionManager.SessionSubscription subscription;
     private LyricsSessionManager.PollingDemandLease lease;
     private boolean closed;
+    private LyricsHost.CatalogActionCallback opening;
     /** The last session tick seen; ticks arrive every 200 ms, so only a change reloads. */
     private boolean tickPrimed;
     private String tickTrackUri = "";
@@ -90,13 +91,45 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
         new LyricsSourcePickerDialog(activity, host, strings, status).open();
     }
 
+    static LyricsSourcePickerDialog showForAgent(Activity activity, LyricsHost host,
+            SettingsUiStrings strings, LyricsHost.CatalogActionCallback opening) {
+        LyricsSourcePickerDialog picker = new LyricsSourcePickerDialog(activity, host, strings,
+                message -> { });
+        picker.opening = opening;
+        picker.open();
+        return picker;
+    }
+
+    boolean isOpen() {
+        return !closed && dialog != null;
+    }
+
+    boolean isShowing() {
+        return isOpen() && dialog.isShowing();
+    }
+
+    void dismiss() {
+        if (dialog != null) dialog.dismiss();
+        close();
+    }
+
+    private void completeOpening(boolean success, String detail) {
+        LyricsHost.CatalogActionCallback callback = opening;
+        opening = null;
+        if (callback != null) callback.onComplete(success, detail);
+    }
+
     // --- Lifecycle ---
 
     /** Opens the picker for the session's current track; no track means nothing to choose. */
     private void open() {
         try {
             String uri = host.catalogTrackUri();
-            if (uri == null || uri.isEmpty()) return;
+            if (uri == null || uri.isEmpty()) {
+                completeOpening(false, "No current track");
+                close();
+                return;
+            }
             state = CatalogPickerState.initial(uri);
             dialog = new PanelDialog(activity,
                     text(strings, "source_picker_title", "Choose lyrics source"));
@@ -116,6 +149,7 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
     /** The picker is showing; ticks are what keep its rows honest, and the lease makes them come. */
     private void present() {
         dialog.show();
+        completeOpening(true, "opened track=" + state.trackUri);
         XpLog.log(TAG + " picker opened rows=" + rows.getChildCount());
         try {
             subscription = host.subscribeLyricsSession(this);
@@ -127,6 +161,7 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
 
     /** The user closed the picker, so nothing keeps ticking or loading on its behalf. */
     private void close() {
+        completeOpening(false, "picker closed before opening");
         closed = true;
         handler.removeCallbacksAndMessages(null);
         release(subscription);
@@ -159,10 +194,18 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
         try {
             host.loadCatalogPickerRows((uri, loaded) -> {
                 if (closed) return;
-                dispatch(state.withRows(uri, serial, loaded));
+                try {
+                    dispatch(state.withRows(uri, serial, loaded));
+                } catch (Throwable t) {
+                    XpLog.log(TAG + " picker render failed: " + t);
+                    completeOpening(false, "picker render failed");
+                    dismiss();
+                }
             });
         } catch (Throwable t) {
             XpLog.log(TAG + " picker load failed: " + t);
+            completeOpening(false, "picker load failed");
+            dismiss();
         }
     }
 

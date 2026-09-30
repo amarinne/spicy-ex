@@ -1,5 +1,11 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.LyricsLocalRomanizer;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
+import com.eza.spicyex.lyrics.language.ScriptClassifier;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 

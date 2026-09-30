@@ -18,7 +18,7 @@ public final class CanonicalSourceCache {
     public static CanonicalSourceCodec.Record load(Context context, String trackUri) {
         if (context == null || trackUri == null || trackUri.isEmpty()) return null;
         try {
-            String raw = com.eza.spicyex.lyrics.SpicyCacheStore.get(context, PREFS, entryKey(trackUri));
+            String raw = com.eza.spicyex.lyrics.cache.SpicyCacheStore.get(context, PREFS, entryKey(trackUri));
             return CanonicalSourceCodec.decode(raw);
         } catch (Throwable t) {
             Diagnostics.warn("CanonicalSourceCache", "load", t);
@@ -27,22 +27,22 @@ public final class CanonicalSourceCache {
     }
 
     public static void clear(Context context) {
-        com.eza.spicyex.lyrics.SpicyCacheStore.clear(context, PREFS);
+        com.eza.spicyex.lyrics.cache.SpicyCacheStore.clear(context, PREFS);
     }
 
     /** Drops only one track's legacy record. */
     public static void remove(Context context, String trackUri) {
         if (context == null || trackUri == null || trackUri.isEmpty()) return;
-        com.eza.spicyex.lyrics.SpicyCacheStore.remove(context, PREFS, entryKey(trackUri));
+        com.eza.spicyex.lyrics.cache.SpicyCacheStore.remove(context, PREFS, entryKey(trackUri));
     }
 
     /** Combined logical-payload usage of the legacy store, for the settings panel. */
     public static long usageBytes(Context context) {
-        return com.eza.spicyex.lyrics.SpicyCacheStore.usageBytes(context, PREFS);
+        return com.eza.spicyex.lyrics.cache.SpicyCacheStore.usageBytes(context, PREFS);
     }
 
     public static int entryCount(Context context) {
-        return com.eza.spicyex.lyrics.SpicyCacheStore.entryCount(context, PREFS);
+        return com.eza.spicyex.lyrics.cache.SpicyCacheStore.entryCount(context, PREFS);
     }
 
     private static String entryKey(String trackUri) {

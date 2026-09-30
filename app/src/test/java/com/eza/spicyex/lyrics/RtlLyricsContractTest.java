@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;

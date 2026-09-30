@@ -15,6 +15,12 @@ import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.catalog.CatalogSource;
 import com.eza.spicyex.lyrics.catalog.LyricsCatalog;
+import com.eza.spicyex.lyrics.session.LayerKind;
+import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
+import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source;
+import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode;
+import com.eza.spicyex.lyrics.cache.CacheClearKind;
+import com.eza.spicyex.settings.SourcePreferencesAdapter;
 import com.eza.spicyex.settings.SettingsWriter;
 import com.eza.spicyex.xposed.XpLog;
 
@@ -22,15 +28,17 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.Charset;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
- * A file-based command channel so an automated agent can drive the catalog without tapping.
+ * A debug file channel for semantic UI and session actions without coordinate input.
  *
  * <p>Why this exists: every catalog action is a method on {@link LyricsHost}, which lives in
  * Spotify's process, and the module ships no receiver, service, or provider. Reaching those actions
@@ -50,13 +58,19 @@ import java.util.concurrent.TimeUnit;
  * <p>Commands, one per line in {@code cmd}:
  * <ul>
  *   <li>{@code status} — ack with the current track and whether a document is loaded</li>
+ *   <li>{@code fullscreen open|close|back|status} — use the native takeover and exit owners</li>
+ *   <li>{@code settings open|close|status} — use the settings dialog lifecycle</li>
+ *   <li>{@code layer refresh|restore|ai SOUND|MEANING} — use the shared layer scheduler</li>
+ *   <li>{@code sources} — commit ranking, order, and enabled flags through the settings adapter</li>
+ *   <li>{@code playback} — use the captured Spotify transport</li>
+ *   <li>{@code action} — invoke reading, follow, skip, and sync actions on the mounted shell</li>
  *   <li>{@code auto} — drop any manual pin and re-elect the automatic winner</li>
  *   <li>{@code climb} — ask the whole quality chain in order, bypassing the racing chain</li>
  *   <li>{@code check <source>} — ask one source, e.g. {@code check apple}</li>
  *   <li>{@code select-candidate <id>} — pin one exact stored catalog candidate</li>
  *   <li>{@code restore-selection <uri> <mode> [id]} — restore a gate's previous seat</li>
  *   <li>{@code footer} — read the source footer currently rendered by the lyrics surface</li>
- *   <li>{@code picker} — open the source picker, for the rare case a human needs to see it</li>
+ *   <li>{@code picker open|close|status} — open or inspect the source picker</li>
  *   <li>{@code editor open [lyrics|card]} — open the layout editor, no tap needed</li>
  *   <li>{@code editor close} — close it again</li>
  *   <li>{@code editor select <name>} — select one element: {@code artwork},
@@ -99,16 +113,22 @@ final class AgentCommandChannel {
     private final LyricsHost host;
     private final Context context;
     private final File dir;
-    private final Handler main = new Handler(Looper.getMainLooper());
+    private final Consumer<Runnable> main;
     private ScheduledExecutorService worker;
     /** Last command text dispatched, so an undeletable command file cannot cause a poll loop. */
     private String lastDispatched = "";
     /** Set once the reply file has proven unwritable, so the failure is logged exactly one time. */
     private boolean outWriteFailed;
+    private WeakReference<LyricsSourcePickerDialog> agentPicker = new WeakReference<>(null);
 
     private AgentCommandChannel(LyricsHost host, Context context) {
+        this(host, context, new Handler(Looper.getMainLooper())::post);
+    }
+
+    AgentCommandChannel(LyricsHost host, Context context, Consumer<Runnable> main) {
         this.host = host;
         this.context = context;
+        this.main = main;
         File files = context.getFilesDir();
         this.dir = files == null ? null : new File(files, DIR);
     }
@@ -180,7 +200,7 @@ final class AgentCommandChannel {
         return tail.isEmpty() || tail.indexOf(' ') >= 0 ? "" : tail;
     }
 
-    private void dispatch(String raw) {
+    void dispatch(String raw) {
         if (raw.isEmpty()) {
             reply("ignored", "empty", "");
             return;
@@ -197,10 +217,35 @@ final class AgentCommandChannel {
             argument = rest.substring(0, rest.length() - correlation.length() - 1).trim();
         }
         String track = trackLabel();
+        final String commandArgument = argument;
         try {
             switch (verb) {
                 case "status":
-                    reply("ok", verb, "track=" + track, correlation);
+                    onMain(verb, correlation, () -> {
+                        Activity activity = References.currentActivity();
+                        NativeSpicyShellView shell = activity == null || activity.getWindow() == null
+                                ? null : findShell(activity.getWindow().getDecorView());
+                        reply("ok", verb, "track=" + trackLabel() + " fullscreen=" + (shell != null)
+                                + " document=" + (shell != null && shell.hasLyricsDocument()), correlation);
+                    });
+                    return;
+                case "fullscreen":
+                    fullscreen(argument, correlation);
+                    return;
+                case "settings":
+                    String settingsAction = argument;
+                    onMain(verb, correlation, () -> {
+                        if (!"open".equals(settingsAction) && !"close".equals(settingsAction)
+                                && !"status".equals(settingsAction)) {
+                            reply("error", verb, "expected open, close, or status", correlation);
+                            return;
+                        }
+                        NativeSpicyShellView shell = requireShell(verb, correlation);
+                        if (shell == null) return;
+                        boolean result = shell.agentSettings(settingsAction);
+                        reply(result || "status".equals(settingsAction) ? "ok" : "error", verb,
+                                settingsAction + "=" + result, correlation);
+                    });
                     return;
                 case "auto":
                     host.resetCatalogToAuto(
@@ -222,6 +267,43 @@ final class AgentCommandChannel {
                             (ok, detail) -> reply(ok ? "ok" : "error", verb,
                                     explain(ok, detail, track), correlation));
                     return;
+                case "check-other":
+                    host.checkOtherCatalogSources((ok, detail) -> reply(ok ? "ok" : "error", verb,
+                            explain(ok, detail, track), correlation));
+                    return;
+                case "reject-candidate":
+                case "remove-candidate":
+                case "delete-track":
+                    catalogDelete(verb, argument, correlation);
+                    return;
+                case "layer":
+                    layer(argument, correlation);
+                    return;
+                case "clear-cache":
+                    String[] clearArgs = argument.split("\\s+");
+                    if (clearArgs.length != 2 || !"confirm".equals(clearArgs[1])) {
+                        reply("error", verb, "expected KIND confirm", correlation);
+                        return;
+                    }
+                    CacheClearKind kind = CacheClearKind.valueOf(clearArgs[0].toUpperCase(Locale.ROOT));
+                    onMain(verb, correlation, () -> {
+                        host.clearLyricsCache(kind);
+                        reply("ok", verb, "requested kind=" + kind, correlation);
+                    });
+                    return;
+                case "playback":
+                    playback(argument, correlation);
+                    return;
+                case "pip":
+                    onMain(verb, correlation, () -> {
+                        Activity activity = References.currentActivity();
+                        boolean opened = "open".equals(commandArgument) && activity != null
+                                && host.openLyricsPip(activity);
+                        reply(opened ? "ok" : "error", verb,
+                                opened ? "requested" : "expected open on an eligible lyrics screen",
+                                correlation);
+                    });
+                    return;
                 case "select-candidate":
                     if (argument.isEmpty()) {
                         reply("error", verb, "missing candidate id", correlation);
@@ -238,7 +320,7 @@ final class AgentCommandChannel {
                     readFooter(correlation);
                     return;
                 case "picker":
-                    openPicker(correlation);
+                    picker(argument.isEmpty() ? "open" : argument, correlation);
                     return;
                 case "editor":
                     editor(argument, correlation);
@@ -251,6 +333,18 @@ final class AgentCommandChannel {
                     return;
                 case "setting-get":
                     readSetting(argument, correlation);
+                    return;
+                case "sources":
+                    sources(argument, correlation);
+                    return;
+                case "action":
+                    onMain(verb, correlation, () -> {
+                        NativeSpicyShellView shell = requireShell(verb, correlation);
+                        if (shell == null) return;
+                        boolean accepted = shell.agentAction(commandArgument);
+                        reply(accepted ? "ok" : "error", verb,
+                                "accepted=" + accepted + " action=" + commandArgument, correlation);
+                    });
                     return;
                 default:
                     reply("error", verb, "unknown command", correlation);
@@ -276,22 +370,245 @@ final class AgentCommandChannel {
         return detail;
     }
 
-    private void openPicker(String correlation) {
-        Activity activity = References.currentActivity();
-        if (activity == null) {
-            reply("error", "picker", "no current activity", correlation);
+    private void onMain(String verb, String correlation, Runnable action) {
+        main.accept(() -> {
+            try { action.run(); }
+            catch (Throwable t) { reply("error", verb, "threw " + t, correlation); }
+        });
+    }
+
+    private void fullscreen(String action, String correlation) {
+        onMain("fullscreen", correlation, () -> {
+            Activity activity = References.currentActivity();
+            if (activity == null || activity.isDestroyed() || activity.isFinishing()) {
+                reply("error", "fullscreen", "no current activity", correlation);
+                return;
+            }
+            NativeSpicyShellView shell = activity.getWindow() == null ? null
+                    : findShell(activity.getWindow().getDecorView());
+            switch (action) {
+                case "status":
+                    reply("ok", "fullscreen", "mounted=" + (shell != null)
+                            + " document=" + (shell != null && shell.hasLyricsDocument()), correlation);
+                    return;
+                case "open":
+                    boolean opened = shell != null || host.launchNativeLyricsFullscreen(activity);
+                    reply(opened ? "ok" : "error", "fullscreen",
+                            shell != null ? "mounted" : opened ? "requested" : "launch failed",
+                            correlation);
+                    return;
+                case "back":
+                case "close":
+                    if (!LyricsActivityTakeoverHook.isLyricsFullscreenActivity(activity)) {
+                        reply("error", "fullscreen", "no fullscreen activity", correlation);
+                        return;
+                    }
+                    LyricsSourcePickerDialog picker = agentPicker.get();
+                    if ("back".equals(action)) {
+                        boolean closedOverlay = false;
+                        if (picker != null && picker.isOpen()) {
+                            picker.dismiss();
+                            closedOverlay = true;
+                        } else if (shell != null && shell.agentSettings("status")) {
+                            closedOverlay = shell.agentSettings("close");
+                        } else if (shell != null) {
+                            closedOverlay = shell.consumeBack();
+                        }
+                        if (closedOverlay) {
+                            reply("ok", "fullscreen", "closed overlay", correlation);
+                            return;
+                        }
+                    }
+                    if (picker != null) picker.dismiss();
+                    if (shell != null) shell.agentSettings("close");
+                    host.markExplicitLyricsExit(activity);
+                    activity.finish();
+                    reply("ok", "fullscreen", "exit requested", correlation);
+                    return;
+                default:
+                    reply("error", "fullscreen", "expected open, close, back, or status", correlation);
+            }
+        });
+    }
+
+    private void picker(String action, String correlation) {
+        onMain("picker", correlation, () -> {
+            LyricsSourcePickerDialog picker = agentPicker.get();
+            if ("status".equals(action)) {
+                reply("ok", "picker", "showing=" + (picker != null && picker.isShowing()),
+                        correlation);
+                return;
+            }
+            if ("close".equals(action)) {
+                if (picker != null) picker.dismiss();
+                agentPicker.clear();
+                reply("ok", "picker", "closed", correlation);
+                return;
+            }
+            if (!"open".equals(action)) {
+                reply("error", "picker", "expected open, close, or status", correlation);
+                return;
+            }
+            Activity activity = References.currentActivity();
+            if (activity == null || activity.isDestroyed() || activity.isFinishing()) {
+                reply("error", "picker", "no current activity", correlation);
+                return;
+            }
+            if (picker != null && picker.isOpen()) {
+                reply("ok", "picker", "already open", correlation);
+                return;
+            }
+            agentPicker = new WeakReference<>(LyricsSourcePickerDialog.showForAgent(activity, host,
+                    com.eza.spicyex.ui.UiLanguage.strings(activity, null),
+                    (ok, detail) -> reply(ok ? "ok" : "error", "picker", detail, correlation)));
+        });
+    }
+
+    private void catalogDelete(String verb, String argument, String correlation) {
+        String[] args = argument.split("\\s+");
+        if (args.length != 2 || !"confirm".equals(args[1]) || args[0].isEmpty()) {
+            reply("error", verb, "expected " + ("delete-track".equals(verb) ? "TRACK_URI" : "CANDIDATE_ID")
+                    + " confirm", correlation);
             return;
         }
-        main.post(() -> {
-            try {
-                // The picker needs the same collaborators the shell chrome passes in: the host and
-                // the interface-language strings.
-                LyricsSourcePickerDialog.show(activity, host,
-                        com.eza.spicyex.UiLanguage.strings(activity, null),
-                        message -> reply("ok", "picker", message, correlation));
-            } catch (Throwable t) {
-                reply("error", "picker", "threw " + t, correlation);
+        onMain(verb, correlation, () -> {
+            LyricsHost.CatalogActionCallback callback = (ok, detail) -> reply(ok ? "ok" : "error",
+                    verb, detail, correlation);
+            if ("delete-track".equals(verb)) {
+                if (!args[0].equals(host.catalogTrackUri())) {
+                    reply("error", verb, "current track changed", correlation);
+                    return;
+                }
+                host.deleteCatalogTrack(callback);
+            } else if ("reject-candidate".equals(verb)) {
+                host.rejectCatalogCandidate(args[0], callback);
+            } else {
+                host.removeCatalogCandidate(args[0], callback);
             }
+        });
+    }
+
+    private void layer(String argument, String correlation) {
+        String[] args = argument.split("\\s+");
+        if (args.length != 2) {
+            reply("error", "layer", "expected refresh|restore|ai SOUND|MEANING", correlation);
+            return;
+        }
+        LayerKind layer = LayerKind.valueOf(args[1].toUpperCase(Locale.ROOT));
+        onMain("layer", correlation, () -> {
+            switch (args[0]) {
+                case "refresh": host.refreshLyricsLayer(layer); break;
+                case "restore": host.restoreLyricsLayer(layer); break;
+                case "ai":
+                    com.eza.spicyex.lyrics.ai.AiRequestStartResult result = host.requestAiLyricsLayer(layer);
+                    reply(result.started() ? "ok" : "error", "layer", result.token, correlation);
+                    return;
+                default:
+                    reply("error", "layer", "expected refresh, restore, or ai", correlation);
+                    return;
+            }
+            reply("ok", "layer", "requested action=" + args[0] + " layer=" + layer, correlation);
+        });
+    }
+
+    private void playback(String argument, String correlation) {
+        String[] args = argument.split("\\s+");
+        onMain("playback", correlation, () -> {
+            boolean accepted;
+            switch (args[0]) {
+                case "toggle": accepted = host.togglePlayPause(); break;
+                case "next": accepted = host.skipToNextTrack(); break;
+                case "previous": accepted = host.skipToPreviousTrack(); break;
+                case "seek":
+                    if (args.length != 2) throw new IllegalArgumentException("seek needs milliseconds");
+                    long position = Long.parseLong(args[1]);
+                    accepted = position >= 0 && host.canSeek() && host.seekSpotifyTo(position);
+                    break;
+                case "status":
+                    SpotifyTrack track = host.getCurrentTrackSafely();
+                    boolean playing = host.isPlayerActuallyPlaying();
+                    reply("ok", "playback", "playing=" + playing + " position="
+                            + host.readBestMeasuredProgressMs(track, playing) + " seekable=" + host.canSeek(),
+                            correlation);
+                    return;
+                default:
+                    reply("error", "playback", "expected status, toggle, next, previous, or seek MS", correlation);
+                    return;
+            }
+            reply(accepted ? "ok" : "error", "playback", "accepted=" + accepted, correlation);
+        });
+    }
+
+    private void sources(String argument, String correlation) {
+        onMain("sources", correlation, () -> {
+            Activity activity = References.currentActivity();
+            if (activity == null || activity.isDestroyed()) {
+                reply("error", "sources", "no current activity", correlation);
+                return;
+            }
+            RankingMode mode =
+                    LyricsSourcePreferences.rankingMode(activity);
+            List<Source> order = new ArrayList<>(
+                    LyricsSourcePreferences.sourceOrder(activity));
+            java.util.Map<Source, Boolean> enabled =
+                    new java.util.EnumMap<>(Source.class);
+            for (Source source
+                    : Source.values()) {
+                enabled.put(source,
+                        LyricsSourcePreferences.sourceEnabled(activity, source));
+            }
+            String before = "mode=" + mode.id + " order=" + order + " enabled=" + enabled;
+            String[] args = argument.split("\\s+");
+            if ("status".equals(argument)) {
+                reply("ok", "sources", before, correlation);
+                return;
+            }
+            if (args.length == 2 && "mode".equals(args[0])
+                    && ("auto".equals(args[1]) || "order".equals(args[1]))) {
+                mode = RankingMode.parse(args[1]);
+            } else if (args.length == 3 && "enable".equals(args[0])
+                    && ("true".equals(args[2]) || "false".equals(args[2]))) {
+                Source source =
+                        Source.parse(args[1]);
+                if (source == null || source == Source.SPICY)
+                    throw new IllegalArgumentException("unknown or retired source");
+                enabled.put(source, Boolean.valueOf(args[2]));
+            } else if (args.length == 2 && "order".equals(args[0])) {
+                order.clear();
+                for (String token : args[1].split(",", -1)) {
+                    Source source =
+                            Source.parse(token);
+                    if (source == null || order.contains(source))
+                        throw new IllegalArgumentException("unknown or duplicate source");
+                    order.add(source);
+                }
+            } else {
+                reply("error", "sources", "expected status, mode auto|order, enable SOURCE true|false,"
+                        + " or order CSV", correlation);
+                return;
+            }
+            SourcePreferencesAdapter adapter =
+                    new SourcePreferencesAdapter(
+                            new SourcePreferencesAdapter.Sink() {
+                        public void setRankingMode(RankingMode value) {
+                            LyricsSourcePreferences.setRankingMode(activity, value);
+                        }
+                        public void setSourceOrder(List<Source> value) {
+                            LyricsSourcePreferences.setSourceOrder(activity, value);
+                        }
+                        public void setSourceEnabled(Source source,
+                                                     boolean value) {
+                            LyricsSourcePreferences.setSourceEnabled(activity, source, value);
+                        }
+                    });
+            adapter.commit(new SettingsWriter(new SettingsStore(activity)),
+                    new SourcePreferencesAdapter.Commit(
+                            mode == RankingMode.AUTO
+                                    ? "Auto" : "Source order", order, enabled));
+            host.reconcileLyricsSources();
+            reply("ok", "sources", "old={" + before + "} new={mode=" + mode.id
+                    + " order=" + LyricsSourcePreferences.sourceOrder(activity)
+                    + " enabled=" + enabled + "}", correlation);
         });
     }
 
@@ -302,7 +619,7 @@ final class AgentCommandChannel {
     private void editor(String argument, String correlation) {
         String[] args = argument.isEmpty() ? new String[0] : argument.split("\\s+");
         String action = args.length == 0 ? "" : args[0].toLowerCase(Locale.ROOT);
-        main.post(() -> {
+        main.accept(() -> {
             try {
                 NativeSpicyShellView shell = requireShell("editor", correlation);
                 if (shell == null) return;
@@ -337,8 +654,27 @@ final class AgentCommandChannel {
                                 correlation);
                         return;
                     }
+                    case "back":
+                    case "demo":
+                    case "tab":
+                    case "reset": {
+                        boolean reset = "reset".equals(action);
+                        if (reset && (args.length != 3 || !"all".equals(args[1])
+                                || !"confirm".equals(args[2]))) {
+                            reply("error", "editor", "reset needs all confirm", correlation);
+                            return;
+                        }
+                        if (!reset && args.length != ("back".equals(action) ? 1 : 2)) {
+                            reply("error", "editor", "invalid action arguments", correlation);
+                            return;
+                        }
+                        boolean accepted = shell.agentEditorAction(action, args.length > 1 ? args[1] : "");
+                        reply(accepted ? "ok" : "error", "editor", "accepted=" + accepted,
+                                correlation);
+                        return;
+                    }
                     default:
-                        reply("error", "editor", "expected open, close, or select", correlation);
+                        reply("error", "editor", "expected open, close, select, back, demo, tab, or reset", correlation);
                 }
             } catch (Throwable t) {
                 reply("error", "editor", "threw " + t, correlation);
@@ -347,7 +683,7 @@ final class AgentCommandChannel {
     }
 
     private void layout(String correlation) {
-        main.post(() -> {
+        main.accept(() -> {
             try {
                 NativeSpicyShellView shell = requireShell("layout", correlation);
                 if (shell == null) return;
@@ -369,7 +705,7 @@ final class AgentCommandChannel {
             reply("error", "setting", "expected a setting key and a value", correlation);
             return;
         }
-        main.post(() -> {
+        main.accept(() -> {
             try {
                 Activity activity = References.currentActivity();
                 if (activity == null || activity.isDestroyed()) {
@@ -400,6 +736,12 @@ final class AgentCommandChannel {
                 SettingsStore store = new SettingsStore(activity);
                 Object previous = store.get(setting);
                 SettingsWriter writer = new SettingsWriter(store);
+                if (isAdapterOwnedSetting(setting)) {
+                    reply("error", "setting", "'" + setting.key + "' is owned by the source"
+                            + " selection dialog; change ranking, order, and toggles there so both"
+                            + " preference namespaces stay together", correlation);
+                    return;
+                }
                 if (setting instanceof Settings.BooleanSetting) {
                     writer.put((Settings.BooleanSetting) setting, (Boolean) value);
                 } else if (setting instanceof Settings.StringSetting) {
@@ -409,6 +751,16 @@ final class AgentCommandChannel {
                 } else {
                     reply("error", "setting", "unsupported setting type", correlation);
                     return;
+                }
+                if (setting == Settings.LYRICS_SOURCE_MODE) {
+                    // The UI mirrors the ranking label into the source namespace on every change
+                    // (SettingsPanel.onSettingChanged); CatalogPolicy.read consults that
+                    // namespace, so a CLI write must do the same or acquisition keeps the old
+                    // mode while the panel shows the new one.
+                    LyricsSourcePreferences.setRankingMode(
+                            activity,
+                            RankingMode
+                                    .parse(String.valueOf(value)));
                 }
                 reply("ok", "setting", "old=" + previous + " new=" + value, correlation);
             } catch (Throwable t) {
@@ -423,7 +775,7 @@ final class AgentCommandChannel {
             reply("error", "setting-get", "expected a setting key", correlation);
             return;
         }
-        main.post(() -> {
+        main.accept(() -> {
             try {
                 Activity activity = References.currentActivity();
                 if (activity == null || activity.isDestroyed()) {
@@ -448,6 +800,16 @@ final class AgentCommandChannel {
             if (setting.key.equals(key)) return setting;
         }
         return null;
+    }
+
+    /**
+     * Settings committed only through {@link SourcePreferencesAdapter},
+     * which writes the ordinary store and the source namespace together. A raw CLI write to one
+     * namespace would diverge them, so the channel refuses these keys outright.
+     */
+    static boolean isAdapterOwnedSetting(Settings.Setting<?> setting) {
+        return setting == Settings.LYRICS_SOURCE_OVERRIDE
+                || setting == Settings.LYRICS_SOURCE_ORDER;
     }
 
     /** The value as the setting's own default types it, or null when the token is not that type.
@@ -513,7 +875,7 @@ final class AgentCommandChannel {
 
     /** Reads the actual footer view, so the device gate verifies rendered UI instead of inferring it. */
     private void readFooter(String correlation) {
-        main.post(() -> {
+        main.accept(() -> {
             try {
                 Activity activity = References.currentActivity();
                 if (activity == null || activity.isDestroyed() || activity.getWindow() == null) {

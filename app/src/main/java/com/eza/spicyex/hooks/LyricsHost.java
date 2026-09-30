@@ -3,7 +3,7 @@ package com.eza.spicyex.hooks;
 import android.app.Activity;
 
 import com.eza.spicyex.SpotifyTrack;
-import com.eza.spicyex.lyrics.CacheClearKind;
+import com.eza.spicyex.lyrics.cache.CacheClearKind;
 
 /**
  * The seam between lyric surfaces and their hosting Xposed hook.
@@ -42,6 +42,9 @@ public interface LyricsHost {
     boolean toggleSpotifySaved(String mode, SpotifyTrack expected);
 
     void markExplicitLyricsExit(Activity activity);
+
+    /** Opens the same Spotify fullscreen route used by the lyrics buttons. */
+    boolean launchNativeLyricsFullscreen(Activity activity);
 
     /** Opens the optional lyrics picture-in-picture window from its explicit button. */
     boolean openLyricsPip(Activity activity);

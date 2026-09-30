@@ -15,7 +15,7 @@ import java.util.List;
 import org.junit.Test;
 
 import com.eza.spicyex.lyrics.LyricsDocument;
-import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.SyllableSegment;
 
@@ -501,46 +501,6 @@ public class LyricSessionContractTest {
         assertEquals(3, coalescer.inFlightCount());
     }
 
-    // --- separate surface subscriptions -------------------------------------
-
-    @Test
-    public void everySurfaceReceivesTheSameEventsFromOneSession() {
-        SessionEventBus bus = new SessionEventBus();
-        List<SessionEvent> fullscreen = new ArrayList<>();
-        List<SessionEvent> nowPlaying = new ArrayList<>();
-        List<SessionEvent> hyperGlow = new ArrayList<>();
-        bus.subscribe(fullscreen::add);
-        bus.subscribe(nowPlaying::add);
-        bus.subscribe(hyperGlow::add);
-
-        LyricSession session = session("ichi");
-        bus.publish(SessionEvent.baseChanged(session));
-        bus.publish(SessionEvent.layerChanged(session, LayerKind.SOUND,
-                Collections.singleton(session.base.rows.get(0).rowId)));
-
-        assertEquals(2, fullscreen.size());
-        assertEquals(2, nowPlaying.size());
-        assertEquals(2, hyperGlow.size());
-        assertEquals(SessionEvent.Kind.SOUND_CHANGED, hyperGlow.get(1).kind);
-        assertTrue(hyperGlow.get(1).isRowScoped());
-    }
-
-    @Test
-    public void aLateSurfaceReplaysTheCurrentStateAndUnsubscribeStopsDelivery() {
-        SessionEventBus bus = new SessionEventBus();
-        LyricSession session = session("ichi");
-        bus.publish(SessionEvent.baseChanged(session));
-
-        List<SessionEvent> late = new ArrayList<>();
-        SessionEventBus.Subscription subscription = bus.subscribe(late::add);
-        assertEquals(1, late.size());
-
-        subscription.close();
-        bus.publish(SessionEvent.stateChanged(session));
-        assertEquals(1, late.size());
-        assertEquals(0, bus.subscriberCount());
-    }
-
     // --- compatibility projection ------------------------------------------
 
     @Test
@@ -586,10 +546,10 @@ public class LyricSessionContractTest {
         LyricsDocument canonical = document("今天我们一起唱歌");
         LyricsLine line = canonical.lines.get(0);
         line.detection = DetectionResult.detected("", line.text,
-                com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass.CHINESE, "zh", .99);
-        line.japaneseReading = new com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.JapaneseReading(
+                com.eza.spicyex.lyrics.language.ScriptClassifier.ScriptClass.CHINESE, "zh", .99);
+        line.japaneseReading = new com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor.JapaneseReading(
                 line.text, "jin tian", Collections.singletonList(
-                new com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "きん")));
+                new com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor.FuriganaSegment(0, 1, "きん")));
         LyricSession session = LyricSession.of(CanonicalBase.fromDocument("spotify:track:a", canonical), 1);
         String row0 = session.base.rows.get(0).rowId;
         session = session.withSound(readySound(session, SoundEntry.line(row0, "jin tian", "pinyin")));

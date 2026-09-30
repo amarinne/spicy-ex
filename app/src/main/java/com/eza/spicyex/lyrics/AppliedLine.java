@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
+
 import java.util.ArrayList;
 import java.util.List;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;

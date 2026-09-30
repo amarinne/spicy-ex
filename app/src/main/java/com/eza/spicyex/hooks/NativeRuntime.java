@@ -1,6 +1,6 @@
 package com.eza.spicyex.hooks;
 
-import com.eza.spicyex.lyrics.SpicyProcessing;
+import com.eza.spicyex.lyrics.processing.SpicyProcessing;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -13,7 +13,7 @@ import java.util.concurrent.RejectedExecutionHandler;
 
 import okhttp3.OkHttpClient;
 
-final class NativeRuntime {
+public final class NativeRuntime {
     // W5 / D4: set our OWN client timeouts so a hung/slow Spicy upstream fails over promptly to
     // the native -> LRCLIB cascade instead of waiting indefinitely. This HTTP client is shared by
     // every lyrics call (Spicy /query, Spotify color-lyrics, LRCLIB, Google translate) - all are
@@ -22,7 +22,7 @@ final class NativeRuntime {
     private static final int HTTP_READ_TIMEOUT_SECONDS = 15;
     private static final int HTTP_WRITE_TIMEOUT_SECONDS = 10;
 
-    static final OkHttpClient HTTP = new OkHttpClient.Builder()
+    public static final OkHttpClient HTTP = new OkHttpClient.Builder()
             // Happy Eyeballs: race IPv4/IPv6 instead of trying routes in order, so a
             // blackholed route costs the fallback delay rather than a full timeout.
             .fastFallback(true)

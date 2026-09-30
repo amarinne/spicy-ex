@@ -9,7 +9,7 @@ import com.eza.spicyex.lyrics.ai.AiSettings;
  *
  * <p>Moved verbatim out of {@code SettingsPanel} so JVM tests cover the gating matrix.
  * Reads only a {@link PanelSnapshot}; capability checks arrive as snapshot flags, never as
- * statics, so Lite/Full behavior is a test input rather than a build artifact.
+ * statics.
  */
 public final class PanelPolicy {
     private PanelPolicy() {
@@ -37,7 +37,7 @@ public final class PanelPolicy {
         if (setting == Settings.SPICY_MANUAL_TOKEN) {
             return snapshot.spicySourceEnabled();
         }
-        if (setting == Settings.AI_ENABLED) return snapshot.aiOffered();
+        if (setting == Settings.AI_ENABLED) return true;
         if (setting == Settings.AI_DEEPSEEK_REASONING) {
             return AiSettings.PROVIDER_DEEPSEEK.equals(snapshot.get(Settings.AI_PROVIDER))
                     && aiSettingVisible(setting, snapshot.isAiEnabled());
@@ -46,8 +46,7 @@ public final class PanelPolicy {
             return aiSettingVisible(setting, snapshot.isAiEnabled());
         }
         if (setting == Settings.TRANSLATION_TARGET || setting == Settings.TRANSLATION_BRIGHTNESS) {
-            return snapshot.translationAvailable()
-                    && Boolean.TRUE.equals(snapshot.get(Settings.TRANSLATION_ENABLED));
+            return Boolean.TRUE.equals(snapshot.get(Settings.TRANSLATION_ENABLED));
         }
         if (setting == Settings.ALIGNED_PER_WORD_ROMAJI
                 || setting == Settings.JAPANESE_READING_MODE
@@ -56,8 +55,7 @@ public final class PanelPolicy {
                 || setting == Settings.CHINESE_TONES
                 || setting == Settings.CYRILLIC_MODE
                 || setting == Settings.CYRILLIC_KEEP_SIGNS) {
-            return snapshot.transliterationAvailable()
-                    && Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED));
+            return Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED));
         }
         if (setting == Settings.BACKGROUND_RENDER_QUALITY) {
             return snapshot.animatedBackgroundAvailable()
@@ -106,8 +104,7 @@ public final class PanelPolicy {
         }
         if (setting == Settings.FURIGANA_BRIGHTNESS || setting == Settings.FURIGANA_POSITION_PERCENT) {
             String reading = snapshot.get(Settings.JAPANESE_READING_MODE);
-            return snapshot.transliterationAvailable()
-                    && Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED))
+            return Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED))
                     && ("furigana_only".equals(reading) || "furigana_romaji".equals(reading));
         }
         return true;
@@ -124,6 +121,7 @@ public final class PanelPolicy {
                 || setting == Settings.APPLE_CASCADE_SPEED
                 || setting == Settings.APPLE_SPRING_STRENGTH
                 || setting == Settings.CHROME_CLUSTER_POSITION
+                || setting == Settings.CHROME_CLUSTER_LAYOUT
                 || setting == Settings.FULLSCREEN_CONTROLS
                 || setting == Settings.LIKED_SONGS_BUTTON
                 || setting == Settings.SKIP_CHIP_POSITION
@@ -157,9 +155,7 @@ public final class PanelPolicy {
     }
 
     public static boolean unavailable(Settings.Setting<?> setting, PanelSnapshot snapshot) {
-        return (setting == Settings.TRANSLITERATION_ENABLED && (!snapshot.transliterationAvailable() || !snapshot.languageModelReady()))
-                || (setting == Settings.TRANSLATION_ENABLED && !snapshot.translationAvailable())
-                || (setting == Settings.LYRICS_FONT && !snapshot.appleFontAvailable());
+        return setting == Settings.TRANSLITERATION_ENABLED && !snapshot.languageModelReady();
     }
 
     /** Why one option is dimmed; empty means selectable. Locale-resolved, never hardcoded. */
@@ -168,14 +164,8 @@ public final class PanelPolicy {
         if (setting != Settings.LIVE_CARD_SECONDARY_MODE) return "";
         boolean needsTransliteration = "Transliteration".equals(value) || "Both".equals(value);
         boolean needsTranslation = "Translation".equals(value) || "Both".equals(value);
-        if (needsTransliteration && !snapshot.transliterationAvailable()) {
-            return fullBuildRequired(strings);
-        }
         if (needsTransliteration && !snapshot.languageModelReady()) {
             return strings.get("settings_label_download_language_models", "Download language models");
-        }
-        if (needsTranslation && !snapshot.translationAvailable()) {
-            return fullBuildRequired(strings);
         }
         if (needsTransliteration && !Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED))) {
             return strings.get("settings_enable_transliteration", "Enable transliteration");
@@ -184,10 +174,6 @@ public final class PanelPolicy {
             return strings.get("settings_enable_translation", "Enable translation");
         }
         return "";
-    }
-
-    private static String fullBuildRequired(PanelStrings strings) {
-        return strings.get("settings_unavailable_full_build", "Full build required");
     }
 
     /**

@@ -12,31 +12,29 @@ import java.util.WeakHashMap;
 public final class LyricsSyllableViewState {
     private static final Map<SyllableSegment, SyllableRenderState> STATES = new WeakHashMap<>();
 
-    /** Apple lift motion active: bouncier spring constants for words and letters. */
-    private static boolean appleMotion;
-
     private LyricsSyllableViewState() {
     }
 
     /**
-     * Switches the motion constants. Resets live springs so in-flight words adopt the new
-     * physics immediately instead of finishing on stale constants. Cheap no-op when unchanged;
-     * safe to call per frame (covers first mount, unlike config-change-only sync).
+     * F6: scopes the motion constants to one segment. Each renderer syncs the segments it is
+     * about to step, every frame; a change resets only that segment's springs, so a surface
+     * rendering with Apple lift never disturbs a surface rendering without it. Cheap no-op
+     * when unchanged; covers first mount, unlike config-change-only sync.
      */
-    public static void setAppleMotion(boolean enabled) {
-        if (appleMotion == enabled) return;
-        appleMotion = enabled;
-        for (SyllableRenderState state : STATES.values()) {
-            if (state == null) continue;
-            state.ySpring = null;
-            state.glowSpring = null;
-            state.localScaleSpring = null;
-            state.localYSpring = null;
-            for (AnimatedLetterState letter : state.letters) {
-                if (letter == null) continue;
-                letter.ySpring = null;
-                letter.glowSpring = null;
-            }
+    public static void syncSegmentMotion(SyllableSegment segment, boolean enabled) {
+        if (segment == null) return;
+        SyllableRenderState state = state(segment);
+        if (state.appleMotion == enabled) return;
+        state.appleMotion = enabled;
+        state.ySpring = null;
+        state.glowSpring = null;
+        state.localScaleSpring = null;
+        state.localYSpring = null;
+        for (AnimatedLetterState letter : state.letters) {
+            if (letter == null) continue;
+            letter.appleMotion = enabled;
+            letter.ySpring = null;
+            letter.glowSpring = null;
         }
     }
 
@@ -119,7 +117,9 @@ public final class LyricsSyllableViewState {
     }
 
     public static void addLetter(SyllableSegment segment, AnimatedLetterState letter) {
-        if (segment != null) state(segment).letters.add(letter);
+        if (segment == null) return;
+        if (letter != null) letter.appleMotion = state(segment).appleMotion;
+        state(segment).letters.add(letter);
     }
 
     public static void clearTextView(SyllableSegment segment) {
@@ -569,28 +569,28 @@ public final class LyricsSyllableViewState {
 
     private static void ensureWordYSpring(SyllableSegment segment, float initialY) {
         if (state(segment).ySpring != null) return;
-        state(segment).ySpring = appleMotion
+        state(segment).ySpring = state(segment).appleMotion
                 ? new Spring(initialY, 1.3f, 0.7f)
                 : new Spring(initialY, 1.45f, 0.4f);
     }
 
     private static void ensureWordGlowSpring(SyllableSegment segment) {
         if (state(segment).glowSpring != null) return;
-        state(segment).glowSpring = appleMotion
+        state(segment).glowSpring = state(segment).appleMotion
                 ? new Spring(0f, 2.4f, 0.65f)
                 : new Spring(0f, 1.18f, 0.56f);
     }
 
     private static void ensureLocalWordScaleSpring(SyllableSegment segment, float initialScale) {
         if (state(segment).localScaleSpring != null) return;
-        state(segment).localScaleSpring = appleMotion
+        state(segment).localScaleSpring = state(segment).appleMotion
                 ? new Spring(initialScale, 1.15f, 0.8f)
                 : new Spring(initialScale, 0.88f, 0.64f);
     }
 
     private static void ensureLocalWordYSpring(SyllableSegment segment, float initialY) {
         if (state(segment).localYSpring != null) return;
-        state(segment).localYSpring = appleMotion
+        state(segment).localYSpring = state(segment).appleMotion
                 ? new Spring(initialY, 1.3f, 0.7f)
                 : new Spring(initialY, 1.45f, 0.4f);
     }
@@ -648,14 +648,14 @@ public final class LyricsSyllableViewState {
 
     private static void ensureLetterYSpring(AnimatedLetterState letter, float initialY) {
         if (letter.ySpring != null) return;
-        letter.ySpring = appleMotion
+        letter.ySpring = letter.appleMotion
                 ? new Spring(initialY, 1.3f, 0.7f)
                 : new Spring(initialY, 1.25f, 0.4f);
     }
 
     private static void ensureLetterGlowSpring(AnimatedLetterState letter) {
         if (letter.glowSpring != null) return;
-        letter.glowSpring = appleMotion
+        letter.glowSpring = letter.appleMotion
                 ? new Spring(0f, 2.4f, 0.65f)
                 : new Spring(0f, 1f, 0.5f);
     }

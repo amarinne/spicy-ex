@@ -17,6 +17,12 @@ public final class SyllableRenderState {
     public SpicyAnimatedTextView textView;
     public SpicyAnimatedTextView romanizedTextView;
     public final List<AnimatedLetterState> letters = new ArrayList<>();
+    /**
+     * F6: this segment's motion constants. Scoped per segment — never global — so renderers
+     * with different Apple configurations (now-playing card off, artwork overlay on,
+     * fullscreen either) keep each other's spring identity and velocity.
+     */
+    public boolean appleMotion;
     public Spring scaleSpring;
     public Spring ySpring;
     public Spring glowSpring;

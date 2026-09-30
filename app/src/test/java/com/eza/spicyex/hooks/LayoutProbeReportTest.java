@@ -228,4 +228,75 @@ public class LayoutProbeReportTest {
         report.rect("dock", 40, 940, 1040, 1000);
         assertViolations(report);
     }
+
+    // R9 / R10 ---------------------------------------------------------------
+
+    /** Fold, landscape two-column, B907: the rail sat 72dp in while Follow sat 16dp in. */
+    private static LayoutProbeReport foldLandscape(int dockRight) {
+        LayoutProbeReport report = new LayoutProbeReport();
+        report.rect("screen", 0, 0, 2208, 1768);
+        report.rect("dock", dockRight - 132, 156, dockRight, 588);
+        report.rect("chip.follow", 2028, 1564, 2160, 1696);
+        report.number("chrome_alpha", 0f);
+        return report;
+    }
+
+    @Test
+    public void controlsInsetFurtherThanFollowFire() {
+        assertViolations(foldLandscape(1992), "R9 chrome_edge dock=216 follow=48");
+    }
+
+    @Test
+    public void controlsOnFollowsEdgeGapPass() {
+        assertViolations(foldLandscape(2160));
+    }
+
+    @Test
+    public void followOnTheOtherHalfIsNotCompared() {
+        LayoutProbeReport report = foldLandscape(1992);
+        report.rect("chip.follow", 48, 1564, 180, 1696);
+        assertViolations(report);
+    }
+
+    private static LayoutProbeReport row(int dockTop) {
+        LayoutProbeReport report = foldLandscape(2160);
+        report.rect("dock", 1700, dockTop, 2160, dockTop + 132);
+        report.flag("chrome_row", true);
+        report.number("edge_margin", 48);
+        report.number("chrome_top_floor", 0);
+        return report;
+    }
+
+    @Test
+    public void rowBelowTheCornerFires() {
+        assertViolations(row(156), "R10 chrome_corner top=156 margin=48");
+    }
+
+    @Test
+    public void rowInTheCornerPasses() {
+        assertViolations(row(48));
+    }
+
+    @Test
+    public void railBelowTheCornerFiresToo() {
+        LayoutProbeReport report = row(156);
+        report.flag("chrome_row", false);
+        assertViolations(report, "R10 chrome_corner top=156 margin=48");
+    }
+
+    /** Xiaomi landscape, B908: a five-button rail from 88dp ran onto the Follow chip. */
+    @Test
+    public void railReachingTheFollowChipFires() {
+        LayoutProbeReport report = row(48);
+        report.rect("dock", 2028, 48, 2160, 1600);
+        assertViolations(report, "R11 chrome_over_chip follow");
+    }
+
+    @Test
+    public void railClearOfTheChipsPasses() {
+        LayoutProbeReport report = row(48);
+        report.rect("dock", 2028, 48, 2160, 760);
+        report.rect("chip.skip", 2028, 1408, 2160, 1540);
+        assertViolations(report);
+    }
 }

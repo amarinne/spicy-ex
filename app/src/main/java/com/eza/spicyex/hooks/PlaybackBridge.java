@@ -99,7 +99,7 @@ final class PlaybackBridge {
     private void installMediaSessionHook() {
         try {
             XpHooks.findAfter(MediaSession.class, "setMetadata", "artwork:MediaSession#setMetadata",
-                    param -> com.eza.spicyex.lyrics.SpotifyArtworkCache.capture(
+                    param -> com.eza.spicyex.lyrics.cache.SpotifyArtworkCache.capture(
                             (android.media.MediaMetadata) param.args[0]), android.media.MediaMetadata.class);
         } catch (Throwable t) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " artwork metadata hook unavailable: " + t.getClass().getSimpleName());

@@ -7,6 +7,7 @@ import com.eza.spicyex.References;
 
 import com.eza.spicyex.xposed.XpLog;
 import com.eza.spicyex.xposed.XpReflect;
+import com.eza.spicyex.SpotifyPlusConfig;
 
 /**
  * Process-wide owner of the captured Spotify access-token lifecycle (packet M2).
@@ -48,7 +49,7 @@ import com.eza.spicyex.xposed.XpReflect;
  * per-instance monitor.
  */
 final class SpotifyTokenStore {
-    private static final String PREFS_NAME = "SpotifyPlus";
+    private static final String PREFS_NAME = SpotifyPlusConfig.PREFS_NAME;
     private static final String KEY_TOKEN = "native_spotify_access_token";
     private static final String KEY_CAPTURED_AT = "native_spotify_token_captured_at";
     private static final String KEY_EXPIRES_AT = "native_spotify_token_expires_at";

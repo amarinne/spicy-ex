@@ -3,7 +3,7 @@ package com.eza.spicyex;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-import com.eza.spicyex.lyrics.LanguageModelPack;
+import com.eza.spicyex.lyrics.language.LanguageModelPack;
 import com.eza.spicyex.settings.TypedStore;
 
 import java.util.Map;
@@ -26,7 +26,7 @@ public final class SettingsStore implements TypedStore {
         this.prefs = prefs;
         this.context = context;
         if (context != null) {
-            com.eza.spicyex.lyrics.LanguageModelPack.attachContext(context);
+            com.eza.spicyex.lyrics.language.LanguageModelPack.attachContext(context);
         }
         migrateLikedSongsButton(prefs);
         migrateLineBlurLevel(prefs);

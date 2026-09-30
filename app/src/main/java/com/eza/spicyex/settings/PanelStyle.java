@@ -15,7 +15,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.eza.spicyex.AiSettingsRows;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.lyrics.GlyphIconDrawable;
 import com.eza.spicyex.ui.ActionIconDrawable;

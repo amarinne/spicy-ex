@@ -5,10 +5,10 @@ import android.widget.TextView;
 
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
-import com.eza.spicyex.SettingsUiStrings;
-import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
-import com.eza.spicyex.lyrics.CacheStoragePolicy;
-import com.eza.spicyex.lyrics.SpicyManualTokenStore;
+import com.eza.spicyex.ui.SettingsUiStrings;
+import com.eza.spicyex.lyrics.providers.LyricsResponseCache;
+import com.eza.spicyex.lyrics.cache.CacheStoragePolicy;
+import com.eza.spicyex.lyrics.providers.SpicyManualTokenStore;
 import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 import com.eza.spicyex.lyrics.session.CanonicalSourceCache;
 import com.eza.spicyex.ui.ActionIconDrawable;

@@ -19,7 +19,7 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import com.eza.spicyex.Settings;
-import com.eza.spicyex.SettingsUiStrings;
+import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
 
@@ -27,7 +27,7 @@ import com.eza.spicyex.lyrics.LyricsTextFactory;
 final class LyricsJumpToCurrentController {
     private static final int MOTION_OFFSET_DP = 8;
     private static final long COLLAPSE_DELAY_MS = 3200L;
-    private static final int SIDE_MARGIN_DP = 16;
+    private static final int SIDE_MARGIN_DP = NativeLyricsUtils.EDGE_BUTTON_MARGIN_DP;
     private static final int CHIP_HEIGHT_DP = 44;
 
     private final SpotifyPlusConfig config;

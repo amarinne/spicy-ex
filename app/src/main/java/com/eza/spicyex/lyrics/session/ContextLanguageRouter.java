@@ -1,7 +1,7 @@
 package com.eza.spicyex.lyrics.session;
 
-import com.eza.spicyex.lyrics.ScriptClassifier;
-import com.eza.spicyex.lyrics.SpicyProcessing;
+import com.eza.spicyex.lyrics.language.ScriptClassifier;
+import com.eza.spicyex.lyrics.processing.SpicyProcessing;
 
 import java.util.ArrayList;
 import java.util.HashMap;

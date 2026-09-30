@@ -218,7 +218,6 @@
     <string name="settings_option_he">Иврит (he)</string>
     <string name="settings_option_fa">Персидский (fa)</string>
     
-    <string name="settings_unavailable_full_build">Необходима полная версия</string>
     <string name="settings_unavailable_android_13">Необходим Android 13+</string>
     <string name="settings_enable_transliteration">Включить транслитерацию</string>
     <string name="settings_enable_translation">Включить перевод</string>

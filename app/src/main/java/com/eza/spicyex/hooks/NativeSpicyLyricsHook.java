@@ -11,7 +11,7 @@ import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.References;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.LyricsDocument;
-import com.eza.spicyex.lyrics.CacheClearKind;
+import com.eza.spicyex.lyrics.cache.CacheClearKind;
 import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 
 import com.eza.spicyex.xposed.XpLog;
@@ -80,9 +80,6 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         XpLog.log(TAG + " bridge init package=" + lpparm.packageName()
                 + " appProcess=" + processName);
         if (lpparm.packageName().equals(processName)) {
-            // At process start, not only on fullscreen open: a user who never opens the fullscreen
-            // screen would otherwise keep derived data from a retired cache epoch indefinitely.
-            DeployCacheCleaner.ensureCleared(applicationContext);
             // Transition B515 paid records before any AI lane can dispatch. This only opens local
             // storage; it performs no provider request and leaves the source XML untouched.
             AIPaidArtifactCache.prepare(applicationContext);
@@ -111,8 +108,9 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         return pipController.openFromLyrics(activity);
     }
 
-    void launchNativeLyricsFullscreen(Activity activity) {
-        activityTakeoverHook.launchNativeLyricsFullscreen(activity);
+    @Override
+    public boolean launchNativeLyricsFullscreen(Activity activity) {
+        return activityTakeoverHook.launchNativeLyricsFullscreen(activity);
     }
 
     @Override

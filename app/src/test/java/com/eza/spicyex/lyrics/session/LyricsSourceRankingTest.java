@@ -4,7 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import com.eza.spicyex.lyrics.LyricQualityRanker;
+import com.eza.spicyex.lyrics.providers.LyricQualityRanker;
 
 import org.junit.Test;
 

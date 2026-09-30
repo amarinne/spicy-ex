@@ -151,15 +151,30 @@ public class PaidArtifactStoreTest {
                 new String(rows.get(1).valueBytes, StandardCharsets.UTF_8));
     }
 
+    // --- clear generation ---------------------------------------------------
+
+    @Test
+    public void missingOrDeletedReadOwnershipCannotWriteEvenWithoutAReservation() {
+        AIPaidArtifactCache.Read read = new AIPaidArtifactCache.Read(
+                null, "k", "SOUND", 2L, 3L, 4L);
+        assertFalse(AIPaidArtifactDatabase.isRevoked(read, "k", "SOUND", 2L, 3L, 4L));
+        assertTrue(AIPaidArtifactDatabase.isRevoked(null, "k", "SOUND", 2L, 3L, 4L));
+        assertTrue(AIPaidArtifactDatabase.isRevoked(read, "k", "SOUND", 3L, 3L, 4L));
+        assertTrue(AIPaidArtifactDatabase.isRevoked(read, "k", "SOUND", 2L, 4L, 4L));
+        assertTrue(AIPaidArtifactDatabase.isRevoked(read, "k", "SOUND", 2L, 3L, 5L));
+        assertTrue(AIPaidArtifactDatabase.isRevoked(read, "other", "SOUND", 2L, 3L, 4L));
+        assertTrue(AIPaidArtifactDatabase.isRevoked(read, "k", "MEANING", 2L, 3L, 4L));
+    }
+
     // --- routing ------------------------------------------------------------
 
     @Test
     public void onlyAiAuthoredArtifactsAreTreatedAsPaid() {
-        assertFalse(com.eza.spicyex.lyrics.ProcessedLyricsCache.isPaid(
+        assertFalse(com.eza.spicyex.lyrics.cache.ProcessedLyricsCache.isPaid(
                 artifact(LayerAuthority.DETERMINISTIC, "local", "", "reading-v3")));
-        assertFalse(com.eza.spicyex.lyrics.ProcessedLyricsCache.isPaid(
+        assertFalse(com.eza.spicyex.lyrics.cache.ProcessedLyricsCache.isPaid(
                 artifact(LayerAuthority.MACHINE, "google", "", "translate-v1")));
-        assertTrue(com.eza.spicyex.lyrics.ProcessedLyricsCache.isPaid(
+        assertTrue(com.eza.spicyex.lyrics.cache.ProcessedLyricsCache.isPaid(
                 artifact(LayerAuthority.AI, "prov", "model", "prompt")));
     }
 

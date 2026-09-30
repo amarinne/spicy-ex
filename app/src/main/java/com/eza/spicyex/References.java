@@ -187,7 +187,7 @@ public class References {
         Activity activity = currentActivity();
         if(activity == null) return null;
 
-        return activity.getSharedPreferences("SpotifyPlus", Context.MODE_PRIVATE);
+        return activity.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE);
     }
 
     public static SharedPreferences getScriptPreferences(String name, Context activity) {

@@ -9,4 +9,6 @@ public class AnimatedLetterState {
     public Spring scaleSpring;
     public Spring ySpring;
     public Spring glowSpring;
+    /** F6: this letter's motion constants, synced from its segment per frame. */
+    public boolean appleMotion;
 }

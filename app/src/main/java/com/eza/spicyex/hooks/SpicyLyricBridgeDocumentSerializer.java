@@ -5,7 +5,7 @@ import com.eza.spicyex.lyrics.DisplayLayoutGroup;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.SyllableSegment;
-import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.reading.CodePointRanges;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.google.gson.JsonArray;
@@ -81,7 +81,7 @@ final class SpicyLyricBridgeDocumentSerializer {
 
             JsonArray layoutGroups = new JsonArray();
             for (DisplayLayoutGroup group : DisplayLayoutGroup.forLine(
-                    com.eza.spicyex.lyrics.ReadingLanguagePolicy.layoutLanguage(row), row.text, row.japaneseReading)) {
+                    com.eza.spicyex.lyrics.language.ReadingLanguagePolicy.layoutLanguage(row), row.text, row.japaneseReading)) {
                 if (group == null || group.end <= group.start) continue;
                 JsonObject layout = new JsonObject();
                 layout.addProperty("start", group.start);

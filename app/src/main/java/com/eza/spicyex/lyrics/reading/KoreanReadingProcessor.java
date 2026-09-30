@@ -4,8 +4,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import com.eza.spicyex.lyrics.KoreanDisplayMode;
-import com.eza.spicyex.lyrics.SpicyRomanizer;
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
+import com.eza.spicyex.lyrics.language.SpicyRomanizer;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ReadingAnnotation;

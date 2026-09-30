@@ -1,6 +1,6 @@
 package com.eza.spicyex.diagnostics;
 
-import com.eza.spicyex.lyrics.SpicyTextDetection;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 
 import java.util.List;
 import java.util.Locale;

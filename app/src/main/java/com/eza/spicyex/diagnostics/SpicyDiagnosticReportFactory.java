@@ -10,10 +10,9 @@ import com.eza.spicyex.BuildConfig;
 import com.eza.spicyex.BuildStamp;
 import com.eza.spicyex.CurrentLyricState;
 import com.eza.spicyex.Diagnostics;
-import com.eza.spicyex.FeatureAvailability;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
-import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
+import com.eza.spicyex.lyrics.providers.LyricsFetchDiagnosticsState;
 import com.eza.spicyex.lyrics.ai.AiEndpoint;
 import com.eza.spicyex.lyrics.session.LayerKind;
 import com.google.gson.Gson;
@@ -124,7 +123,6 @@ public final class SpicyDiagnosticReportFactory {
         product.addProperty("buildStampVersion", bounded(BuildStamp.VERSION, 128));
         product.addProperty("buildClue", bounded(BuildStamp.CLUE, 128));
         product.addProperty("versionCode", BuildConfig.VERSION_CODE);
-        product.addProperty("networkCacheEpoch", bounded(BuildStamp.NETWORK_CACHE_EPOCH, 128));
         product.addProperty("flavor", "standard");
         try {
             product.addProperty("xposedApiVersion", XpLog.apiVersion());
@@ -134,8 +132,6 @@ public final class SpicyDiagnosticReportFactory {
         product.addProperty("processIdentity", bounded(Application.getProcessName(), 64));
         JsonObject features = new JsonObject();
         features.addProperty("lyricsHooks", true);
-        features.addProperty("translation", FeatureAvailability.translationAvailable());
-        features.addProperty("transliteration", FeatureAvailability.transliterationAvailable());
         features.addProperty("fullscreenRenderer", settings.get(Settings.NATIVE_SPICY_ENABLED));
         features.addProperty("nowPlayingCard", true);
         features.addProperty("hyperGlowBridge", true);

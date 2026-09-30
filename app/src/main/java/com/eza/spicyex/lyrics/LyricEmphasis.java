@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 /**
  * Apple Music's held-note emphasis, per letter. Pure motion math, no views.
  *

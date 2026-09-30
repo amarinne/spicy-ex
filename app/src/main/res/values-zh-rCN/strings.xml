@@ -160,7 +160,6 @@
     <string name="settings_option_he">希伯来语 (he)</string>
     <string name="settings_option_fa">波斯语 (fa)</string>
 
-    <string name="settings_unavailable_full_build">需要完整版本</string>
     <string name="settings_unavailable_android_13">需要 Android 13 及以上</string>
     <string name="settings_enable_transliteration">请先启用转写</string>
     <string name="settings_enable_translation">请先启用翻译</string>

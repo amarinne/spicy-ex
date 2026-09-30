@@ -1,6 +1,6 @@
 package com.eza.spicyex.hooks;
 
-import com.eza.spicyex.lyrics.NativeLyricsSource;
+import com.eza.spicyex.lyrics.providers.NativeLyricsSource;
 import com.eza.spicyex.xposed.XpHooks;
 import com.eza.spicyex.xposed.XpLog;
 import com.eza.spicyex.xposed.XpReflect;

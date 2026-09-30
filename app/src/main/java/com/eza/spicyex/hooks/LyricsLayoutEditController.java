@@ -24,8 +24,8 @@ import com.eza.spicyex.ui.PanelDialog;
 
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
-import com.eza.spicyex.SettingsUiStrings;
-import com.eza.spicyex.UiLanguage;
+import com.eza.spicyex.ui.SettingsUiStrings;
+import com.eza.spicyex.ui.UiLanguage;
 import com.eza.spicyex.settings.SettingsWriter;
 
 import java.util.ArrayList;
@@ -34,6 +34,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
+import com.eza.spicyex.SpotifyPlusConfig;
 
 /**
  * Direct-manipulation layout editor: tap/drag the *real* rendered artwork, track text, lyrics
@@ -76,6 +77,9 @@ final class LyricsLayoutEditController {
 
         /** Closes the editor, same as the Done button. */
         void agentClose();
+
+        /** Runs an editor action; the command channel requires confirmation for reset all. */
+        boolean agentAction(String action, String argument);
 
         /** Adds the editor's own geometry and state to a probe reading. */
         void agentReport(LayoutProbeReport report);
@@ -351,6 +355,7 @@ final class LyricsLayoutEditController {
                 Settings.FOLLOW_CHIP_POSITION, Settings.FOLLOW_CHIP_STYLE,
                 Settings.BACKGROUND_RENDER_QUALITY,
                 Settings.LIKED_SONGS_BUTTON, Settings.CHROME_CLUSTER_POSITION,
+                Settings.CHROME_CLUSTER_LAYOUT,
                 Settings.SHOW_FULLSCREEN_BACK_BUTTON, Settings.FULLSCREEN_CONTROLS,
                 Settings.LYRICS_ADAPTIVE_TEXT_SIZE, Settings.INTERLUDE_ICON,
                 Settings.TRACK_INFO_BACKGROUND, Settings.TRACK_INFO_TEXT_OVERFLOW,
@@ -751,15 +756,15 @@ final class LyricsLayoutEditController {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
             // Auto-preview: opening the editor with nothing actually playing left it showing an
-            // empty/error state, so every element had to be selected blind. Full only - the demo's
-            // whole point is previewing furigana/pinyin/romanization/translation, none of which
-            // exist in the Lite build. Deferred to after the first layout pass so the editor UI
-            // appears instantly instead of blocking on document render + bitmap creation.
-            if (!demoActive && enableDemoData != null
-                    && com.eza.spicyex.FeatureAvailability.transliterationAvailable()) {
+            // empty/error state, so every element had to be selected blind. Deferred to after the first
+            // layout pass so the editor UI appears instantly instead of blocking on document render +
+            // bitmap creation.
+            if (!demoActive && enableDemoData != null) {
                 demoActive = true;
                 overlay.post(() -> overlay.post(() -> {
-                    if (enableDemoData != null) enableDemoData.run();
+                    if (demoActive && overlay.getParent() != null && enableDemoData != null) {
+                        enableDemoData.run();
+                    }
                 }));
             }
 
@@ -933,10 +938,41 @@ final class LyricsLayoutEditController {
         }
 
         @Override
+        public boolean agentAction(String action, String argument) {
+            if (overlay.getParent() == null || action == null) return false;
+            String value = argument == null ? "" : argument.trim().toLowerCase(java.util.Locale.ROOT);
+            switch (action.trim().toLowerCase(java.util.Locale.ROOT)) {
+                case "back":
+                    return value.isEmpty() && onBackPressed();
+                case "demo":
+                    if (cardMode || enableDemoData == null || disableDemoData == null) return false;
+                    if (!"live".equals(value) && !"synthetic".equals(value)) return false;
+                    if (demoActive != "synthetic".equals(value)) toggleDemo();
+                    return true;
+                case "tab":
+                    if (cardMode) return false;
+                    switch (value) {
+                        case "style": selectTextTab(TAB_STYLE); return true;
+                        case "animation": selectTextTab(TAB_ANIMATION); return true;
+                        case "effects": selectTextTab(TAB_EFFECTS); return true;
+                        default: return false;
+                    }
+                case "reset":
+                    if (!"all".equals(value)) return false;
+                    resetLayoutToDefaults();
+                    return true;
+                default: return false;
+            }
+        }
+
+        @Override
         public void agentReport(LayoutProbeReport report) {
             if (report == null) return;
             report.flag("card_mode", cardMode);
             report.flag("side_sheet", sideSheet);
+            report.flag("demo_active", demoActive);
+            report.text("text_tab", textTab == TAB_ANIMATION ? "animation"
+                    : textTab == TAB_EFFECTS ? "effects" : "style");
             report.text("selected", agentNameFor(selected));
             report.number("z.overlay", Math.round(overlay.getZ()));
             report.rect("toolbar.done", screenRectOf(toolbarDone));
@@ -2856,10 +2892,14 @@ final class LyricsLayoutEditController {
         /** One pill holding the three tabs; the current one is a white segment. */
         private View textTabs() {
             return tabBar(new String[]{s("tab_style", "Style"), s("tab_animation", "Animation"),
-                    s("tab_effects", "Effects")}, textTab, index -> {
-                textTab = index;
-                selectElement(Element.TEXT);
-            });
+                    s("tab_effects", "Effects")}, textTab, this::selectTextTab);
+        }
+
+        private void selectTextTab(int index) {
+            textTab = index;
+            selectElement(Element.TEXT);
+            optionsScroll.scrollTo(0, 0);
+            optionsScroll.post(() -> optionsScroll.scrollTo(0, 0));
         }
 
         /** The panel's tab bar: one pill, the current tab a white segment; picking one rebuilds
@@ -3381,6 +3421,15 @@ final class LyricsLayoutEditController {
                     }), matchWrap(12));
 
             endGroup();
+            beginGroup(strings.setting(Settings.CHROME_CLUSTER_LAYOUT));
+            addOption(chipRow(Settings.CHROME_CLUSTER_LAYOUT,
+                    new String[]{"Auto", "Vertical", "Horizontal"},
+                    () -> {
+                        refreshDock();
+                        selectElement(Element.DOCK);
+                    }), matchWrap(12));
+
+            endGroup();
             beginGroup(strings.setting(Settings.FULLSCREEN_CONTROLS));
             int timeout = com.eza.spicyex.lyrics.LyricsShellSettings
                     .parseFullscreenControlsSeconds(store.get(Settings.FULLSCREEN_CONTROLS));
@@ -3749,7 +3798,7 @@ final class LyricsLayoutEditController {
             // Landscape shows the portrait size scaled to fit until it gets its own value (see
             // LyricsShellSettings#lyricsTextSizeMultiplier); start the pinch from what is shown.
             String landscapeKey = Settings.landscapeKey(activity, Settings.LYRICS_TEXT_SIZE);
-            if (landscapeKey != null && !activity.getSharedPreferences("SpotifyPlus",
+            if (landscapeKey != null && !activity.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME,
                     android.content.Context.MODE_PRIVATE).contains(landscapeKey)) {
                 percent = Math.round(percent * com.eza.spicyex.lyrics.LyricsShellSettings.LANDSCAPE_FIT_SCALE);
             }

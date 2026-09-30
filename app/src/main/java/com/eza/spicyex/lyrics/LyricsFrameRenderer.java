@@ -130,10 +130,22 @@ public final class LyricsFrameRenderer {
             applyStatic(document, mountedIndices, mountedRowsHost);
             return;
         }
-        // Sync the lift-motion constants here (not only on config change): springs are created
-        // lazily at mount, so a config-path-only sync misses first mount with Apple already on.
-        // No-op when unchanged; the only caller of the animated path is this fullscreen renderer.
-        LyricsSyllableViewState.setAppleMotion(config != null && config.appleLift);
+        // Per-segment lift-motion constants, synced for the segments this frame will step
+        // (not only on config change): springs are created lazily at mount, so a
+        // config-path-only sync misses first mount with Apple already on. Each renderer syncs
+        // its own segments — the now-playing card renders with Apple flags off while its
+        // artwork overlay renders with them on — so one surface never resets the other's
+        // springs. No-op per segment when unchanged.
+        boolean appleMotion = config != null && config.appleLift;
+        for (int syncIndex : mountedIndices) {
+            if (syncIndex < 0 || syncIndex >= document.appliedLines.size()) continue;
+            AppliedLine syncLine = document.appliedLines.get(syncIndex);
+            if (syncLine == null || syncLine.words == null) continue;
+            if (!LyricsLineViewState.isMounted(syncLine, mountedRowsHost)) continue;
+            for (SyllableSegment word : syncLine.words) {
+                LyricsSyllableViewState.syncSegmentMotion(word, appleMotion);
+            }
+        }
         int boundedVisibleStart = Math.max(0, visibleStart - SCROLL_RENDER_MARGIN_ROWS);
         int boundedVisibleEnd = visibleEnd >= Integer.MAX_VALUE - SCROLL_RENDER_MARGIN_ROWS
                 ? Integer.MAX_VALUE

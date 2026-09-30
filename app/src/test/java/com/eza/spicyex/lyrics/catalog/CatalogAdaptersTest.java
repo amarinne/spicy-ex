@@ -1,6 +1,7 @@
 package com.eza.spicyex.lyrics.catalog;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -116,5 +117,81 @@ public class CatalogAdaptersTest {
                 ProviderFailureClassifier.classify(SourceId.AMLL, ""));
         assertEquals(ProviderStatus.DISABLED,
                 ProviderFailureClassifier.classify(SourceId.QQ, "source disabled"));
+    }
+
+    @Test
+    public void strictSingleSourceFailuresShareOneRetryPolicy() {
+        // F9: these strict exits are now recorded by the provider itself, so automatic and
+        // explicit requests persist the same outcome. An Apple 404 earns absence backoff
+        // instead of staying NOT_CHECKED; transport and quality failures stay transient.
+        assertEquals(ProviderStatus.NOT_FOUND,
+                ProviderFailureClassifier.classify(SourceId.APPLE,
+                        "Apple Music source unavailable: HTTP 404"));
+        assertEquals(ProviderStatus.TRANSIENT_ERROR,
+                ProviderFailureClassifier.classify(SourceId.APPLE,
+                        "Apple Music source unavailable: rejected candidate"));
+        assertEquals(ProviderStatus.TRANSIENT_ERROR,
+                ProviderFailureClassifier.classify(SourceId.APPLE,
+                        "Apple Music source unavailable: timeout"));
+        assertEquals(ProviderStatus.TRANSIENT_ERROR,
+                ProviderFailureClassifier.classify(SourceId.SPOTIFY_NATIVE,
+                        "Spotify lyrics request failed"));
+        assertEquals(ProviderStatus.TRANSIENT_ERROR,
+                ProviderFailureClassifier.classify(SourceId.LRCLIB,
+                        "strict LRCLIB; LRCLIB failed: timeout"));
+    }
+
+    private static CatalogPolicy policy(SourceId... enabled) {
+        return new CatalogPolicy(Arrays.asList(enabled), false);
+    }
+
+    private static CatalogState rejectedApple() {
+        CatalogState empty = CatalogState.empty("abc123");
+        return new CatalogState(empty.trackId, empty.candidates, empty.providers,
+                empty.selection,
+                java.util.Collections.singleton(
+                        CatalogState.rejectionKey(SourceId.APPLE, "abc123")),
+                empty.known);
+    }
+
+    private static LyricsDocument appleDelivery() {
+        LyricsDocument doc = document("apple_music_lenerd", "Syllable");
+        doc.provider = "Apple Music";
+        return doc;
+    }
+
+    @Test
+    public void rejectedAppleItemNeverFallsBack() {
+        // F4: providerSuccess refuses the rejected item, and the session must not show it
+        // as an unsaved fallback either.
+        assertTrue(CatalogAdapters.isRefusedFallback(
+                policy(SourceId.APPLE, SourceId.LRCLIB), rejectedApple(), "abc123",
+                appleDelivery()));
+    }
+
+    @Test
+    public void disabledSourceNeverFallsBack() {
+        assertTrue(CatalogAdapters.isRefusedFallback(
+                policy(SourceId.LRCLIB), CatalogState.empty("abc123"), "abc123",
+                appleDelivery()));
+    }
+
+    @Test
+    public void enabledUnrejectedDeliveryKeepsStorageFailureFallback() {
+        assertFalse(CatalogAdapters.isRefusedFallback(
+                policy(SourceId.APPLE, SourceId.LRCLIB), CatalogState.empty("abc123"), "abc123",
+                appleDelivery()));
+    }
+
+    @Test
+    public void unknownProvenanceAndUnreadableInputsKeepLegacyFallback() {
+        LyricsDocument unknown = document("unknown", "Line");
+        unknown.provider = "";
+        assertFalse(CatalogAdapters.isRefusedFallback(
+                policy(SourceId.APPLE), CatalogState.empty("abc123"), "abc123", unknown));
+        assertFalse(CatalogAdapters.isRefusedFallback(null, CatalogState.empty("abc123"),
+                "abc123", appleDelivery()));
+        assertFalse(CatalogAdapters.isRefusedFallback(
+                policy(SourceId.APPLE), CatalogState.empty("abc123"), "abc123", null));
     }
 }

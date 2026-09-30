@@ -7,10 +7,10 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.eza.spicyex.GlossyToggle;
+import com.eza.spicyex.ui.GlossyToggle;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
-import com.eza.spicyex.SettingsUiStrings;
+import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source;

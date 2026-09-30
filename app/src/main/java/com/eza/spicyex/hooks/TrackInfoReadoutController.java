@@ -39,7 +39,7 @@ import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.ArtGestureArbiter;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
 import com.eza.spicyex.lyrics.PanelMediaMode;
-import com.eza.spicyex.lyrics.SpotifyArtworkCache;
+import com.eza.spicyex.lyrics.cache.SpotifyArtworkCache;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.Motion;
 
@@ -210,6 +210,8 @@ final class TrackInfoReadoutController {
     private final SpotifyPlusConfig config;
     private final LyricsJumpToCurrentController jumpController;
     private LyricsSkipGapController skipGapController;
+    /** Room to keep free beside the top controls; null keeps the rail default. */
+    private java.util.function.IntSupplier chromeReserve;
     private final Runnable onRevealChrome;
     private final boolean landscape;
     /** When true this screen is the adaptive two-column layout: the column placement below owns
@@ -1031,6 +1033,18 @@ final class TrackInfoReadoutController {
     }
 
     /** Re-reads settings (call at mount and from the preference listener). */
+    /** How much room the Top readout leaves beside the top controls; the shell knows whether
+     *  they stand as a rail or a row. */
+    void setChromeReserve(java.util.function.IntSupplier reserve) {
+        chromeReserve = reserve;
+        layoutTopRow();
+    }
+
+    /** The controls' footprint changed (direction, or a button came or went). */
+    void onChromeReserveChanged() {
+        layoutTopRow();
+    }
+
     void onPreferenceChanged() {
         applyBackgroundStyle();
         applyArtRadius();
@@ -1158,7 +1172,7 @@ final class TrackInfoReadoutController {
             controlsLeft = "Left".equals(config.get(Settings.CHROME_CLUSTER_POSITION));
         } catch (Throwable ignored) {
         }
-        int railClearance = dp(44 + 8);
+        int railClearance = chromeReserve != null ? chromeReserve.getAsInt() : dp(44 + 8);
         topRow.setPadding(sidePad + (controlsLeft ? railClearance : 0), dp(8),
                 sidePad + (controlsLeft ? 0 : railClearance), 0);
         if (topGradientView != null) {

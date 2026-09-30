@@ -819,9 +819,9 @@ final class LyricsActivityTakeoverHook {
         return false;
     }
 
-    void launchNativeLyricsFullscreen(Activity activity) {
+    boolean launchNativeLyricsFullscreen(Activity activity) {
         try {
-            if (activity == null) return;
+            if (activity == null || activity.isFinishing() || activity.isDestroyed()) return false;
             takeoverArmed = true;
             Intent intent = new Intent();
             intent.setClassName(activity.getPackageName(), LYRICS_FULLSCREEN_ACTIVITY);
@@ -829,8 +829,11 @@ final class LyricsActivityTakeoverHook {
             activity.startActivity(intent);
             XpLog.log(NativeSpicyLyricsHook.TAG
                     + " launched native lyrics fullscreen (takeover armed) from Extra lyrics button");
+            return true;
         } catch (Throwable t) {
+            takeoverArmed = false;
             XpLog.log(NativeSpicyLyricsHook.TAG + " launch native lyrics fullscreen failed: " + t);
+            return false;
         }
     }
 
@@ -903,7 +906,6 @@ final class LyricsActivityTakeoverHook {
         try {
             if (activity == null || activity.isFinishing()
                     || (Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) return;
-            DeployCacheCleaner.ensureCleared(activity);
             if (!isLyricsFullscreenActivity(activity)) return;
             if (isExplicitLyricsExit(activity)) {
                 unregisterSystemBackCallback(activity);

@@ -1,5 +1,8 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
+import com.eza.spicyex.lyrics.language.SpicyRomanizer;
+
 import android.content.Context;
 
 import com.eza.spicyex.FeatureAvailability;
@@ -242,25 +245,21 @@ public final class LyricsRenderConfig {
         if (cfg == null && context != null) cfg = SpotifyPlusConfig.from(context);
         LyricsShellSettings shell = new LyricsShellSettings(context, cfg);
 
-        boolean transliterationAvailable = FeatureAvailability.transliterationAvailable();
-        boolean translationAvailable = FeatureAvailability.translationAvailable();
-        String jp = transliterationAvailable ? get(cfg, Settings.JAPANESE_READING_MODE) : "off";
-        String cn = transliterationAvailable ? get(cfg, Settings.CHINESE_MODE) : "off";
+        String jp = get(cfg, Settings.JAPANESE_READING_MODE);
+        String cn = get(cfg, Settings.CHINESE_MODE);
         String defaultJp = "cycle".equals(jp) ? SpotifyPlusConfig.JP_READING_ROMAJI_ONLY : jp;
-        String defaultCn = transliterationAvailable ? shell.defaultChineseMode(cn) : "";
-        String kr = transliterationAvailable ? get(cfg, Settings.KOREAN_ROMANIZATION) : KoreanDisplayMode.RR_STANDARD.value;
+        String defaultCn = shell.defaultChineseMode(cn);
+        String kr = get(cfg, Settings.KOREAN_ROMANIZATION);
         String defaultKr = "cycle".equals(kr) ? KoreanDisplayMode.RR_STANDARD.value : KoreanDisplayMode.valueOfSetting(kr);
         // Read the live preference, not the config snapshot: the fullscreen chip writes the cycled
         // mode there, and every consumer — including the session-owned Sound lane — must agree with
         // what is on screen.
-        String currentKr = transliterationAvailable ? shell.currentKoreanMode(kr) : defaultKr;
-        String cy = transliterationAvailable ? get(cfg, Settings.CYRILLIC_MODE) : "Off";
-        String defaultCy = transliterationAvailable
-                ? shell.currentCyrillicMode(cy)
-                : ("cycle".equals(cy) ? SpicyRomanizer.CYRILLIC_RUSSIAN : cy);
+        String currentKr = shell.currentKoreanMode(kr);
+        String cy = get(cfg, Settings.CYRILLIC_MODE);
+        String defaultCy = shell.currentCyrillicMode(cy);
         if ("cycle".equals(defaultCy) || defaultCy.isEmpty()) defaultCy = SpicyRomanizer.CYRILLIC_RUSSIAN;
-        boolean transliterationEnabled = transliterationAvailable && get(cfg, Settings.TRANSLITERATION_ENABLED);
-        boolean translationEnabled = translationAvailable && translationEnabled(cfg);
+        boolean transliterationEnabled = get(cfg, Settings.TRANSLITERATION_ENABLED);
+        boolean translationEnabled = translationEnabled(cfg);
 
         String wordBounceMode = cfg == null ? Settings.WORD_BOUNCE.defaultValue
                 : cfg.get(Settings.WORD_BOUNCE);
@@ -305,7 +304,7 @@ public final class LyricsRenderConfig {
                 shell.lineBlurQualityMultiplier() * (get(cfg, Settings.LYRICS_BLUR_INTENSITY) / 100f),
                 "note".equals(get(cfg, Settings.INTERLUDE_ICON)),
                 get(cfg, Settings.TOGGLE_PROGRESS_RING),
-                transliterationAvailable && shell.attachTransliterationToWordsEnabled(),
+                shell.attachTransliterationToWordsEnabled(),
                 transliterationEnabled,
                 get(cfg, Settings.ADAPTIVE_SECTIONING),
                 shell.lineSpacingMode(),
@@ -337,7 +336,7 @@ public final class LyricsRenderConfig {
                 kr,
                 defaultKr,
                 currentKr,
-                transliterationAvailable && get(cfg, Settings.CHINESE_TONES),
+                get(cfg, Settings.CHINESE_TONES),
                 cy,
                 defaultCy,
                 defaultCy,
@@ -513,7 +512,8 @@ public final class LyricsRenderConfig {
             }
 
             boolean interludeChanged = oldValue.interludeNoteIcon != next.interludeNoteIcon;
-            boolean fontChanged = changed(oldValue.lyricsFont, next.lyricsFont);
+            boolean fontChanged = changed(oldValue.lyricsFont, next.lyricsFont)
+                    || changed(oldValue.lyricsFontCustomPath, next.lyricsFontCustomPath);
             boolean weightChanged = changed(oldValue.lyricWeight, next.lyricWeight) || fontChanged;
             boolean textSizeChanged = changed(oldValue.lyricsTextSizeMode, next.lyricsTextSizeMode)
                     || changed(oldValue.lyricsTextSizeMultiplier, next.lyricsTextSizeMultiplier)

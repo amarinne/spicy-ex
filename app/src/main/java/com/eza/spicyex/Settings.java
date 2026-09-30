@@ -1,6 +1,8 @@
 package com.eza.spicyex;
 
-import com.eza.spicyex.lyrics.KoreanDisplayMode;
+import com.eza.spicyex.settings.SettingsPanel;
+
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
 import com.eza.spicyex.lyrics.LyricsBackgroundStyle;
 
 import java.util.ArrayList;
@@ -347,6 +349,13 @@ public final class Settings {
     public static final Setting<String> CHROME_CLUSTER_POSITION = enumSetting(
             "lyrics_chrome_cluster_position", INTERNAL, "Top controls position", "Right",
             "Left", "Right"
+    );
+
+    /** Top controls as a vertical rail or a horizontal row. Auto keeps the rail with a Top readout
+     *  and the row otherwise; each orientation keeps its own value. */
+    public static final Setting<String> CHROME_CLUSTER_LAYOUT = enumSetting(
+            "lyrics_chrome_cluster_layout", INTERNAL, "Top controls direction", "Auto",
+            "Auto", "Vertical", "Horizontal"
     );
 
     public static final Setting<Boolean> SHOW_FULLSCREEN_BACK_BUTTON = boolSetting(
@@ -972,10 +981,6 @@ public final class Settings {
             "lyric_show_skeleton", "Skeleton placeholder while loading", true
     );
 
-    public static final Setting<String> LAST_CACHE_CLEAR_VERSION = internalSetting(
-            "last_cache_clear_version", "last_cache_clear_version", ""
-    );
-
     // --- Helper classes ---
 
     public static final class Section {
@@ -1116,7 +1121,7 @@ public final class Settings {
                 || setting == TRACK_INFO_ART_SIZE || setting == TRACK_INFO_ART_SIZE_CUSTOM_DP
                 || setting == TRACK_INFO_TEXT_SIZE || setting == TRACK_INFO_TEXT_SIZE_CUSTOM
                 || setting == SKIP_CHIP_POSITION || setting == FOLLOW_CHIP_POSITION
-                || setting == CHROME_CLUSTER_POSITION
+                || setting == CHROME_CLUSTER_POSITION || setting == CHROME_CLUSTER_LAYOUT
                 // Motion and the readout's look: a wide screen often wants a calmer or different
                 // setup. Each orientation starts from the other's value and then keeps its own.
                 || setting == ANIMATION_STYLE || setting == LOAD_LIFT_ANIMATION

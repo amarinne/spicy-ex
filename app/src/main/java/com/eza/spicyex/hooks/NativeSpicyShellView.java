@@ -62,6 +62,18 @@ final class NativeSpicyShellView extends FrameLayout {
         return delegate.agentSelectElement(name);
     }
 
+    boolean agentSettings(String action) {
+        return delegate.agentSettings(action);
+    }
+
+    boolean agentEditorAction(String action, String argument) {
+        return delegate.agentEditorAction(action, argument);
+    }
+
+    boolean agentAction(String action) {
+        return delegate.agentAction(action);
+    }
+
     /** One JSON line of live geometry plus rule violations, or null if it could not be built. */
     String agentLayoutReport() {
         return delegate.agentLayoutReport();

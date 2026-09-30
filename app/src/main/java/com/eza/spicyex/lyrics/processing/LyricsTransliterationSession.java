@@ -1,0 +1,229 @@
+package com.eza.spicyex.lyrics.processing;
+
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
+import com.eza.spicyex.lyrics.language.SpicyRomanizer;
+
+import com.eza.spicyex.SpotifyPlusConfig;
+import com.eza.spicyex.lyrics.LyricsRenderConfig;
+import com.eza.spicyex.lyrics.LyricsShellSettings;
+
+/** Runtime transliteration toggle state, including per-document JP/CN cycle modes. */
+public final class LyricsTransliterationSession {
+    private static final String[] JAPANESE_CYCLE = {
+            SpotifyPlusConfig.JP_READING_FURIGANA_ONLY,
+            SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
+            SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI
+    };
+    private static final String[] CHINESE_CYCLE = {
+            SpotifyPlusConfig.CHINESE_MODE_PINYIN,
+            SpotifyPlusConfig.CHINESE_MODE_JYUTPING
+    };
+    private static final String[] KOREAN_CYCLE = {
+            KoreanDisplayMode.RR_STANDARD.value,
+            KoreanDisplayMode.WORD_TRANSLIT.value,
+            KoreanDisplayMode.RR_PRONUNCIATION.value,
+            KoreanDisplayMode.VN_PRONUNCIATION.value
+    };
+    private static final String[] CYRILLIC_CYCLE = {
+            SpicyRomanizer.CYRILLIC_RUSSIAN,
+            SpicyRomanizer.CYRILLIC_UKRAINIAN
+    };
+    private boolean showRomanization;
+    private String japaneseReadingMode;
+    private String chineseMode;
+    private String koreanMode;
+    private String cyrillicMode;
+    private String japaneseModeConfig;
+    private String chineseModeConfig;
+    private String koreanModeConfig;
+    private String cyrillicModeConfig;
+
+    public LyricsTransliterationSession(boolean showRomanization, LyricsRenderConfig config) {
+        this(showRomanization, config, null, null, null, null);
+    }
+
+    public LyricsTransliterationSession(boolean showRomanization, LyricsRenderConfig config,
+                                       String lastJapaneseReadingMode, String lastChineseMode,
+                                       String lastKoreanMode, String lastCyrillicMode) {
+        this.showRomanization = showRomanization;
+        japaneseReadingMode = safe(lastJapaneseReadingMode);
+        chineseMode = safe(lastChineseMode);
+        koreanMode = KoreanDisplayMode.valueOfSetting(lastKoreanMode);
+        cyrillicMode = safe(lastCyrillicMode);
+        applyConfig(config);
+    }
+
+    public boolean showRomanization() {
+        return showRomanization;
+    }
+
+    /** Explicit AI generation reveals its result without advancing any language mode cycle. */
+    public void setShowRomanization(boolean value) {
+        showRomanization = value;
+    }
+
+    /**
+     * A data-backed chip can look off while visibility is already requested and the layer is still
+     * empty. Starting generation from that state must not let the same click toggle visibility off
+     * before the result arrives.
+     */
+    public boolean keepVisibleForRequestedOutput(boolean outputRequested, boolean wasVisible,
+                                                 boolean hasDisplayedOutput) {
+        return outputRequested && (!wasVisible || !hasDisplayedOutput);
+    }
+
+    public String japaneseReadingMode() {
+        return japaneseReadingMode;
+    }
+
+    public String chineseMode() {
+        return chineseMode;
+    }
+
+    public String koreanMode() {
+        return koreanMode;
+    }
+
+    public String cyrillicMode() {
+        return cyrillicMode;
+    }
+
+    public boolean applyConfig(LyricsRenderConfig config) {
+        if (config == null) return false;
+        boolean changed = !safe(japaneseModeConfig).equals(safe(config.japaneseModeConfig))
+                || !safe(chineseModeConfig).equals(safe(config.chineseModeConfig))
+                || !safe(koreanModeConfig).equals(safe(config.koreanModeConfig))
+                || !safe(cyrillicModeConfig).equals(safe(config.cyrillicModeConfig));
+        japaneseModeConfig = safe(config.japaneseModeConfig);
+        chineseModeConfig = safe(config.chineseModeConfig);
+        koreanModeConfig = safe(config.koreanModeConfig);
+        cyrillicModeConfig = safe(config.cyrillicModeConfig);
+        if (changed) {
+            japaneseReadingMode = cycleOrDefault(japaneseModeConfig, japaneseReadingMode, config.defaultJapaneseReadingMode);
+            chineseMode = cycleOrDefault(chineseModeConfig, chineseMode, config.defaultChineseMode);
+            koreanMode = cycleOrDefault(koreanModeConfig, koreanMode, config.defaultKoreanMode);
+            cyrillicMode = cycleOrDefault(cyrillicModeConfig, cyrillicMode, config.defaultCyrillicMode);
+        } else {
+            if (isBlank(japaneseReadingMode)) japaneseReadingMode = safe(config.defaultJapaneseReadingMode);
+            if (isBlank(chineseMode)) chineseMode = safe(config.defaultChineseMode);
+            if (isBlank(koreanMode)) koreanMode = safe(config.defaultKoreanMode);
+            if (isBlank(cyrillicMode)) cyrillicMode = safe(config.defaultCyrillicMode);
+        }
+        return changed;
+    }
+
+    public CycleResult cycle(boolean japaneseDocument, boolean chineseDocument,
+                             boolean koreanDocument, boolean cyrillicDocument) {
+        if (japaneseDocument) {
+            cycleJapanese();
+            return new CycleResult(showRomanization, "jp transliteration mode");
+        }
+        if (chineseDocument) {
+            cycleChinese();
+            return new CycleResult(showRomanization, "cn transliteration mode");
+        }
+        if (koreanDocument) {
+            cycleKorean();
+            return new CycleResult(showRomanization, "kr transliteration mode");
+        }
+        if (cyrillicDocument) {
+            cycleCyrillic();
+            return new CycleResult(showRomanization, "cy transliteration mode");
+        }
+        showRomanization = !showRomanization;
+        return new CycleResult(showRomanization, "transliteration mode");
+    }
+
+    private void cycleJapanese() {
+        if ("cycle".equals(japaneseModeConfig)) {
+            CycleStep step = advanceCycle(showRomanization, japaneseReadingMode, JAPANESE_CYCLE);
+            showRomanization = step.visible;
+            japaneseReadingMode = step.mode;
+        } else {
+            showRomanization = !showRomanization;
+        }
+    }
+
+    private void cycleKorean() {
+        if ("cycle".equals(koreanModeConfig)) {
+            CycleStep step = advanceCycle(showRomanization, koreanMode, KOREAN_CYCLE);
+            showRomanization = step.visible;
+            koreanMode = step.mode;
+        } else if ("Off".equals(koreanModeConfig)) {
+            showRomanization = false;
+        } else {
+            koreanMode = KoreanDisplayMode.valueOfSetting(koreanModeConfig);
+            showRomanization = !showRomanization;
+        }
+    }
+
+    private void cycleCyrillic() {
+        if ("cycle".equals(cyrillicModeConfig)) {
+            CycleStep step = advanceCycle(showRomanization, cyrillicMode, CYRILLIC_CYCLE);
+            showRomanization = step.visible;
+            cyrillicMode = step.mode;
+        } else if ("Off".equals(cyrillicModeConfig)) {
+            showRomanization = false;
+        } else {
+            cyrillicMode = cyrillicModeConfig;
+            showRomanization = !showRomanization;
+        }
+    }
+
+    private void cycleChinese() {
+        if ("cycle".equals(chineseModeConfig)) {
+            CycleStep step = advanceCycle(showRomanization,
+                    LyricsShellSettings.normalizeChineseMode(chineseMode), CHINESE_CYCLE);
+            showRomanization = step.visible;
+            chineseMode = step.mode;
+        } else {
+            showRomanization = !showRomanization;
+        }
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isEmpty();
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String cycleOrDefault(String modeConfig, String current, String fallback) {
+        if ("cycle".equals(modeConfig) && !isBlank(current)) return current;
+        return safe(fallback);
+    }
+
+    private static CycleStep advanceCycle(boolean visible, String current, String[] modes) {
+        if (modes == null || modes.length == 0) return new CycleStep(false, safe(current));
+        if (!visible) return new CycleStep(true, modes[0]);
+        String normalized = safe(current);
+        for (int index = 0; index < modes.length; index++) {
+            if (!modes[index].equals(normalized)) continue;
+            return index + 1 < modes.length
+                    ? new CycleStep(true, modes[index + 1])
+                    : new CycleStep(false, normalized);
+        }
+        return new CycleStep(false, normalized);
+    }
+
+    private static final class CycleStep {
+        final boolean visible;
+        final String mode;
+
+        CycleStep(boolean visible, String mode) {
+            this.visible = visible;
+            this.mode = mode;
+        }
+    }
+
+    public static final class CycleResult {
+        public final boolean showRomanization;
+        public final String reason;
+
+        private CycleResult(boolean showRomanization, String reason) {
+            this.showRomanization = showRomanization;
+            this.reason = reason;
+        }
+    }
+}

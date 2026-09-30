@@ -272,7 +272,6 @@
     <string name="settings_option_he">Hebrew (he)</string>
     <string name="settings_option_fa">Persian (fa)</string>
     <!-- Other settings-panel display strings. -->
-    <string name="settings_unavailable_full_build">Full build required</string>
     <string name="settings_unavailable_android_13">Android 13+ required</string>
     <string name="settings_enable_transliteration">Enable transliteration</string>
     <string name="settings_enable_translation">Enable translation</string>
@@ -569,12 +568,15 @@
     <string name="settings_label_lyrics_status_bar_hidden_portrait">Hide status bar (portrait)</string>
     <string name="settings_label_lyrics_status_bar_hidden_landscape">Hide status bar (landscape)</string>
     <string name="settings_label_lyrics_chrome_cluster_position">Top controls position</string>
+    <string name="settings_label_lyrics_chrome_cluster_layout">Top controls direction</string>
     <string name="settings_label_lyrics_show_fullscreen_back_button">Show back button</string>
     <string name="settings_option_icon">Icon</string>
     <string name="settings_option_label">Label</string>
     <string name="settings_option_left">Left</string>
     <string name="settings_option_center">Center</string>
     <string name="settings_option_right">Right</string>
+    <string name="settings_option_vertical">Vertical</string>
+    <string name="settings_option_horizontal">Horizontal</string>
     <string name="settings_label_lyrics_focus_position">Lyrics focus point</string>
     <string name="settings_label_lyrics_focus_position_custom_percent">Custom focus point</string>
     <string name="settings_label_lyrics_track_info_background">Track info background</string>

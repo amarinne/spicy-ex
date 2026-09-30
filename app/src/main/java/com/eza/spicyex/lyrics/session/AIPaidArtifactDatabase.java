@@ -22,6 +22,7 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
     private static final String TABLE_RESERVATIONS = "reservations";
     private static final String TABLE_META = "meta";
     private static final String META_V515_MIGRATED = "v515_shared_prefs_migrated";
+    private static final String META_CLEAR_GENERATION = "paid_clear_generation";
     private static final int READ_CHUNK_BYTES = 256 * 1024;
     private static final long STALE_RESERVATION_MS = 6L * 60L * 60L * 1000L;
 
@@ -116,12 +117,31 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
         return output.toByteArray();
     }
 
+    AIPaidArtifactCache.Read read(String key, String layer, PaidArtifactIdentity identity) {
+        SQLiteDatabase db = getReadableDatabase();
+        db.beginTransaction();
+        try {
+            AIPaidArtifactCache.Read read = new AIPaidArtifactCache.Read(
+                    AIPaidArtifactCache.payloadOf(get(key), identity), key, layer,
+                    clearGeneration(db, META_CLEAR_GENERATION),
+                    clearGeneration(db, layerGenerationKey(layer)),
+                    clearGeneration(db, entryGenerationKey(key)));
+            db.setTransactionSuccessful();
+            return read;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
     AIPaidArtifactCache.Write put(String key, String layer, byte[] value,
                                   AIPaidArtifactCache.Reservation reservation,
-                                  long maxBytes) {
+                                  AIPaidArtifactCache.Read read, long maxBytes) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            if (isRevoked(db, key, layer, read)) {
+                return AIPaidArtifactCache.Write.rejected("run-revoked");
+            }
             long reserved = matchingReservationBytes(db, key, reservation);
             long target = Math.max(value.length, reserved);
             long other = footprintExcluding(db, key);
@@ -140,10 +160,14 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
 
     AIPaidArtifactCache.Reservation reserve(String key, String layer, long maxRecordBytes,
                                              AIPaidArtifactCache.Reservation current,
-                                             long maxBytes) {
+                                             AIPaidArtifactCache.Read read, long maxBytes) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            if (isRevoked(db, key, layer, read)) {
+                return AIPaidArtifactCache.Reservation.rejected(
+                        AIPaidArtifactCache.Reservation.Status.UNAVAILABLE, "run-revoked");
+            }
             long now = System.currentTimeMillis();
             db.delete(TABLE_RESERVATIONS, "touched_at_ms < ?",
                     new String[]{String.valueOf(now - STALE_RESERVATION_MS)});
@@ -199,6 +223,7 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
         try {
             db.delete(TABLE_RESERVATIONS, "entry_key = ?", new String[]{key});
             boolean removed = db.delete(TABLE_ENTRIES, "entry_key = ?", new String[]{key}) > 0;
+            bumpClearGeneration(db, entryGenerationKey(key));
             db.setTransactionSuccessful();
             return removed;
         } finally {
@@ -212,6 +237,7 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
         try {
             db.delete(TABLE_RESERVATIONS, null, null);
             db.delete(TABLE_ENTRIES, null, null);
+            bumpClearGeneration(db, META_CLEAR_GENERATION);
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
@@ -224,6 +250,7 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
         try {
             db.delete(TABLE_RESERVATIONS, "layer = ?", new String[]{layer});
             db.delete(TABLE_ENTRIES, "layer = ?", new String[]{layer});
+            bumpClearGeneration(db, layerGenerationKey(layer));
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
@@ -262,6 +289,44 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
         return DatabaseUtils.longForQuery(db,
                 "SELECT COUNT(*) FROM " + TABLE_META + " WHERE meta_key = ?",
                 new String[]{key}) > 0L;
+    }
+
+    private static boolean isRevoked(SQLiteDatabase db, String key, String layer,
+                                     AIPaidArtifactCache.Read read) {
+        return isRevoked(read, key, layer,
+                clearGeneration(db, META_CLEAR_GENERATION),
+                clearGeneration(db, layerGenerationKey(layer)),
+                clearGeneration(db, entryGenerationKey(key)));
+    }
+
+    static boolean isRevoked(AIPaidArtifactCache.Read read, String key, String layer,
+                             long allGeneration, long layerGeneration, long entryGeneration) {
+        return read == null || !read.matches(key, layer, allGeneration,
+                layerGeneration, entryGeneration);
+    }
+
+    private static String layerGenerationKey(String layer) {
+        return META_CLEAR_GENERATION + ":layer:" + layer;
+    }
+
+    private static String entryGenerationKey(String key) {
+        return META_CLEAR_GENERATION + ":entry:" + key;
+    }
+
+    private static long clearGeneration(SQLiteDatabase db, String key) {
+        return DatabaseUtils.longForQuery(db,
+                "SELECT COALESCE(MAX(CAST(meta_value AS INTEGER)), 0) FROM " + TABLE_META
+                        + " WHERE meta_key = ?", new String[]{key});
+    }
+
+    private static void bumpClearGeneration(SQLiteDatabase db, String key) {
+        ContentValues values = new ContentValues();
+        values.put("meta_key", key);
+        values.put("meta_value", String.valueOf(clearGeneration(db, key) + 1L));
+        if (db.insertWithOnConflict(TABLE_META, null, values,
+                SQLiteDatabase.CONFLICT_REPLACE) == -1L) {
+            throw new IllegalStateException("clear generation insert failed");
+        }
     }
 
     private static long entryBytes(SQLiteDatabase db, String key) {

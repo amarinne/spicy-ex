@@ -31,12 +31,12 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.eza.spicyex.BuildConfig;
-import com.eza.spicyex.GlossyToggle;
+import com.eza.spicyex.ui.GlossyToggle;
 import com.eza.spicyex.R;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
-import com.eza.spicyex.SettingsUiStrings;
-import com.eza.spicyex.UiLanguage;
+import com.eza.spicyex.ui.SettingsUiStrings;
+import com.eza.spicyex.ui.UiLanguage;
 
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;

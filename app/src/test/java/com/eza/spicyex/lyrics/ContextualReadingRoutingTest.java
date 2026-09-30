@@ -1,8 +1,16 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.LatinLanguageGate;
+import com.eza.spicyex.lyrics.language.LyricsLocalRomanizer;
+import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
+import com.eza.spicyex.lyrics.language.ScriptClassifier;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
+
 import com.eza.spicyex.lyrics.session.DetectionResult;
 import org.junit.Test;
 import static org.junit.Assert.*;
+import com.eza.spicyex.lyrics.processing.ProviderTranslationResolver;
+import com.eza.spicyex.lyrics.processing.SpicyProcessing;
 
 public class ContextualReadingRoutingTest {
     @Test public void compactBackendLoadsAndAbstainsOnAmbiguousHan() {

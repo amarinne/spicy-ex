@@ -16,17 +16,17 @@ import com.eza.spicyex.lyrics.BackgroundLine;
 import com.eza.spicyex.lyrics.LiveLyricCardView;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsDocument;
-import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
-import com.eza.spicyex.lyrics.LyricsFetchErrors;
+import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.providers.LyricsFetchErrors;
 import com.eza.spicyex.lyrics.LyricsLine;
-import com.eza.spicyex.lyrics.LyricsLocalRomanizer;
+import com.eza.spicyex.lyrics.language.LyricsLocalRomanizer;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
 import com.eza.spicyex.lyrics.LyricsRenderMode;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsShellLifecycle;
-import com.eza.spicyex.lyrics.RomanizationOptions;
-import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
-import com.eza.spicyex.lyrics.SpicyTextDetection;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 import com.eza.spicyex.xposed.XpLog;
 
 import java.util.List;
@@ -175,7 +175,7 @@ final class NowPlayingLyricController {
         this.artworkTargetHost.setInvalidationListener(this::onArtworkTargetInvalidated);
         this.artworkBackLifecycle = new LyricsShellLifecycle(activity, this::closeArtwork);
         this.config = SpotifyPlusConfig.from(activity);
-        this.preferences = activity.getSharedPreferences("SpotifyPlus", Context.MODE_PRIVATE);
+        this.preferences = activity.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE);
         refreshConfig();
         this.card.setOnClickListener(v -> handleCardTap());
         this.artworkOverlay.setActions(this::closeArtwork, this::expandArtwork);
@@ -183,46 +183,10 @@ final class NowPlayingLyricController {
 
     private boolean refreshConfig() {
         LyricsRenderConfig next = LyricsRenderConfig.read(activity, config);
-        boolean changed = renderConfig == null
-                || !renderConfig.liveCardSecondaryMode.equals(next.liveCardSecondaryMode)
-                || renderConfig.liveCardShowTransliteration != next.liveCardShowTransliteration
-                || renderConfig.liveCardShowTranslation != next.liveCardShowTranslation
-                || renderConfig.lineSpacingMultiplier != next.lineSpacingMultiplier
-                || !renderConfig.lyricWeight.equals(next.lyricWeight)
-                || !renderConfig.lyricsTextSizeMode.equals(next.lyricsTextSizeMode)
-                || renderConfig.lyricsTextSizeMultiplier != next.lyricsTextSizeMultiplier
-                || renderConfig.transliterationEnabled != next.transliterationEnabled
-                || renderConfig.interludeNoteIcon != next.interludeNoteIcon
-                || !renderConfig.lineSyncFillMode.equals(next.lineSyncFillMode)
-                || renderConfig.spotlight != next.spotlight
-                || renderConfig.wordBounceEnabled != next.wordBounceEnabled
-                || !renderConfig.wordBounceStyle.equals(next.wordBounceStyle)
-                || renderConfig.lineGradientEnabled != next.lineGradientEnabled
-                || renderConfig.glowBlurEnabled != next.glowBlurEnabled
-                || !renderConfig.liveCardWeight.equals(next.liveCardWeight)
-                || !renderConfig.lyricsFont.equals(next.lyricsFont)
-                || !renderConfig.lyricsFontCustomPath.equals(next.lyricsFontCustomPath)
-                || !renderConfig.liveCardTextSizeMode.equals(next.liveCardTextSizeMode)
-                || renderConfig.liveCardMinimalAnimation != next.liveCardMinimalAnimation
-                || !renderConfig.liveCardAnimationMode.equals(next.liveCardAnimationMode)
-                || !renderConfig.liveCardGlowMode.equals(next.liveCardGlowMode)
-                || !renderConfig.liveCardLineSyncFillMode.equals(next.liveCardLineSyncFillMode)
-                || !renderConfig.liveCardTransitionMode.equals(next.liveCardTransitionMode)
-                || !renderConfig.liveCardOverflowMode.equals(next.liveCardOverflowMode)
-                || !renderConfig.liveCardScrollScope.equals(next.liveCardScrollScope)
-                || renderConfig.adaptiveSectioningEnabled != next.adaptiveSectioningEnabled
-                || renderConfig.attachTransliterationToWords != next.attachTransliterationToWords
-                || !renderConfig.defaultJapaneseReadingMode.equals(next.defaultJapaneseReadingMode)
-                || !renderConfig.defaultChineseMode.equals(next.defaultChineseMode)
-                || !renderConfig.defaultKoreanMode.equals(next.defaultKoreanMode)
-                || !renderConfig.koreanMode.equals(next.koreanMode)
-                || !renderConfig.defaultCyrillicMode.equals(next.defaultCyrillicMode)
-                || renderConfig.chineseTones != next.chineseTones
-                || renderConfig.cyrillicKeepSigns != next.cyrillicKeepSigns
-                || renderConfig.translationEnabled != next.translationEnabled
-                || !renderConfig.translationBackend.equals(next.translationBackend)
-                || !renderConfig.translationTarget.equals(next.translationTarget)
-                || renderConfig.translationBright != next.translationBright;
+        // F11: one shared definition of "what changed". The hand-rolled comparison drifted
+        // and missed live-card size, Apple, blur, and bounce-scope fields, leaving mounted
+        // content stale until an unrelated change.
+        boolean changed = renderConfig == null || renderConfig.diff(next).hasChanges;
         renderConfig = next;
         if (changed) {
             card.applyConfig(renderConfig);
@@ -631,7 +595,10 @@ final class NowPlayingLyricController {
         NativeRuntime.LYRICS_IO.execute(() -> {
             try {
                 if (isProjectionStale(id, generation, revision)) return;
-                LyricsDocument nextCardDocument = doc;
+                // Detached: the worker must never mutate the session's document or the mounted
+                // documents. Both are read on the main thread while this runs.
+                LyricsDocument nextCardDocument = LyricsDocument.copyOf(doc);
+                if (nextCardDocument == null) return;
                 LyricsDocumentProcessor.applyProcessedCachePreservingAi(
                         activity.getApplicationContext(), nextCardDocument,
                         fetchOptions, NativeRuntime.GOOGLE_PROCESSING_VERSION);
@@ -644,42 +611,6 @@ final class NowPlayingLyricController {
                                     || fetchConfig.liveCardShowTransliteration));
                 }
                 if (isProjectionStale(id, generation, revision)) return;
-                // A derived-layer completion republishes the whole document over an unchanged
-                // canonical base. Absorb it into the documents already mounted instead of building
-                // two fresh ones and replanning every row: this surface publishes several times per
-                // track as the lanes settle, and the artwork overlay keeps its document identity.
-                LyricsDocument mountedCard = cardDocument;
-                LyricsDocument mountedArtwork = artworkDocument;
-                LyricsDocumentProcessor.DerivedMergeResult cardMerge =
-                        NowPlayingSessionGuard.mayMergeMountedProjection(
-                        replayRequired,
-                        id.equals(loadedId),
-                        mountedCard != null,
-                        mountedArtwork != null)
-                        ? LyricsDocumentProcessor.mergeDerivedPublication(mountedCard, nextCardDocument)
-                        : LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE;
-                if (cardMerge != LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE) {
-                    boolean cardChanged = cardMerge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED;
-                    boolean artworkChanged =
-                            LyricsDocumentProcessor.mergeDerivedPublication(mountedArtwork, nextCardDocument)
-                                    == LyricsDocumentProcessor.DerivedMergeResult.CHANGED;
-                    boolean cardRowsChanged = LyricTimeline.refreshAppliedDerivedText(mountedCard);
-                    boolean artworkRowsChanged =
-                            LyricTimeline.refreshAppliedDerivedText(mountedArtwork);
-                    if (cardChanged || artworkChanged || cardRowsChanged || artworkRowsChanged) {
-                        LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
-                        handler.post(() -> {
-                            if (isProjectionStale(id, generation, revision)) return;
-                            if (cardChanged || cardRowsChanged) card.invalidateMountedContent();
-                            if (artworkChanged || artworkRowsChanged) {
-                                artworkOverlay.invalidateMountedContent();
-                            }
-                            lastIdx = Integer.MIN_VALUE;
-                            clearMiniProjection();
-                        });
-                    }
-                    return;
-                }
                 LyricsDocument nextArtworkDocument = LyricsDocument.copyOf(nextCardDocument);
                 if (nextArtworkDocument == null) return;
                 if (isProjectionStale(id, generation, revision)) return;
@@ -687,10 +618,18 @@ final class NowPlayingLyricController {
                 if (isProjectionStale(id, generation, revision)) return;
                 LyricTimeline.applySyncedRows(nextArtworkDocument);
                 if (isProjectionStale(id, generation, revision)) return;
-                LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
-                handler.post(() -> commitProjectedDocument(
-                        id, generation, revision, nextCardDocument, nextArtworkDocument,
-                        replayRequired));
+                // The guarded merge, applied-row refresh, and invalidation run together on the
+                // main thread, like fullscreen's commitAndRenderDocument: a worker that passed
+                // an earlier guard can no longer overwrite a newer publication and then discard
+                // its own invalidation as stale.
+                handler.post(() -> {
+                    if (isProjectionStale(id, generation, revision)) return;
+                    if (tryMergeMountedProjection(id, nextCardDocument, replayRequired)) return;
+                    LyricPipelineMetrics.increment(
+                            LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
+                    commitProjectedDocument(id, generation, revision, nextCardDocument,
+                            nextArtworkDocument, replayRequired);
+                });
             } catch (Throwable t) {
                 handler.post(() -> {
                     if (!running || projectionRevision.get() != revision) return;
@@ -699,6 +638,53 @@ final class NowPlayingLyricController {
                 });
             }
         });
+    }
+
+    /**
+     * F5: absorbs a prepared publication into the mounted documents. Main thread only: the
+     * caller holds a fresh staleness check, so the merge, row refresh, and invalidation land
+     * as one atomic step that no racing worker can interleave.
+     *
+     * @return true when the mounted documents absorbed the publication and no replacement
+     *         is required.
+     */
+    private boolean tryMergeMountedProjection(String id, LyricsDocument nextCardDocument,
+                                              boolean replayRequired) {
+        // A derived-layer completion republishes the whole document over an unchanged
+        // canonical base. Absorb it into the documents already mounted instead of building
+        // two fresh ones and replanning every row: this surface publishes several times per
+        // track as the lanes settle, and the artwork overlay keeps its document identity.
+        LyricsDocument mountedCard = cardDocument;
+        LyricsDocument mountedArtwork = artworkDocument;
+        LyricsDocumentProcessor.DerivedMergeResult cardMerge =
+                NowPlayingSessionGuard.mayMergeMountedProjection(
+                        replayRequired,
+                        id.equals(loadedId),
+                        mountedCard != null,
+                        mountedArtwork != null)
+                        ? LyricsDocumentProcessor.mergeDerivedPublication(mountedCard,
+                                nextCardDocument)
+                        : LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE;
+        if (cardMerge == LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE) {
+            return false;
+        }
+        boolean cardChanged = cardMerge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED;
+        boolean artworkChanged =
+                LyricsDocumentProcessor.mergeDerivedPublication(mountedArtwork, nextCardDocument)
+                        == LyricsDocumentProcessor.DerivedMergeResult.CHANGED;
+        boolean cardRowsChanged = LyricTimeline.refreshAppliedDerivedText(mountedCard);
+        boolean artworkRowsChanged =
+                LyricTimeline.refreshAppliedDerivedText(mountedArtwork);
+        if (cardChanged || artworkChanged || cardRowsChanged || artworkRowsChanged) {
+            LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
+            if (cardChanged || cardRowsChanged) card.invalidateMountedContent();
+            if (artworkChanged || artworkRowsChanged) {
+                artworkOverlay.invalidateMountedContent();
+            }
+            lastIdx = Integer.MIN_VALUE;
+            clearMiniProjection();
+        }
+        return true;
     }
 
     private boolean isProjectionStale(String id, int generation, long revision) {

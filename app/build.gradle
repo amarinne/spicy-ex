@@ -10,7 +10,8 @@ android {
     // intentionally additive: the narrower lyrics-ai and lyrics-session groups sit inside the
     // broad lyrics group, while corpus names identify the golden language fixtures.
     def unitTestGroups = [
-            settings: ['com.eza.spicyex.Settings*', 'com.eza.spicyex.settings.*'],
+            settings: ['com.eza.spicyex.Settings*', 'com.eza.spicyex.settings.*',
+                    'com.eza.spicyex.ui.SettingsUiStrings*'],
             diagnostics: ['com.eza.spicyex.diagnostics.*'],
             hooks: ['com.eza.spicyex.hooks.*'],
             lyrics: ['com.eza.spicyex.lyrics.*'],
@@ -20,12 +21,12 @@ android {
                     'com.eza.spicyex.lyrics.ChineseRomanizerTest',
                     'com.eza.spicyex.lyrics.CyrillicRomanizerTest',
                     'com.eza.spicyex.lyrics.GreekRomanizerTest',
-                    'com.eza.spicyex.lyrics.JapaneseReadingTest',
-                    'com.eza.spicyex.lyrics.JapaneseReadingPolicyConformanceTest',
-                    'com.eza.spicyex.lyrics.JapaneseRomajiProjectionConformanceTest',
+                    'com.eza.spicyex.lyrics.language.JapaneseReadingTest',
+                    'com.eza.spicyex.lyrics.language.JapaneseReadingPolicyConformanceTest',
+                    'com.eza.spicyex.lyrics.language.JapaneseRomajiProjectionConformanceTest',
                     'com.eza.spicyex.lyrics.JapaneseRubyGeometryTest',
-                    'com.eza.spicyex.lyrics.JyutpingRomanizerTest',
-                    'com.eza.spicyex.lyrics.KoreanPronunciationTest',
+                    'com.eza.spicyex.lyrics.language.JyutpingRomanizerTest',
+                    'com.eza.spicyex.lyrics.language.KoreanPronunciationTest',
                     'com.eza.spicyex.lyrics.KoreanReadingProcessorTest',
                     'com.eza.spicyex.lyrics.KoreanRomanizerTest'
             ]
@@ -35,9 +36,9 @@ android {
     // default and grouped test run, and only execute with -PtestTools=<name>.
     def optInTestTools = [
             'jp-export': [
-                    'com.eza.spicyex.lyrics.JapaneseSnapshotExporterTest',
-                    'com.eza.spicyex.lyrics.JapaneseReadingPolicyResultExporterTest',
-                    'com.eza.spicyex.lyrics.JapaneseRomajiProjectionResultExporterTest'
+                    'com.eza.spicyex.lyrics.language.JapaneseSnapshotExporterTest',
+                    'com.eza.spicyex.lyrics.language.JapaneseReadingPolicyResultExporterTest',
+                    'com.eza.spicyex.lyrics.language.JapaneseRomajiProjectionResultExporterTest'
             ],
             'model-survey': ['com.eza.spicyex.lyrics.ai.OpenRouterModelSurveyTest']
     ]
@@ -93,15 +94,12 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 902
-        versionName "1.58.620+B902-20260928T1554Z"
+        versionCode 916
+        versionName "1.58.634+B916-20260930T0748Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
         buildConfigField "String", "DIAGNOSTIC_INTAKE_URL", "\"${diagnosticIntakeUrl}\""
-        buildConfigField "boolean", "TRANSLITERATION_AVAILABLE", "true"
-        buildConfigField "boolean", "TRANSLATION_AVAILABLE", "true"
-        buildConfigField "boolean", "APPLE_FONT_AVAILABLE", "true"
         def modelPackUrl = providers.gradleProperty("LANGUAGE_MODEL_PACK_URL")
             .orElse("https://github.com/amarinne/spicy-ex/releases/download/v1/spicyex-language-models-v1.zip")
             .get()

@@ -4,8 +4,8 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
-import com.eza.spicyex.lyrics.LatinLanguageGate;
-import com.eza.spicyex.lyrics.ProcessedLyricsCache;
+import com.eza.spicyex.lyrics.language.LatinLanguageGate;
+import com.eza.spicyex.lyrics.cache.ProcessedLyricsCache;
 
 import com.eza.spicyex.xposed.XpLog;
 
@@ -277,7 +277,7 @@ public final class LyricsDetectionSession {
         StringBuilder text = new StringBuilder();
         boolean unresolved = false;
         for (DetectionResult row : rows) {
-            if (row.scriptClass != com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass.LATIN) continue;
+            if (row.scriptClass != com.eza.spicyex.lyrics.language.ScriptClassifier.ScriptClass.LATIN) continue;
             if (!row.hasLanguage() && row.status != DetectionStatus.ERROR) unresolved = true;
             if (row.sourceText.trim().isEmpty() || !seen.add(row.sourceText)) continue;
             if (text.length() > 0) text.append('\n');
@@ -408,12 +408,12 @@ public final class LyricsDetectionSession {
 
         @Override
         public DetectionResult restoreText(Context context, String text) {
-            return com.eza.spicyex.lyrics.ProviderTextDetectionStore.get(context, text);
+            return com.eza.spicyex.lyrics.language.ProviderTextDetectionStore.get(context, text);
         }
 
         @Override
         public boolean saveText(Context context, String text, DetectionResult result) {
-            com.eza.spicyex.lyrics.ProviderTextDetectionStore.put(context, text, result);
+            com.eza.spicyex.lyrics.language.ProviderTextDetectionStore.put(context, text, result);
             return true;
         }
     }

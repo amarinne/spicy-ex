@@ -383,9 +383,15 @@ public final class LiveLyricCardView extends LinearLayout {
                 LyricsRowViewFactory.isRtlLine(line));
     }
 
-    private String configKey(LyricsRenderConfig config) {
+    /** Package-visible for the F11 key-coverage test. */
+    static String configKey(LyricsRenderConfig config) {
         if (config == null) return "";
+        // F11: this key is the card's own definition of "what changed" and must cover
+        // everything the mounted row plan bakes in. The custom size multiplier, bounce
+        // scope, Apple motion, and blur controls were missing, so those changes never
+        // rebuilt the mounted row until an unrelated change.
         return config.liveCardTextSizeMode
+                + "|" + config.liveCardTextSizeMultiplier
                 + "|" + config.liveCardWeight
                 + "|" + config.lyricsFont
                 + "|" + config.liveCardSecondaryMode
@@ -401,9 +407,16 @@ public final class LiveLyricCardView extends LinearLayout {
                 + "|" + config.adaptiveSectioningEnabled
                 + "|" + config.spotlight
                 + "|" + config.wordBounceEnabled
+                + "|" + config.wordBounceScope
                 + "|" + config.wordBounceStyle
+                + "|" + config.appleStyle
+                + "|" + config.appleLift
+                + "|" + config.appleDimPassed
                 + "|" + config.lineSyncFillMode
                 + "|" + config.glowBlurEnabled
+                + "|" + config.lineBlurEnabled
+                + "|" + config.lineBlurHeavy
+                + "|" + config.blurQuality
                 + "|" + config.interludeNoteIcon
                 + "|" + config.translationBright;
     }

@@ -5,11 +5,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import com.eza.spicyex.lyrics.KoreanDisplayMode;
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.SyllableSegment;
-import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
-import com.eza.spicyex.lyrics.SpicyTextDetection;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ParagraphProvenance;

@@ -3,8 +3,8 @@ package com.eza.spicyex.hooks;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 
 import com.eza.spicyex.SpotifyTrack;
-import com.eza.spicyex.lyrics.NativeLyricsSource;
-import com.eza.spicyex.lyrics.LyricsRepository;
+import com.eza.spicyex.lyrics.providers.NativeLyricsSource;
+import com.eza.spicyex.lyrics.providers.LyricsRepository;
 import android.os.Handler;
 import android.os.Looper;
 

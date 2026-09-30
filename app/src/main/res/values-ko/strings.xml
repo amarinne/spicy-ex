@@ -255,7 +255,6 @@
     <string name="settings_option_fa">페르시아어 (fa)</string>
 
     <!-- Other settings-panel display strings -->
-    <string name="settings_unavailable_full_build">전체 기능 빌드에서만 사용 가능</string>
     <string name="settings_unavailable_android_13">Android 13 이상 필요</string>
     <string name="settings_enable_transliteration">발음 표기 켜기</string>
     <string name="settings_enable_translation">번역 켜기</string>

@@ -1,7 +1,6 @@
 package com.eza.spicyex.settings;
 
 import com.eza.spicyex.Settings;
-import com.eza.spicyex.SettingsValueNormalizer;
 
 /**
  * Pure value formatting for settings rows and option dialogs.

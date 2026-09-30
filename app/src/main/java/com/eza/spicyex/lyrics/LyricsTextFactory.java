@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
@@ -77,11 +79,6 @@ public final class LyricsTextFactory {
             return resolveCjkTypeface(weight);
         }
         String normalizedFamily = safe(family).toLowerCase(Locale.ROOT);
-        // Lite builds don't bundle the Apple faces — a stale "apple" config falls back to Spotify
-        // rather than degrading to Roboto via the missing-asset catch.
-        if ("apple".equals(normalizedFamily) && !com.eza.spicyex.FeatureAvailability.appleFontAvailable()) {
-            normalizedFamily = "spotify";
-        }
         if ("apple".equals(normalizedFamily)) {
             String key = "lyric|apple|" + safe(weight);
             Typeface cached = typefaceCache.get(key);

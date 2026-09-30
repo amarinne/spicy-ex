@@ -25,7 +25,7 @@ public final class AiLaneWiringContractTest {
     /** Plaintext must reach a secure dialog and nothing else; that dialog cannot exist on the JVM. */
     @Test
     public void apiKeyRevealShowsPlaintextOnlyInASecureDialog() throws Exception {
-        String source = read("src/main/java/com/eza/spicyex/AiSettingsRows.java");
+        String source = read("src/main/java/com/eza/spicyex/settings/AiSettingsRows.java");
 
         assertTrue(source.contains("new PanelDialog(context,"));
         assertTrue(source.contains(".secure()"));

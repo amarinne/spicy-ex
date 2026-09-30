@@ -30,10 +30,10 @@ public class SpicyLyricBridgeDocumentSerializerTest {
         AppliedLine row = new AppliedLine(); row.text = "中国"; row.endMs = 1000;
         row.sourceLine = new LyricsLine(); row.sourceLine.text = row.text;
         row.sourceLine.detection = com.eza.spicyex.lyrics.session.DetectionResult.detected("", row.text,
-                com.eza.spicyex.lyrics.ScriptClassifier.ScriptClass.CHINESE, "zh", .99);
-        row.japaneseReading = new com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.JapaneseReading(
+                com.eza.spicyex.lyrics.language.ScriptClassifier.ScriptClass.CHINESE, "zh", .99);
+        row.japaneseReading = new com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor.JapaneseReading(
                 "中国", "chuugoku", Collections.singletonList(
-                new com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "ちゅうごく")));
+                new com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor.FuriganaSegment(0, 2, "ちゅうごく")));
         document.appliedLines.add(row);
         JsonObject encoded = JsonParser.parseString(unzip(SpicyLyricBridgeDocumentSerializer.serialize(
                 document, "test", 1, "track"))).getAsJsonObject()

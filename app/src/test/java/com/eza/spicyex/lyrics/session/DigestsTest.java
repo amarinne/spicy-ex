@@ -2,9 +2,8 @@ package com.eza.spicyex.lyrics.session;
 
 import static org.junit.Assert.assertEquals;
 
-import com.eza.spicyex.lyrics.LyricCaches;
+import com.eza.spicyex.lyrics.cache.LyricCaches;
 
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Locale;
@@ -37,8 +36,6 @@ public class DigestsTest {
 
     @Test
     public void persistedCacheKeysAndCanonicalIdsKeepLegacyEncoding() throws Exception {
-        Method cacheHash = LyricCaches.class.getDeclaredMethod("sha256", String.class);
-        cacheHash.setAccessible(true);
         Random random = new Random(622);
         for (int sample = 0; sample < 200; sample++) {
             StringBuilder input = new StringBuilder("\u541b\u306e\u58f0|\ud83c\udfb5|");
@@ -49,7 +46,7 @@ public class DigestsTest {
             StringBuilder legacy = new StringBuilder();
             for (byte b : digest) legacy.append(String.format(Locale.ROOT, "%02x", b));
             assertEquals(legacy.toString(), Digests.sha256(value));
-            assertEquals(legacy.toString(), cacheHash.invoke(null, value));
+            assertEquals("detection/text/" + legacy, LyricCaches.providerDetectionKey(value));
         }
     }
 }

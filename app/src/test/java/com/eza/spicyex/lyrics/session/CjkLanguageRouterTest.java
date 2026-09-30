@@ -1,6 +1,6 @@
 package com.eza.spicyex.lyrics.session;
 
-import com.eza.spicyex.lyrics.ScriptClassifier;
+import com.eza.spicyex.lyrics.language.ScriptClassifier;
 import org.junit.Test;
 import java.util.*;
 import static org.junit.Assert.*;

@@ -17,7 +17,6 @@ public final class ReadingContracts {
 
     public interface ProviderAdapter<I> { ParsedDocument parse(I input); }
     public interface CanonicalLineBuilder { CanonicalLine build(ParsedLine line); }
-    public interface ScriptPartitioner { List<ScriptRun> partition(CanonicalLine line, LanguageContext context); }
     public interface ReadingProcessor {
         boolean supports(ScriptRun run, LanguageContext context);
         ReadingAnnotation annotate(CanonicalLine line, ScriptRun run, Map<String, Object> options);

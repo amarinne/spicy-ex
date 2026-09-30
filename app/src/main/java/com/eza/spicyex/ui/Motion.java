@@ -10,6 +10,7 @@ import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
 
 import java.util.WeakHashMap;
+import com.eza.spicyex.SpotifyPlusConfig;
 
 /**
  * Shared motion tokens and helpers for module chrome (settings panel, dialogs, popups).
@@ -35,7 +36,7 @@ public final class Motion {
     public static final String FEEL_FAST = "Fast";
     public static final String FEEL_RELAXED = "Relaxed";
 
-    private static final String PREFS_NAME = "SpotifyPlus";
+    private static final String PREFS_NAME = SpotifyPlusConfig.PREFS_NAME;
     private static final String KEY_TRANSITION_FEEL = "lyrics_transition_feel";
 
     private static volatile String feel = FEEL_FAST;

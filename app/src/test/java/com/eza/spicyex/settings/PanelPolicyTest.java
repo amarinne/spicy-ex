@@ -21,6 +21,23 @@ public class PanelPolicyTest {
     }
 
     @Test
+    public void translationRowsFollowTheMasterSwitch() {
+        assertFalse(PanelPolicy.shouldRender(Settings.TRANSLATION_TARGET, full()));
+        PanelSnapshot on = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.TRANSLATION_ENABLED, true).build();
+        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_TARGET, on));
+        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_BRIGHTNESS, on));
+    }
+
+    @Test
+    public void onlyAMissingLanguageModelMakesARowUnavailable() {
+        assertFalse(PanelPolicy.unavailable(Settings.TRANSLATION_ENABLED, PanelSnapshot.builder().build()));
+        assertFalse(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED, full()));
+        assertTrue(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED,
+                PanelSnapshot.builder().allCapabilities().languageModelReady(false).build()));
+    }
+
+    @Test
     public void pipOptionsFollowMasterSwitch() {
         PanelSnapshot off = PanelSnapshot.builder().build();
         assertTrue(PanelPolicy.shouldRender(Settings.PIP_ENABLED, off));
@@ -62,13 +79,6 @@ public class PanelPolicyTest {
     }
 
     @Test
-    public void aiSectionHiddenWhenFamilyNotOffered() {
-        PanelSnapshot lite = PanelSnapshot.builder().build();
-        assertFalse(PanelPolicy.shouldRender(Settings.AI_ENABLED, lite));
-        assertFalse(PanelPolicy.shouldRender(Settings.AI_PROVIDER, lite));
-    }
-
-    @Test
     public void aiFamilyNestsUnderMasterSwitch() {
         PanelSnapshot off = PanelSnapshot.builder().allCapabilities()
                 .put(Settings.AI_ENABLED, false).build();
@@ -106,20 +116,6 @@ public class PanelPolicyTest {
         assertFalse(PanelPolicy.shouldRender(Settings.DOWNLOAD_LANGUAGE_MODELS, ready));
         assertTrue(PanelPolicy.shouldRender(Settings.TRANSLITERATION_ENABLED, ready));
         assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_ENABLED, ready));
-    }
-
-    @Test
-    public void translationRowsNeedCapabilityAndMasterSwitch() {
-        PanelSnapshot noCapability = PanelSnapshot.builder().allCapabilities()
-                .translationAvailable(false)
-                .put(Settings.TRANSLATION_ENABLED, true).build();
-        assertFalse(PanelPolicy.shouldRender(Settings.TRANSLATION_TARGET, noCapability));
-        PanelSnapshot disabled = full();
-        assertFalse(PanelPolicy.shouldRender(Settings.TRANSLATION_TARGET, disabled));
-        PanelSnapshot on = PanelSnapshot.builder().allCapabilities()
-                .put(Settings.TRANSLATION_ENABLED, true).build();
-        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_TARGET, on));
-        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_BRIGHTNESS, on));
     }
 
     @Test
@@ -292,21 +288,7 @@ public class PanelPolicyTest {
     // --- Availability ---
 
     @Test
-    public void unavailableTracksBuildAndDeviceGaps() {
-        assertTrue(PanelPolicy.unavailable(Settings.TRANSLATION_ENABLED, PanelSnapshot.builder().build()));
-        assertFalse(PanelPolicy.unavailable(Settings.TRANSLATION_ENABLED, full()));
-        assertTrue(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED,
-                PanelSnapshot.builder().allCapabilities().transliterationAvailable(false).build()));
-    }
-
-    @Test
     public void liveCardSecondaryModeExplainsItsRequirements() {
-        PanelSnapshot lite = PanelSnapshot.builder()
-                .put(Settings.TRANSLITERATION_ENABLED, true)
-                .put(Settings.TRANSLATION_ENABLED, true).build();
-        assertEquals("Full build required", PanelPolicy.optionUnavailableReason(
-                (Settings.StringSetting) Settings.LIVE_CARD_SECONDARY_MODE,
-                "Transliteration", lite, strings()));
         PanelSnapshot fullOff = full();
         assertEquals("Enable transliteration", PanelPolicy.optionUnavailableReason(
                 (Settings.StringSetting) Settings.LIVE_CARD_SECONDARY_MODE,

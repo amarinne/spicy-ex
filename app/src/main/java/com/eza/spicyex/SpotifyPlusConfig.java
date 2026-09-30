@@ -12,13 +12,7 @@ import android.content.res.Configuration;
 public final class SpotifyPlusConfig {
     public static final String PREFS_NAME = "SpotifyPlus";
 
-    // Value constants shared by Settings declarations and normalization helpers. The only raw-key
-    // reads left are the source-language/translation-target pair in LyricsTranslator.
-    public static final String KEY_SOURCE_LANGUAGE_MODE = "lyrics_source_language_mode";
-    public static final String SOURCE_LANGUAGE_AUTO = "auto";
-    public static final String SOURCE_LANGUAGE_MANUAL = "manual";
-    public static final String KEY_SOURCE_LANGUAGE = "lyrics_source_language";
-    public static final String KEY_TRANSLATION_TARGET = "lyrics_translation_target";
+    // Value constants shared by Settings declarations and normalization helpers.
     public static final String CHINESE_MODE_PINYIN = "pinyin";
     public static final String CHINESE_MODE_JYUTPING = "jyutping";
     public static final String JP_READING_FURIGANA_ONLY = "furigana_only";

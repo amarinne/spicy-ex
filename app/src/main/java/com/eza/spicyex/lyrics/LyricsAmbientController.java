@@ -11,8 +11,8 @@ import com.eza.spicyex.FeatureAvailability;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
-import com.eza.spicyex.beautifullyrics.entities.AmbientBackgroundLayer;
-import com.eza.spicyex.beautifullyrics.entities.AmbientArtworkBackgroundView;
+import com.eza.spicyex.ambient.AmbientBackgroundLayer;
+import com.eza.spicyex.ambient.AmbientArtworkBackgroundView;
 
 import java.io.IOException;
 import android.graphics.Bitmap;
@@ -20,8 +20,8 @@ import android.os.Handler;
 import android.os.Looper;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.Future;
-import com.eza.spicyex.beautifullyrics.entities.AmbientArtworkTexture;
-import com.eza.spicyex.beautifullyrics.entities.AmbientArtworkProfile;
+import com.eza.spicyex.ambient.AmbientArtworkTexture;
+import com.eza.spicyex.ambient.AmbientArtworkProfile;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 
@@ -32,6 +32,7 @@ import okhttp3.Request;
 import okhttp3.Response;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
+import com.eza.spicyex.lyrics.cache.SpotifyArtworkCache;
 
 /** Owns the native lyrics ambient gradient and optional animated album-art background. */
 public final class LyricsAmbientController {

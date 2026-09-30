@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
 

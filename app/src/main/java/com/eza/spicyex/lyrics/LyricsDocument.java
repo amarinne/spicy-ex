@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -24,6 +26,8 @@ public class LyricsDocument {
      * it. The session renders catalog seats, so a delivery without an ID is committed first.
      */
     public String catalogCandidateId = "";
+    /** Provider identity and persistence outcome; copied across in-flight deliveries only. */
+    public com.eza.spicyex.lyrics.catalog.CatalogDelivery catalogDelivery;
     public boolean spicyPackedPayload;
     public boolean spicyEnvelopeNoticePresent;
     public Integer spicyQueryStatus;
@@ -80,6 +84,7 @@ public class LyricsDocument {
         copy.selectionMode = safe(source.selectionMode);
         copy.selectionOverride = safe(source.selectionOverride);
         copy.catalogCandidateId = safe(source.catalogCandidateId);
+        copy.catalogDelivery = source.catalogDelivery;
         copy.spicyPackedPayload = source.spicyPackedPayload;
         copy.spicyEnvelopeNoticePresent = source.spicyEnvelopeNoticePresent;
         copy.spicyQueryStatus = source.spicyQueryStatus;

@@ -255,7 +255,6 @@
     <string name="settings_option_fa">ペルシャ語 (fa)</string>
 
     <!-- Other settings-panel display strings -->
-    <string name="settings_unavailable_full_build">フルビルド必須</string>
     <string name="settings_unavailable_android_13">Android 13+ 必須</string>
     <string name="settings_enable_transliteration">音字を有効化</string>
     <string name="settings_enable_translation">翻訳を有効化</string>

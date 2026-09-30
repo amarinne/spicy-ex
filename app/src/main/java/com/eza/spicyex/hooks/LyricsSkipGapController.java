@@ -43,7 +43,7 @@ final class LyricsSkipGapController {
     private static final long HIDE_DURATION_MS = 240L;
     private static final int CHIP_HEIGHT_DP = 44;
     private static final int TEXT_COLOR = Color.rgb(232, 232, 238);
-    private static final int SIDE_MARGIN_DP = 16;
+    private static final int SIDE_MARGIN_DP = NativeLyricsUtils.EDGE_BUTTON_MARGIN_DP;
     /** Vertical distance between the two stacked chips: 44dp chip + 8dp gap. */
     private static final int STACK_OFFSET_DP = 52;
 

@@ -1,0 +1,436 @@
+package com.eza.spicyex.lyrics.providers;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import com.eza.spicyex.lyrics.LyricsDocument;
+import com.eza.spicyex.lyrics.catalog.CatalogSource;
+
+import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
+import static com.eza.spicyex.lyrics.LyricUtils.safe;
+
+/** Package-local state machine for provider fallback decisions. */
+final class LyricsProviderChain {
+    private final int generation;
+    private final String cachedRaw;
+    private final List<String> candidatesSeen = new ArrayList<>();
+    /** Fallback stages the acquisition plan allows for this fetch. */
+    boolean amllAllowed = true;
+    boolean lrclibAllowed = true;
+
+    private LyricsDocument pendingStatic;
+    private Source pendingStaticSource;
+    private String pendingStaticRaw;
+    private boolean deliveredCached;
+    private boolean deliveredCachedSynced;
+    private LyricsDocument nativeBaseline;
+
+    LyricsProviderChain(int generation, String cachedRaw) {
+        this.generation = generation;
+        this.cachedRaw = cachedRaw;
+    }
+
+    private boolean prefer(LyricsDocument candidate, LyricsDocument currentBest) {
+        return LyricQualityRanker.preferAuto(candidate, currentBest);
+    }
+
+    Decision acceptCached(LyricsDocument doc) {
+        Result result = fromRemoteDocument(doc, Source.CACHE);
+        if (result instanceof Synced) {
+            deliveredCached = true;
+            deliveredCachedSynced = true;
+            addCandidate(Source.CACHE);
+            return Decision.deliver(((Synced) result).document, false, null, true);
+        }
+        if (result instanceof Static) {
+            Static statik = (Static) result;
+            holdStatic(statik.document, statik.source, null);
+            addCandidate(Source.CACHE);
+            return Decision.holdStatic();
+        }
+        return Decision.ignore(result);
+    }
+
+    Decision remoteUnavailable(String message) {
+        if (deliveredCachedSynced) return Decision.suppress();
+        return Decision.continueAfter(new TransientFailure(Source.SPICY, message), pendingStatic);
+    }
+
+    Decision acceptRemoteNetwork(LyricsDocument doc, String raw) {
+        addCandidate(Source.SPICY);
+        Result result = fromRemoteDocument(doc, Source.SPICY);
+        if (result instanceof Synced) {
+            if (deliveredCached && safe(raw).equals(safe(cachedRaw))) {
+                return Decision.suppress();
+            }
+            Synced synced = (Synced) result;
+            if (nativeBaseline != null && !prefer(synced.document, nativeBaseline)) {
+                return Decision.suppress();
+            }
+            if (isWordOrBetter(synced.document)) {
+                return Decision.deliver(synced.document, true, raw, false);
+            }
+            // LINE is below the WORD search threshold: hold it and keep probing the
+            // remaining enabled sources instead of sealing the visit.
+            if (deliveredCachedSynced) return Decision.suppress();
+            if (pendingStatic != null && prefer(pendingStatic, synced.document)) {
+                return Decision.continueAfter(synced, pendingStatic);
+            }
+            String rawToCache = safe(raw).equals(safe(cachedRaw)) ? null : raw;
+            holdStatic(synced.document, synced.source, rawToCache);
+            return Decision.continueAfter(synced, pendingStatic);
+        }
+        if (result instanceof Static) {
+            if (deliveredCachedSynced) return Decision.suppress();
+            Static statik = (Static) result;
+            if (pendingStatic != null && prefer(pendingStatic, statik.document)) {
+                return Decision.continueAfter(statik, pendingStatic);
+            }
+            String rawToCache = safe(raw).equals(safe(cachedRaw)) ? null : raw;
+            holdStatic(statik.document, statik.source, rawToCache);
+            return Decision.continueAfter(statik, pendingStatic);
+        }
+        if (deliveredCachedSynced) return Decision.suppress();
+        return Decision.continueAfter(result, pendingStatic);
+    }
+
+    Decision acceptNative(LyricsDocument doc) {
+        Result result = fromDocument(doc, Source.NATIVE);
+        if (!(result instanceof Synced) && !(result instanceof Static)) {
+            return Decision.continueAfter(result, pendingStatic);
+        }
+        addCandidate(Source.NATIVE);
+        LyricsDocument nativeDoc = result.document();
+        if (nativeBaseline == null) nativeBaseline = nativeDoc;
+        if (pendingStatic != null) {
+            LyricsDocument winner = prefer(nativeDoc, pendingStatic) ? nativeDoc : pendingStatic;
+            if (!isWordOrBetter(winner) && (amllAllowed || lrclibAllowed)) {
+                holdStatic(winner, winner == nativeDoc ? Source.NATIVE : pendingStaticSource,
+                        winner == nativeDoc ? null : pendingStaticRaw);
+                return Decision.continueAfter(result, pendingStatic);
+            }
+            if (winner == nativeDoc) {
+                return Decision.deliver(nativeDoc, false, null, false);
+            }
+            return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
+        }
+        if (isWordOrBetter(nativeDoc)) {
+            return Decision.deliver(nativeDoc, false, null, false);
+        }
+        holdStatic(nativeDoc, Source.NATIVE, null);
+        return Decision.holdStatic();
+    }
+
+    Decision nativeMissAfterRetries(String message) {
+        return Decision.continueAfter(new Empty(Source.NATIVE, false), pendingStatic, message);
+    }
+
+    Decision acceptLrclib(LyricsDocument doc) {
+        Result result = fromDocument(doc, Source.LRCLIB);
+        if (!(result instanceof Synced) && !(result instanceof Static)) {
+            return finishWithoutStatic(result);
+        }
+        addCandidate(Source.LRCLIB);
+        LyricsDocument lrclibDoc = result.document();
+        if (pendingStatic == null) {
+            return Decision.deliver(lrclibDoc, false, null, false);
+        }
+        LyricsDocument winner = prefer(lrclibDoc, pendingStatic) ? lrclibDoc : pendingStatic;
+        if (winner == lrclibDoc) {
+            return Decision.deliver(lrclibDoc, false, null, false);
+        }
+        return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
+    }
+
+    /** Word-level AMLL TTML ranks against a held sub-word document the same way LRCLIB does. */
+    Decision acceptAmll(LyricsDocument doc) {
+        Result result = fromDocument(doc, Source.AMLL);
+        if (!(result instanceof Synced) && !(result instanceof Static)) {
+            return finishWithoutStatic(result);
+        }
+        addCandidate(Source.AMLL);
+        LyricsDocument amllDoc = result.document();
+        if (pendingStatic == null) {
+            if (!isWordOrBetter(amllDoc) && lrclibAllowed) {
+                holdStatic(amllDoc, Source.AMLL, null);
+                return Decision.continueAfter(result, pendingStatic);
+            }
+            return Decision.deliver(amllDoc, false, null, false);
+        }
+        LyricsDocument winner = prefer(amllDoc, pendingStatic) ? amllDoc : pendingStatic;
+        if (!isWordOrBetter(winner) && lrclibAllowed) {
+            holdStatic(winner, winner == amllDoc ? Source.AMLL : pendingStaticSource,
+                    winner == amllDoc ? null : pendingStaticRaw);
+            return Decision.continueAfter(result, pendingStatic);
+        }
+        if (winner == amllDoc) {
+            return Decision.deliver(amllDoc, false, null, false);
+        }
+        return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
+    }
+
+    /** An AMLL miss is never durable: LRCLIB may still hold the track. */
+    Decision acceptAmllError(String error) {
+        Result result = new TransientFailure(Source.AMLL, error);
+        if (pendingStatic != null) {
+            return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
+        }
+        return finishWithoutStatic(result, error);
+    }
+
+    Decision acceptLrclibError(String error) {
+        Result result = LyricsFetchErrors.isDurableNoLyrics(error)
+                ? new Empty(Source.LRCLIB, true)
+                : new TransientFailure(Source.LRCLIB, error);
+        if (pendingStatic != null) {
+            return Decision.deliver(pendingStatic, !isBlank(pendingStaticRaw), pendingStaticRaw, false);
+        }
+        return finishWithoutStatic(result, error);
+    }
+
+    boolean hasPendingStatic() {
+        return pendingStatic != null;
+    }
+
+    LyricsDocument pendingStatic() {
+        return pendingStatic;
+    }
+
+    String pendingStaticRaw() {
+        return pendingStaticRaw;
+    }
+
+    boolean deliveredCachedSynced() {
+        return deliveredCachedSynced;
+    }
+
+    List<String> candidatesSeen() {
+        return candidatesSeen;
+    }
+
+    List<String> candidatesSnapshot() {
+        return Collections.unmodifiableList(new ArrayList<>(candidatesSeen));
+    }
+
+    private Decision finishWithoutStatic(Result result) {
+        return finishWithoutStatic(result, result == null ? "" : result.message());
+    }
+
+    private Decision finishWithoutStatic(Result result, String message) {
+        if (result instanceof Empty && ((Empty) result).durableNoLyrics) {
+            return Decision.error(message, true, result);
+        }
+        return Decision.error(message, false, result);
+    }
+
+    private Result fromRemoteDocument(LyricsDocument doc, Source source) {
+        if (doc == null) return new Empty(source, false);
+        doc.generation = generation;
+        SpicyResponseClassifier.apply(doc);
+        if (doc.spicyPoisoned) {
+            return new TransientFailure(source, "Apple Music response suspicious: " + safe(doc.spicyQualityReason));
+        }
+        return fromDocument(doc, source);
+    }
+
+    private Result fromDocument(LyricsDocument doc, Source source) {
+        if (doc == null) return new Empty(source, false);
+        doc.generation = generation;
+        if (doc.lines == null || doc.lines.isEmpty()) return new Empty(source, false);
+        if (LyricQualityRanker.score(doc) == LyricQualityRanker.REJECT) {
+            return new TransientFailure(source, "Rejected lyric candidate");
+        }
+        if (isSyncedType(doc.type)) return new Synced(doc, source);
+        return new Static(doc, source);
+    }
+
+    private void holdStatic(LyricsDocument doc, Source source, String raw) {
+        pendingStatic = doc;
+        pendingStaticSource = source;
+        pendingStaticRaw = raw;
+    }
+
+    private void addCandidate(Source source) {
+        if (source == null || candidatesSeen.contains(source.label)) return;
+        candidatesSeen.add(source.label);
+    }
+
+    static boolean isSyncedType(String type) {
+        return "Line".equalsIgnoreCase(type) || "Word".equalsIgnoreCase(type)
+                || "Syllable".equalsIgnoreCase(type);
+    }
+
+    /**
+     * Whether a document meets the WORD search threshold ({@link CatalogSource.TimingLevel}).
+     * LINE and static documents keep the in-visit search open across enabled sources.
+     */
+    static boolean isWordOrBetter(LyricsDocument doc) {
+        if (doc == null) return false;
+        return "Word".equalsIgnoreCase(doc.type) || "Syllable".equalsIgnoreCase(doc.type);
+    }
+
+    enum Source {
+        CACHE("cache"),
+        APPLE_MUSIC("apple_music"),
+        /** Retired legacy alias: maps to the same Apple Music label. */
+        SPICY("apple_music"),
+        NATIVE("native"),
+        AMLL("amll"),
+        LRCLIB("lrclib"),
+        UNSUPPORTED("unsupported");
+
+        final String label;
+
+        Source(String label) {
+            this.label = label;
+        }
+    }
+
+    abstract static class Result {
+        final Source source;
+
+        Result(Source source) {
+            this.source = source;
+        }
+
+        LyricsDocument document() {
+            return null;
+        }
+
+        String message() {
+            return "";
+        }
+    }
+
+    static final class Synced extends Result {
+        final LyricsDocument document;
+
+        Synced(LyricsDocument document, Source source) {
+            super(source);
+            this.document = document;
+        }
+
+        @Override
+        LyricsDocument document() {
+            return document;
+        }
+    }
+
+    static final class Static extends Result {
+        final LyricsDocument document;
+
+        Static(LyricsDocument document, Source source) {
+            super(source);
+            this.document = document;
+        }
+
+        @Override
+        LyricsDocument document() {
+            return document;
+        }
+    }
+
+    static final class Empty extends Result {
+        final boolean durableNoLyrics;
+
+        Empty(Source source, boolean durableNoLyrics) {
+            super(source);
+            this.durableNoLyrics = durableNoLyrics;
+        }
+
+        @Override
+        String message() {
+            return source.label + " empty";
+        }
+    }
+
+    static final class TransientFailure extends Result {
+        final String message;
+
+        TransientFailure(Source source, String message) {
+            super(source);
+            this.message = safe(message);
+        }
+
+        @Override
+        String message() {
+            return message;
+        }
+    }
+
+    static final class FatalUnsupported extends Result {
+        final String message;
+
+        FatalUnsupported(String message) {
+            super(Source.UNSUPPORTED);
+            this.message = safe(message);
+        }
+
+        @Override
+        String message() {
+            return message;
+        }
+    }
+
+    static final class Decision {
+        final Action action;
+        final LyricsDocument document;
+        final boolean cacheDeliveredRaw;
+        final String rawToCache;
+        final boolean durableNoLyrics;
+        final boolean fromCachedSynced;
+        final Result result;
+        final String message;
+
+        private Decision(Action action, LyricsDocument document, boolean cacheDeliveredRaw, String rawToCache,
+                         boolean durableNoLyrics, boolean fromCachedSynced, Result result, String message) {
+            this.action = action;
+            this.document = document;
+            this.cacheDeliveredRaw = cacheDeliveredRaw;
+            this.rawToCache = rawToCache;
+            this.durableNoLyrics = durableNoLyrics;
+            this.fromCachedSynced = fromCachedSynced;
+            this.result = result;
+            this.message = safe(message);
+        }
+
+        static Decision deliver(LyricsDocument doc, boolean cacheDeliveredRaw, String rawToCache, boolean fromCachedSynced) {
+            return new Decision(Action.DELIVER, doc, cacheDeliveredRaw, rawToCache, false, fromCachedSynced, null, "");
+        }
+
+        static Decision continueAfter(Result result, LyricsDocument pendingStatic) {
+            return continueAfter(result, pendingStatic, result == null ? "" : result.message());
+        }
+
+        static Decision continueAfter(Result result, LyricsDocument pendingStatic, String message) {
+            return new Decision(Action.CONTINUE, pendingStatic, false, null, false, false, result, message);
+        }
+
+        static Decision holdStatic() {
+            return new Decision(Action.HOLD_STATIC, null, false, null, false, false, null, "");
+        }
+
+        static Decision suppress() {
+            return new Decision(Action.SUPPRESS, null, false, null, false, false, null, "");
+        }
+
+        static Decision ignore(Result result) {
+            return new Decision(Action.IGNORE, null, false, null, false, false, result,
+                    result == null ? "" : result.message());
+        }
+
+        static Decision error(String message, boolean durableNoLyrics, Result result) {
+            return new Decision(Action.ERROR, null, false, null, durableNoLyrics, false, result, message);
+        }
+    }
+
+    enum Action {
+        DELIVER,
+        CONTINUE,
+        HOLD_STATIC,
+        SUPPRESS,
+        IGNORE,
+        ERROR
+    }
+}

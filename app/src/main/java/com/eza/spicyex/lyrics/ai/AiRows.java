@@ -2,7 +2,7 @@ package com.eza.spicyex.lyrics.ai;
 
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
-import com.eza.spicyex.lyrics.ReadingLanguagePolicy;
+import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;

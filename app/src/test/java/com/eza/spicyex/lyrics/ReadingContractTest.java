@@ -1,5 +1,8 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
@@ -18,21 +21,16 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import com.eza.spicyex.lyrics.reading.CodePointRanges;
-import com.eza.spicyex.lyrics.reading.CanonicalValidator;
 import com.eza.spicyex.lyrics.reading.DefaultCanonicalLineBuilder;
-import com.eza.spicyex.lyrics.reading.DefaultScriptPartitioner;
 import com.eza.spicyex.lyrics.reading.KoreanReadingProcessor;
 import com.eza.spicyex.lyrics.reading.ReadingModels.Boundary;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
-import com.eza.spicyex.lyrics.reading.ReadingModels.LanguageContext;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ParagraphProvenance;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ParsedLine;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ReadingAnnotation;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ReadingUnit;
-import com.eza.spicyex.lyrics.reading.ReadingModels.ScriptRun;
 import com.eza.spicyex.lyrics.reading.ReadingModels.SourceSpan;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TextRange;
-import com.eza.spicyex.lyrics.reading.ReadingModels.ValidationResult;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
@@ -92,7 +90,6 @@ public class ReadingContractTest {
         JsonObject fixture = JsonParser.parseReader(new InputStreamReader(stream)).getAsJsonObject();
         assertEquals(1, fixture.get("schemaVersion").getAsInt());
         DefaultCanonicalLineBuilder builder = new DefaultCanonicalLineBuilder();
-        DefaultScriptPartitioner partitioner = new DefaultScriptPartitioner();
         JsonArray lines = fixture.getAsJsonArray("lines");
         for (int i = 0; i < lines.size(); i++) {
             JsonObject raw = lines.get(i).getAsJsonObject();
@@ -118,20 +115,6 @@ public class ReadingContractTest {
                 assertEquals(id, e.get(0).getAsInt(), canonical.spanMappings.get(m).canonicalRange.startCp);
                 assertEquals(id, e.get(1).getAsInt(), canonical.spanMappings.get(m).canonicalRange.endCp);
             }
-
-            List<ScriptRun> runs = partitioner.partition(canonical,
-                    new LanguageContext(fixture.get("language").getAsString(), Collections.emptyList()));
-            JsonArray runArr = expected.getAsJsonArray("scriptRuns");
-            assertEquals(id + " scriptRuns", runArr.size(), runs.size());
-            for (int r = 0; r < runArr.size(); r++) {
-                JsonArray e = runArr.get(r).getAsJsonArray();
-                assertEquals(id, e.get(0).getAsInt(), runs.get(r).canonicalRange.startCp);
-                assertEquals(id, e.get(1).getAsInt(), runs.get(r).canonicalRange.endCp);
-                assertEquals(id, e.get(2).getAsString(), runs.get(r).script);
-            }
-
-            ValidationResult validation = CanonicalValidator.validate(canonical, runs);
-            assertTrue(id + " " + validation.errors, validation.valid);
 
             if (expected.has("readingMode")) {
                 KoreanDisplayMode mode = KoreanDisplayMode.fromSetting(expected.get("readingMode").getAsString());

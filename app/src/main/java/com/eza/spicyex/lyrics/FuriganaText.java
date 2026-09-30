@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
+
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;

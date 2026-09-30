@@ -9,9 +9,9 @@ import android.view.View;
 import android.view.Window;
 import android.widget.FrameLayout;
 
-import com.eza.spicyex.SettingsPanel;
+import com.eza.spicyex.settings.SettingsPanel;
 import com.eza.spicyex.SettingsStore;
-import com.eza.spicyex.beautifullyrics.entities.VsyncFrameScheduler;
+import com.eza.spicyex.ui.VsyncFrameScheduler;
 import com.eza.spicyex.lyrics.LyricsAmbientController;
 import com.eza.spicyex.ui.Motion;
 import com.eza.spicyex.ui.PanelSurface;
@@ -28,6 +28,8 @@ final class LyricsSettingsDialogController {
     private final java.util.function.IntConsumer onOpenLayoutEditor;
     private final Runnable onResyncTiming;
     private final String logTag;
+    private Dialog currentDialog;
+    private PanelSurface currentSurface;
 
     LyricsSettingsDialogController(
             Activity activity,
@@ -52,7 +54,8 @@ final class LyricsSettingsDialogController {
     // Sticky across opens: half mode anchors the panel to the top so lyrics preview underneath.
     private static boolean halfMode;
 
-    void show() {
+    boolean show() {
+        if (isShowing()) return true;
         try {
             Dialog dialog = new Dialog(activity);
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -122,6 +125,10 @@ final class LyricsSettingsDialogController {
             });
 
             dialog.setOnDismissListener(d -> {
+                if (currentDialog == dialog) {
+                    currentDialog = null;
+                    currentSurface = null;
+                }
                 frameScheduler.start();
                 // Source toggles and order are saved inside the panel; the session re-seats the
                 // current track from stored candidates instead of waiting for the next track.
@@ -135,11 +142,26 @@ final class LyricsSettingsDialogController {
             });
 
             dialog.show();
+            currentDialog = dialog;
+            currentSurface = surface;
             PanelSurface.configureWindow(dialog.getWindow());
             surface.enter(halfMode ? 0.1f : 0.5f);
+            return true;
         } catch (Throwable t) {
             XpLog.log(logTag + " settings dialog failed: " + t);
+            if (currentDialog != null) currentDialog.dismiss();
+            return false;
         }
+    }
+
+    boolean isShowing() {
+        return currentDialog != null && currentDialog.isShowing();
+    }
+
+    boolean close() {
+        if (!isShowing() || currentSurface == null) return false;
+        currentSurface.exit(null);
+        return true;
     }
 
     /** A settings list reads best at phone width; wider just makes every row a long empty bar. */

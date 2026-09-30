@@ -10,7 +10,6 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.setTextIfChanged;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.shortTrackId;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.sideSystemPadding;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.sourceProviderLabel;
-import static com.eza.spicyex.hooks.NativeLyricsUtils.topSystemPadding;
 import static com.eza.spicyex.hooks.NativeLyricsUtils.trackIdFromUri;
 import static com.eza.spicyex.hooks.NativeRuntime.AI_WORKERS;
 import static com.eza.spicyex.hooks.NativeRuntime.GOOGLE_PROCESSING_VERSION;
@@ -49,12 +48,15 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.eza.spicyex.sharecard.LyricsShareCardController;
+
 import com.eza.spicyex.CurrentLyricState;
 import com.eza.spicyex.Settings;
-import com.eza.spicyex.SettingsUiStrings;
+import com.eza.spicyex.SettingsStore;
+import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
-import com.eza.spicyex.beautifullyrics.entities.VsyncFrameScheduler;
+import com.eza.spicyex.ui.VsyncFrameScheduler;
 import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.ChipSpinnerDrawable;
@@ -64,21 +66,21 @@ import com.eza.spicyex.lyrics.LyricCascadeProfile;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsAmbientController;
 import com.eza.spicyex.lyrics.LyricsDocument;
-import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.LyricsFrameRenderer;
 import com.eza.spicyex.lyrics.LyricsLineViewState;
 import com.eza.spicyex.lyrics.LyricsLineVisualController;
 import com.eza.spicyex.lyrics.LyricsLine;
-import com.eza.spicyex.lyrics.LyricsLocalRomanizer;
+import com.eza.spicyex.lyrics.language.LyricsLocalRomanizer;
 import com.eza.spicyex.lyrics.LyricsPlaybackClock;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
 import com.eza.spicyex.lyrics.LyricsRenderMode;
-import com.eza.spicyex.lyrics.LyricsLocalReprocessController;
+import com.eza.spicyex.lyrics.processing.LyricsLocalReprocessController;
 import com.eza.spicyex.lyrics.LyricsRowMountController;
 import com.eza.spicyex.lyrics.LyricsRowViewFactory;
 import com.eza.spicyex.lyrics.LyricsScrollController;
-import com.eza.spicyex.lyrics.LyricsSecondaryProcessor;
-import com.eza.spicyex.lyrics.LyricsSecondaryRowUpdater;
+import com.eza.spicyex.lyrics.processing.LyricsSecondaryProcessor;
+import com.eza.spicyex.lyrics.processing.LyricsSecondaryRowUpdater;
 import com.eza.spicyex.lyrics.LyricsShellLifecycle;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsShellSettings;
@@ -88,12 +90,12 @@ import com.eza.spicyex.lyrics.LyricsSurfaceRowPlanner;
 import com.eza.spicyex.lyrics.LyricsTapSeekHandler;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
 import com.eza.spicyex.lyrics.LyricsToggleSpinnerController;
-import com.eza.spicyex.lyrics.LyricsTransliterationSession;
-import com.eza.spicyex.lyrics.RomanizationOptions;
-import com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor;
-import com.eza.spicyex.lyrics.SpicyProcessing;
-import com.eza.spicyex.lyrics.SpicyTextDetection;
-import com.eza.spicyex.lyrics.SpotifyArtworkCache;
+import com.eza.spicyex.lyrics.processing.LyricsTransliterationSession;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
+import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
+import com.eza.spicyex.lyrics.processing.SpicyProcessing;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+import com.eza.spicyex.lyrics.cache.SpotifyArtworkCache;
 import com.eza.spicyex.lyrics.Spring;
 import com.eza.spicyex.lyrics.SyllableSegment;
 
@@ -270,6 +272,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean clusterLayoutListenerAdded;
     private boolean chromeLayoutApplied;
     private boolean chromeLayoutTop;
+    private int chromeLayoutGap;
+    /** {@link Settings#CHROME_CLUSTER_LAYOUT} for this orientation, read at mount and on
+     *  preference change only: the chrome refresh runs every frame. */
+    private String chromeLayoutMode = Settings.CHROME_CLUSTER_LAYOUT.defaultValue;
+    private int chromeReserveApplied = -1;
+    /** Top controls on the left edge; cached with the header padding for the per-frame fit check. */
+    private boolean chromeMirrored;
     private boolean chromeLayoutLandscape;
     private int chromeLayoutSize = -1;
     private final Runnable hideChromeRunnable = this::hideChrome;
@@ -470,6 +479,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (skipGapController != null) skipGapController.onPreferenceChanged();
         if (chromeViews != null) {
             updatePipButtonVisibility();
+            chromeLayoutMode = config.get(Settings.CHROME_CLUSTER_LAYOUT);
             LyricsShellChromeController.applyClusterPosition(chromeViews,
                     "Left".equals(config.get(Settings.CHROME_CLUSTER_POSITION)));
             chromeLayoutApplied = false;
@@ -486,6 +496,106 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    /** The top controls stand as a vertical rail (true) or a horizontal row. Auto keeps the rail
+     *  beside a Top readout and the row otherwise. */
+    private boolean verticalChrome() {
+        if ("Horizontal".equals(chromeLayoutMode)) return false;
+        if (!"Vertical".equals(chromeLayoutMode) && !isTopReadout()) return false;
+        return railGapPx() >= 0;
+    }
+
+    /**
+     * The gap a rail uses between its buttons: the normal one, or a tighter one (down to 2dp) so
+     * the rail ends 8dp above the Follow or skip chip on its own edge. -1 when even that does not
+     * fit, and the controls stand as a row instead. Runs every frame, so it reads only laid-out
+     * views: the header's padding already holds the corner top, and the chips' own layout params
+     * hold where they sit.
+     */
+    private int railGapPx() {
+        boolean landscape = isLandscape();
+        int normal = LyricsShellChromeController.defaultGapPx(landscape);
+        if (chromeHeader == null || chromeViews == null || chromeViews.configCluster == null) return normal;
+        int buttons = 0;
+        for (int i = 0; i < chromeViews.configCluster.getChildCount(); i++) {
+            if (chromeViews.configCluster.getChildAt(i).getVisibility() != GONE) buttons++;
+        }
+        if (buttons <= 1) return normal;
+        boolean rightEdge = !chromeMirrored;
+        int limit = Math.min(
+                chipTopOnEdge(jumpToCurrentController == null ? null : jumpToCurrentController.view(), rightEdge),
+                chipTopOnEdge(skipGapController == null ? null : skipGapController.view(), rightEdge));
+        if (limit == Integer.MAX_VALUE) return normal;
+        int[] shell = new int[2];
+        getLocationOnScreen(shell);
+        int room = limit - dp(8) - (shell[1] + chromeHeader.getPaddingTop())
+                - buttons * dp(chromeButtonDp());
+        int gap = Math.min(normal, room / (buttons - 1));
+        return gap >= dp(2) ? gap : -1;
+    }
+
+    /** Screen top of a bottom chip anchored on the given edge; unbounded for any other chip. */
+    private static int chipTopOnEdge(View chip, boolean rightEdge) {
+        if (chip == null || !(chip.getLayoutParams() instanceof FrameLayout.LayoutParams)
+                || !(chip.getParent() instanceof View)) {
+            return Integer.MAX_VALUE;
+        }
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) chip.getLayoutParams();
+        int horizontal = Gravity.getAbsoluteGravity(lp.gravity, chip.getLayoutDirection())
+                & Gravity.HORIZONTAL_GRAVITY_MASK;
+        if (horizontal != (rightEdge ? Gravity.RIGHT : Gravity.LEFT)) return Integer.MAX_VALUE;
+        View host = (View) chip.getParent();
+        if (host.getHeight() <= 0) return Integer.MAX_VALUE;
+        int[] loc = new int[2];
+        host.getLocationOnScreen(loc);
+        int height = lp.height > 0 ? lp.height : chip.getHeight();
+        return loc[1] + host.getHeight() - host.getPaddingBottom() - lp.bottomMargin - height;
+    }
+
+    /**
+     * The top controls keep the Follow chip's gap from the edge they hug, so both line up, and
+     * sit that gap below the top - below the status bar or cutout when either takes room - so a
+     * row or a rail starts in the corner. Back keeps its own side's system padding.
+     */
+    private void applyChromeHeaderPadding() {
+        if (chromeHeader == null) return;
+        boolean mirrored = "Left".equals(config.get(Settings.CHROME_CLUSTER_POSITION));
+        chromeMirrored = mirrored;
+        int edge = chromeEdgePx(mirrored);
+        int backSide = sideSystemPadding(activity);
+        int left = mirrored ? edge : backSide;
+        int right = mirrored ? backSide : edge;
+        int top = chromeCornerTopPx();
+        if (left != chromeHeader.getPaddingLeft() || top != chromeHeader.getPaddingTop()
+                || right != chromeHeader.getPaddingRight()) {
+            chromeHeader.setPadding(left, top, right, chromeHeader.getPaddingBottom());
+        }
+    }
+
+    /** The Follow chip's gap from the screen edge: its own margin, plus the content column's side
+     *  padding in single-column landscape, where the chip lives inside that column. */
+    private int chromeEdgePx(boolean clusterLeft) {
+        int column = 0;
+        if (contentColumn != null && isLandscape() && !twoColumn) {
+            column = clusterLeft ? contentColumn.getPaddingLeft() : contentColumn.getPaddingRight();
+        }
+        return column + dp(NativeLyricsUtils.EDGE_BUTTON_MARGIN_DP);
+    }
+
+    /** Where the top controls' top edge goes: the edge gap below whatever takes the top. */
+    private int chromeCornerTopPx() {
+        int floor = NativeLyricsUtils.statusBarHidden(activity) ? cutoutTopPx
+                : Math.max(NativeLyricsUtils.statusBarClearance(activity), cutoutTopPx);
+        return floor + dp(NativeLyricsUtils.EDGE_BUTTON_MARGIN_DP);
+    }
+
+    /** Room the Top readout keeps free beside the controls: a rail's width, or the whole row. */
+    private int chromeReservePx() {
+        int rail = dp(44 + 8);
+        if (verticalChrome() || chromeViews == null || chromeViews.configCluster == null) return rail;
+        int width = chromeViews.configCluster.getWidth();
+        return width > 0 ? width + dp(8) : rail;
     }
 
     /** Two-column owns the left edge with its panel art; Back stays gone while engaged
@@ -668,6 +778,33 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return editor != null && editor.agentSelect(name);
     }
 
+    boolean agentEditorAction(String action, String argument) {
+        return layoutEditorHandle != null && layoutEditorHandle.agentAction(action, argument);
+    }
+
+    boolean agentSettings(String action) {
+        if ("open".equals(action)) return settingsDialogController.show();
+        if ("close".equals(action)) return settingsDialogController.close();
+        return settingsDialogController.isShowing();
+    }
+
+    boolean agentAction(String action) {
+        switch (action) {
+            case "sound-cycle": cycleTransliterationMode(preferences); return true;
+            case "meaning-toggle": onTranslationTapped(); return true;
+            case "ai-sound": openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind.SOUND); return true;
+            case "ai-meaning": openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind.MEANING); return true;
+            case "follow": resumeFollowCurrentLine(); return true;
+            case "skip-gap": skipCurrentGap(); return true;
+            case "sync-reset":
+                new com.eza.spicyex.settings.SettingsWriter(new SettingsStore(activity))
+                        .put(Settings.SYNC_OFFSET_MS, 0);
+                resyncLyricsTiming();
+                return true;
+            default: return false;
+        }
+    }
+
     /**
      * Reads the live screen and the open editor as one JSON line, or null when it could not be
      * built. Never throws: the channel turns a thrown probe into an {@code error} reply, and a
@@ -688,6 +825,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     chromeViews == null ? null : chromeViews.configCluster));
             report.rect("back", LyricsLayoutEditController.screenRectOf(
                     chromeViews == null ? null : chromeViews.back));
+            int[] shellOnScreen = new int[2];
+            getLocationOnScreen(shellOnScreen);
+            int edgeMargin = dp(NativeLyricsUtils.EDGE_BUTTON_MARGIN_DP);
+            report.flag("chrome_row", !verticalChrome());
+            report.number("edge_margin", edgeMargin);
+            report.number("chrome_top_floor", shellOnScreen[1] + chromeCornerTopPx() - edgeMargin);
             report.rect("lyrics_frame", LyricsLayoutEditController.screenRectOf(lyricsFrame));
             addChipFact(report, "skip", skipGapController == null ? null : skipGapController.view());
             addChipFact(report, "follow",
@@ -896,10 +1039,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     /** Re-pins the header, the lyrics and the track readout below the status bar's place. */
     private void reapplyTopClearance() {
-        if (chromeHeader != null) {
-            chromeHeader.setPadding(chromeHeader.getPaddingLeft(), topSystemPadding(activity),
-                    chromeHeader.getPaddingRight(), chromeHeader.getPaddingBottom());
-        }
+        applyChromeHeaderPadding();
         lyricsTopInsetPx = Math.max(NativeLyricsUtils.statusBarClearance(activity), cutoutTopPx);
         applyLyricsScrollPadding();
         if (trackInfoController != null) trackInfoController.onPreferenceChanged();
@@ -1243,7 +1383,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         this.ambientController = new LyricsAmbientController(activity, HTTP, config);
         this.settingsDialogController = new LyricsSettingsDialogController(
                 activity, frameScheduler, ambientController, host, this::onSettingsClosed,
-                mode -> enterLayoutEditMode(mode == com.eza.spicyex.SettingsPanel.EDITOR_CARD),
+                mode -> enterLayoutEditMode(mode == com.eza.spicyex.settings.SettingsPanel.EDITOR_CARD),
                 this::resyncLyricsTiming, TAG);
         this.emptyStateController = new LyricsShellEmptyStateController(activity, config, textFactory);
         this.shellLifecycle = new LyricsShellLifecycle(activity, () -> {
@@ -1251,15 +1391,15 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             host.markExplicitLyricsExit(activity);
             activity.finish();
         });
-        SharedPreferences prefs = activity.getSharedPreferences("SpotifyPlus", Context.MODE_PRIVATE);
+        SharedPreferences prefs = activity.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE);
         preferences = prefs;
         renderConfig = LyricsRenderConfig.read(activity, config);
         // SettingsStore normally attaches this context when the settings panel is opened, but
         // lyrics can be mounted first (or restored from a warm Spotify process). Attach it here as
         // well so post-install model packs are visible to the tokenizer/detector on every entry
         // path, not only after the user has visited Settings.
-        com.eza.spicyex.lyrics.LanguageModelPack.attachContext(activity);
-        com.eza.spicyex.lyrics.SpicyJapaneseChineseProcessor.attachContext(activity);
+        com.eza.spicyex.lyrics.language.LanguageModelPack.attachContext(activity);
+        com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor.attachContext(activity);
         autoResumeFollow = config.get(Settings.AUTO_RESUME_FOLLOW);
         slideAnimationEnabled = readSlideEnabled();
         com.eza.spicyex.lyrics.FuriganaText.applySettings(
@@ -1326,6 +1466,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
         int chromeButton = chromeButtonDp();
         likedMode = config.get(Settings.LIKED_SONGS_BUTTON);
+        chromeLayoutMode = config.get(Settings.CHROME_CLUSTER_LAYOUT);
         LyricsShellChromeController.ChromeViews chrome = LyricsShellChromeController.attach(
                 activity,
                 this,
@@ -1335,7 +1476,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 translationSpinner,
                 chromeButton,
                 isLandscape(),
-                isTopReadout(),
+                verticalChrome(),
                 "Left".equals(config.get(Settings.CHROME_CLUSTER_POSITION)),
                 () -> {
                     if (consumeLayoutEditorBack()) return;
@@ -1343,41 +1484,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                     activity.finish();
                 },
                 () -> cycleTransliterationMode(prefs),
-                () -> {
-                    if (renderConfig != null && !renderConfig.translationEnabled) return;
-                    if (translationFailedNow()) {
-                        retryTranslation();
-                        return;
-                    }
-                    boolean wasVisible = showTranslation();
-                    boolean hasDisplayedMeaning = hasLayerOutput(
-                            com.eza.spicyex.lyrics.session.LayerKind.MEANING);
-                    boolean requestedOutput = shouldGenerateAi(
-                            com.eza.spicyex.lyrics.session.LayerKind.MEANING);
-                    boolean requestStarted = !requestedOutput || requestAiLayerWithFeedback(
-                            com.eza.spicyex.lyrics.session.LayerKind.MEANING);
-                    boolean keepVisible = transliterationSession.keepVisibleForRequestedOutput(
-                            requestedOutput, wasVisible, hasDisplayedMeaning);
-                    if (TranslationVisibilityPolicy.onTap(requestedOutput, requestStarted,
-                            keepVisible) != TranslationVisibilityPolicy.TapAction.TOGGLE) {
-                        return;
-                    }
-                    showTranslation = !showTranslation;
-                    markTranslationToggled();
-                    prefs.edit().putBoolean(Settings.NATIVE_SPICY_TRANSLATION.key, showTranslation).apply();
-                    updateToggleVisuals();
-                    // In place: a full renderDocument() rebuilt every row object and reset the
-                    // active line, so the reflow springs found nothing to animate and the follow
-                    // scroll jumped - the flash when translations appeared or left.
-                    hideThenRebuild(showTranslation ? java.util.Collections.emptyList()
-                            : mountedTranslationViews(), this::rebuildSecondaryRowsInPlace);
-                },
+                this::onTranslationTapped,
                 () -> host.openLyricsPip(activity),
                 () -> settingsDialogController.show(),
                 com.eza.spicyex.ui.ActionIconDrawable.likedSongsKind(likedMode),
                 this::onLikeTapped);
         chromeHeader = chrome.header;
         chromeViews = chrome;
+        applyChromeHeaderPadding();
         updatePipButtonVisibility();
         applyBackVisibility();
         attachClusterLayoutListener();
@@ -1556,6 +1670,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 chrome.header,
                 chrome.headerTitle);
         trackInfoController.setSkipGapController(skipGapController);
+        trackInfoController.setChromeReserve(this::chromeReservePx);
         // Two-column: the readout's column placement (cover + song info, one component with the
         // other three) goes into the left column this shell owns, in place of the lyric stack it
         // used to draw itself. Hiding it (Track info position Off) collapses the left column and
@@ -1611,6 +1726,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             if (wanted != lyricsTopInsetPx) {
                 lyricsTopInsetPx = wanted;
                 applyLyricsScrollPadding();
+                applyChromeHeaderPadding();
             }
             int side = computeSafeSideInset(insets);
             if (side != lyricsSideInsetPx) {
@@ -1623,6 +1739,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 safeLeftInsetPx = edges[0];
                 safeRightInsetPx = edges[1];
                 applyContentColumnPadding();
+                applyChromeHeaderPadding();
                 applyLyricsScrollPadding();
                 applyRowSideInsets();
             }
@@ -1656,7 +1773,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             TrackInfoReadoutController.ART_NETWORK_LISTENERS.add(artworkDownloadListener);
         }
         applyStatusBarPreference();
-        com.eza.spicyex.lyrics.LanguageModelPack.setReadyListener(languageModelReadyListener);
+        com.eza.spicyex.lyrics.language.LanguageModelPack.setReadyListener(languageModelReadyListener);
         if (!pipPresentation) watchContentScreenTop(true);
         ambientController.start();
         revealChrome();
@@ -1720,7 +1837,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             statusBarHiddenByUs = false;
             showStatusBar();
         }
-        com.eza.spicyex.lyrics.LanguageModelPack.clearReadyListener(languageModelReadyListener);
+        com.eza.spicyex.lyrics.language.LanguageModelPack.clearReadyListener(languageModelReadyListener);
         documentGate.stop();
         if (lyricRequest != null) lyricRequest.close();
         lyricRequest = null;
@@ -2030,7 +2147,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private String koreanMode() {
-        if (demoModeActive) return com.eza.spicyex.lyrics.KoreanDisplayMode.RR_STANDARD.value;
+        if (demoModeActive) return com.eza.spicyex.lyrics.language.KoreanDisplayMode.RR_STANDARD.value;
         return transliterationSession == null ? "" : transliterationSession.koreanMode();
     }
 
@@ -2295,7 +2412,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         followState.resetActive();
         // An instrumental track has no lyrics to show and never will, so it gets its own note
         // rather than a lookup error.
-        if (com.eza.spicyex.lyrics.InstrumentalTracks.isInstrumental(host.getCurrentTrackSafely())) {
+        if (com.eza.spicyex.lyrics.providers.InstrumentalTracks.isInstrumental(host.getCurrentTrackSafely())) {
             emptyStateController.showInstrumental(lyricsColumn);
             status.setText(uiText("lyrics_instrumental", "Instrumental"));
             return;
@@ -4284,6 +4401,29 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      * whatever drifted. The stored SYNC_OFFSET_MS is reset by the panel itself, which owns that
      * write; this clears the render state the panel cannot reach.
      */
+    private void onTranslationTapped() {
+        if (renderConfig != null && !renderConfig.translationEnabled) return;
+        if (translationFailedNow()) {
+            retryTranslation();
+            return;
+        }
+        boolean wasVisible = showTranslation();
+        boolean hasDisplayedMeaning = hasLayerOutput(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+        boolean requestedOutput = shouldGenerateAi(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+        boolean requestStarted = !requestedOutput
+                || requestAiLayerWithFeedback(com.eza.spicyex.lyrics.session.LayerKind.MEANING);
+        boolean keepVisible = transliterationSession.keepVisibleForRequestedOutput(
+                requestedOutput, wasVisible, hasDisplayedMeaning);
+        if (TranslationVisibilityPolicy.onTap(requestedOutput, requestStarted, keepVisible)
+                != TranslationVisibilityPolicy.TapAction.TOGGLE) return;
+        showTranslation = !showTranslation;
+        markTranslationToggled();
+        preferences.edit().putBoolean(Settings.NATIVE_SPICY_TRANSLATION.key, showTranslation).apply();
+        updateToggleVisuals();
+        hideThenRebuild(showTranslation ? java.util.Collections.emptyList()
+                : mountedTranslationViews(), this::rebuildSecondaryRowsInPlace);
+    }
+
     private void resyncLyricsTiming() {
         try {
             playbackClock.reset(lastUri);
@@ -4689,7 +4829,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      * language change made in the settings panel never reached this surface until a remount.
      */
     private SettingsUiStrings uiStrings() {
-        return com.eza.spicyex.UiLanguage.strings(activity, config.get(Settings.UI_LANGUAGE));
+        return com.eza.spicyex.ui.UiLanguage.strings(activity, config.get(Settings.UI_LANGUAGE));
     }
 
     private String aiPipelineLabel(String value) {
@@ -5160,13 +5300,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean activeLineHasJapanese() {
         AppliedLine line = activeLine();
         return line == null ? documentHasJapanese()
-                : "ja".equals(com.eza.spicyex.lyrics.ReadingLanguagePolicy.layoutLanguage(line));
+                : "ja".equals(com.eza.spicyex.lyrics.language.ReadingLanguagePolicy.layoutLanguage(line));
     }
 
     private boolean activeLineHasChinese() {
         AppliedLine line = activeLine();
         return line == null ? documentHasChinese()
-                : "zh".equals(com.eza.spicyex.lyrics.ReadingLanguagePolicy.layoutLanguage(line));
+                : "zh".equals(com.eza.spicyex.lyrics.language.ReadingLanguagePolicy.layoutLanguage(line));
     }
 
     private boolean activeLineHasKorean() {
@@ -5203,7 +5343,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private boolean documentHasReadingLanguage(String language) {
         if (document == null) return false;
         for (AppliedLine line : document.appliedLines) {
-            if (language.equals(com.eza.spicyex.lyrics.ReadingLanguagePolicy.layoutLanguage(line))) return true;
+            if (language.equals(com.eza.spicyex.lyrics.language.ReadingLanguagePolicy.layoutLanguage(line))) return true;
         }
         return false;
     }
@@ -5322,20 +5462,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void refreshChromeClusterSpacing() {
         if (chromeViews == null) return;
-        boolean top = isTopReadout();
+        boolean top = verticalChrome();
         boolean landscape = isLandscape();
         int size = chromeButtonDp();
+        int gap = top ? railGapPx() : LyricsShellChromeController.defaultGapPx(landscape);
         // applyTopMode reorders children with remove/add. Repeating that on every vsync changes
         // the View touch target between DOWN and UP, which cancels ordinary clicks and long
         // presses intermittently. Rebuild only when the actual chrome layout inputs changed.
         if (chromeLayoutApplied && chromeLayoutTop == top
-                && chromeLayoutLandscape == landscape && chromeLayoutSize == size) return;
-        LyricsShellChromeController.applyTopMode(chromeViews, top, size, landscape);
+                && chromeLayoutLandscape == landscape && chromeLayoutSize == size
+                && chromeLayoutGap == gap) return;
+        LyricsShellChromeController.applyTopMode(chromeViews, top, size, gap);
+        applyChromeHeaderPadding();
         applyBackVisibility();
         chromeLayoutApplied = true;
         chromeLayoutTop = top;
         chromeLayoutLandscape = landscape;
         chromeLayoutSize = size;
+        chromeLayoutGap = gap;
         attachClusterLayoutListener();
         applyLandscapeChromeClearance();
     }
@@ -5344,6 +5488,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (clusterLayoutListenerAdded || chromeViews == null || chromeViews.configCluster == null) return;
         chromeViews.configCluster.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             applyLandscapeChromeClearance();
+            int reserve = chromeReservePx();
+            if (reserve != chromeReserveApplied && trackInfoController != null) {
+                chromeReserveApplied = reserve;
+                // Posted: this runs inside a layout pass.
+                post(trackInfoController::onChromeReserveChanged);
+            }
         });
         clusterLayoutListenerAdded = true;
     }

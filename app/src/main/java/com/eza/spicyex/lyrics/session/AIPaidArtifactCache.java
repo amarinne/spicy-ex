@@ -37,8 +37,8 @@ public final class AIPaidArtifactCache {
      * Existing records are never evicted to make room; a full finite quota still refuses writes.
      */
     private static long quotaBytes(Context context) {
-        return com.eza.spicyex.lyrics.CacheStoragePolicy.paidAiQuota(
-                com.eza.spicyex.lyrics.CacheStoragePolicy.totalBudget(context));
+        return com.eza.spicyex.lyrics.cache.CacheStoragePolicy.paidAiQuota(
+                com.eza.spicyex.lyrics.cache.CacheStoragePolicy.totalBudget(context));
     }
 
     private static volatile AIPaidArtifactDatabase database;
@@ -84,7 +84,6 @@ public final class AIPaidArtifactCache {
         public final String reason;
         final String token;
         final String entryKey;
-
         private Reservation(Status status, String reason, String token, String entryKey) {
             this.status = status;
             this.reason = Digests.nz(reason);
@@ -96,12 +95,40 @@ public final class AIPaidArtifactCache {
             return status == Status.ADMITTED;
         }
 
-        static Reservation admitted(String token, String entryKey) {
+        public static Reservation admitted(String token, String entryKey) {
             return new Reservation(Status.ADMITTED, "", token, entryKey);
         }
 
-        static Reservation rejected(Status status, String reason) {
+        public static Reservation rejected(Status status, String reason) {
             return new Reservation(status, reason, "", "");
+        }
+    }
+
+    /** Immutable deletion fence captured with a run's first record read, before any reservation. */
+    public static final class Read {
+        public final String payload;
+        final String entryKey;
+        final String layer;
+        final long allGeneration;
+        final long layerGeneration;
+        final long entryGeneration;
+
+        public Read(String payload, String entryKey, String layer, long allGeneration,
+             long layerGeneration, long entryGeneration) {
+            this.payload = payload;
+            this.entryKey = entryKey;
+            this.layer = layer;
+            this.allGeneration = allGeneration;
+            this.layerGeneration = layerGeneration;
+            this.entryGeneration = entryGeneration;
+        }
+
+        public boolean matches(String key, String layer, long allGeneration,
+                               long layerGeneration, long entryGeneration) {
+            return this.entryKey.equals(key) && this.layer.equals(layer)
+                    && this.allGeneration == allGeneration
+                    && this.layerGeneration == layerGeneration
+                    && this.entryGeneration == entryGeneration;
         }
     }
 
@@ -126,7 +153,7 @@ public final class AIPaidArtifactCache {
 
     /** Stores a paid payload against the reservation held by its run. */
     public static Write put(Context context, PaidArtifactIdentity identity, String payload,
-                            Reservation reservation) {
+                            Reservation reservation, Read read) {
         if (context == null) return Write.rejected("no-context");
         if (identity == null || !identity.isComplete()) return Write.rejected("incomplete-identity");
         if (payload == null || payload.isEmpty()) return Write.rejected("empty-payload");
@@ -137,7 +164,7 @@ public final class AIPaidArtifactCache {
             synchronized (LOCK) {
                 AIPaidArtifactDatabase db = database(context);
                 if (!db.ensureV515Migration()) return Write.rejected("migration-failed");
-                return db.put(entryKey(identity), identity.layerKind.name(), value, reservation,
+                return db.put(entryKey(identity), identity.layerKind.name(), value, reservation, read,
                         quotaBytes(context));
             }
         } catch (Throwable failure) {
@@ -148,7 +175,7 @@ public final class AIPaidArtifactCache {
 
     /** Reserves a conservative final-record size before any provider dispatch. */
     public static Reservation reserve(Context context, PaidArtifactIdentity identity,
-                                      long maxRecordBytes, Reservation current) {
+                                      long maxRecordBytes, Reservation current, Read read) {
         if (context == null || identity == null || !identity.isComplete()) {
             return Reservation.rejected(Reservation.Status.UNAVAILABLE, "storage-unavailable");
         }
@@ -160,7 +187,7 @@ public final class AIPaidArtifactCache {
                             "migration-failed");
                 }
                 return db.reserve(entryKey(identity), identity.layerKind.name(), maxRecordBytes,
-                        current, quotaBytes(context));
+                        current, read, quotaBytes(context));
             }
         } catch (Throwable failure) {
             Diagnostics.warn("AIPaidArtifactCache", "reserve", failure);
@@ -175,21 +202,32 @@ public final class AIPaidArtifactCache {
         }
     }
 
-    /** @return stored payload for this exact identity, or null when none is trustworthy */
-    public static String get(Context context, PaidArtifactIdentity identity) {
+    /** Reads the payload and its deletion fence under the same storage lock. */
+    public static Read read(Context context, PaidArtifactIdentity identity) {
         if (context == null || identity == null || !identity.isComplete()) return null;
         String key = entryKey(identity);
         try {
-            byte[] raw;
             synchronized (LOCK) {
                 AIPaidArtifactDatabase db = database(context);
-                if (!db.ensureV515Migration()) return legacyPayload(context, identity, key);
-                raw = db.get(key);
+                return read(db::ensureV515Migration,
+                        () -> db.read(key, identity.layerKind.name(), identity),
+                        () -> legacyRead(context, identity, key));
             }
-            return payloadOf(raw, identity);
         } catch (Throwable failure) {
-            Diagnostics.warn("AIPaidArtifactCache", "get", failure);
-            return legacyPayload(context, identity, key);
+            Diagnostics.warn("AIPaidArtifactCache", "read", failure);
+            return null;
+        }
+    }
+
+    /** Legacy reuse is allowed only after a confirmed, incomplete migration. */
+    static Read read(java.util.function.BooleanSupplier migration,
+                     java.util.function.Supplier<Read> current,
+                     java.util.function.Supplier<Read> legacy) {
+        try {
+            return migration.getAsBoolean() ? current.get() : legacy.get();
+        } catch (Throwable failure) {
+            Diagnostics.warn("AIPaidArtifactCache", "read", failure);
+            return null;
         }
     }
 
@@ -344,7 +382,7 @@ public final class AIPaidArtifactCache {
         }
     }
 
-    private static String payloadOf(byte[] raw, PaidArtifactIdentity identity) {
+    static String payloadOf(byte[] raw, PaidArtifactIdentity identity) {
         if (raw == null || raw.length == 0) return null;
         try {
             JsonObject record = JsonParser.parseString(
@@ -359,12 +397,15 @@ public final class AIPaidArtifactCache {
         }
     }
 
-    private static String legacyPayload(Context context, PaidArtifactIdentity identity, String key) {
+    private static Read legacyRead(Context context, PaidArtifactIdentity identity, String key) {
         try {
             SharedPreferences preferences = context.getSharedPreferences(
                     LEGACY_PREFS, Context.MODE_PRIVATE);
             String raw = preferences.getString(key, null);
-            return raw == null ? null : payloadOf(raw.getBytes(StandardCharsets.UTF_8), identity);
+            String payload = raw == null ? null
+                    : payloadOf(raw.getBytes(StandardCharsets.UTF_8), identity);
+            // Empty identity cannot pass matches(), so fallback reads cannot authorize writes.
+            return new Read(payload, "", "", -1L, -1L, -1L);
         } catch (Throwable ignored) {
             return null;
         }

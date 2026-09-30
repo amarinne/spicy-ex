@@ -1,5 +1,9 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
+import com.eza.spicyex.lyrics.language.SpicyRomanizer;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 import static org.junit.Assert.assertEquals;
 
 import java.io.InputStreamReader;

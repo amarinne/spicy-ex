@@ -1,5 +1,8 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 /** Shared display-mode decisions for fullscreen rows and the now-playing lyric card. */
 public final class LyricsDisplayMode {
     private LyricsDisplayMode() {

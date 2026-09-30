@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 import android.graphics.Color;
 
 import java.util.ArrayList;

@@ -9,12 +9,12 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.lyrics.LyricsDocument;
-import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
-import com.eza.spicyex.lyrics.LyricsFetchDiagnosticsState;
+import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.providers.LyricsFetchDiagnosticsState;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
-import com.eza.spicyex.lyrics.LyricsSecondaryProcessingSession;
-import com.eza.spicyex.lyrics.LyricsSecondaryProcessor;
-import com.eza.spicyex.lyrics.RomanizationOptions;
+import com.eza.spicyex.lyrics.processing.LyricsSecondaryProcessingSession;
+import com.eza.spicyex.lyrics.processing.LyricsSecondaryProcessor;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalBaseAdoption;
 import com.eza.spicyex.lyrics.session.CanonicalSourceCache;
@@ -22,9 +22,9 @@ import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 import com.eza.spicyex.lyrics.session.DetectionArtifact;
 import com.eza.spicyex.lyrics.session.LyricsDetectionSession;
 import com.eza.spicyex.lyrics.session.LyricsMemoryPressure;
-import com.eza.spicyex.beautifullyrics.entities.LyricsResponseCache;
-import com.eza.spicyex.lyrics.CacheClearKind;
-import com.eza.spicyex.lyrics.LyricCaches;
+import com.eza.spicyex.lyrics.providers.LyricsResponseCache;
+import com.eza.spicyex.lyrics.cache.CacheClearKind;
+import com.eza.spicyex.lyrics.cache.LyricCaches;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.session.DerivedLayerArtifact;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
@@ -35,7 +35,7 @@ import com.eza.spicyex.lyrics.session.LegacyDocumentComposer;
 import com.eza.spicyex.lyrics.session.LyricSession;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
-import com.eza.spicyex.lyrics.NativeLyricsSource;
+import com.eza.spicyex.lyrics.providers.NativeLyricsSource;
 import com.eza.spicyex.lyrics.catalog.AcquisitionPlanner;
 import com.eza.spicyex.lyrics.catalog.AcquisitionScope;
 import com.eza.spicyex.lyrics.catalog.CatalogAdapters;
@@ -101,7 +101,8 @@ final class LyricsSessionManager {
     private final NativeSpicyLyricsHook hook;
     private final LyricsFetchCoordinator fetchCoordinator;
     private final Context context;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Handler handler;
+    private final java.util.function.LongSupplier snapshotClock;
     private final List<SubscriptionRecord> subscriptions = new ArrayList<>();
     private final List<RequestRecord> requests = new ArrayList<>();
     private final LyricsSessionPolicy policy = new LyricsSessionPolicy();
@@ -161,6 +162,8 @@ final class LyricsSessionManager {
     LyricsSessionManager(NativeSpicyLyricsHook hook, LyricsFetchCoordinator fetchCoordinator, Context context) {
         this.hook = hook;
         this.fetchCoordinator = fetchCoordinator;
+        this.handler = new Handler(Looper.getMainLooper());
+        this.snapshotClock = SystemClock::elapsedRealtime;
         Context app = context.getApplicationContext();
         this.context = app != null ? app : context;
         SpotifyPlusConfig config = SpotifyPlusConfig.from(this.context);
@@ -175,6 +178,20 @@ final class LyricsSessionManager {
         LyricsMemoryPressure.addReclaimer(level -> detectionSession.trimMemory());
     }
 
+    /** Injects runtime dependencies for JVM tests of session transitions and publication. */
+    LyricsSessionManager(Context context, Handler handler,
+                         LyricsSecondaryProcessingSession secondaryProcessing,
+                         LyricsDetectionSession detectionSession,
+                         java.util.function.LongSupplier snapshotClock) {
+        this.hook = null;
+        this.fetchCoordinator = null;
+        this.context = context;
+        this.handler = handler;
+        this.secondaryProcessing = secondaryProcessing;
+        this.detectionSession = detectionSession;
+        this.snapshotClock = snapshotClock;
+    }
+
     void start() {
         if (started) return;
         started = true;
@@ -187,12 +204,14 @@ final class LyricsSessionManager {
         }
     }
 
-    private final NativeLyricsSource.NativeListener nativeCaptureListener = (trackId, captured) -> {
+    private final NativeLyricsSource.NativeListener nativeCaptureListener = this::postNativeCapture;
+
+    private void postNativeCapture(String trackId, LyricsDocument captured) {
         try {
             handler.post(() -> acceptNativeCapture(trackId, captured));
         } catch (Throwable ignored) {
         }
-    };
+    }
 
     /** Commits a native capture for the current track, then publishes the seat it produces. */
     private void acceptNativeCapture(String trackId, LyricsDocument captured) {
@@ -668,28 +687,47 @@ final class LyricsSessionManager {
             }
             final boolean durable = stored;
             final LyricsCatalog.View seated = view;
-            handler.post(() -> {
-                if (!policy.accepts(requestedGeneration, requestedUri)) {
-                    LyricPipelineMetrics.increment(
-                            LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
-                    completeCatalogAction(callback, false, "Track changed");
-                    return;
-                }
-                if (requestedUri.equals(loadingUri)) loadingUri = "";
-                if (seated != null && seated.document != null) {
-                    if (applyView(seated)) {
-                        publishSeat(requestedTrack, requestedUri, requestedGeneration,
-                                seated.document, seated.sourceRevision);
-                    }
-                } else if (document == null) {
-                    // Nothing renders from the catalog (a failed write, or a source Auto may not
-                    // use): show the delivery for this visit without claiming it is stored.
-                    publishSeat(requestedTrack, requestedUri, requestedGeneration, result, 1);
-                }
-                completeCatalogAction(callback, durable || document != null,
-                        durable ? "Source checked" : "Source checked; not saved");
-            });
+            // A stored delivery may still be ineligible for Auto. Preserve the adapter's
+            // provenance and judge fallback against the same state as the seat.
+            final boolean refused = seated == null
+                    ? CatalogAdapters.isRefusedFallback(context, requestedTrack, result)
+                    : CatalogAdapters.isRefusedFallback(seated.policy, seated.state,
+                            seated.trackId, result);
+            handler.post(() -> acceptProviderView(requestedTrack, requestedUri,
+                    requestedGeneration, result, callback, durable, seated, refused));
         });
+    }
+
+    /** Applies provider completion only while its catalog snapshot is still current. */
+    void acceptProviderView(SpotifyTrack requestedTrack, String requestedUri,
+                            int requestedGeneration, LyricsDocument result,
+                            LyricsHost.CatalogActionCallback callback, boolean durable,
+                            LyricsCatalog.View seated, boolean refused) {
+        if (!policy.accepts(requestedGeneration, requestedUri)) {
+            LyricPipelineMetrics.increment(
+                    LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
+            completeCatalogAction(callback, false, "Track changed");
+            return;
+        }
+        if (seated != null && !applyView(seated)) {
+            completeCatalogAction(callback, durable || document != null, "Source checked; newer state retained");
+            return;
+        }
+        if (requestedUri.equals(loadingUri)) loadingUri = "";
+        if (seated != null && seated.document != null) {
+            publishSeat(requestedTrack, requestedUri, requestedGeneration,
+                    seated.document, seated.sourceRevision);
+        } else if (document == null && !refused) {
+            // Nothing renders from the catalog (a failed write, or a source Auto may not
+            // use): show the delivery for this visit without claiming it is stored.
+            publishSeat(requestedTrack, requestedUri, requestedGeneration, result, 1);
+        } else if (document == null) {
+            acceptError(requestedTrack, requestedUri, requestedGeneration,
+                    "Source not eligible for this track");
+        }
+        completeCatalogAction(callback, durable || document != null,
+                durable ? "Source checked"
+                        : refused ? "Source not used" : "Source checked; not saved");
     }
 
     // --- Catalog source-picker operations ---
@@ -854,12 +892,13 @@ final class LyricsSessionManager {
                         }
 
                         @Override public void onError(String error) {
-                            CatalogAdapters.recordError(context, source, current, error);
+                            // F9: the strict source already recorded its terminal outcome.
+                            // Recording here counted provider-owned failures twice and told
+                            // nothing new about the retry policy.
                             completeCatalogAction(callback, false, error);
                         }
                     });
         } catch (Throwable t) {
-            CatalogAdapters.recordError(context, source, current, t.getMessage());
             completeCatalogAction(callback, false, t.getMessage());
         }
     }
@@ -1095,7 +1134,8 @@ final class LyricsSessionManager {
         // Do not publish the cleared intermediate state: surfaces would flash empty readings or
         // translations before the lane refills them. Publication happens on layer completion, and
         // a layer with no work still completes, so turning a layer off still reaches every surface.
-        startSharedProcessing(track, document, policy.generation());
+        startSharedProcessing(track, document, policy.generation(),
+                java.util.Collections.emptySet(), java.util.EnumSet.of(layer));
     }
 
     /**
@@ -1124,14 +1164,16 @@ final class LyricsSessionManager {
             LyricsDocumentProcessor.resetSoundLayer(context, document);
         }
         return startSharedProcessing(track, document, policy.generation(),
-                java.util.EnumSet.of(layer)).contains(layer)
+                java.util.EnumSet.of(layer), java.util.EnumSet.of(layer)).contains(layer)
                 ? AiRequestStartResult.STARTED : AiRequestStartResult.NOTHING_TO_DO;
     }
 
     /** Drops the accepted AI overlay and republishes the canonical baseline only. */
     void restoreLayer(LayerKind layer) {
         if (layer == null || document == null || session == null) return;
-        secondaryProcessing.cancelActive();
+        // Layer-scoped: the sibling lane keeps its run, so it still completes (or stays
+        // explicitly retryable) instead of stranding in PROCESSING with its work cancelled.
+        secondaryProcessing.cancelLayer(layer);
         LayerState restored = LayerState.absent(layer);
         if (layer == LayerKind.MEANING
                 && session.meaning.artifact instanceof MeaningArtifact) {
@@ -1141,8 +1183,8 @@ final class LyricsSessionManager {
             }
         }
         session = session.withLayer(layer, restored);
-        document = canonicalSource == null ? LyricsDocument.copyOf(document)
-                : LegacyDocumentComposer.compose(canonicalSource, session);
+        // Keep the processing input identity: the sibling lane still addresses this document.
+        // notifyDocument composes the restored layer from session state for every subscriber.
         syncDocumentLayerFlags();
         notifyDocument(snapshot(), document);
     }
@@ -1158,22 +1200,23 @@ final class LyricsSessionManager {
      */
     void clearCache(CacheClearKind kind) {
         if (kind == null) return;
-        secondaryProcessing.cancelActive();
         switch (kind) {
             case TRANSLATION:
+                secondaryProcessing.cancelLayer(LayerKind.MEANING);
                 LyricCaches.clearGoogle(context);
                 LyricCaches.clearMeaningArtifacts(context);
                 AIPaidArtifactCache.clearLayer(context, LayerKind.MEANING);
                 refreshLayer(LayerKind.MEANING);
                 break;
             case TRANSLITERATION:
+                secondaryProcessing.cancelLayer(LayerKind.SOUND);
                 LyricCaches.clearSoundArtifacts(context);
                 AIPaidArtifactCache.clearLayer(context, LayerKind.SOUND);
                 refreshLayer(LayerKind.SOUND);
                 break;
             case AI:
-                AIPaidArtifactCache.clear(context);
                 secondaryProcessing.cancelActive();
+                AIPaidArtifactCache.clear(context);
                 if (session != null) {
                     session = session.withLayer(LayerKind.MEANING, LayerState.absent(LayerKind.MEANING));
                     session = session.withLayer(LayerKind.SOUND, LayerState.absent(LayerKind.SOUND));
@@ -1185,6 +1228,7 @@ final class LyricsSessionManager {
                 }
                 break;
             case LYRICS_RESPONSE:
+                secondaryProcessing.cancelActive();
                 // Transport cache only: saved song data in the catalog is never a cache.
                 String currentUri = policy.trackUri();
                 if (!currentUri.isEmpty()) {
@@ -1305,6 +1349,14 @@ final class LyricsSessionManager {
     private java.util.Set<LayerKind> startSharedProcessing(
             SpotifyTrack requestedTrack, LyricsDocument snapshot, int requestedGeneration,
             java.util.Set<LayerKind> explicitAiRequests) {
+        return startSharedProcessing(requestedTrack, snapshot, requestedGeneration,
+                explicitAiRequests, java.util.EnumSet.allOf(LayerKind.class));
+    }
+
+    private java.util.Set<LayerKind> startSharedProcessing(
+            SpotifyTrack requestedTrack, LyricsDocument snapshot, int requestedGeneration,
+            java.util.Set<LayerKind> explicitAiRequests,
+            java.util.Set<LayerKind> requestedLayers) {
         LyricsRenderConfig config = renderConfig();
         com.eza.spicyex.lyrics.session.SoundArtifact displayedSound = session != null
                 && session.sound.artifact instanceof com.eza.spicyex.lyrics.session.SoundArtifact
@@ -1330,7 +1382,7 @@ final class LyricsSessionManager {
                         adoptLayerArtifact(layer, artifact, failure, processed, requestedGeneration);
                         publishProcessed(processed, requestedGeneration);
                     }
-                });
+                }, requestedLayers);
         markLanesRunning(started, snapshot, config, explicitAiRequests);
         // The initial document was published before the asynchronous lanes were started. Publish
         // the processing transition too, otherwise surfaces never see the pending state and their
@@ -1422,7 +1474,7 @@ final class LyricsSessionManager {
         boolean playing = track != null && hook.isPlayerActuallyPlaying();
         long position = track == null ? 0L : hook.readBestMeasuredProgressMs(track, playing);
         return new Snapshot(track, policy.trackUri(), policy.generation(), status, playing, position,
-                SystemClock.elapsedRealtime());
+                snapshotClock.getAsLong());
     }
 
     private void notifyState(Snapshot snapshot) {

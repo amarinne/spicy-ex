@@ -1,10 +1,12 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
+
 import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.eza.spicyex.Settings;
-import com.eza.spicyex.SettingsValueNormalizer;
+import com.eza.spicyex.settings.SettingsValueNormalizer;
 import com.eza.spicyex.SpotifyPlusConfig;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
@@ -13,7 +15,7 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
  * Does not own schema/default declaration (Settings) or panel writes (SettingsStore).
  */
 public final class LyricsShellSettings {
-    private static final String PREFS_MAIN = "SpotifyPlus";
+    private static final String PREFS_MAIN = SpotifyPlusConfig.PREFS_NAME;
 
     private final Context context;
     private final SpotifyPlusConfig config;

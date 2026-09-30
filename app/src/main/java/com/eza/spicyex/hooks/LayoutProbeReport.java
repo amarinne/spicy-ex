@@ -32,6 +32,8 @@ final class LayoutProbeReport {
     static final float SHEET_COVER_LIMIT = 0.5f;
     /** Chrome dimmer than this is not "visible chrome" for the lyrics-under-chrome rule. */
     static final float CHROME_VISIBLE_ALPHA = 0.5f;
+    /** Slack for the top controls' edge gap against the Follow chip's, and for the row's corner. */
+    static final int EDGE_TOLERANCE_PX = 2;
     /** A mounted lyrics window is small; the cap keeps the reply one readable line. */
     static final int MAX_LYRIC_ROWS = 40;
 
@@ -135,6 +137,9 @@ final class LayoutProbeReport {
         sheetCoversTarget(out);
         lyricsUnderChrome(out);
         sheetOverToolbar(out);
+        chromeEdge(out);
+        chromeCorner(out);
+        chromeOverChip(out);
         return out;
     }
 
@@ -248,6 +253,50 @@ final class LayoutProbeReport {
             if (intersects(row, dock)) covered++;
         }
         if (covered > 0) out.add("R7 lyrics_under_chrome " + covered);
+    }
+
+    /**
+     * R9: the top controls and the Follow chip hug the same screen edge at different distances.
+     * Both line up on one edge gap; a chip on the other half of the screen is not compared.
+     */
+    private void chromeEdge(List<String> out) {
+        int[] screen = rects.get("screen");
+        int[] dock = rects.get("dock");
+        int[] follow = rects.get("chip.follow");
+        if (screen == null || dock == null || follow == null) return;
+        boolean dockRight = centerX(dock) > centerX(screen);
+        if (dockRight != (centerX(follow) > centerX(screen))) return;
+        int dockGap = dockRight ? screen[2] - dock[2] : dock[0] - screen[0];
+        int followGap = dockRight ? screen[2] - follow[2] : follow[0] - screen[0];
+        if (Math.abs(dockGap - followGap) > EDGE_TOLERANCE_PX) {
+            out.add("R9 chrome_edge dock=" + dockGap + " follow=" + followGap);
+        }
+    }
+
+    /** R10: top controls - rail or row - that do not start one edge gap below the top floor. */
+    private void chromeCorner(List<String> out) {
+        int[] dock = rects.get("dock");
+        Double floor = number("chrome_top_floor");
+        Double margin = number("edge_margin");
+        if (dock == null || floor == null || margin == null) return;
+        int topGap = (int) Math.round(dock[1] - floor.doubleValue());
+        if (Math.abs(topGap - margin.doubleValue()) > EDGE_TOLERANCE_PX) {
+            out.add("R10 chrome_corner top=" + topGap + " margin=" + Math.round(margin.doubleValue()));
+        }
+    }
+
+    /** R11: the top controls reaching down onto the Follow or skip chip. */
+    private void chromeOverChip(List<String> out) {
+        int[] dock = rects.get("dock");
+        if (dock == null) return;
+        for (String chip : CHIPS) {
+            int[] rect = rects.get("chip." + chip);
+            if (rect != null && intersects(dock, rect)) out.add("R11 chrome_over_chip " + chip);
+        }
+    }
+
+    private static int centerX(int[] rect) {
+        return (rect[0] + rect[2]) / 2;
     }
 
     private boolean isTrue(String name) {

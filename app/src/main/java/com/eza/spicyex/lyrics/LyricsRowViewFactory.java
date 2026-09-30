@@ -1,5 +1,9 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.CjkLineBreak;
+import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.graphics.Color;

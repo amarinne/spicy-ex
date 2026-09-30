@@ -1,0 +1,406 @@
+package com.eza.spicyex.lyrics.providers;
+
+import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.lyrics.LyricsDocument;
+import com.eza.spicyex.lyrics.LyricsLine;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
+
+public class LyricsParserSpicyMetadataTest {
+    private final LyricsParser parser = new LyricsParser(null);
+    private final SpotifyTrack track = new SpotifyTrack(
+            "Song", "Artist", "Album", "spotify:track:test", 0, "", 0, null, 180000, false);
+
+    @Test
+    public void parseSpicyLyricsCapturesPackedQueryMetadata() {
+        JsonObject result = new JsonObject();
+        result.addProperty("httpStatus", 200);
+        result.addProperty("format", "json");
+        result.add("data", packedStaticLyrics());
+
+        LyricsDocument doc = parser.parseSpicyLyrics(null, track, queryResponse(result).toString(), false);
+
+        assertTrue(doc.spicyPackedPayload);
+        assertEquals(Integer.valueOf(200), doc.spicyQueryStatus);
+        assertEquals("json", doc.spicyFormat);
+        assertFalse(doc.spicyPoisoned);
+        assertNull(doc.spicyQualityReason);
+        assertEquals("Static", doc.type);
+        assertEquals(1, doc.lines.size());
+        assertEquals("hello", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void parseSpicyLyricsLeavesUnpackedPayloadFalse() {
+        JsonObject result = new JsonObject();
+        result.addProperty("httpStatus", 204);
+        result.addProperty("format", "plain");
+        result.add("data", unpackedStaticLyrics());
+
+        LyricsDocument doc = parser.parseSpicyLyrics(null, track, queryResponse(result).toString(), false);
+
+        assertFalse(doc.spicyPackedPayload);
+        assertEquals(Integer.valueOf(204), doc.spicyQueryStatus);
+        assertEquals("plain", doc.spicyFormat);
+        assertFalse(doc.spicyPoisoned);
+        assertNull(doc.spicyQualityReason);
+        assertEquals("Static", doc.type);
+        assertEquals(1, doc.lines.size());
+        assertEquals("hello", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void parseSpicyLyricsRejectsNoticeOnlyPayload() {
+        JsonObject notice = new JsonObject();
+        notice.addProperty("_notice", "please update spicy lyrics");
+        JsonObject result = new JsonObject();
+        result.addProperty("httpStatus", 200);
+        result.addProperty("format", "json");
+        result.add("data", notice);
+
+        assertThrows(IllegalStateException.class,
+                () -> parser.parseSpicyLyrics(null, track, queryResponse(result).toString(), false));
+    }
+
+    @Test
+    public void liveForcedUpdatePayloadIsClassifiedAsControlResponse() {
+        String raw = "{\"queries\":[{\"_notice\":\"Access is granted solely for personal, individual use through official Spicy Lyrics clients or their public forks of official repositories. Any automated data extraction (scraping) or unauthorized redistribution via third-party applications is strictly prohibited.\"},{\"operation\":\"lyrics\",\"operationId\":\"0\",\"result\":{\"data\":[[\"Text\",\"Type\",\"Static\",\"SongWriters\",\"the cool spicetify extension\",\"Lines\",\"Please update Spicy Lyrics\",\"You can do so immediately by restarting Spotify\",\"id\",\"4uLU6hMCjMI75M1A2tKUQC\",\"source\",\"spl\"],[-1,5,1,3,5,8,10,2,-5,4,-3,2,1,0,6,7,9,11]],\"httpStatus\":200,\"format\":\"json\"}}]}";
+
+        LyricsDocument doc = parser.parseSpicyLyrics(null, track, raw, false);
+        SpicyResponseClassifier.apply(doc);
+
+        assertEquals("Static", doc.type);
+        assertEquals(2, doc.lines.size());
+        assertTrue(doc.spicyPackedPayload);
+        assertTrue(doc.spicyPoisoned);
+        assertEquals("CLIENT_UPDATE_REQUIRED", doc.spicyQualityReason);
+    }
+
+    @Test
+    public void parseSyllableLyricsUsesTrailingSpanSpaceAsWordBoundary() {
+        JsonObject result = new JsonObject();
+        result.addProperty("httpStatus", 200);
+        result.addProperty("format", "json");
+        result.add("data", syllableLyricsWithSpanSpaces());
+
+        LyricsDocument doc = parser.parseSpicyLyrics(null, track, queryResponse(result).toString(), false);
+
+        LyricsLine line = doc.lines.get(0);
+        assertEquals("점점 내 모습이", line.text);
+        assertEquals("점", line.syllables.get(0).text);
+        assertTrue(line.syllables.get(0).partOfWord);
+        assertEquals("점", line.syllables.get(1).text);
+        assertEquals("점 ", line.syllables.get(1).sourceText);
+        assertFalse(line.syllables.get(1).partOfWord);
+        assertEquals("내", line.syllables.get(2).text);
+        assertEquals("내 ", line.syllables.get(2).sourceText);
+        assertFalse(line.syllables.get(2).partOfWord);
+        assertEquals("모", line.syllables.get(3).text);
+        assertTrue(line.syllables.get(3).partOfWord);
+    }
+
+    @Test
+    public void parseSyllableLyricsRebuildsTextFromRawSpansBeforePrejoinedLeadText() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("I ", false, 15.144, 15.381));
+        syllables.add(syllable("let ", false, 15.381, 15.565));
+        syllables.add(syllable("you ", false, 15.565, 15.715));
+        syllables.add(syllable("go ", false, 15.715, 16.032));
+        syllables.add(syllable("君のた", true, 16.032, 16.800));
+        syllables.add(syllable("めなら", true, 16.800, 17.948));
+
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "I let you go君のためなら");
+        lead.addProperty("StartTime", 15.144);
+        lead.addProperty("EndTime", 17.948);
+        lead.add("Syllables", syllables);
+
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        JsonArray content = new JsonArray();
+        content.add(item);
+
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+        assertEquals("I let you go 君のためなら", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void parseSyllableLyricsRestoresPackedJapaneseLatinBoundary() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("I", false, 15.144, 15.381));
+        syllables.add(syllable("let", false, 15.381, 15.565));
+        syllables.add(syllable("you", false, 15.565, 15.715));
+        syllables.add(syllable("go", false, 15.715, 16.032));
+        syllables.add(syllable("君のた", true, 16.032, 16.800));
+        syllables.add(syllable("めなら", true, 16.800, 17.948));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "I let you go君のためなら");
+        lead.addProperty("StartTime", 15.144);
+        lead.addProperty("EndTime", 17.948);
+        lead.add("Syllables", syllables);
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        JsonArray content = new JsonArray();
+        content.add(item);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+        assertEquals("I let you go 君のためなら", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void parseSyllableLyricsPreservesAuthoredFullwidthQuestionMark() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("君", true, 1.0, 1.3));
+        syllables.add(syllable("は", true, 1.3, 1.5));
+        syllables.add(syllable("誰？", false, 1.5, 2.0));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "君は誰？");
+        lead.addProperty("StartTime", 1.0);
+        lead.addProperty("EndTime", 2.0);
+        lead.add("Syllables", syllables);
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        JsonArray content = new JsonArray();
+        content.add(item);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+
+        assertEquals("君は誰？", doc.lines.get(0).text);
+        assertEquals("誰？", doc.lines.get(0).syllables.get(2).text);
+    }
+
+    @Test
+    public void parseSyllableLyricsDoesNotInventJapaneseWordSpaceFromPackedFlags() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("とて", false, 47.379, 48.580));
+        syllables.add(syllable("も", false, 48.580, 49.495));
+        syllables.add(syllable("きれい", false, 52.006, 53.276));
+        syllables.add(syllable("だっ", false, 53.276, 54.068));
+        syllables.add(syllable("た", false, 54.068, 55.523));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("StartTime", 47.379);
+        lead.addProperty("EndTime", 55.523);
+        lead.add("Syllables", syllables);
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        JsonArray content = new JsonArray();
+        content.add(item);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+        assertEquals("とてもきれいだった", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void parseSyllableLyricsDoesNotInventNativePersonCounterSpace() {
+        JsonArray content = new JsonArray();
+        content.add(numericPersonVocal("1"));
+        content.add(numericPersonVocal("2"));
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+
+        assertEquals("1人", doc.lines.get(0).text);
+        assertEquals("2人", doc.lines.get(1).text);
+    }
+
+    @Test
+    public void parseSyllableLyricsUsesTrailingEdgeProviderFlags() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("My", false, 1.0, 1.3));
+        syllables.add(syllable("Camoufla", true, 1.3, 1.7));
+        syllables.add(syllable("ge", false, 1.7, 2.0));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "My Camouflage");
+        lead.addProperty("StartTime", 1.0);
+        lead.addProperty("EndTime", 2.0);
+        lead.add("Syllables", syllables);
+        JsonObject vocal = new JsonObject();
+        vocal.addProperty("Type", "Vocal");
+        vocal.add("Lead", lead);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        JsonArray content = new JsonArray();
+        content.add(vocal);
+        lyrics.add("Content", content);
+
+        LyricsDocument doc = parser.parseSpicyLyrics(
+                null, track, queryResponse(queryResult(lyrics)).toString(), false);
+
+        assertEquals("My Camouflage", doc.lines.get(0).text);
+        assertTrue(doc.lines.get(0).syllables.get(0).boundaryAfter);
+        assertFalse(doc.lines.get(0).syllables.get(1).boundaryAfter);
+        assertFalse(doc.lines.get(0).syllables.get(2).boundaryAfter);
+    }
+
+    @Test
+    public void noticeFirstPackedSuccessIgnoresOtherOperationAndMetadata() {
+        JsonObject root = queryResponse(queryResult(packedStaticLyrics()));
+        JsonArray jobs = new JsonArray();
+        JsonObject notice = new JsonObject();
+        notice.addProperty("_notice", "Access policy");
+        jobs.add(notice);
+        JsonObject unrelated = new JsonObject();
+        unrelated.addProperty("operationId", "1");
+        JsonObject failure = new JsonObject();
+        failure.addProperty("httpStatus", 401);
+        failure.addProperty("format", "plain");
+        failure.add("data", unpackedStaticLyrics());
+        unrelated.add("result", failure);
+        jobs.add(unrelated);
+        jobs.add(root.getAsJsonArray("queries").get(0));
+        root.add("queries", jobs);
+        LyricsDocument doc = parser.parseSpicyLyrics(null, track, root.toString(), false);
+        SpicyResponseClassifier.apply(doc);
+        assertTrue(doc.spicyEnvelopeNoticePresent);
+        assertTrue(doc.spicyPackedPayload);
+        assertEquals(Integer.valueOf(200), doc.spicyQueryStatus);
+        assertFalse(doc.spicyPoisoned);
+        assertEquals("hello", doc.lines.get(0).text);
+    }
+
+    @Test
+    public void missingOperationIdNeverFallsBackToStructuralLyricsScan() {
+        JsonObject root = queryResponse(queryResult(packedStaticLyrics()));
+        root.getAsJsonArray("queries").get(0).getAsJsonObject().remove("operationId");
+        assertThrows(IllegalStateException.class,
+                () -> parser.parseSpicyLyrics(null, track, root.toString(), false));
+    }
+
+    private static JsonObject queryResponse(JsonObject result) {
+        JsonObject query = new JsonObject();
+        query.addProperty("operationId", "0");
+        query.add("result", result);
+        JsonArray queries = new JsonArray();
+        queries.add(query);
+        JsonObject root = new JsonObject();
+        root.add("queries", queries);
+        return root;
+    }
+
+    private static JsonObject queryResult(com.google.gson.JsonElement lyrics) {
+        JsonObject result = new JsonObject();
+        result.addProperty("httpStatus", 200);
+        result.addProperty("format", "json");
+        result.add("data", lyrics);
+        return result;
+    }
+
+    private static JsonObject unpackedStaticLyrics() {
+        JsonObject line = new JsonObject();
+        line.addProperty("Text", "hello");
+        JsonArray lines = new JsonArray();
+        lines.add(line);
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Static");
+        lyrics.add("Lines", lines);
+        return lyrics;
+    }
+
+    private static JsonArray packedStaticLyrics() {
+        JsonArray values = new JsonArray();
+        values.add("Type");
+        values.add("Static");
+        values.add("Lines");
+        values.add("Text");
+        values.add("hello");
+
+        JsonArray stream = new JsonArray();
+        stream.add(-1);
+        stream.add(2);
+        stream.add(0);
+        stream.add(2);
+        stream.add(1);
+        stream.add(-5);
+        stream.add(-1);
+        stream.add(1);
+        stream.add(3);
+        stream.add(4);
+
+        JsonArray packed = new JsonArray();
+        packed.add(values);
+        packed.add(stream);
+        return packed;
+    }
+
+    private static JsonObject syllableLyricsWithSpanSpaces() {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable("점", true, 22.804, 23.167));
+        syllables.add(syllable("점 ", true, 23.167, 23.304));
+        syllables.add(syllable("내 ", true, 23.304, 23.429));
+        syllables.add(syllable("모", true, 23.429, 23.589));
+        syllables.add(syllable("습", true, 23.589, 23.792));
+        syllables.add(syllable("이", true, 23.792, 23.892));
+
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", "점점 내 모습이");
+        lead.addProperty("StartTime", 22.804);
+        lead.addProperty("EndTime", 23.892);
+        lead.add("Syllables", syllables);
+
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+
+        JsonArray content = new JsonArray();
+        content.add(item);
+
+        JsonObject lyrics = new JsonObject();
+        lyrics.addProperty("Type", "Syllable");
+        lyrics.add("Content", content);
+        return lyrics;
+    }
+
+    private static JsonObject numericPersonVocal(String digit) {
+        JsonArray syllables = new JsonArray();
+        syllables.add(syllable(digit, false, 1.0, 1.5));
+        syllables.add(syllable("人", false, 1.5, 2.0));
+        JsonObject lead = new JsonObject();
+        lead.addProperty("Text", digit + "人");
+        lead.addProperty("StartTime", 1.0);
+        lead.addProperty("EndTime", 2.0);
+        lead.add("Syllables", syllables);
+        JsonObject item = new JsonObject();
+        item.addProperty("Type", "Vocal");
+        item.add("Lead", lead);
+        return item;
+    }
+
+    private static JsonObject syllable(String text, boolean partOfWord, double start, double end) {
+        JsonObject object = new JsonObject();
+        object.addProperty("Text", text);
+        object.addProperty("IsPartOfWord", partOfWord);
+        object.addProperty("StartTime", start);
+        object.addProperty("EndTime", end);
+        return object;
+    }
+}

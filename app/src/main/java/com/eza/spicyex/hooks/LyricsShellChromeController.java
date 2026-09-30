@@ -29,7 +29,9 @@ import com.eza.spicyex.ui.ActionIconDrawable;
  * <p>Default control order: cog anchored top-right. Off/Bottom: Back leading at the top-left
  * corner, then title spacer, then transliteration, translation, like, PiP, settings. Top: Back
  * is gone (art owns the corner) and the controls form a vertical rail anchored right, reading
- * top to bottom as settings, PiP, like, translation, transliteration. R1 like sits ahead of the reading
+ * top to bottom as settings, PiP, like, translation, transliteration.
+ * {@link Settings#CHROME_CLUSTER_LAYOUT} can force the rail or the row in either mode; the shell
+ * resolves it and passes the result as {@code vertical}. R1 like sits ahead of the reading
  * toggles, only when enabled; Off reserves nothing. {@link Settings#CHROME_CLUSTER_POSITION}
  * mirrors this whole arrangement to the opposite edge (Back trails, cluster leads instead) in
  * every mode - see {@link #applyClusterPosition} - without changing the cluster's own internal
@@ -49,7 +51,7 @@ final class LyricsShellChromeController {
             ChipSpinnerDrawable translationSpinner,
             int chromeButtonDp,
             boolean landscape,
-            boolean topActive,
+            boolean vertical,
             boolean mirrored,
             Runnable onBack,
             Runnable onRomanToggle,
@@ -130,7 +132,7 @@ final class LyricsShellChromeController {
         translationToggle.setForeground(translationSpinner);
         ChromeViews views = new ChromeViews(header, headerTitle, back, configCluster,
                 romanToggle, translationToggle, settingsButton, likeButton, pipButton);
-        applyTopMode(views, topActive, chromeButtonDp, landscape);
+        applyTopMode(views, vertical, chromeButtonDp, landscape);
         applyClusterPosition(views, mirrored);
         return views;
     }
@@ -156,28 +158,41 @@ final class LyricsShellChromeController {
     }
 
     /**
-     * Applies the Top/Off-Bottom arrangement synchronously: call at mount and on mode
-     * change only. Order follows {@code docs/FULLSCREEN_CHROME_SPEC.md}: Top is a vertical
-     * right rail (settings, PiP, like, translation, transliteration); otherwise Back leads and
-     * the row reads (transliteration, translation, like, PiP, settings). Hidden controls and an Off like
-     * button reserve nothing; spacing follows visible order only.
+     * Applies the rail/row arrangement synchronously: call at mount and on mode change only.
+     * Order follows {@code docs/FULLSCREEN_CHROME_SPEC.md}: the vertical rail reads (settings,
+     * PiP, like, translation, transliteration) top to bottom; the row reads (transliteration,
+     * translation, like, PiP, settings). Hidden controls and an Off like button reserve nothing;
+     * spacing follows visible order only. Back visibility belongs to the shell.
      */
-    static void applyTopMode(ChromeViews chrome, boolean topActive,
+    static void applyTopMode(ChromeViews chrome, boolean vertical,
             int chromeButtonDp, boolean landscape) {
+        applyTopMode(chrome, vertical, chromeButtonDp, defaultGapPx(landscape));
+    }
+
+    /** Gap between neighbouring controls when nothing forces a tighter rail. */
+    static int defaultGapPx(boolean landscape) {
+        return dp(landscape ? 6 : 8);
+    }
+
+    /** As above with an explicit gap: a rail tightens it to stay clear of the bottom chips. */
+    static void applyTopMode(ChromeViews chrome, boolean vertical,
+            int chromeButtonDp, int gap) {
         if (chrome == null || chrome.header == null) return;
         int size = dp(chromeButtonDp);
-        int gap = dp(landscape ? 6 : 8);
-        if (chrome.back != null) {
-            chrome.back.setVisibility(topActive ? View.GONE : View.VISIBLE);
+        // Back shares the header row with a rail: pin both to the top instead of centring Back
+        // against the rail's full height.
+        if (chrome.header instanceof LinearLayout) {
+            ((LinearLayout) chrome.header).setGravity(
+                    vertical ? Gravity.TOP : Gravity.CENTER_VERTICAL);
         }
         if (chrome.configCluster == null) return;
         chrome.configCluster.setOrientation(
-                topActive ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+                vertical ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         chrome.configCluster.setGravity(
-                topActive ? Gravity.END : Gravity.CENTER_VERTICAL);
+                vertical ? Gravity.END : Gravity.CENTER_VERTICAL);
         // Reorder without dropping LayoutParams; order is owned by
         // docs/FULLSCREEN_CHROME_SPEC.md (cog anchored top-right, like second).
-        ImageButton[] order = topActive
+        ImageButton[] order = vertical
                 ? new ImageButton[]{chrome.settingsButton, chrome.pipButton, chrome.likeButton,
                         chrome.translationToggle, chrome.romanToggle}
                 : new ImageButton[]{chrome.romanToggle, chrome.translationToggle, chrome.likeButton,

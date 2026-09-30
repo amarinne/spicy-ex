@@ -16,12 +16,7 @@ import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
  * the main thread.
  */
 public final class LyricsCatalog {
-    /**
-     * Read order across IO threads. Taken before a view's state is read, so a higher sequence
-     * always saw at least every commit a lower one saw; the session drops older views.
-     */
-    private static final java.util.concurrent.atomic.AtomicLong SEQUENCE =
-            new java.util.concurrent.atomic.AtomicLong();
+    private static final CatalogReadOrder READS = new CatalogReadOrder();
 
     private LyricsCatalog() {
     }
@@ -82,20 +77,14 @@ public final class LyricsCatalog {
         importPublicRelease(context, track, trackId, policy, row, now);
         CatalogStore.Committed committed = CatalogStore.transact(context, trackId,
                 state -> CatalogDecisions.reconcile(state, policy, row));
-        long sequence = SEQUENCE.incrementAndGet();
-        CatalogState after = CatalogStore.state(context, trackId);
-        return view(trackId, after, policy, now, includeLocal, committed.committed, sequence, "");
+        return readView(context, trackId, includeLocal, committed.committed, "");
     }
 
     /** Read-only view after a provider outcome was committed elsewhere. */
     public static View current(Context context, SpotifyTrack track, boolean includeLocal) {
         String trackId = CatalogSource.bareTrackId(track == null ? "" : track.uri);
         if (context == null || trackId.isEmpty()) return null;
-        CatalogPolicy policy = CatalogPolicy.read(context);
-        long sequence = SEQUENCE.incrementAndGet();
-        CatalogState state = CatalogStore.state(context, trackId);
-        return view(trackId, state, policy, System.currentTimeMillis(), includeLocal, true,
-                sequence, "");
+        return readView(context, trackId, includeLocal, true, "");
     }
 
     /** Runs one user command over the track and returns the committed view. */
@@ -106,9 +95,7 @@ public final class LyricsCatalog {
         long now = System.currentTimeMillis();
         CatalogStore.Committed committed = CatalogStore.transact(context, trackId,
                 state -> command.decide(state, policy, now));
-        long sequence = SEQUENCE.incrementAndGet();
-        CatalogState after = CatalogStore.state(context, trackId);
-        return view(trackId, after, policy, now, false, committed.committed, sequence,
+        return readView(context, trackId, false, committed.committed,
                 committed.change == null ? "storage-failed" : committed.change.outcome);
     }
 
@@ -148,6 +135,16 @@ public final class LyricsCatalog {
         } catch (Throwable ignored) {
             return null;
         }
+    }
+
+    private static View readView(Context context, String trackId, boolean includeLocal,
+                                 boolean durable, String outcome) {
+        return READS.read(sequence -> {
+            CatalogPolicy policy = CatalogPolicy.read(context);
+            CatalogState state = CatalogStore.state(context, trackId);
+            return view(trackId, state, policy, System.currentTimeMillis(), includeLocal,
+                    durable, sequence, outcome);
+        });
     }
 
     private static View view(String trackId, CatalogState state, CatalogPolicy policy,

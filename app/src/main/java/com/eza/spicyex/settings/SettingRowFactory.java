@@ -5,11 +5,10 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.eza.spicyex.AiSettingsRows;
-import com.eza.spicyex.GlossyToggle;
+import com.eza.spicyex.ui.GlossyToggle;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
-import com.eza.spicyex.SettingsUiStrings;
+import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.ActionIconDrawable.Kind;
 

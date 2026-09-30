@@ -2,7 +2,7 @@ package com.eza.spicyex.lyrics.session;
 
 import android.content.Context;
 
-import com.eza.spicyex.lyrics.ScriptClassifier;
+import com.eza.spicyex.lyrics.language.ScriptClassifier;
 
 import org.junit.Test;
 

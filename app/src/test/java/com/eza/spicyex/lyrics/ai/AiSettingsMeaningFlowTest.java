@@ -4,7 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
-import com.eza.spicyex.lyrics.RomanizationOptions;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
 import com.eza.spicyex.lyrics.session.LayerConfigIds;
 
 import org.junit.Test;

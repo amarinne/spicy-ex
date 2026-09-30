@@ -1,6 +1,6 @@
 package com.eza.spicyex.lyrics.session;
 
-import com.eza.spicyex.lyrics.ScriptClassifier;
+import com.eza.spicyex.lyrics.language.ScriptClassifier;
 
 /**
  * Language/script detection for one canonical row.

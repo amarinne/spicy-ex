@@ -4,7 +4,7 @@ import android.content.Context;
 
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.LyricsDocument;
-import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.catalog.CatalogSource.MatchMethod;
 import com.eza.spicyex.lyrics.catalog.CatalogSource.ProviderStatus;
@@ -136,6 +136,10 @@ public final class CatalogAdapters {
                                         LyricsDocument doc, MatchMethod method,
                                         String providerItemId, String rawPayload,
                                         int adapterRevision) {
+        if (doc == null) return false;
+        // Stamp before storage: a refusal or failed write must retain the adapter's exact item.
+        doc.catalogDelivery = new CatalogDelivery(source, providerItemId, method, false);
+        doc.catalogCandidateId = "";
         try {
             long now = System.currentTimeMillis();
             CatalogCandidate candidate = buildCandidate(source, track, doc, method, providerItemId,
@@ -147,7 +151,10 @@ public final class CatalogAdapters {
                     state -> CatalogDecisions.providerSuccess(state, policy, candidate, row, now));
             boolean stored = committed.committed && committed.change != null
                     && !committed.change.putCandidates.isEmpty();
-            if (stored) doc.catalogCandidateId = candidate.candidateId;
+            if (stored) {
+                doc.catalogCandidateId = candidate.candidateId;
+                doc.catalogDelivery = new CatalogDelivery(source, providerItemId, method, true);
+            }
             return stored;
         } catch (Throwable ignored) {
             return false;
@@ -156,10 +163,12 @@ public final class CatalogAdapters {
 
     /**
      * Commits a delivery no adapter stored (a response-cache replay, for instance) with provenance
-     * inferred from the document. Idempotent: an already-stamped document is left alone.
+     * inferred from the document. An adapter's completed attempt is never retried with inferred
+     * provenance, including when storage failed or the exact provider item was rejected.
      */
     public static boolean commitDelivered(Context context, SpotifyTrack track, LyricsDocument doc) {
         if (doc == null) return false;
+        if (doc.catalogDelivery != null) return doc.catalogDelivery.stored;
         if (!doc.catalogCandidateId.isEmpty()) return true;
         SourceId source = CatalogSource.inferSourceId(doc.fetchSource, doc.provider);
         if (source == null) return false;
@@ -168,6 +177,41 @@ public final class CatalogAdapters {
         return recordSuccess(context, source, track, doc,
                 exact ? MatchMethod.EXACT_SPOTIFY_ID : MatchMethod.STRONG_SEARCH,
                 exact ? bare : "", "", adapterRevision(source));
+    }
+
+    /** Policy applies to every unseated delivery, even when the provider stored it successfully. */
+    public static boolean isRefusedFallback(CatalogPolicy policy, CatalogState state,
+                                            String bareTrackId, LyricsDocument doc) {
+        if (policy == null || state == null || doc == null) return false;
+        CatalogDelivery delivery = doc.catalogDelivery;
+        SourceId source = delivery == null
+                ? CatalogSource.inferSourceId(doc.fetchSource, doc.provider) : delivery.source;
+        if (source == null) return false;
+        if (!policy.enabled(source)) return true;
+        if (delivery != null) {
+            return state.isRejected(source, delivery.providerItemId)
+                    || (!policy.karaokeOriginalLyrics
+                    && delivery.matchMethod == MatchMethod.KARAOKE_SUBSTITUTION);
+        }
+        boolean exact = source == SourceId.APPLE || source == SourceId.SPOTIFY_NATIVE;
+        String item = exact ? (bareTrackId == null ? "" : bareTrackId) : "";
+        return state.isRejected(source, item);
+    }
+
+    /**
+     * Storage-backed overload for the session: reads the current policy and track state.
+     * Call off the main thread; both reads are plain SQLite queries.
+     */
+    public static boolean isRefusedFallback(Context context, SpotifyTrack track,
+                                            LyricsDocument doc) {
+        if (context == null || doc == null) return false;
+        try {
+            String bare = CatalogSource.bareTrackId(track == null ? "" : track.uri);
+            return isRefusedFallback(CatalogPolicy.read(context),
+                    CatalogStore.state(context, bare), bare, doc);
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /** Commits a terminal provider failure, classified into a durable or transient outcome. */

@@ -104,7 +104,18 @@ public final class CatalogStore {
     public static CatalogState state(Context context, String trackId) {
         if (context == null || trackId == null || trackId.isEmpty()) return CatalogState.empty(trackId);
         try {
-            return readState(helper(context).getReadableDatabase(), trackId);
+            SQLiteDatabase db = helper(context).getReadableDatabase();
+            // F10: one read transaction across every table. In WAL mode this snapshot cannot
+            // interleave with a concurrent commit, so a selection always references
+            // candidates from the same snapshot instead of a mix that never existed.
+            db.beginTransaction();
+            try {
+                CatalogState state = readState(db, trackId);
+                db.setTransactionSuccessful();
+                return state;
+            } finally {
+                db.endTransaction();
+            }
         } catch (Throwable t) {
             Diagnostics.warn("CatalogStore", "state", t);
             return CatalogState.empty(trackId);

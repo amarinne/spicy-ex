@@ -7,7 +7,7 @@ import android.widget.TextView;
 
 import com.eza.spicyex.References;
 import com.eza.spicyex.lyrics.AppliedLine;
-import com.eza.spicyex.lyrics.SpicyTextDetection;
+import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 
 import java.util.Locale;
 
@@ -48,6 +48,10 @@ final class NativeLyricsUtils {
         float scaledDensity = activity == null ? 1f : activity.getResources().getDisplayMetrics().scaledDensity;
         return sp * scaledDensity;
     }
+
+    /** Gap between a floating control and the screen edge it hugs: the Follow and skip chips, and
+     *  the top controls, so they all line up on the same edge. */
+    static final int EDGE_BUTTON_MARGIN_DP = 16;
 
     static int sideSystemPadding(Context context) {
         boolean landscape = false;

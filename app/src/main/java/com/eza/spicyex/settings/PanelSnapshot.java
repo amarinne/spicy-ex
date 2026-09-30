@@ -16,23 +16,15 @@ import java.util.Map;
  */
 public final class PanelSnapshot {
     private final Map<String, Object> values;
-    private final boolean translationAvailable;
-    private final boolean transliterationAvailable;
     private final boolean languageModelReady;
-    private final boolean appleFontAvailable;
     private final boolean animatedBackgroundAvailable;
     private final boolean spicySourceEnabled;
-    private final boolean aiOffered;
 
     private PanelSnapshot(Builder builder) {
         this.values = Collections.unmodifiableMap(new HashMap<>(builder.values));
-        this.translationAvailable = builder.translationAvailable;
-        this.transliterationAvailable = builder.transliterationAvailable;
         this.languageModelReady = builder.languageModelReady;
-        this.appleFontAvailable = builder.appleFontAvailable;
         this.animatedBackgroundAvailable = builder.animatedBackgroundAvailable;
         this.spicySourceEnabled = builder.spicySourceEnabled;
-        this.aiOffered = builder.aiOffered;
     }
 
     /** Coerced value for a setting; missing entries read as the declared default. */
@@ -48,20 +40,8 @@ public final class PanelSnapshot {
         return Boolean.TRUE.equals(get(Settings.AI_ENABLED));
     }
 
-    public boolean translationAvailable() {
-        return translationAvailable;
-    }
-
-    public boolean transliterationAvailable() {
-        return transliterationAvailable;
-    }
-
     public boolean languageModelReady() {
         return languageModelReady;
-    }
-
-    public boolean appleFontAvailable() {
-        return appleFontAvailable;
     }
 
     public boolean animatedBackgroundAvailable() {
@@ -72,47 +52,23 @@ public final class PanelSnapshot {
         return spicySourceEnabled;
     }
 
-    /** Whether the AI family is offered at all (Full-only gate, independent of the master switch). */
-    public boolean aiOffered() {
-        return aiOffered;
-    }
-
     public static Builder builder() {
         return new Builder();
     }
 
     public static final class Builder {
         private final Map<String, Object> values = new HashMap<>();
-        private boolean translationAvailable;
-        private boolean transliterationAvailable;
         private boolean languageModelReady;
-        private boolean appleFontAvailable;
         private boolean animatedBackgroundAvailable;
         private boolean spicySourceEnabled;
-        private boolean aiOffered;
 
         public Builder put(Settings.Setting<?> setting, Object value) {
             values.put(setting.key, value);
             return this;
         }
 
-        public Builder translationAvailable(boolean value) {
-            translationAvailable = value;
-            return this;
-        }
-
-        public Builder transliterationAvailable(boolean value) {
-            transliterationAvailable = value;
-            return this;
-        }
-
         public Builder languageModelReady(boolean value) {
             languageModelReady = value;
-            return this;
-        }
-
-        public Builder appleFontAvailable(boolean value) {
-            appleFontAvailable = value;
             return this;
         }
 
@@ -126,19 +82,10 @@ public final class PanelSnapshot {
             return this;
         }
 
-        public Builder aiOffered(boolean value) {
-            aiOffered = value;
-            return this;
-        }
-
         /** All capabilities on: the model-installed, modern-device baseline tests start from. */
         public Builder allCapabilities() {
-            translationAvailable = true;
-            transliterationAvailable = true;
             languageModelReady = true;
-            appleFontAvailable = true;
             animatedBackgroundAvailable = true;
-            aiOffered = true;
             return this;
         }
 

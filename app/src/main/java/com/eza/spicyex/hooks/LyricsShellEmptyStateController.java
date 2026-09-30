@@ -121,7 +121,7 @@ final class LyricsShellEmptyStateController {
     void showInstrumental(LinearLayout lyricsColumn) {
         ++stateToken;
         lyricsColumn.removeAllViews();
-        com.eza.spicyex.SettingsUiStrings strings = com.eza.spicyex.UiLanguage.strings(activity,
+        com.eza.spicyex.ui.SettingsUiStrings strings = com.eza.spicyex.ui.UiLanguage.strings(activity,
                 config.get(Settings.UI_LANGUAGE));
 
         LinearLayout box = new LinearLayout(activity);

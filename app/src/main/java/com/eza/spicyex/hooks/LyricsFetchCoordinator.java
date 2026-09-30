@@ -10,11 +10,11 @@ import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.LyricsDocument;
-import com.eza.spicyex.lyrics.LyricsDocumentProcessor;
-import com.eza.spicyex.lyrics.LyricsParser;
-import com.eza.spicyex.lyrics.LyricsRepository;
-import com.eza.spicyex.lyrics.NativeLyricsSource;
-import com.eza.spicyex.lyrics.SpicyManualTokenStore;
+import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.providers.LyricsParser;
+import com.eza.spicyex.lyrics.providers.LyricsRepository;
+import com.eza.spicyex.lyrics.providers.NativeLyricsSource;
+import com.eza.spicyex.lyrics.providers.SpicyManualTokenStore;
 import com.eza.spicyex.lyrics.catalog.CatalogRequestIdentity;
 
 import java.util.ArrayList;
@@ -277,7 +277,10 @@ final class LyricsFetchCoordinator {
                 Diagnostics.context("result", "error"));
         List<NativeSpicyLyricsHook.LyricsResultCallback> callbacks;
         synchronized (inFlightLock) {
-            if (inFlight.remove(operation.key) != operation) return;
+            // Identity before removal: a replacement registered under the same key after an
+            // invalidate must survive this stale error. Mirrors the deliverSuccess guard.
+            if (inFlight.get(operation.key) != operation) return;
+            inFlight.remove(operation.key);
             if (operation.expiry != null) operation.expiry.cancel(false);
             callbacks = new ArrayList<>(operation.callbacks);
             operation.callbacks.clear();
