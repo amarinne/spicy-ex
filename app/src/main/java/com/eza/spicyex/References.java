@@ -100,7 +100,7 @@ public class References {
                     Map<String, String> md = (Map<String, String>) XpReflect.callMethod(track, "metadata");
 
                     String title = md.get("title");
-                    String artist = md.get("artist_name");
+                    String artist = joinArtistNames(md.get("artist_name"), md);
                     String album = md.get("album_title");
                     String color = md.get("extracted_color");
                     String imageId = md.get("image_large_url");
@@ -153,6 +153,41 @@ public class References {
     }
 
     private static long previousMs;
+    /**
+     * Full artist credit line. Spotify's player metadata carries the main artist in
+     * "artist_name" and any further credited artists in 1-based indexed keys
+     * ("artist_name:1", "artist_name:2", ...); Spotify's own client iterates the same
+     * keys when it builds the artist list. Joined with ", " to match the Now Playing
+     * credit line; downstream matching already splits on commas.
+     */
+    static String joinArtistNames(String primary, Map<String, String> md) {
+        List<String> names = new ArrayList<>();
+        if (primary != null && !primary.trim().isEmpty()) names.add(primary.trim());
+        if (md != null) {
+            for (int index = 1; index <= MAX_INDEXED_ARTISTS; index++) {
+                String extra = md.get("artist_name:" + index);
+                if (extra == null || extra.trim().isEmpty()) break;
+                String name = extra.trim();
+                boolean duplicate = false;
+                for (String known : names) {
+                    if (known.equalsIgnoreCase(name)) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate) names.add(name);
+            }
+        }
+        if (names.isEmpty()) return primary;
+        StringBuilder joined = new StringBuilder();
+        for (int i = 0; i < names.size(); i++) {
+            if (i > 0) joined.append(", ");
+            joined.append(names.get(i));
+        }
+        return joined.toString();
+    }
+
+    private static final int MAX_INDEXED_ARTISTS = 32;
     public static long getCurrentPlaybackPosition(DexKitBridge bridge, ClassLoader classLoader) {
         Object wrapper = playerStateWrapperStrong != null
                 ? playerStateWrapperStrong
