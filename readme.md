@@ -1,7 +1,8 @@
 <div align="center">
 
 # Spicy EX
-Spicy Lyrics for Spotify, as an Xposed/LSPosed module.<br>
+Animated synced lyrics inside Spotify, as an Xposed/LSPosed module.<br>
+Unofficial community project — not affiliated with Spotify or Spicy Lyrics.<br>
 For the desktop version, check out [spicy-lyrics](https://github.com/amarinne/spicy-lyrics).
 Xiaomi HyperOS 3 lockscreen/AOD integration: [HyperGlow](https://github.com/amarinne/hyperglow)
 
