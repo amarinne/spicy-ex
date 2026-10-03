@@ -238,6 +238,8 @@ final class TrackInfoReadoutController {
     private final ImageButton topOverlayButton;
     private final FrameLayout sideBox;
     private boolean pipPresentation;
+    /** Album-art choice for this PiP presentation; false keeps every shape lyrics-only. */
+    private boolean pipAlbumArt;
     private final ArtTouchFrame sideArtFrame;
     private final ImageView sideArt;
     private final View sideOverlayScrim;
@@ -890,9 +892,9 @@ final class TrackInfoReadoutController {
      *  {@link Settings#TRACK_INFO_SHOW_TITLE}/{@code _ARTIST}/{@code _ALBUM} - independent of
      *  position/size, so hiding a field doesn't need its own layout mode. */
     private void applyFieldVisibility() {
-        boolean showTitle = readBool(Settings.TRACK_INFO_SHOW_TITLE);
-        boolean showArtist = readBool(Settings.TRACK_INFO_SHOW_ARTIST);
-        boolean showAlbum = readBool(Settings.TRACK_INFO_SHOW_ALBUM);
+        boolean showTitle = !pipPresentation && readBool(Settings.TRACK_INFO_SHOW_TITLE);
+        boolean showArtist = !pipPresentation && readBool(Settings.TRACK_INFO_SHOW_ARTIST);
+        boolean showAlbum = !pipPresentation && readBool(Settings.TRACK_INFO_SHOW_ALBUM);
         int titleVis = showTitle ? View.VISIBLE : View.GONE;
         int artistVis = showArtist ? View.VISIBLE : View.GONE;
         int albumVis = showAlbum ? View.VISIBLE : View.GONE;
@@ -1027,12 +1029,39 @@ final class TrackInfoReadoutController {
         if (headerTitle != null) headerTitle.setVisibility(header ? View.GONE : View.VISIBLE);
     }
 
-    /** PiP shows only lyrics, regardless of the stored track-info position - except the
-     *  landscape window, which keeps the artwork and song info column beside the lyrics so it is
-     *  not one very wide strip of text. */
+    /** PiP is lyrics-only by default. The optional artwork readout never includes metadata. */
     void setPipPresentation() {
+        setPipPresentation(pipAlbumArtEnabled());
+    }
+
+    /** PiP presentation with an explicit album-art choice; the stored flag is read when the
+     *  no-arg overload above is used. Follows the same lyrics-only default. */
+    void setPipPresentation(boolean albumArt) {
         pipPresentation = true;
+        pipAlbumArt = albumArt;
+        applyFieldVisibility();
         setMode("Off");
+    }
+
+    /** Whether the PiP art column may show: the two-column layout plus the album-art toggle.
+     *  Pure, unit-tested. Off is lyrics-only with no metadata and no blank column; on restores
+     *  the landscape artwork column. Portrait uses the existing top artwork readout. */
+    static boolean pipColumnAllowed(boolean twoColumn, boolean albumArt) {
+        return twoColumn && albumArt;
+    }
+
+    /** PiP artwork uses the column or top readout according to its window shape. */
+    static String pipEffectiveMode(boolean twoColumn, boolean albumArt) {
+        return albumArt ? "Top" : "Off";
+    }
+
+    /** Live read of {@link Settings#PIP_ALBUM_ART}; false when unreadable, matching its default. */
+    private boolean pipAlbumArtEnabled() {
+        try {
+            return Boolean.TRUE.equals(config.get(Settings.PIP_ALBUM_ART));
+        } catch (Throwable ignored) {
+            return Settings.PIP_ALBUM_ART.defaultValue;
+        }
     }
 
     /** Re-reads settings (call at mount and from the preference listener). */
@@ -1055,6 +1084,7 @@ final class TrackInfoReadoutController {
         applyFieldVisibility();
         panelMediaMode = readPanelMediaMode(config);
         if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) hideOverlays();
+        if (pipPresentation) pipAlbumArt = pipAlbumArtEnabled();
         setMode(currentMode());
     }
 
@@ -1067,7 +1097,7 @@ final class TrackInfoReadoutController {
     }
 
     private void setMode(String mode) {
-        if (pipPresentation) mode = twoColumn ? "Top" : "Off";
+        if (pipPresentation) mode = pipEffectiveMode(twoColumn, pipAlbumArt);
         if (mode == null) mode = "Off";
         // Two-column's left column is this readout's column placement: it shows for every stored
         // position except Off, and hiding it collapses that column (the lyrics take the width).

@@ -355,6 +355,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     void setPipPresentation(int screenHeightPx, int cropTopPx) {
+        setPipPresentation(screenHeightPx, cropTopPx, pipAlbumArtEnabled());
+    }
+
+    /** PiP presentation with an explicit album-art choice. Off keeps every PiP shape
+     *  lyrics-only (no metadata, no blank column); on restores the former landscape
+     *  artwork column. Portrait uses the top artwork readout when enabled. */
+    void setPipPresentation(int screenHeightPx, int cropTopPx, boolean albumArt) {
         boolean first = !pipPresentation;
         pipPresentation = true;
         pipScreenHeightPx = screenHeightPx;
@@ -363,7 +370,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // position must not become it.
         watchContentScreenTop(false);
         if (first) addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> post(this::fitPipLyrics));
-        if (trackInfoController != null) trackInfoController.setPipPresentation();
+        if (trackInfoController != null) trackInfoController.setPipPresentation(albumArt);
         if (chromeHeader != null) {
             chromeHeader.animate().cancel();
             chromeHeader.setVisibility(View.GONE);
@@ -375,9 +382,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     /** The landscape window crops the status-bar room off the top of the layout, and the column's
      *  full-screen margins (made for a status bar and a nav bar) assumed portrait's insets: the
-     *  cover and song info are centred in what the window really shows, with even margins. */
+     *  cover and song info are centred in what the window really shows, with even margins.
+     *  Stands down while the PiP album-art toggle is off (lyrics-only leaves no column to fit). */
     private void fitPipArtColumn() {
-        if (!twoColumn || landscapeLeftColumn == null
+        if (!twoColumn || !pipAlbumArtEnabled() || landscapeLeftColumn == null
                 || !(landscapeLeftColumn.getLayoutParams() instanceof LinearLayout.LayoutParams)) return;
         LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) landscapeLeftColumn.getLayoutParams();
         int top = pipCropTopPx + dp(24);
@@ -499,6 +507,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         ambientController.applySettings(renderConfig.backgroundStyle, renderConfig.forceDarkBackground,
                 renderConfig.extraDarkBackground);
         if (trackInfoController != null) trackInfoController.onPreferenceChanged();
+        if (pipPresentation) fitPipArtColumn();
         if (jumpToCurrentController != null) jumpToCurrentController.onPreferenceChanged();
         if (skipGapController != null) skipGapController.onPreferenceChanged();
         if (chromeViews != null) {
@@ -818,6 +827,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             case "meaning-toggle": onTranslationTapped(); return true;
             case "ai-sound": openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind.SOUND); return true;
             case "ai-meaning": openAiLayerPanel(com.eza.spicyex.lyrics.session.LayerKind.MEANING); return true;
+            case "fling-up":
+            case "fling-down":
+                com.eza.spicyex.lyrics.ElasticScrollView scroll = elasticScroll();
+                if (scroll == null || document == null) return false;
+                followState.holdUntil(SystemClock.elapsedRealtime() + 60_000);
+                followState.markManualScroll();
+                scroll.fling(dp("fling-up".equals(action) ? -8000 : 8000));
+                return true;
             case "follow": resumeFollowCurrentLine(); return true;
             case "skip-gap": skipCurrentGap(); return true;
             case "sync-reset":
@@ -841,6 +858,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             report.number("density", getResources().getDisplayMetrics().density);
             report.text("orientation", isLandscape() ? "landscape" : "portrait");
             report.flag("two_column", twoColumn);
+            report.flag("follow_held", followState.isHoldingNow());
+            report.number("scroll_y", lyricsScroll == null ? 0 : lyricsScroll.getScrollY());
+            if (document != null && document.appliedLines != null && scrollController != null) {
+                int active = followState.activeIndex();
+                if (active >= 0 && active < document.appliedLines.size()) {
+                    View row = rowMountController.attachedRowView(document.appliedLines.get(active));
+                    if (row != null && row.getHeight() > 0) report.number("follow_target",
+                            Math.max(0, scrollController.centeredScrollTarget(row, dp(56), appleStyle())));
+                }
+            }
             report.flag("editor_open", layoutEditorHandle != null);
             report.number("chrome_alpha", chromeHeader == null ? 0f : chromeHeader.getAlpha());
             report.rect("artwork", LyricsLayoutEditController.screenRectOf(agentArtworkFrame()));
@@ -1136,6 +1163,26 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return widthDp >= TWO_COLUMN_MIN_WIDTH_DP && aspect >= TWO_COLUMN_SQUARE_ASPECT_MIN;
     }
 
+    /**
+     * PiP two-column gate: the landscape PiP window keeps the artwork + metadata column only
+     * when the adaptive landscape layout and the PiP album-art toggle are both on. Portrait
+     * PiP uses its top readout instead. Fullscreen never reads this;
+     * it keeps using {@link #twoColumnEngaged}. Pure, unit-tested.
+     */
+    static boolean pipTwoColumnEngaged(int pipLayout, boolean adaptive, boolean albumArt) {
+        if (pipLayout != PIP_LAYOUT_LANDSCAPE) return false;
+        return adaptive && albumArt;
+    }
+
+    /** Live read of {@link Settings#PIP_ALBUM_ART}; false when unreadable, matching its default. */
+    private boolean pipAlbumArtEnabled() {
+        try {
+            return Boolean.TRUE.equals(config.get(Settings.PIP_ALBUM_ART));
+        } catch (Throwable ignored) {
+            return Settings.PIP_ALBUM_ART.defaultValue;
+        }
+    }
+
     private LinearLayout rowContainer() {
         return landscapeRightColumn != null ? landscapeRightColumn : contentColumn;
     }
@@ -1374,6 +1421,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // Last, so that nothing earlier in the frame (a cascade ending resets its rows' scale)
         // leaves a row at the wrong size for the frame that is drawn.
         applyEdgeRowScale();
+        if (this.edgeScaleSettling && !this.frameScheduler.isContinuous()) {
+            visuallySettledFrames = 0;
+            handler.removeCallbacks(idleFrameProbe);
+            this.frameScheduler.setContinuous(true);
+            this.frameScheduler.requestFrame();
+        }
     });
 
     /** Not in a picture-in-picture host. */
@@ -1398,15 +1451,27 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         this.romanSpinner = new ChipSpinnerDrawable(activity);
         this.translationSpinner = new ChipSpinnerDrawable(activity);
         this.toggleSpinnerController = new LyricsToggleSpinnerController(romanSpinner, translationSpinner);
-        this.playbackClock = new LyricsPlaybackClock(host::readBestMeasuredProgressMs);
+        this.playbackClock = new LyricsPlaybackClock(new LyricsPlaybackClock.Measurer() {
+            @Override public long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {
+                return host.readBestMeasuredProgressMs(track, playing);
+            }
+
+            @Override public double readEffectiveRate(boolean playing) {
+                return host.readEffectivePlaybackRate(playing);
+            }
+        });
         this.config = SpotifyPlusConfig.from(activity);
         // Construction-time layout decision: rotation remounts the shell, and the adaptive
         // toggle takes effect on the next open (same contract as PR9's landscape layout).
+        // A PiP landscape window gets the two-column art column only when the album-art
+        // toggle is also on; off keeps every PiP shape lyrics-only. Fullscreen is unaffected.
         android.content.res.Configuration screen = activity.getResources().getConfiguration();
         // A PiP host is still full screen (usually portrait) when the shell is built, so the
         // window's shape decides there instead of the host's configuration.
         this.twoColumn = pipLayout == PIP_LAYOUT_LANDSCAPE
-                ? Boolean.TRUE.equals(config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT))
+                ? pipTwoColumnEngaged(pipLayout,
+                        Boolean.TRUE.equals(config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT)),
+                        pipAlbumArtEnabled())
                 : pipLayout == PIP_LAYOUT_NONE && twoColumnEngaged(screen.screenWidthDp,
                         screen.screenHeightDp, config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT));
         this.aiSettings = new AiSettings(activity);
@@ -2142,6 +2207,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 // continuous mode while either is live freezes the motion part-way.
                 || scrollSpring != null
                 || scrollInProgress
+                || edgeScaleSettling
                 || rendererPending;
         if (continuous) {
             visuallySettledFrames = 0;
@@ -3766,9 +3832,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void animatePress(View row, float to, long durationMs,
                               android.animation.TimeInterpolator interpolator) {
+        Float from = pressScales.get(row);
         android.animation.ValueAnimator running = pressAnimators.remove(row);
         if (running != null) running.cancel();
-        Float from = pressScales.get(row);
         android.animation.ValueAnimator animator = android.animation.ValueAnimator.ofFloat(
                 from == null ? 1f : from, to);
         animator.setDuration(durationMs);
@@ -3779,7 +3845,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         });
         animator.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override public void onAnimationEnd(android.animation.Animator animation) {
-                if (pressAnimators.get(row) == animation) pressAnimators.remove(row);
+                if (pressAnimators.get(row) != animation) return;
+                pressAnimators.remove(row);
                 if (to >= 1f) pressScales.remove(row);
                 applyEdgeRowScale(0f);
             }
@@ -4499,16 +4566,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         long lyricPos = pos >= 0 ? adjustedLyricPositionMs(pos) : pos;
         int index = lyricPos >= 0 ? LyricTimeline.findPrimaryActiveRow(document.appliedLines, lyricPos) : followState.activeIndex();
         if (index < 0 || index >= document.appliedLines.size()) return;
+        // Tap Follow snaps straight back even mid-fling: kill native momentum first so the
+        // posted scroll below is not fought (or cleared) by a still-coasting OverScroller.
+        com.eza.spicyex.lyrics.ElasticScrollView elastic = elasticScroll();
+        if (elastic != null) elastic.stopScrolling();
+        else if (lyricsScroll != null) lyricsScroll.smoothScrollTo(lyricsScroll.getScrollX(), lyricsScroll.getScrollY());
+        scrollSpring = null;
+        handler.removeCallbacks(scrollSettleRunnable);
+        scrollSettleScheduled = false;
+        scrollInProgress = false;
+        clearScrollSubpixel();
+        clearRowCascade();
         followState.clearHold();
         if (flushPendingSourceSwap()) return;
-        returnToCurrentPending = true;
-        // Deliberately not resetActive(): that sets the active index to the "nothing has ever been
-        // active" sentinel, which shouldScrollInstantly() reads as a fresh document and answers by
-        // snapping. Tapping the follow chip then teleported the column instead of travelling back
-        // to it. Keeping the real previous index lets the jump run through the scroll spring, whose
-        // travel is capped so even a jump from the far end of the song arrives legibly.
+        returnToCurrentPending = false;
+        // Deliberately not resetActive(): the snap below requests instant placement directly,
+        // so it lands on the current lyric even when the active index did not change.
         renderWindowForActive(index);
-        setActiveLine(index, Math.max(0, lyricPos), track);
+        setActiveLine(index, Math.max(0, lyricPos), track, true);
         frameRenderer.applySynced(document, rowMountController.mountedIndices(), mountedRowsHost,
                 renderConfig, Math.max(0, lyricPos), index, 1f / 60f, false);
         updateJumpToCurrentVisibility();
@@ -5270,6 +5345,43 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean show = document != null && followState.activeIndex() >= 0 && followState.isHoldingNow();
         jumpToCurrentController.update(show && !pipPresentation);
 
+        // Adaptive arrow direction from the exact desired scroll target vs the live viewport,
+        // not an active-index guess. Runs every frame (including while coasting on a spring),
+        // since updateState() drives this method while scrollInProgress/scrollSpring is live.
+        try {
+            if (jumpToCurrentController != null && document != null && document.appliedLines != null
+                    && scrollController != null && lyricsScroll != null && rowMountController != null) {
+                int active = followState.activeIndex();
+                if (active >= 0 && active < document.appliedLines.size()) {
+                    View row = rowMountController.attachedRowView(document.appliedLines.get(active));
+                    if (row != null && row.getHeight() > 0) {
+                        int target = Math.max(0, scrollController.centeredScrollTarget(
+                                row, dp(56), appleStyle()));
+                        jumpToCurrentController.setPointingUp(
+                                LyricsJumpToCurrentController.shouldPointUp(
+                                        lyricsScroll.getScrollY(), target));
+                    } else {
+                        // The active row can be outside the virtual window during a long fling.
+                        int nearestIndex = -1;
+                        long nearestDistance = Long.MAX_VALUE;
+                        for (int mounted : rowMountController.mountedIndices()) {
+                            View mountedRow = rowMountController.attachedRowView(document.appliedLines.get(mounted));
+                            if (mountedRow == null || mountedRow.getHeight() <= 0) continue;
+                            long distance = Math.abs((long) scrollController.centeredScrollTarget(
+                                    mountedRow, dp(56), appleStyle()) - lyricsScroll.getScrollY());
+                            if (distance < nearestDistance) {
+                                nearestDistance = distance;
+                                nearestIndex = mounted;
+                            }
+                        }
+                        if (nearestIndex >= 0) jumpToCurrentController.setPointingUp(active < nearestIndex);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // Direction is best-effort; visibility above already applied.
+        }
+
         // The countdown starts once the list is at rest: not while it is still gliding or
         // springing back from an end, and not while paused (it starts over on resume rather
         // than jumping ahead by the time spent paused).
@@ -5314,7 +5426,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 && target.gapStartMs == skipAckGapStartMs;
         if ("Auto".equals(mode)) {
             skipGapController.hide();
-            if (target != null && !acked && playingNow && host.canSeek()) performSkipSeek(target, uri);
+            if (target != null && !acked && playingNow && host.canSeek()) performSkipSeek(target, uri, false);
             return;
         }
         // host.canSeek() reflects the *current* PlaybackState, which can flip moment to moment
@@ -5327,22 +5439,35 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
-    /** On-demand chip tap: seek past the currently active gap, if it is still there. */
+    /** On-demand chip tap: seek past the currently active gap, if it is still there.
+     *  TRAILING is user-initiated ("Next track"), so it always dispatches skip-next (works
+     *  paused and under repeat-one); automatic outro skipping keeps the end-of-track seek. */
     private void skipCurrentGap() {
         if (document == null || document.appliedLines == null || lastSkipSeenPosMs < 0) return;
         String uri = lastUri;
         SkipGapPolicy.SkipTarget target =
                 SkipGapPolicy.skipTarget(document.appliedLines, lastSkipSeenPosMs);
         if (target == null || target.gapStartMs == skipAckGapStartMs) return;
-        performSkipSeek(target, uri);
+        performSkipSeek(target, uri, true);
     }
 
-    private void performSkipSeek(SkipGapPolicy.SkipTarget target, String uri) {
+    private void performSkipSeek(SkipGapPolicy.SkipTarget target, String uri, boolean onDemand) {
         // TRAILING gaps mean "next track". Seeking to the last moment lets the song end on its own,
         // so the next one follows as it would have anyway: on a free account a skip-next counts
         // against the hourly skip limit, and once that is spent Spotify stops offering it at all -
         // the outro then could not be skipped. Skip-next only where seeking is unavailable.
+        // On-demand taps always take the skip-next path: a seek while paused leaves playback
+        // paused at the track end, and under repeat-one it loops the same track instead of
+        // advancing, so neither satisfies an explicit "Next track" request.
         if (target.kind == SkipGapPolicy.GapKind.TRAILING) {
+            if (onDemand) {
+                if (host.skipToNextTrack()) {
+                    skipAckUri = uri;
+                    skipAckGapStartMs = target.gapStartMs;
+                }
+                skipGapController.hide();
+                return;
+            }
             SpotifyTrack track = host.getCurrentTrackSafely();
             long end = track == null ? 0 : track.duration;
             boolean ended = end > 1000 && host.canSeek() && host.seekSpotifyTo(end - 250);

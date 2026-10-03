@@ -24,6 +24,7 @@
     <string name="settings_label_lyric_auto_resume_follow_delay_seconds">Auto-resume follow delay</string>
     <string name="settings_label_lyric_follow_chip_position">Follow-lyrics chip position</string>
     <string name="settings_label_lyric_follow_chip_style">Follow-lyrics chip style</string>
+    <string name="settings_label_lyric_follow_chip_icon">Follow-lyrics chip icon</string>
     <string name="settings_label_lyric_skip_chip_position">Skip chip position</string>
     <string name="settings_label_lyric_skip_chip_style">Skip chip style</string>
     <string name="settings_label_lyric_auto_skip_intro_outro">Auto-skip intro/outro</string>
@@ -498,6 +499,9 @@
     <string name="settings_label_lyrics_show_fullscreen_back_button">Show back button</string>
     <string name="settings_option_icon">Icon</string>
     <string name="settings_option_label">Label</string>
+    <string name="settings_option_adaptive_arrow">Adaptive arrow</string>
+    <string name="settings_option_static_arrow">Static arrow</string>
+    <string name="settings_option_waveform">Waveform</string>
     <string name="settings_option_left">Left</string>
     <string name="settings_option_center">Center</string>
     <string name="settings_option_right">Right</string>
@@ -578,4 +582,6 @@
     <string name="settings_option_lyrics_pip_shape_wide">Wide (16:9)</string>
     <string name="settings_label_lyrics_pip_enabled">Show picture-in-picture button</string>
     <string name="settings_search_lyrics_pip_enabled">pip button, minimize lyrics, floating lyrics</string>
+    <string name="settings_label_lyrics_pip_album_art">Show album art</string>
+    <string name="settings_search_lyrics_pip_album_art">pip album art, cover, artwork, thumbnail</string>
 </resources>

@@ -179,6 +179,11 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         return playbackBridge.readBestMeasuredProgressMs(track, playing);
     }
 
+    @Override
+    public double readEffectivePlaybackRate(boolean playing) {
+        return playbackBridge.readEffectivePlaybackRate(playing);
+    }
+
     public boolean isPlayerActuallyPlaying() {
         return playbackBridge.isPlayerActuallyPlaying();
     }

@@ -41,6 +41,11 @@ final class LyricsJumpToCurrentController {
     private ValueAnimator widthAnimator;
     private String style = Settings.FOLLOW_CHIP_STYLE.defaultValue;
     private String position = Settings.FOLLOW_CHIP_POSITION.defaultValue;
+    private String icon = Settings.FOLLOW_CHIP_ICON.defaultValue;
+    /** Adaptive arrow direction: false = down (viewport above target), true = up (below). */
+    private boolean pointingUp;
+    /** Whether the chip is currently showing the icon alone (vs the labelled pill). */
+    private boolean iconCollapsed;
     private boolean shown;
     private boolean editingForcedVisible;
     /** Latest real follow-state request, tracked even while the editor pins the preview visible. */
@@ -88,14 +93,63 @@ final class LyricsJumpToCurrentController {
         return controller;
     }
 
-    /** Re-applies the editor-owned style and horizontal anchor. */
+    /** Re-applies the editor-owned style, icon, and horizontal anchor. */
     void onPreferenceChanged() {
         String nextStyle = config == null ? null : config.get(Settings.FOLLOW_CHIP_STYLE);
         style = nextStyle == null ? Settings.FOLLOW_CHIP_STYLE.defaultValue : nextStyle;
         String nextPosition = config == null ? null : config.get(Settings.FOLLOW_CHIP_POSITION);
         position = nextPosition == null ? Settings.FOLLOW_CHIP_POSITION.defaultValue : nextPosition;
+        String nextIcon = config == null ? null : config.get(Settings.FOLLOW_CHIP_ICON);
+        icon = nextIcon == null ? Settings.FOLLOW_CHIP_ICON.defaultValue : nextIcon;
+        if (!isAdaptiveIcon(icon)) pointingUp = false;
         applyPosition();
         if (button.getVisibility() == View.VISIBLE) applyStyle(false);
+    }
+
+    /** Whether the chip shows the direction-following arrow (vs a fixed glyph). */
+    static boolean isAdaptiveIcon(String icon) {
+        return "Adaptive arrow".equals(icon);
+    }
+
+    static boolean isWaveformIcon(String icon) {
+        return "Waveform".equals(icon);
+    }
+
+    /**
+     * Which way the adaptive arrow points: down when the viewport sits above the current lyric
+     * target (the song is below), up when below it. Compares the exact desired scroll target
+     * against the live scroll position - not an active-index guess - so it stays right while
+     * coasting on a spring. Within 2px counts as above (down), matching the scroll snap below
+     * which a smaller delta jumps without animating.
+     */
+    static boolean shouldPointUp(int currentScrollY, int desiredScrollTarget) {
+        return currentScrollY > desiredScrollTarget + 2;
+    }
+
+    static String arrowGlyph(boolean pointingUp) {
+        return pointingUp ? "↑" : "↓";
+    }
+
+    /**
+     * Updates the adaptive arrow direction. No-op unless the icon is the adaptive arrow; the
+     * glyph refreshes in place without restarting the label-pill collapse timer.
+     */
+    void setPointingUp(boolean up) {
+        if (!isAdaptiveIcon(icon)) return;
+        if (pointingUp == up) return;
+        pointingUp = up;
+        if (button.getVisibility() != View.VISIBLE || isWaveformIcon(icon)) return;
+        refreshArrowGlyph();
+    }
+
+    private void refreshArrowGlyph() {
+        String arrow = arrowGlyph(pointingUp);
+        if (iconCollapsed) {
+            if (!arrow.equals(button.getText().toString())) button.setText(arrow);
+        } else {
+            String expanded = arrow + " " + followLabel;
+            if (!expanded.equals(button.getText().toString())) button.setText(expanded);
+        }
     }
 
     private void applyPosition() {
@@ -132,14 +186,29 @@ final class LyricsJumpToCurrentController {
 
     private void applyCollapsed(boolean collapsed) {
         cancelWidthAnimation();
-        button.setText(collapsed ? "" : followLabel);
+        iconCollapsed = collapsed;
         button.setContentDescription(followLabel);
-        waveIcon.setBounds(0, 0, dp(ICON_DP), dp(ICON_DP));
-        button.setCompoundDrawablesRelative(waveIcon, null, null, null);
-        button.setCompoundDrawablePadding(collapsed ? 0 : dp(8));
-        // With no text the glyph sits at the start edge, not centred: the padding centres it.
-        int iconInset = (dp(CHIP_HEIGHT_DP) - dp(ICON_DP)) / 2;
-        button.setPaddingRelative(collapsed ? iconInset : dp(16), 0, collapsed ? 0 : dp(18), 0);
+        if (isWaveformIcon(icon)) {
+            button.setText(collapsed ? "" : followLabel);
+            waveIcon.setBounds(0, 0, dp(ICON_DP), dp(ICON_DP));
+            button.setCompoundDrawablesRelative(waveIcon, null, null, null);
+            button.setCompoundDrawablePadding(collapsed ? 0 : dp(8));
+            // With no text the glyph sits at the start edge, not centred: the padding centres it.
+            int iconInset = (dp(CHIP_HEIGHT_DP) - dp(ICON_DP)) / 2;
+            button.setPaddingRelative(collapsed ? iconInset : dp(16), 0, collapsed ? 0 : dp(18), 0);
+        } else {
+            // Arrow modes reuse the old down glyph ("↓") as text; adaptive adds its "↑" pair.
+            button.setCompoundDrawablesRelative(null, null, null, null);
+            button.setCompoundDrawablePadding(0);
+            String arrow = arrowGlyph(isAdaptiveIcon(icon) && pointingUp);
+            if (collapsed) {
+                button.setText(arrow);
+                button.setPadding(0, 0, 0, 0);
+            } else {
+                button.setText(arrow + " " + followLabel);
+                button.setPadding(dp(16), 0, dp(16), 0);
+            }
+        }
         ViewGroup.LayoutParams lp = button.getLayoutParams();
         if (lp != null) {
             lp.width = collapsed ? dp(CHIP_HEIGHT_DP) : ViewGroup.LayoutParams.WRAP_CONTENT;

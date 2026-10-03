@@ -39,6 +39,7 @@ public class ElasticScrollView extends ScrollView {
     /** Finger travel withheld from ScrollView during this gesture. */
     private float withheld;
     private float lastRawY;
+    private int activePointerId = MotionEvent.INVALID_POINTER_ID;
     private float localMinusRaw;
     private boolean touching;
 
@@ -146,8 +147,12 @@ public class ElasticScrollView extends ScrollView {
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) captureCarry(ev);
         if (!elasticEnabled) return super.onInterceptTouchEvent(ev);
-        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) beginGesture(ev);
-        else lastRawY = ev.getRawY();
+        int action = ev.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) beginGesture(ev);
+        else if (action == MotionEvent.ACTION_POINTER_UP) onActivePointerUp(ev);
+        // Like ScrollView interception, POINTER_DOWN does not select the newest pointer here;
+        // onTouchEvent applies the newest-pointer rule. Just keep the active baseline current.
+        else lastRawY = activeRawY(ev);
         return super.onInterceptTouchEvent(ev);
     }
 
@@ -156,20 +161,29 @@ public class ElasticScrollView extends ScrollView {
         if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) captureCarry(ev);
         if (!elasticEnabled) return super.onTouchEvent(ev);
         int action = ev.getActionMasked();
-        float rawY = ev.getRawY();
         if (action == MotionEvent.ACTION_DOWN) {
             beginGesture(ev);
-        } else if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_POINTER_UP) {
-            // The other hand takes over: measure from where the finger now is, or its distance
-            // from the old one is read as one huge step (the list jumped, or the pull was lost).
-            lastRawY = rawY;
+        } else if (action == MotionEvent.ACTION_POINTER_DOWN) {
+            // The other hand takes over like ScrollView's newest-pointer rule: measure from
+            // where the finger now is, or its distance from the old one is read as one huge
+            // step (the list jumped, or the pull was lost).
+            onActivePointerDown(ev);
+        } else if (action == MotionEvent.ACTION_POINTER_UP) {
+            onActivePointerUp(ev);
         } else if (action == MotionEvent.ACTION_MOVE) {
-            float dy = rawY - lastRawY;
-            lastRawY = rawY;
+            float activeRaw = activeRawY(ev);
+            float dy = activeRaw - lastRawY;
+            lastRawY = activeRaw;
             trackPull(dy);
+        } else {
+            lastRawY = activeRawY(ev);
         }
         float originalY = ev.getY();
-        ev.setLocation(ev.getX(), rawY + localMinusRaw - withheld);
+        // setLocation pins pointer 0 and shifts every pointer by the same delta, so the
+        // compensated value must stay pointer-0 based: the active finger then reads as
+        // rawActive + localMinusRaw - withheld and gaps are preserved. Feeding active raw
+        // here would inject the inter-finger distance into ScrollView.
+        ev.setLocation(ev.getX(), compensatedPointerZeroY(ev.getRawY(), localMinusRaw, withheld));
         boolean handled;
         try {
             handled = super.onTouchEvent(ev);
@@ -191,10 +205,60 @@ public class ElasticScrollView extends ScrollView {
         springing = false;
         springVelocity = 0f;
         withheld = 0f;
+        activePointerId = ev.getPointerId(0);
         lastRawY = ev.getRawY();
         // Screen-space from here on: the translation below moves this view under the finger.
         localMinusRaw = ev.getY() - ev.getRawY();
         pull = inverseRubber(offset);
+    }
+
+    // minSdk 27 has no MotionEvent.getRawY(int), so another finger's screen Y is rebuilt from
+    // its local Y plus this event's raw/local gap, which is identical for every pointer.
+    static float rawForIndex(float yAtIndex, float rawAtZero, float yAtZero) {
+        return yAtIndex + rawAtZero - yAtZero;
+    }
+
+    // ScrollView hands the gesture to a surviving pointer when the active one lifts: index 1
+    // when index 0 leaves, otherwise index 0.
+    static int survivorIndexForPointerUp(int actionIndex, int pointerCount) {
+        if (pointerCount <= 1) return 0;
+        return actionIndex == 0 ? 1 : 0;
+    }
+
+    // Pointer-0 based event translation: setLocation(x, y) pins pointer 0 at (x, y) and moves
+    // every other pointer by the same delta, so this keeps every pointer gap intact while
+    // withholding the stretched part from ScrollView.
+    static float compensatedPointerZeroY(float rawAtZero, float localMinusRaw, float withheld) {
+        return rawAtZero + localMinusRaw - withheld;
+    }
+
+    private float rawYFor(MotionEvent ev, int pointerIndex) {
+        return rawForIndex(ev.getY(pointerIndex), ev.getRawY(), ev.getY(0));
+    }
+
+    private float activeRawY(MotionEvent ev) {
+        int index = ev.findPointerIndex(activePointerId);
+        if (index < 0) {
+            index = 0;
+            if (ev.getPointerCount() > 0) activePointerId = ev.getPointerId(0);
+        }
+        return rawYFor(ev, index);
+    }
+
+    private void onActivePointerDown(MotionEvent ev) {
+        int index = ev.getActionIndex();
+        activePointerId = ev.getPointerId(index);
+        lastRawY = rawYFor(ev, index);
+    }
+
+    private void onActivePointerUp(MotionEvent ev) {
+        int actionIndex = ev.getActionIndex();
+        if (ev.getPointerId(actionIndex) == activePointerId) {
+            int survivor = survivorIndexForPointerUp(actionIndex, ev.getPointerCount());
+            if (survivor >= ev.getPointerCount()) survivor = 0;
+            activePointerId = ev.getPointerId(survivor);
+        }
+        lastRawY = activeRawY(ev);
     }
 
     /** Splits a finger step between the stretch and ordinary scrolling. */
@@ -340,6 +404,31 @@ public class ElasticScrollView extends ScrollView {
             }
         }
         super.onOverScrolled(scrollX, scrollY, clampedX, clampedY);
+    }
+
+    /**
+     * Aborts every in-flight motion so the owner can snap elsewhere immediately (tap Follow
+     * while a fling is still coasting). Uses only public APIs: the native OverScroller is
+     * really aborted, not just our flags. Works with the rubber band on or off.
+     */
+    public void stopScrolling() {
+        // AOSP ScrollView.smoothScrollBy/To starts a new scroll when outside ANIMATED_SCROLL_GAP
+        // (250ms), replacing the running fling, and aborts the scroller plus jumps when called
+        // again inside the gap. Two successive zero-distance calls therefore deterministically
+        // cancel momentum with no movement.
+        super.smoothScrollBy(0, 0);
+        super.smoothScrollBy(0, 0);
+        flinging = false;
+        carryVelocity = 0f;
+        scrollVelocity = 0f;
+        lastScrollNanos = 0L;
+        springing = false;
+        springVelocity = 0f;
+        if (offset != 0f) setOffset(0f);
+        pull = 0f;
+        // Withheld offsets only exist to feed the ScrollView shifted coordinates mid-gesture;
+        // clearing them under a finger would jump the content, so only drop them when idle.
+        if (!touching) withheld = 0f;
     }
 
     private int endRange() {

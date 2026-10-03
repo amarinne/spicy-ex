@@ -22,6 +22,7 @@
     <string name="settings_label_lyric_auto_resume_follow_delay_seconds">自動追従再開までの遅延</string>
     <string name="settings_label_lyric_follow_chip_position">追従チップの位置</string>
     <string name="settings_label_lyric_follow_chip_style">追従チップのスタイル</string>
+    <string name="settings_label_lyric_follow_chip_icon">追従チップのアイコン</string>
     <string name="settings_label_lyric_skip_chip_position">スキップチップの位置</string>
     <string name="settings_label_lyric_skip_chip_style">スキップチップのスタイル</string>
     <string name="settings_label_lyric_auto_skip_intro_outro">自動イントロ/アウトロスキップ</string>
@@ -200,6 +201,9 @@
     <string name="settings_option_max">最大</string>
     <string name="settings_option_dots">ドット</string>
     <string name="settings_option_note">音符</string>
+    <string name="settings_option_adaptive_arrow">適応矢印</string>
+    <string name="settings_option_static_arrow">固定矢印</string>
+    <string name="settings_option_waveform">波形</string>
     <string name="settings_option_gradient_wash">グラデーションウォッシュ</string>
     <string name="settings_option_spotlight">スポットライト</string>
     <string name="settings_option_gradient">グラデーション</string>
