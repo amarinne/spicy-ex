@@ -24,6 +24,14 @@ public interface LyricsHost {
 
     long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing);
 
+    /**
+     * Effective playback rate for the lyrics clock: 0 while paused/buffering, the reported
+     * speed otherwise. A default so existing hosts keep working; the real hook overrides it.
+     */
+    default double readEffectivePlaybackRate(boolean playing) {
+        return playing ? 1d : 0d;
+    }
+
     boolean seekSpotifyTo(long positionMs);
 
     /** Whether a seek would currently be honored (ACTION_SEEK_TO advertised right now) - lets

@@ -265,10 +265,30 @@ final class PlaybackBridge {
         return controller;
     }
 
+    /**
+     * Effective playback rate for the shared lyrics clock: 0 while paused or buffering,
+     * Spotify's reported speed while genuinely advancing, 1 when no PlayerState is available.
+     * Never a pause signal itself: buffering still reads as playing via
+     * {@link #isPlayerActuallyPlaying}.
+     */
+    synchronized double readEffectivePlaybackRate(boolean playing) {
+        if (!playing) return 0d;
+        try {
+            Object state = References.playerState == null ? null : References.playerState.get();
+            if (state == null) return 1d;
+            if (state != parsedState) parseState(state);
+            if (parsedBasePos < 0) return 1d;
+            if (parsedBuffering) return 0d;
+            return parsedSpeed;
+        } catch (Throwable ignored) {
+            return 1d;
+        }
+    }
+
     /** The position being heard while Spotify plays locally: counted in the audio frames
      *  actually presented since the current PlayerState (AudioOutputLatency#heardPositionMs),
      *  or else what Spotify reports less the output path's latency. */
-    long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {
+    synchronized long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {
         reportedFromPlayerState = false;
         long reported = readReportedProgressMs(track, playing);
         if (reported <= 0 || !playing || outputLatency == null) return reported;
@@ -463,24 +483,41 @@ final class PlaybackBridge {
     }
 
     private void parseState(Object state) throws ReflectiveOperationException {
-        parsedState = state;
         Class<?> cls = state.getClass();
-        if (cls != stateAccessorOwner) {
-            stateAccessorOwner = cls;
-            positionAccessor = accessor(cls, "positionAsOfTimestamp");
-            timestampAccessor = accessor(cls, "timestamp");
-            speedAccessor = accessor(cls, "playbackSpeed");
-            bufferingAccessor = accessor(cls, "isBuffering");
+        Method pos = positionAccessor;
+        Method tsAccessor = timestampAccessor;
+        Method spAccessor = speedAccessor;
+        Method bufAccessor = bufferingAccessor;
+        boolean freshOwner = cls != stateAccessorOwner;
+        if (freshOwner) {
+            pos = accessor(cls, "positionAsOfTimestamp");
+            tsAccessor = accessor(cls, "timestamp");
+            spAccessor = accessor(cls, "playbackSpeed");
+            bufAccessor = accessor(cls, "isBuffering");
         }
-        parsedBasePos = positionAccessor == null ? -1
-                : (long) leadingNumber(positionAccessor.invoke(state), -1d);
-        Object ts = timestampAccessor == null ? null : timestampAccessor.invoke(state);
-        parsedTimestamp = ts instanceof Long ? (Long) ts : 0L;
+        long basePos = pos == null ? -1
+                : (long) leadingNumber(pos.invoke(state), -1d);
+        Object ts = tsAccessor == null ? null : tsAccessor.invoke(state);
+        long timestamp = ts instanceof Long ? (Long) ts : 0L;
         // Absent speed (older builds) reads as normal speed, not as a stop.
-        double speed = speedAccessor == null ? 1d : leadingNumber(speedAccessor.invoke(state), 1d);
-        parsedSpeed = speed > 0d && speed < 8d ? speed : 1d;
-        Object buffering = bufferingAccessor == null ? null : bufferingAccessor.invoke(state);
-        parsedBuffering = buffering instanceof Boolean && (Boolean) buffering;
+        double rawSpeed = spAccessor == null ? 1d : leadingNumber(spAccessor.invoke(state), 1d);
+        double speed = rawSpeed > 0d && rawSpeed < 8d ? rawSpeed : 1d;
+        Object buffering = bufAccessor == null ? null : bufAccessor.invoke(state);
+        boolean isBuffering = buffering instanceof Boolean && (Boolean) buffering;
+        // Publish only after every accessor succeeded: a failure retries on the next read
+        // instead of pinning the new identity with old or mixed values.
+        if (freshOwner) {
+            stateAccessorOwner = cls;
+            positionAccessor = pos;
+            timestampAccessor = tsAccessor;
+            speedAccessor = spAccessor;
+            bufferingAccessor = bufAccessor;
+        }
+        parsedState = state;
+        parsedBasePos = basePos;
+        parsedTimestamp = timestamp;
+        parsedSpeed = speed;
+        parsedBuffering = isBuffering;
     }
 
     private static Method accessor(Class<?> cls, String name) {
