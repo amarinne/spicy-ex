@@ -5187,9 +5187,20 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void performSkipSeek(SkipGapPolicy.SkipTarget target, String uri) {
-        // TRAILING gaps mean "next track" — skip immediately instead of seeking to near the end.
+        // TRAILING gaps mean "next track". Seeking to the last moment lets the song end on its own,
+        // so the next one follows as it would have anyway: on a free account a skip-next counts
+        // against the hourly skip limit, and once that is spent Spotify stops offering it at all -
+        // the outro then could not be skipped. Skip-next only where seeking is unavailable.
         if (target.kind == SkipGapPolicy.GapKind.TRAILING) {
-            host.skipToNextTrack();
+            SpotifyTrack track = host.getCurrentTrackSafely();
+            long end = track == null ? 0 : track.duration;
+            boolean ended = end > 1000 && host.canSeek() && host.seekSpotifyTo(end - 250);
+            if (ended) {
+                skipAckUri = uri;
+                skipAckGapStartMs = target.gapStartMs;
+            } else {
+                host.skipToNextTrack();
+            }
             skipGapController.hide();
             return;
         }

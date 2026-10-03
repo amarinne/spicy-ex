@@ -13,13 +13,10 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import com.eza.spicyex.xposed.XpHooks;
 import com.eza.spicyex.xposed.XpLog;
 import com.eza.spicyex.xposed.XpPackage;
-import com.eza.spicyex.xposed.XpReflect;
 import com.eza.spicyex.xposed.SpotifySymbolResolver;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindMethod;
@@ -30,8 +27,6 @@ import org.luckypray.dexkit.query.matchers.MethodMatcher;
 
 /** Bridges Spotify playback/session state into renderer-friendly progress and seek operations. */
 final class PlaybackBridge {
-    private static final Pattern DIGITS = Pattern.compile("\\d+");
-
     private volatile boolean isPlaying;
     private volatile long mediaPositionMs = -1;
     private volatile long mediaPositionUpdatedAtElapsedMs = 0;
@@ -39,7 +34,10 @@ final class PlaybackBridge {
     private volatile WeakReference<MediaSession> currentMediaSession = new WeakReference<>(null);
     private Method playerWrapperGetStateMethod;
 
+    private AudioOutputLatency outputLatency;
+
     void install(XpPackage lpparm, SpotifySymbolResolver symbols) {
+        outputLatency = new AudioOutputLatency(lpparm.classLoader());
         hookPlayerStateBridge(lpparm, symbols);
         installMediaSessionHook();
     }
@@ -267,7 +265,24 @@ final class PlaybackBridge {
         return controller;
     }
 
+    /** The position being heard while Spotify plays locally: counted in the audio frames
+     *  actually presented since the current PlayerState (AudioOutputLatency#heardPositionMs),
+     *  or else what Spotify reports less the output path's latency. */
     long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {
+        reportedFromPlayerState = false;
+        long reported = readReportedProgressMs(track, playing);
+        if (reported <= 0 || !playing || outputLatency == null) return reported;
+        if (reportedFromPlayerState && !parsedBuffering && Math.abs(parsedSpeed - 1d) < 0.001d) {
+            long heard = outputLatency.heardPositionMs(
+                    parsedState, parsedBasePos, parsedTimestamp, reported);
+            if (heard >= 0) return heard;
+        }
+        return Math.max(0, reported - outputLatency.latencyMs());
+    }
+
+    private boolean reportedFromPlayerState;
+
+    private long readReportedProgressMs(SpotifyTrack track, boolean playing) {
         long now = SystemClock.elapsedRealtime();
         long media = mediaPositionMs;
         if (media >= 0 && now < seekOverrideUntilElapsedMs) {
@@ -278,7 +293,10 @@ final class PlaybackBridge {
         }
 
         long playerStateProgress = readPlayerStateProgressMs(playing);
-        if (playerStateProgress >= 0) return playerStateProgress;
+        if (playerStateProgress >= 0) {
+            reportedFromPlayerState = parsedTimestamp > 0;
+            return playerStateProgress;
+        }
 
         if (track != null && track.position >= 0) {
             long wallNow = System.currentTimeMillis();
@@ -411,25 +429,88 @@ final class PlaybackBridge {
         seekOverrideUntilElapsedMs = SystemClock.elapsedRealtime() + 1800;
     }
 
+    /**
+     * Spotify's own PlayerState#position(now): positionAsOfTimestamp advanced by the wall-clock
+     * time since timestamp (System.currentTimeMillis, the clock Spotify itself passes) times
+     * playbackSpeed. A PlayerState is immutable, so the three values are read and parsed once
+     * per state object; the 33 ms resync only does the arithmetic. Speed is honoured as Spotify
+     * reports it (podcasts at other speeds), and a buffering state does not advance - the
+     * lyrics used to run on through a stall and jump back when playback resumed.
+     */
+    private Object parsedState;
+    private long parsedBasePos = -1;
+    private long parsedTimestamp;
+    private double parsedSpeed = 1d;
+    private boolean parsedBuffering;
+    private Class<?> stateAccessorOwner;
+    private Method positionAccessor;
+    private Method timestampAccessor;
+    private Method speedAccessor;
+    private Method bufferingAccessor;
+
     private long readPlayerStateProgressMs(boolean playing) {
         try {
             Object state = References.playerState == null ? null : References.playerState.get();
             if (state == null) return -1;
-            Object posOpt = XpReflect.callMethod(state, "positionAsOfTimestamp");
-            if (posOpt == null) return -1;
-            Matcher matcher = DIGITS.matcher(posOpt.toString());
-            if (!matcher.find()) return -1;
-            long basePos = Long.parseLong(matcher.group());
-            long timestamp = 0;
-            try {
-                Object rawTimestamp = XpReflect.callMethod(state, "timestamp");
-                if (rawTimestamp instanceof Long) timestamp = (Long) rawTimestamp;
-            } catch (Throwable ignored) {
-            }
-            if (!playing || timestamp <= 0) return Math.max(0, basePos);
-            return Math.max(0, basePos + (System.currentTimeMillis() - timestamp));
+            if (state != parsedState) parseState(state);
+            if (parsedBasePos < 0) return -1;
+            if (!playing || parsedBuffering || parsedTimestamp <= 0) return parsedBasePos;
+            long advanced = Math.round((System.currentTimeMillis() - parsedTimestamp) * parsedSpeed);
+            return Math.max(0, parsedBasePos + Math.max(0, advanced));
         } catch (Throwable ignored) {
             return -1;
+        }
+    }
+
+    private void parseState(Object state) throws ReflectiveOperationException {
+        parsedState = state;
+        Class<?> cls = state.getClass();
+        if (cls != stateAccessorOwner) {
+            stateAccessorOwner = cls;
+            positionAccessor = accessor(cls, "positionAsOfTimestamp");
+            timestampAccessor = accessor(cls, "timestamp");
+            speedAccessor = accessor(cls, "playbackSpeed");
+            bufferingAccessor = accessor(cls, "isBuffering");
+        }
+        parsedBasePos = positionAccessor == null ? -1
+                : (long) leadingNumber(positionAccessor.invoke(state), -1d);
+        Object ts = timestampAccessor == null ? null : timestampAccessor.invoke(state);
+        parsedTimestamp = ts instanceof Long ? (Long) ts : 0L;
+        // Absent speed (older builds) reads as normal speed, not as a stop.
+        double speed = speedAccessor == null ? 1d : leadingNumber(speedAccessor.invoke(state), 1d);
+        parsedSpeed = speed > 0d && speed < 8d ? speed : 1d;
+        Object buffering = bufferingAccessor == null ? null : bufferingAccessor.invoke(state);
+        parsedBuffering = buffering instanceof Boolean && (Boolean) buffering;
+    }
+
+    private static Method accessor(Class<?> cls, String name) {
+        for (Class<?> c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                Method m = c.getDeclaredMethod(name);
+                if (Modifier.isStatic(m.getModifiers())) continue;
+                m.setAccessible(true);
+                return m;
+            } catch (NoSuchMethodException ignored) {
+            }
+        }
+        return null;
+    }
+
+    /** The first number in an Optional's toString ("Optional.of(1234)"), without a regex. */
+    static double leadingNumber(Object value, double fallback) {
+        if (value == null) return fallback;
+        if (value instanceof Number) return ((Number) value).doubleValue();
+        String s = value.toString();
+        int i = 0;
+        int n = s.length();
+        while (i < n && !Character.isDigit(s.charAt(i))) i++;
+        if (i == n) return fallback;
+        int start = i;
+        while (i < n && (Character.isDigit(s.charAt(i)) || s.charAt(i) == '.')) i++;
+        try {
+            return Double.parseDouble(s.substring(start, i));
+        } catch (NumberFormatException e) {
+            return fallback;
         }
     }
 }

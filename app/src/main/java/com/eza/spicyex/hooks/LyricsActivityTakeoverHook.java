@@ -374,16 +374,15 @@ final class LyricsActivityTakeoverHook {
             FrameLayout content = activity.findViewById(android.R.id.content);
             if (content == null) return false;
             if (content.findViewWithTag(TAG_EXTRA_LYRICS_BUTTON) != null) return true;
-            if (!isLikelyNowPlayingScreen(activity, content)) return false;
 
             // The Share/Queue cluster (accessory_row) is an R8-obfuscated ConstraintLayout. Add the
             // entry button to its parent and position it into the empty footer space after layout.
-            View rowView = findViewByResourceEntryName(content, "accessory_row");
-            if (rowView == null || !rowView.isShown() || rowView.getWidth() == 0) {
-                XpLog.log(NativeSpicyLyricsHook.TAG
-                        + " Extra lyrics: accessory_row not laid out yet in " + activity.getClass().getName());
-                return false;
-            }
+            // Looked up first, by its resource id: this runs every few seconds for minutes in the
+            // single main activity (the mini player alone passes the now-playing check), and the
+            // name-based scan plus the now-playing check walked the whole view tree each time.
+            View rowView = accessoryRow(activity, content);
+            if (rowView == null || !rowView.isShown() || rowView.getWidth() == 0) return false;
+            if (!isLikelyNowPlayingScreen(activity, content)) return false;
             ViewGroup buttonHost = rowView.getParent() instanceof ViewGroup ? (ViewGroup) rowView.getParent() : null;
             if (buttonHost == null) return false;
             if (buttonHost.findViewWithTag(TAG_EXTRA_LYRICS_BUTTON) != null) return true;
@@ -744,6 +743,18 @@ final class LyricsActivityTakeoverHook {
         button.setFocusable(true);
         button.setOnClickListener(v -> launchNativeLyricsFullscreen(activity));
         return button;
+    }
+
+    private int accessoryRowId;
+
+    private View accessoryRow(Activity activity, View content) {
+        if (accessoryRowId == 0) {
+            accessoryRowId = activity.getResources().getIdentifier(
+                    "accessory_row", "id", activity.getPackageName());
+            if (accessoryRowId == 0) accessoryRowId = View.NO_ID;
+        }
+        if (accessoryRowId != View.NO_ID) return content.findViewById(accessoryRowId);
+        return findViewByResourceEntryName(content, "accessory_row");
     }
 
     private View findViewByResourceEntryName(View root, String entryName) {
