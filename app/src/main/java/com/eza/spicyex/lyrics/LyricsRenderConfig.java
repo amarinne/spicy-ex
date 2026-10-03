@@ -241,9 +241,13 @@ public final class LyricsRenderConfig {
     }
 
     public static LyricsRenderConfig read(Context context, SpotifyPlusConfig config) {
+        return read(context, config, 1f);
+    }
+
+    public static LyricsRenderConfig read(Context context, SpotifyPlusConfig config, float lyricsTextBoost) {
         SpotifyPlusConfig cfg = config;
         if (cfg == null && context != null) cfg = SpotifyPlusConfig.from(context);
-        LyricsShellSettings shell = new LyricsShellSettings(context, cfg);
+        LyricsShellSettings shell = new LyricsShellSettings(context, cfg).withTextBoost(lyricsTextBoost);
 
         String jp = get(cfg, Settings.JAPANESE_READING_MODE);
         String cn = get(cfg, Settings.CHINESE_MODE);

@@ -342,6 +342,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     /** The focus line's place mapped into the PiP lyrics area; NaN until measured. */
     private float pipAnchorFraction = Float.NaN;
 
+    /** The landscape PiP window is a wide layout scaled down hard: its lyrics, and their
+     *  translation under them, come out tiny unless they are set larger. */
+    private float pipTextBoost() {
+        return pipLayout == PIP_LAYOUT_LANDSCAPE ? PIP_LANDSCAPE_TEXT_BOOST : 1f;
+    }
+
+    private static final float PIP_LANDSCAPE_TEXT_BOOST = 1.2f;
+
     boolean hasLyricsDocument() {
         return document != null;
     }
@@ -362,6 +370,22 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         if (skipGapController != null) skipGapController.hide();
         if (jumpToCurrentController != null) jumpToCurrentController.update(false);
+        fitPipArtColumn();
+    }
+
+    /** The landscape window crops the status-bar room off the top of the layout, and the column's
+     *  full-screen margins (made for a status bar and a nav bar) assumed portrait's insets: the
+     *  cover and song info are centred in what the window really shows, with even margins. */
+    private void fitPipArtColumn() {
+        if (!twoColumn || landscapeLeftColumn == null
+                || !(landscapeLeftColumn.getLayoutParams() instanceof LinearLayout.LayoutParams)) return;
+        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) landscapeLeftColumn.getLayoutParams();
+        int top = pipCropTopPx + dp(24);
+        int bottom = dp(24);
+        if (lp.topMargin == top && lp.bottomMargin == bottom) return;
+        lp.topMargin = top;
+        lp.bottomMargin = bottom;
+        landscapeLeftColumn.setLayoutParams(lp);
     }
 
     /** Keep the lyrics area at full height after the readout is removed. */
@@ -1325,10 +1349,21 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     /** The share sheet hides everything: nothing but it is drawn, the background is paused. */
     private boolean lyricsCovered;
 
+    private static final float PIP_FRAME_INTERVAL_SEC = 0.028f;
+    private float pipFrameAccumSec;
+
     private final VsyncFrameScheduler frameScheduler = new VsyncFrameScheduler(deltaTimeSeconds -> {
         if (!running) return;
         // The share sheet is up: the lyrics hold still under it (see onShareSheet).
         if (lyricsFrozen) return;
+        // A PiP window is small and cannot be touched: half the frame rate is not visible there
+        // and halves the work of running a full-screen-sized layout.
+        if (pipPresentation && this.frameScheduler.isContinuous()) {
+            pipFrameAccumSec += deltaTimeSeconds <= 0d ? (1f / 60f) : (float) deltaTimeSeconds;
+            if (pipFrameAccumSec < PIP_FRAME_INTERVAL_SEC) return;
+            deltaTimeSeconds = pipFrameAccumSec;
+            pipFrameAccumSec = 0f;
+        }
         float dt = deltaTimeSeconds <= 0d ? (1f / 60f) : (float) Math.max(0.001d, Math.min(0.08d, deltaTimeSeconds));
         // Order matters: the reveal publishes this frame's alpha factor, then updateState() runs
         // the renderer, which reads it. Stepping it after would show every row one frame stale.
@@ -1384,6 +1419,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 MEANING_WORKERS, AI_WORKERS, handler, GOOGLE_PROCESSING_VERSION);
         this.localReprocessController = new LyricsLocalReprocessController(secondaryProcessor);
         this.ambientController = new LyricsAmbientController(activity, HTTP, config);
+        if (pipLayout != PIP_LAYOUT_NONE) ambientController.setRenderScaleFactor(0.5f);
         this.settingsDialogController = new LyricsSettingsDialogController(
                 activity, frameScheduler, ambientController, host, this::onSettingsClosed,
                 mode -> enterLayoutEditMode(mode == com.eza.spicyex.settings.SettingsPanel.EDITOR_CARD),
@@ -1396,7 +1432,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         });
         SharedPreferences prefs = activity.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE);
         preferences = prefs;
-        renderConfig = LyricsRenderConfig.read(activity, config);
+        renderConfig = LyricsRenderConfig.read(activity, config, pipTextBoost());
         // SettingsStore normally attaches this context when the settings panel is opened, but
         // lyrics can be mounted first (or restored from a warm Spotify process). Attach it here as
         // well so post-install model packs are visible to the tokenizer/detector on every entry
@@ -2178,7 +2214,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             // the handle and the real position never visibly disagree.
             if (anchorChanged) rescrollActiveRowToAnchor();
         }
-        LyricsRenderConfig next = LyricsRenderConfig.read(activity, config);
+        LyricsRenderConfig next = LyricsRenderConfig.read(activity, config, pipTextBoost());
         LyricsRenderConfig.Diff diff = renderConfig == null ? null : renderConfig.diff(next);
         if (diff == null || !diff.hasChanges) {
             renderConfig = next;
