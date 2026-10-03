@@ -409,7 +409,7 @@
     <string name="settings_label_download_language_models">언어 모델 다운로드</string>
     <string name="settings_label_lyrics_status_bar_hidden_mode">상태 표시줄 숨기기</string>
     <string name="share_hint">위로 밀어 가사 추가 · 탭하여 번역 켜기/끄기</string>
-    <string name="share_hint_swipe_up">카드를 위로 밀면 다음 가사가 추가돼요</string>
+    <string name="share_hint_swipe_up">위로 밀어 다음 가사 추가</string>
     <string name="share_design_glass">글래스</string>
     <string name="share_design_classic">클래식</string>
     <string name="share_design_minimal">미니멀</string>

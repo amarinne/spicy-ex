@@ -448,7 +448,7 @@
     <string name="settings_label_lyrics_furigana_brightness">Furigana brightness</string>
     <string name="settings_label_lyrics_furigana_position_percent">Furigana position</string>
     <string name="share_hint">Swipe up to add lyrics · Tap to toggle translation</string>
-    <string name="share_hint_swipe_up">Swipe up on the card to add the next line</string>
+    <string name="share_hint_swipe_up">Swipe up for the next line</string>
     <string name="share_design_glass">Glass</string>
     <string name="share_design_classic">Classic</string>
     <string name="share_design_minimal">Minimal</string>

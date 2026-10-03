@@ -405,7 +405,7 @@
     <string name="lyrics_ai_from_source">AI が元のリリックスから翻訳しました。</string>
     <string name="lyrics_ai_model_used">モデル: %1$s</string>
     <string name="share_hint">上にスワイプで歌詞を追加 · タップで翻訳の切替</string>
-    <string name="share_hint_swipe_up">カードを上にスワイプすると次の歌詞が追加されます</string>
+    <string name="share_hint_swipe_up">上にスワイプで次の歌詞を追加</string>
     <string name="share_design_glass">グラス</string>
     <string name="share_design_classic">クラシック</string>
     <string name="share_design_minimal">ミニマル</string>
