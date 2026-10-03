@@ -1,0 +1,47 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'assets/**'
+      - 'gradle/**'
+      - 'gradlew'
+      - '*.gradle'
+      - 'gradle.properties'
+      - '.github/workflows/pr-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug:
+    if: github.repository == 'amarinne/spicy-ex'
+    name: Unit tests and debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      JAVA_TOOL_OPTIONS: -Djava.util.concurrent.ForkJoinPool.common.parallelism=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Run unit tests and assemble debug APK
+        run: ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest :app:assembleDebug
