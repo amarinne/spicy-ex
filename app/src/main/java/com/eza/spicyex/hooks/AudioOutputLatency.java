@@ -170,17 +170,28 @@ final class AudioOutputLatency {
     }
 
     private AudioTrack currentTrack() {
-        try {
-            if (!resolved) {
-                resolved = true;
+        if (!resolved) {
+            resolved = true;
+            try {
                 Class<?> driver = Class.forName(DRIVER_CLASS, false, classLoader);
                 sessionMapField = driver.getDeclaredField("sSessionToAudioDriverMap");
                 sessionMapField.setAccessible(true);
                 currentSessionField = driver.getDeclaredField("sCurrentAudioSession");
                 currentSessionField.setAccessible(true);
                 getAudioTrack = driver.getMethod("getAudioTrack");
+            } catch (Throwable t) {
+                // Structural: the driver symbols are gone; never retry them.
+                sessionMapField = null;
+                if (!logged) {
+                    logged = true;
+                    XpLog.log(NativeSpicyLyricsHook.TAG + " audio output latency unavailable: "
+                            + t, t);
+                }
+                return null;
             }
-            if (sessionMapField == null) return null;
+        }
+        if (sessionMapField == null) return null;
+        try {
             Object session = currentSessionField.get(null);
             SparseArray<?> drivers = (SparseArray<?>) sessionMapField.get(null);
             if (drivers == null) return null;
@@ -204,12 +215,12 @@ final class AudioOutputLatency {
             }
             return fallback;
         } catch (Throwable t) {
-            if (sessionMapField != null || !logged) {
+            // Transient sampling failure: keep the resolved symbols so later samples retry.
+            if (!logged) {
                 logged = true;
                 XpLog.log(NativeSpicyLyricsHook.TAG + " audio output latency unavailable: "
-                        + t.getClass().getSimpleName());
+                        + t, t);
             }
-            sessionMapField = null;
             return null;
         }
     }
