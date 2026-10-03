@@ -6,6 +6,8 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+    base_branches:
+      - '^main$'
   path_filters:
     - "!app/src/main/res/values-*/**"
     - "!app/translation/**"
