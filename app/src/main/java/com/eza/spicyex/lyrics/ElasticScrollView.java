@@ -54,8 +54,80 @@ public class ElasticScrollView extends ScrollView {
     private float scrollVelocity;
     private long lastScrollNanos;
 
+    /** Scroll speed (px/s) the list still had when a finger landed on it mid-fling. */
+    private float carryVelocity;
+    private final int maxFlingVelocity;
+
     public ElasticScrollView(Context context) {
         super(context);
+        maxFlingVelocity = android.view.ViewConfiguration.get(context).getScaledMaximumFlingVelocity();
+    }
+
+    /**
+     * Content dissolving into the background over the top and bottom {@code px} of the visible
+     * area, rather than being cut at the edge. Drawn as an alpha mask over this view's own layer,
+     * so it fades whatever is behind the lyrics in, per pixel - each visual line on its own as it
+     * crosses - and costs nothing when both are 0.
+     */
+    public void setEdgeFade(int topPx, int bottomPx) {
+        topPx = Math.max(0, topPx);
+        bottomPx = Math.max(0, bottomPx);
+        if (topPx == edgeFadeTop && bottomPx == edgeFadeBottom) return;
+        edgeFadeTop = topPx;
+        edgeFadeBottom = bottomPx;
+        invalidate();
+    }
+
+    private int edgeFadeTop;
+    private int edgeFadeBottom;
+    private android.graphics.Paint edgeFadePaint;
+    private android.graphics.LinearGradient edgeFadeShader;
+    private final android.graphics.Matrix edgeFadeMatrix = new android.graphics.Matrix();
+
+    @Override
+    public void draw(android.graphics.Canvas canvas) {
+        int w = getWidth();
+        int h = getHeight();
+        if ((edgeFadeTop <= 0 && edgeFadeBottom <= 0) || w <= 0 || h <= 0) {
+            super.draw(canvas);
+            return;
+        }
+        if (edgeFadePaint == null) {
+            edgeFadePaint = new android.graphics.Paint();
+            edgeFadePaint.setXfermode(new android.graphics.PorterDuffXfermode(
+                    android.graphics.PorterDuff.Mode.DST_OUT));
+            // A unit-length ramp, stretched to the current length by the shader matrix. Eased
+            // rather than linear: the line thins out gently first and only vanishes right at
+            // the edge, which reads softer than an even fade.
+            edgeFadeShader = new android.graphics.LinearGradient(0f, 0f, 0f, 1f,
+                    new int[]{0xFF000000, 0xB0000000, 0x60000000, 0x24000000, 0x08000000, 0x00000000},
+                    new float[]{0f, 0.18f, 0.4f, 0.62f, 0.82f, 1f},
+                    android.graphics.Shader.TileMode.CLAMP);
+            edgeFadePaint.setShader(edgeFadeShader);
+        }
+        int top = getScrollY();
+        int save = canvas.saveLayer(0, top, w, top + h, null);
+        super.draw(canvas);
+        if (edgeFadeTop > 0) {
+            edgeFadeMatrix.setScale(1f, edgeFadeTop);
+            edgeFadeMatrix.postTranslate(0f, top);
+            edgeFadeShader.setLocalMatrix(edgeFadeMatrix);
+            canvas.drawRect(0, top, w, top + edgeFadeTop, edgeFadePaint);
+        }
+        if (edgeFadeBottom > 0) {
+            // The same ramp flipped, its edge at the bottom.
+            edgeFadeMatrix.setScale(1f, -edgeFadeBottom);
+            edgeFadeMatrix.postTranslate(0f, top + h);
+            edgeFadeShader.setLocalMatrix(edgeFadeMatrix);
+            canvas.drawRect(0, top + h - edgeFadeBottom, w, top + h, edgeFadePaint);
+        }
+        canvas.restoreToCount(save);
+    }
+
+    /** A finger landing on a list that is still coasting remembers how fast it was going. */
+    private void captureCarry(MotionEvent ev) {
+        long age = System.nanoTime() - lastScrollNanos;
+        carryVelocity = lastScrollNanos != 0L && age < 70_000_000L ? scrollVelocity : 0f;
     }
 
     /** Apple Music enables the rubber band and the end limit; every other style turns both off. */
@@ -72,6 +144,7 @@ public class ElasticScrollView extends ScrollView {
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) captureCarry(ev);
         if (!elasticEnabled) return super.onInterceptTouchEvent(ev);
         if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) beginGesture(ev);
         else lastRawY = ev.getRawY();
@@ -80,12 +153,17 @@ public class ElasticScrollView extends ScrollView {
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) captureCarry(ev);
         if (!elasticEnabled) return super.onTouchEvent(ev);
         int action = ev.getActionMasked();
         float rawY = ev.getRawY();
         if (action == MotionEvent.ACTION_DOWN) {
             beginGesture(ev);
-        } else if (action == MotionEvent.ACTION_MOVE && ev.getPointerCount() == 1) {
+        } else if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_POINTER_UP) {
+            // The other hand takes over: measure from where the finger now is, or its distance
+            // from the old one is read as one huge step (the list jumped, or the pull was lost).
+            lastRawY = rawY;
+        } else if (action == MotionEvent.ACTION_MOVE) {
             float dy = rawY - lastRawY;
             lastRawY = rawY;
             trackPull(dy);
@@ -148,6 +226,14 @@ public class ElasticScrollView extends ScrollView {
 
     @Override
     public void fling(int velocityY) {
+        // Swiping again while the list is still coasting adds to its speed, as a list does under
+        // alternating hands, instead of starting over from the new swipe's speed alone.
+        float carry = carryVelocity;
+        carryVelocity = 0f;
+        if (carry != 0f && Math.signum(carry) == Math.signum((float) velocityY)) {
+            float boosted = velocityY + carry * 0.6f;
+            velocityY = Math.round(Math.max(-maxFlingVelocity, Math.min(maxFlingVelocity, boosted)));
+        }
         flinging = elasticEnabled;
         super.fling(velocityY);
     }
@@ -155,14 +241,15 @@ public class ElasticScrollView extends ScrollView {
     @Override
     protected void onScrollChanged(int l, int t, int oldl, int oldt) {
         super.onScrollChanged(l, t, oldl, oldt);
-        if (!elasticEnabled) return;
         long now = System.nanoTime();
         if (lastScrollNanos != 0L) {
             float dt = Math.max(1e-3f, (now - lastScrollNanos) / 1e9f);
             float v = (t - oldt) / dt;
-            scrollVelocity = scrollVelocity == 0f ? v : scrollVelocity * 0.4f + v * 0.6f;
+            // A long gap means a fresh motion: do not average it with the last one's speed.
+            scrollVelocity = scrollVelocity == 0f || dt > 0.1f ? v : scrollVelocity * 0.4f + v * 0.6f;
         }
         lastScrollNanos = now;
+        if (!elasticEnabled) return;
         if (!flinging || touching) return;
         int range = endRange();
         boolean hitTop = t <= 0 && oldt > 0 && scrollVelocity < 0f;

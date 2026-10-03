@@ -1336,6 +1336,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         stepRowCascade(dt);
         stepScrollSpring(dt);
         updateState(dt);
+        // Last, so that nothing earlier in the frame (a cascade ending resets its rows' scale)
+        // leaves a row at the wrong size for the frame that is drawn.
+        applyEdgeRowScale();
     });
 
     /** Not in a picture-in-picture host. */
@@ -1636,6 +1639,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             }
             frameScheduler.setContinuous(true);
             frameScheduler.requestFrame();
+            applyEdgeRowScale();
             scheduleScrollWindowRender();
             if (applyingLyricScroll) return;
             scrollInProgress = true;
@@ -2855,6 +2859,85 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 document.appliedLines, anchor, NativeRuntime.LYRIC_WINDOW_EDGE_BUFFER);
     }
 
+    /** Lines leaving the lyrics area dissolve into the background at its top and bottom edge
+     *  instead of being cut off or shrinking: a soft alpha mask on the scroll view itself
+     *  (ElasticScrollView#setEdgeFade), so it applies per pixel - to each visual line, including
+     *  each line of a lyric that wraps - and only where a line actually meets the edge. The
+     *  faster the list moves (either way) the longer the fade reaches; it eases back as the
+     *  scroll slows. */
+    private static final int EDGE_FADE_DP = 40;
+    /** How much longer the fade gets at full scroll speed, as a multiple of the above. */
+    private static final float EDGE_FADE_SPEED_BOOST = 0.8f;
+    /** Scroll speeds below this read as resting (an auto-follow step); full effect at the max. */
+    private static final int EDGE_SCALE_SPEED_FLOOR_DP_PER_SEC = 500;
+    private static final int EDGE_SCALE_SPEED_MAX_DP_PER_SEC = 4000;
+    /** Time constant of the fade length following the scroll speed, both directions. */
+    private static final float EDGE_SCALE_EASE_SEC = 0.12f;
+    private long edgeScaleAtMs;
+    private boolean edgeScaleSettling;
+    private int edgeScaleLastScrollY = Integer.MIN_VALUE;
+    private float edgeScaleSpeed;
+    private float edgeFadePx = -1f;
+
+    private void applyEdgeRowScale() {
+        long now = SystemClock.uptimeMillis();
+        float dt = edgeScaleAtMs == 0L ? 0f : Math.min(0.1f, (now - edgeScaleAtMs) / 1000f);
+        edgeScaleAtMs = now;
+        applyEdgeRowScale(dt);
+    }
+
+    private void applyEdgeRowScale(float dt) {
+        edgeScaleSettling = false;
+        if (mountedRowsHost == null || lyricsScroll == null) return;
+        int viewport = lyricsScroll.getHeight();
+        if (viewport <= 0) return;
+        int scrollY = lyricsScroll.getScrollY();
+        // Sampled once a frame at most: the scroll listener also calls in between, and a few
+        // pixels over a millisecond or two read as a fling.
+        if (dt >= 0.008f) {
+            float instant = edgeScaleLastScrollY == Integer.MIN_VALUE
+                    ? 0f : Math.abs(scrollY - edgeScaleLastScrollY) / dt;
+            edgeScaleLastScrollY = scrollY;
+            // Rises quickly with a fling, falls away a little slower so the edge settles softly.
+            float k = instant > edgeScaleSpeed ? 0.5f : 0.15f;
+            edgeScaleSpeed += (instant - edgeScaleSpeed) * k;
+        }
+        float floor = dp(EDGE_SCALE_SPEED_FLOOR_DP_PER_SEC);
+        float s = Math.max(0f, Math.min(1f,
+                (edgeScaleSpeed - floor) / Math.max(1f, dp(EDGE_SCALE_SPEED_MAX_DP_PER_SEC) - floor)));
+        s = s * (2f - s);
+        float target = Math.min(dp(EDGE_FADE_DP) * (1f + EDGE_FADE_SPEED_BOOST * s), viewport * 0.15f);
+        float ease = dt <= 0f ? 0f : 1f - (float) Math.exp(-dt / EDGE_SCALE_EASE_SEC);
+        edgeFadePx = edgeFadePx < 0f ? target : edgeFadePx + (target - edgeFadePx) * ease;
+        if (Math.abs(target - edgeFadePx) < 0.5f) edgeFadePx = target;
+        // Keep frames coming until the speed has died down and the fade has settled.
+        if (s > 0f || edgeFadePx != target) edgeScaleSettling = true;
+        if (lyricsScroll instanceof com.eza.spicyex.lyrics.ElasticScrollView) {
+            int px = Math.round(edgeFadePx);
+            ((com.eza.spicyex.lyrics.ElasticScrollView) lyricsScroll).setEdgeFade(px, px);
+        }
+        // Rows keep their own size; only the long-press feedback scales them.
+        for (int i = 0; i < mountedRowsHost.getChildCount(); i++) {
+            View row = mountedRowsHost.getChildAt(i);
+            Float pressed = pressScales.get(row);
+            float applied = pressed == null ? 1f : pressed;
+            if (Math.abs(row.getScaleX() - applied) < 0.002f) continue;
+            row.setPivotX(rowAlignmentPivotX(row));
+            row.setPivotY(row.getHeight() * 0.5f);
+            row.setScaleX(applied);
+            row.setScaleY(applied);
+        }
+    }
+
+    private static float rowAlignmentPivotX(View row) {
+        if (!(row instanceof LinearLayout)) return row.getWidth() * 0.5f;
+        int g = Gravity.getAbsoluteGravity(((LinearLayout) row).getGravity(), row.getLayoutDirection())
+                & Gravity.HORIZONTAL_GRAVITY_MASK;
+        if (g == Gravity.RIGHT) return row.getWidth();
+        if (g == Gravity.LEFT) return 0f;
+        return row.getWidth() * 0.5f;
+    }
+
     private void scheduleScrollSettleRemeasure() {
         if (!running) return;
         lastScrollEventMs = SystemClock.elapsedRealtime();
@@ -3587,11 +3670,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final Runnable shrinkPressedLyric = () -> {
         View row = pressedLyricRow;
         if (row == null || !row.isAttachedToWindow()) return;
-        // Held down, the line sinks a little, as in Apple Music, until the sheet opens. (No
-        // cancel(): a new scale animation replaces only the scale, not the row's other motion.)
-        row.animate().scaleX(0.94f).scaleY(0.94f)
-                .setDuration(Math.max(160, android.view.ViewConfiguration.getLongPressTimeout() - 60))
-                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
+        // Held down, the line sinks a little, as in Apple Music, until the sheet opens.
+        animatePress(row, 0.94f,
+                Math.max(160, android.view.ViewConfiguration.getLongPressTimeout() - 60),
+                new android.view.animation.DecelerateInterpolator(1.6f));
     };
 
     /**
@@ -3609,8 +3691,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 if (line == null || line.dotLine || line.text == null || line.text.trim().isEmpty()) return;
                 View row = rowMountController.attachedRowView(line);
                 if (row == null || row.getWidth() <= 0) return;
-                row.setPivotX(row.getWidth() / 2f);
-                row.setPivotY(row.getHeight() / 2f);
+                // The pivot is left to applyEdgeRowScale, which owns the row's scale: moving it here
+                // while the row was still scaled made the line jump the moment a finger landed.
                 pressedLyricRow = row;
                 pressedLyricDownY = event.getY();
                 // A beat later, so a flick that starts on a line does not pulse it.
@@ -3636,8 +3718,38 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         pressedLyricRow = null;
         if (row == null) return;
         row.removeCallbacks(shrinkPressedLyric);
-        row.animate().scaleX(1f).scaleY(1f).setDuration(460)
-                .setInterpolator(new android.view.animation.OvershootInterpolator(2.2f)).start();
+        animatePress(row, 1f, 460, new android.view.animation.OvershootInterpolator(2.2f));
+    }
+
+    /** The press feedback's own factor on a row's size. It is multiplied with the edge scale in
+     *  applyEdgeRowScale rather than animated on the view's scale directly: two writers on one
+     *  property overrode each other, and the lines jumped whenever a finger touched the list. */
+    private final java.util.WeakHashMap<View, Float> pressScales = new java.util.WeakHashMap<>();
+    private final java.util.WeakHashMap<View, android.animation.ValueAnimator> pressAnimators =
+            new java.util.WeakHashMap<>();
+
+    private void animatePress(View row, float to, long durationMs,
+                              android.animation.TimeInterpolator interpolator) {
+        android.animation.ValueAnimator running = pressAnimators.remove(row);
+        if (running != null) running.cancel();
+        Float from = pressScales.get(row);
+        android.animation.ValueAnimator animator = android.animation.ValueAnimator.ofFloat(
+                from == null ? 1f : from, to);
+        animator.setDuration(durationMs);
+        animator.setInterpolator(interpolator);
+        animator.addUpdateListener(a -> {
+            pressScales.put(row, (Float) a.getAnimatedValue());
+            applyEdgeRowScale(0f);
+        });
+        animator.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(android.animation.Animator animation) {
+                if (pressAnimators.get(row) == animation) pressAnimators.remove(row);
+                if (to >= 1f) pressScales.remove(row);
+                applyEdgeRowScale(0f);
+            }
+        });
+        pressAnimators.put(row, animator);
+        animator.start();
     }
 
     /**
@@ -3893,10 +4005,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             if (moved) clearRowCascade();
             return;
         }
-        if (!appleStyle()) {
-            // Not the Apple style: nothing below this line applies. The spring scroll, the row
-            // cascade it complements and the Apple cascade speed/strength editor keys are all
-            // Apple-owned, so this stays on the ScrollView's own smoothScrollTo() as it always was.
+        if (!appleStyle() && !returnToCurrentPending && Math.abs(delta) <= springTravelCapPx()) {
+            // Not the Apple style: the row cascade and the Apple speed/strength editor keys do not
+            // apply, so an ordinary advance stays on the ScrollView's own smoothScrollTo(). A
+            // return from far away falls through to the capped spring below instead, since
+            // smoothScrollTo() would just slide the whole distance as a plain scroll.
             clearRowCascade();
             lyricsScroll.smoothScrollTo(0, target);
             return;
@@ -3950,7 +4063,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // the excess first and springing a fixed, viewport-relative remainder gives every jump
         // the same legible arrival no matter how far it started.
         int start = oldScroll;
-        float maxTravel = springTravelCapPx();
+        // A return springs over a shorter stretch than an ordinary far jump: the rest is skipped
+        // first, so the spring is visibly the arrival rather than a long fast scroll.
+        float maxTravel = returning ? springTravelCapPx() * 0.6f : springTravelCapPx();
         if (Math.abs(target - start) > maxTravel) {
             start = target + Math.round(Math.signum(start - target) * maxTravel);
             applyingLyricScroll = true;
