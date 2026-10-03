@@ -281,23 +281,36 @@ final class NativeLyricsCaptureHook {
     private boolean missingClassesShipInApk(List<String> missing) {
         if (missing.isEmpty()) return false;
         try {
-            List<Class<?>> shipped = symbols.cache.classes("lyrics.deferredNames", () -> {
-                List<String> found = new ArrayList<>();
-                for (String name : missing) {
-                    if (!symbols.dexKit().findClass(FindClass.create().matcher(
-                            ClassMatcher.create().className(name))).isEmpty()) found.add(name);
-                }
-                return found;
-            });
-            if (shipped.isEmpty()) {
-                XpLog.log(NativeSpicyLyricsHook.TAG
-                        + " native lyrics deferred ClassLoader hook skipped: none of the missing classes ship");
-                return false;
+            if (anyMissingShipsInApk(missing, name ->
+                    !symbols.dexKit().findClass(FindClass.create().matcher(
+                            ClassMatcher.create().className(name))).isEmpty())) {
+                return true;
             }
+            XpLog.log(NativeSpicyLyricsHook.TAG
+                    + " native lyrics deferred ClassLoader hook skipped: none of the missing classes ship");
+            return false;
         } catch (Throwable t) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " native lyrics deferred check failed: " + t);
         }
         return true;
+    }
+
+    /**
+     * Presence probe over DexKit name matches. A name counts as shipped when DexKit finds it
+     * in the APK, without loading the class: present-but-not-yet-loadable names must still
+     * install the deferred hook. A probe failure propagates so the caller fails safe to
+     * installing the hook.
+     */
+    interface DeferredPresenceProbe {
+        boolean ships(String className) throws Exception;
+    }
+
+    static boolean anyMissingShipsInApk(List<String> missing, DeferredPresenceProbe probe)
+            throws Exception {
+        for (String name : missing) {
+            if (probe.ships(name)) return true;
+        }
+        return false;
     }
 
     private void hookDeferredNativeLyricsClassLoading() {
