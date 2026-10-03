@@ -50,6 +50,8 @@ public class References {
     private static final Pattern DIGITS = Pattern.compile("\\d+");
     private static volatile Method hasTrackMethod;
     private static volatile Method getContextTrack;
+    private static final java.util.Set<Class<?>> TRACKLESS_WRAPPERS =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     public static Activity currentActivity() {
         return currentActivity.get();
@@ -77,9 +79,19 @@ public class References {
         try {
             Object wrapper = XpReflect.callMethod(state, "track");
 
+            // Spotify's Optional has a present and an absent class; the absent one (a bare
+            // singleton) declares no accessor at all. That is simply "no track right now" - and
+            // looking for its accessor again on every call used to log a stack trace each time.
+            if (wrapper == null || TRACKLESS_WRAPPERS.contains(wrapper.getClass())) return null;
             Method hasTrackAccessor = hasTrackMethod;
             if(hasTrackAccessor == null || hasTrackAccessor.getDeclaringClass() != wrapper.getClass()) {
-                hasTrackAccessor = symbols.trackMethod(wrapper.getClass(), boolean.class);
+                try {
+                    hasTrackAccessor = symbols.trackMethod(wrapper.getClass(), boolean.class);
+                } catch (NoSuchMethodException absent) {
+                    TRACKLESS_WRAPPERS.add(wrapper.getClass());
+                    XpLog.log("[SpotifyPlus] " + wrapper.getClass().getName() + " has no track accessor, read as no track");
+                    return null;
+                }
                 hasTrackMethod = hasTrackAccessor;
             }
 
