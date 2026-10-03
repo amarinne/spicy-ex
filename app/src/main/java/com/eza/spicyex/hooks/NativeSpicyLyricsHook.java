@@ -71,7 +71,8 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
                 lpparm.classLoader(),
                 symbols,
                 lyricsFetchCoordinator.nativeLyricsSource(),
-                this::getCurrentTrackSafely
+                this::getCurrentTrackSafely,
+                applicationContext
         ).hook();
         playbackBridge.install(lpparm, symbols);
         activityTakeoverHook.hook();
