@@ -1090,7 +1090,13 @@ public final class LyricsShareCardController {
                 Bitmap source = artwork;
                 ambience.setAlpha(0f);
                 RENDER.execute(() -> {
-                    Bitmap blurred = cachedBlur(source);
+                    Bitmap blurred;
+                    try {
+                        blurred = cachedBlur(source);
+                    } catch (Throwable error) {
+                        XpLog.log(TAG + " blur failed: " + error);
+                        return;
+                    }
                     main.post(() -> {
                         if (!ambience.isAttachedToWindow()) return;
                         ambience.setImageBitmap(blurred);
