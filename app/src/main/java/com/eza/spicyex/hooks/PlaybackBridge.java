@@ -297,7 +297,23 @@ final class PlaybackBridge {
                     parsedState, parsedBasePos, parsedTimestamp, reported);
             if (heard >= 0) return heard;
         }
-        return Math.max(0, reported - outputLatency.latencyMs());
+        return compensateForLatency(reported, outputLatency.latencyMs(), parsedSpeed,
+                reportedFromPlayerState, parsedBuffering);
+    }
+
+    /**
+     * Fallback latency compensation: the output latency is a wall-clock delay, so a PlayerState
+     * position (which advances at playback speed) trails what is heard by latency * speed.
+     * Other progress sources (media session, track snapshot) retain the existing
+     * unscaled subtraction. Buffering does not advance, so it is unscaled too.
+     */
+    static long compensateForLatency(long reportedMs, long latencyMs, double speed,
+                                     boolean fromPlayerState, boolean buffering) {
+        long adjustment = latencyMs;
+        if (fromPlayerState && !buffering) {
+            adjustment = Math.round(latencyMs * speed);
+        }
+        return Math.max(0, reportedMs - adjustment);
     }
 
     private boolean reportedFromPlayerState;
