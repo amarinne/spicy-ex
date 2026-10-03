@@ -238,6 +238,8 @@ final class TrackInfoReadoutController {
     private final ImageButton topOverlayButton;
     private final FrameLayout sideBox;
     private boolean pipPresentation;
+    /** Album-art choice for this PiP presentation; false keeps every shape lyrics-only. */
+    private boolean pipAlbumArt;
     private final ArtTouchFrame sideArtFrame;
     private final ImageView sideArt;
     private final View sideOverlayScrim;
@@ -890,9 +892,9 @@ final class TrackInfoReadoutController {
      *  {@link Settings#TRACK_INFO_SHOW_TITLE}/{@code _ARTIST}/{@code _ALBUM} - independent of
      *  position/size, so hiding a field doesn't need its own layout mode. */
     private void applyFieldVisibility() {
-        boolean showTitle = readBool(Settings.TRACK_INFO_SHOW_TITLE);
-        boolean showArtist = readBool(Settings.TRACK_INFO_SHOW_ARTIST);
-        boolean showAlbum = readBool(Settings.TRACK_INFO_SHOW_ALBUM);
+        boolean showTitle = !pipPresentation && readBool(Settings.TRACK_INFO_SHOW_TITLE);
+        boolean showArtist = !pipPresentation && readBool(Settings.TRACK_INFO_SHOW_ARTIST);
+        boolean showAlbum = !pipPresentation && readBool(Settings.TRACK_INFO_SHOW_ALBUM);
         int titleVis = showTitle ? View.VISIBLE : View.GONE;
         int artistVis = showArtist ? View.VISIBLE : View.GONE;
         int albumVis = showAlbum ? View.VISIBLE : View.GONE;
@@ -979,6 +981,7 @@ final class TrackInfoReadoutController {
         Drawable bg = view.getBackground();
         if (bg instanceof GradientDrawable) {
             ((GradientDrawable) bg).setCornerRadius(dp(radiusDp));
+            view.invalidateOutline(); // the art views clip to it
         }
     }
 
@@ -1026,10 +1029,39 @@ final class TrackInfoReadoutController {
         if (headerTitle != null) headerTitle.setVisibility(header ? View.GONE : View.VISIBLE);
     }
 
-    /** PiP shows only lyrics, regardless of the stored track-info position. */
+    /** PiP is lyrics-only by default. The optional artwork readout never includes metadata. */
     void setPipPresentation() {
+        setPipPresentation(pipAlbumArtEnabled());
+    }
+
+    /** PiP presentation with an explicit album-art choice; the stored flag is read when the
+     *  no-arg overload above is used. Follows the same lyrics-only default. */
+    void setPipPresentation(boolean albumArt) {
         pipPresentation = true;
+        pipAlbumArt = albumArt;
+        applyFieldVisibility();
         setMode("Off");
+    }
+
+    /** Whether the PiP art column may show: the two-column layout plus the album-art toggle.
+     *  Pure, unit-tested. Off is lyrics-only with no metadata and no blank column; on restores
+     *  the landscape artwork column. Portrait uses the existing top artwork readout. */
+    static boolean pipColumnAllowed(boolean twoColumn, boolean albumArt) {
+        return twoColumn && albumArt;
+    }
+
+    /** PiP artwork uses the column or top readout according to its window shape. */
+    static String pipEffectiveMode(boolean twoColumn, boolean albumArt) {
+        return albumArt ? "Top" : "Off";
+    }
+
+    /** Live read of {@link Settings#PIP_ALBUM_ART}; false when unreadable, matching its default. */
+    private boolean pipAlbumArtEnabled() {
+        try {
+            return Boolean.TRUE.equals(config.get(Settings.PIP_ALBUM_ART));
+        } catch (Throwable ignored) {
+            return Settings.PIP_ALBUM_ART.defaultValue;
+        }
     }
 
     /** Re-reads settings (call at mount and from the preference listener). */
@@ -1052,6 +1084,7 @@ final class TrackInfoReadoutController {
         applyFieldVisibility();
         panelMediaMode = readPanelMediaMode(config);
         if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) hideOverlays();
+        if (pipPresentation) pipAlbumArt = pipAlbumArtEnabled();
         setMode(currentMode());
     }
 
@@ -1064,7 +1097,7 @@ final class TrackInfoReadoutController {
     }
 
     private void setMode(String mode) {
-        if (pipPresentation) mode = "Off";
+        if (pipPresentation) mode = pipEffectiveMode(twoColumn, pipAlbumArt);
         if (mode == null) mode = "Off";
         // Two-column's left column is this readout's column placement: it shows for every stored
         // position except Off, and hiding it collapses that column (the lyrics take the width).
@@ -1569,10 +1602,10 @@ final class TrackInfoReadoutController {
      *  given bitmap instead. */
     void showDemoTrack(SpotifyTrack track, Bitmap art) {
         onTrackChanged(track);
-        Bitmap rounded = art == null ? null : roundBitmap(art, dp(bottomArtDpF), dp(artRadiusDp));
-        Bitmap sideRounded = art == null ? null : roundBitmap(art, dp(sideArtDp), dp(artRadiusDp));
+        Bitmap rounded = art == null ? null : roundBitmap(art, dp(bottomArtDpF), 0f);
+        Bitmap sideRounded = art == null ? null : roundBitmap(art, dp(sideArtDp), 0f);
         Bitmap columnRounded = art == null || columnArt == null ? null
-                : roundBitmap(art, dp(columnArtDpF), dp(artRadiusDp));
+                : roundBitmap(art, dp(columnArtDpF), 0f);
         if (currentArtwork != null) {
             try {
                 currentArtwork.recycle();
@@ -1744,7 +1777,7 @@ final class TrackInfoReadoutController {
             }
             if (raw == null) return null;
             int targetPx = large ? (fromNetworkCache ? size : raw.getWidth()) : size;
-            return roundBitmap(raw, targetPx, radiusPx);
+            return roundBitmap(raw, targetPx, 0f);
         } catch (RuntimeException unavailable) {
             return null;
         } finally {
@@ -1849,7 +1882,13 @@ final class TrackInfoReadoutController {
         view.animate().alpha(1f).setDuration(180).start();
     }
 
-    /** Rounds once per track change so drag frames never pay for an outline mask. */
+    /**
+     * Scales the cover to its bitmap size. The corners are not baked in (radiusPx is 0 at every
+     * call): the art views clip to their own rounded background instead (styleArt). A radius baked
+     * at the bitmap's size scaled with it wherever the view was shown at another size - the PiP
+     * window's cover column most of all - so the cover's corners no longer matched its
+     * placeholder and touch scrim, which round at the view's real size.
+     */
     private static Bitmap roundBitmap(Bitmap src, int sizePx, float radiusPx) {
         Bitmap out = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(out);
@@ -2232,6 +2271,9 @@ final class TrackInfoReadoutController {
         placeholder.setColor(0xFF3A3F55);
         placeholder.setCornerRadius(dp(radiusDp));
         art.setBackground(placeholder);
+        // The cover is clipped by this rounded background (its outline), so image, placeholder
+        // and scrim share one radius at whatever size the view ends up.
+        art.setClipToOutline(true);
     }
 
     /** Overlay scrim with the art's shape (rounded readout, square side panel). */

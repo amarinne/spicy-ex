@@ -114,6 +114,16 @@ public final class Settings {
             "Icon", "Label", "Auto"
     );
 
+    // Which glyph the "Follow lyrics" chip shows - independent of FOLLOW_CHIP_STYLE above
+    // (that one owns Icon/Label/Auto presentation; this one owns which icon). Adaptive arrow
+    // (default) points down when the viewport sits above the current lyric target and up when
+    // below; Static arrow keeps the old downward arrow; Waveform keeps the audio-bars glyph.
+    // Edited from the layout editor's Follow-lyrics element.
+    public static final Setting<String> FOLLOW_CHIP_ICON = enumSetting(
+            "lyric_follow_chip_icon", INTERNAL, "Follow-lyrics chip icon", "Adaptive arrow",
+            "Adaptive arrow", "Static arrow", "Waveform"
+    );
+
     // Adds a button to Spotify's persistent mini player (every non-lyrics screen) that jumps
     // straight to the native fullscreen lyrics - see LyricsActivityTakeoverHook.
     public static final Setting<Boolean> MINI_PLAYER_LYRICS_ICON = boolSetting(
@@ -804,6 +814,13 @@ public final class Settings {
     // Starting PiP sends Spotify to the background, back to the app used before it.
     public static final Setting<Boolean> PIP_LEAVE_SPOTIFY = boolSetting(
             "lyrics_pip_leave_spotify", PIP, "Return to the previous app", true
+    );
+
+    // Album artwork in PiP. Off by default: every PiP shape is lyrics-only, with no
+    // metadata and no blank column. On restores the former landscape artwork + metadata
+    // column only; portrait stays lyrics-only per the existing PiP layout contract.
+    public static final Setting<Boolean> PIP_ALBUM_ART = boolSetting(
+            "lyrics_pip_album_art", PIP, "Show album art", false
     );
 
     // ===================== INTERNAL (fixed defaults, not shown) =====================

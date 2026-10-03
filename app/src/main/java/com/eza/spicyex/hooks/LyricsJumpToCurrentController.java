@@ -29,14 +29,23 @@ final class LyricsJumpToCurrentController {
     private static final long COLLAPSE_DELAY_MS = 3200L;
     private static final int SIDE_MARGIN_DP = NativeLyricsUtils.EDGE_BUTTON_MARGIN_DP;
     private static final int CHIP_HEIGHT_DP = 44;
+    private static final int ICON_DP = 18;
+    private static final long COLLAPSE_DURATION_MS = 320L;
 
     private final SpotifyPlusConfig config;
     private final String followLabel;
     private final TextView button;
     private final PillProgressDrawable progressDrawable = new PillProgressDrawable();
-    private final Runnable collapse = () -> applyCollapsed(true);
+    private final WaveformIconDrawable waveIcon = new WaveformIconDrawable();
+    private final Runnable collapse = this::collapseToIcon;
+    private ValueAnimator widthAnimator;
     private String style = Settings.FOLLOW_CHIP_STYLE.defaultValue;
     private String position = Settings.FOLLOW_CHIP_POSITION.defaultValue;
+    private String icon = Settings.FOLLOW_CHIP_ICON.defaultValue;
+    /** Adaptive arrow direction: false = down (viewport above target), true = up (below). */
+    private boolean pointingUp;
+    /** Whether the chip is currently showing the icon alone (vs the labelled pill). */
+    private boolean iconCollapsed;
     private boolean shown;
     private boolean editingForcedVisible;
     /** Latest real follow-state request, tracked even while the editor pins the preview visible. */
@@ -57,7 +66,7 @@ final class LyricsJumpToCurrentController {
             SettingsUiStrings strings,
             Runnable onClick
     ) {
-        TextView view = textFactory.createChip(activity, "↓");
+        TextView view = textFactory.createChip(activity, "");
         view.setTextSize(13);
         view.setAlpha(0f);
         view.setVisibility(View.GONE);
@@ -84,14 +93,63 @@ final class LyricsJumpToCurrentController {
         return controller;
     }
 
-    /** Re-applies the editor-owned style and horizontal anchor. */
+    /** Re-applies the editor-owned style, icon, and horizontal anchor. */
     void onPreferenceChanged() {
         String nextStyle = config == null ? null : config.get(Settings.FOLLOW_CHIP_STYLE);
         style = nextStyle == null ? Settings.FOLLOW_CHIP_STYLE.defaultValue : nextStyle;
         String nextPosition = config == null ? null : config.get(Settings.FOLLOW_CHIP_POSITION);
         position = nextPosition == null ? Settings.FOLLOW_CHIP_POSITION.defaultValue : nextPosition;
+        String nextIcon = config == null ? null : config.get(Settings.FOLLOW_CHIP_ICON);
+        icon = nextIcon == null ? Settings.FOLLOW_CHIP_ICON.defaultValue : nextIcon;
+        if (!isAdaptiveIcon(icon)) pointingUp = false;
         applyPosition();
         if (button.getVisibility() == View.VISIBLE) applyStyle(false);
+    }
+
+    /** Whether the chip shows the direction-following arrow (vs a fixed glyph). */
+    static boolean isAdaptiveIcon(String icon) {
+        return "Adaptive arrow".equals(icon);
+    }
+
+    static boolean isWaveformIcon(String icon) {
+        return "Waveform".equals(icon);
+    }
+
+    /**
+     * Which way the adaptive arrow points: down when the viewport sits above the current lyric
+     * target (the song is below), up when below it. Compares the exact desired scroll target
+     * against the live scroll position - not an active-index guess - so it stays right while
+     * coasting on a spring. Within 2px counts as above (down), matching the scroll snap below
+     * which a smaller delta jumps without animating.
+     */
+    static boolean shouldPointUp(int currentScrollY, int desiredScrollTarget) {
+        return currentScrollY > desiredScrollTarget + 2;
+    }
+
+    static String arrowGlyph(boolean pointingUp) {
+        return pointingUp ? "↑" : "↓";
+    }
+
+    /**
+     * Updates the adaptive arrow direction. No-op unless the icon is the adaptive arrow; the
+     * glyph refreshes in place without restarting the label-pill collapse timer.
+     */
+    void setPointingUp(boolean up) {
+        if (!isAdaptiveIcon(icon)) return;
+        if (pointingUp == up) return;
+        pointingUp = up;
+        if (button.getVisibility() != View.VISIBLE || isWaveformIcon(icon)) return;
+        refreshArrowGlyph();
+    }
+
+    private void refreshArrowGlyph() {
+        String arrow = arrowGlyph(pointingUp);
+        if (iconCollapsed) {
+            if (!arrow.equals(button.getText().toString())) button.setText(arrow);
+        } else {
+            String expanded = arrow + " " + followLabel;
+            if (!expanded.equals(button.getText().toString())) button.setText(expanded);
+        }
     }
 
     private void applyPosition() {
@@ -127,14 +185,79 @@ final class LyricsJumpToCurrentController {
     }
 
     private void applyCollapsed(boolean collapsed) {
-        button.setText(collapsed ? "↓" : followLabel);
+        cancelWidthAnimation();
+        iconCollapsed = collapsed;
         button.setContentDescription(followLabel);
-        button.setPadding(collapsed ? 0 : dp(16), 0, collapsed ? 0 : dp(16), 0);
+        if (isWaveformIcon(icon)) {
+            button.setText(collapsed ? "" : followLabel);
+            waveIcon.setBounds(0, 0, dp(ICON_DP), dp(ICON_DP));
+            button.setCompoundDrawablesRelative(waveIcon, null, null, null);
+            button.setCompoundDrawablePadding(collapsed ? 0 : dp(8));
+            // With no text the glyph sits at the start edge, not centred: the padding centres it.
+            int iconInset = (dp(CHIP_HEIGHT_DP) - dp(ICON_DP)) / 2;
+            button.setPaddingRelative(collapsed ? iconInset : dp(16), 0, collapsed ? 0 : dp(18), 0);
+        } else {
+            // Arrow modes reuse the old down glyph ("↓") as text; adaptive adds its "↑" pair.
+            button.setCompoundDrawablesRelative(null, null, null, null);
+            button.setCompoundDrawablePadding(0);
+            String arrow = arrowGlyph(isAdaptiveIcon(icon) && pointingUp);
+            if (collapsed) {
+                button.setText(arrow);
+                button.setPadding(0, 0, 0, 0);
+            } else {
+                button.setText(arrow + " " + followLabel);
+                button.setPadding(dp(16), 0, dp(16), 0);
+            }
+        }
         ViewGroup.LayoutParams lp = button.getLayoutParams();
         if (lp != null) {
             lp.width = collapsed ? dp(CHIP_HEIGHT_DP) : ViewGroup.LayoutParams.WRAP_CONTENT;
             lp.height = dp(CHIP_HEIGHT_DP);
             button.setLayoutParams(lp);
+        }
+    }
+
+    /** The label pill narrows to the round icon, its text fading as it goes. */
+    private void collapseToIcon() {
+        if (button.getVisibility() != View.VISIBLE) return;
+        int startWidth = button.getWidth();
+        int endWidth = dp(CHIP_HEIGHT_DP);
+        if (startWidth <= endWidth || widthAnimator != null) {
+            applyCollapsed(true);
+            return;
+        }
+        ValueAnimator animator = ValueAnimator.ofInt(startWidth, endWidth);
+        animator.setDuration(COLLAPSE_DURATION_MS);
+        animator.setInterpolator(new android.view.animation.PathInterpolator(0.3f, 0f, 0.1f, 1f));
+        animator.addUpdateListener(a -> {
+            int width = (Integer) a.getAnimatedValue();
+            ViewGroup.LayoutParams lp = button.getLayoutParams();
+            if (lp == null) return;
+            lp.width = width;
+            button.setLayoutParams(lp);
+            float progress = (float) (startWidth - width) / Math.max(1, startWidth - endWidth);
+            button.setTextColor(Color.argb(Math.round(255 * Math.max(0f, 1f - progress * 1.6f)),
+                    255, 255, 255));
+        });
+        animator.addListener(new AnimatorListenerAdapter() {
+            boolean cancelled;
+            @Override public void onAnimationCancel(Animator animation) { cancelled = true; }
+            @Override public void onAnimationEnd(Animator animation) {
+                if (widthAnimator == animation) widthAnimator = null;
+                button.setTextColor(Color.WHITE);
+                if (!cancelled && button.getVisibility() == View.VISIBLE) applyCollapsed(true);
+            }
+        });
+        widthAnimator = animator;
+        animator.start();
+    }
+
+    private void cancelWidthAnimation() {
+        ValueAnimator animator = widthAnimator;
+        widthAnimator = null;
+        if (animator != null) {
+            animator.cancel();
+            button.setTextColor(Color.WHITE);
         }
     }
 
@@ -177,6 +300,7 @@ final class LyricsJumpToCurrentController {
             }
         } else {
             button.removeCallbacks(collapse);
+            cancelWidthAnimation();
             if (button.getVisibility() == View.VISIBLE) {
                 button.animate().cancel();
                 button.animate()
@@ -245,6 +369,38 @@ final class LyricsJumpToCurrentController {
             flp.bottomMargin = target;
             button.setLayoutParams(flp);
         }
+    }
+
+    /** Audio-waveform glyph: five rounded bars of varied height, centred. */
+    private static final class WaveformIconDrawable extends Drawable {
+        private static final float[] HEIGHTS = {0.38f, 0.7f, 1f, 0.62f, 0.3f};
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        WaveformIconDrawable() {
+            paint.setColor(Color.WHITE);
+        }
+
+        @Override public void draw(Canvas canvas) {
+            android.graphics.Rect b = getBounds();
+            int n = HEIGHTS.length;
+            float slot = b.width() / (float) n;
+            float bar = slot * 0.5f;
+            for (int i = 0; i < n; i++) {
+                float h = b.height() * HEIGHTS[i];
+                float cx = b.left + slot * (i + 0.5f);
+                float cy = b.exactCenterY();
+                canvas.drawRoundRect(cx - bar / 2f, cy - h / 2f, cx + bar / 2f, cy + h / 2f,
+                        bar / 2f, bar / 2f, paint);
+            }
+        }
+
+        @Override public int getIntrinsicWidth() { return dp(ICON_DP); }
+        @Override public int getIntrinsicHeight() { return dp(ICON_DP); }
+        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
+        @Override public void setColorFilter(android.graphics.ColorFilter filter) {
+            paint.setColorFilter(filter);
+        }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
     /**

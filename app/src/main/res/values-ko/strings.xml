@@ -22,6 +22,7 @@
     <string name="settings_label_lyric_auto_resume_follow_delay_seconds">현재 가사로 복귀하기까지 대기 시간</string>
     <string name="settings_label_lyric_follow_chip_position">‘현재 가사로’ 버튼 위치</string>
     <string name="settings_label_lyric_follow_chip_style">‘현재 가사로’ 버튼 스타일</string>
+    <string name="settings_label_lyric_follow_chip_icon">‘현재 가사로’ 버튼 아이콘</string>
     <string name="settings_label_lyric_skip_chip_position">건너뛰기 버튼 위치</string>
     <string name="settings_label_lyric_skip_chip_style">건너뛰기 버튼 스타일</string>
     <string name="settings_label_lyric_auto_skip_intro_outro">인트로·아웃트로 자동 건너뛰기</string>
@@ -200,6 +201,9 @@
     <string name="settings_option_max">최대</string>
     <string name="settings_option_dots">점</string>
     <string name="settings_option_note">음표</string>
+    <string name="settings_option_adaptive_arrow">적응형 화살표</string>
+    <string name="settings_option_static_arrow">고정 화살표</string>
+    <string name="settings_option_waveform">파형</string>
     <string name="settings_option_gradient_wash">그라데이션 채움</string>
     <string name="settings_option_spotlight">스포트라이트</string>
     <string name="settings_option_gradient">그라데이션</string>
@@ -409,7 +413,7 @@
     <string name="settings_label_download_language_models">언어 모델 다운로드</string>
     <string name="settings_label_lyrics_status_bar_hidden_mode">상태 표시줄 숨기기</string>
     <string name="share_hint">위로 밀어 가사 추가 · 탭하여 번역 켜기/끄기</string>
-    <string name="share_hint_swipe_up">카드를 위로 밀면 다음 가사가 추가돼요</string>
+    <string name="share_hint_swipe_up">위로 밀어 다음 가사 추가</string>
     <string name="share_design_glass">글래스</string>
     <string name="share_design_classic">클래식</string>
     <string name="share_design_minimal">미니멀</string>

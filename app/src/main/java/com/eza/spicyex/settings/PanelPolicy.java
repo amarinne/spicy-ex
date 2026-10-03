@@ -127,7 +127,8 @@ public final class PanelPolicy {
                 || setting == Settings.SKIP_CHIP_POSITION
                 || setting == Settings.FOLLOW_CHIP_POSITION
                 || setting == Settings.SKIP_CHIP_STYLE
-                || setting == Settings.FOLLOW_CHIP_STYLE;
+                || setting == Settings.FOLLOW_CHIP_STYLE
+                || setting == Settings.FOLLOW_CHIP_ICON;
     }
 
     private static boolean shouldRenderForceDark(PanelSnapshot snapshot) {

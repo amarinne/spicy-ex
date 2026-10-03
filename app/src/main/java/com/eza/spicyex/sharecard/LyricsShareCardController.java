@@ -768,6 +768,8 @@ public final class LyricsShareCardController {
         bg.setColor(Color.argb(205, 22, 22, 26));
         chip.setBackground(bg);
         chip.setElevation(dp(30));
+        // A short next line used to leave the chip narrower than its own instruction.
+        chip.setMinimumWidth(Math.max(dp(190), Math.min(dp(280), cardHost.getWidth() - dp(40))));
         ImageView arrow = new ImageView(activity);
         arrow.setImageDrawable(new ShareCardIcon(ShareCardIcon.Kind.ARROW_UP, Color.WHITE));
         LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(dp(18), dp(18));
@@ -777,10 +779,12 @@ public final class LyricsShareCardController {
         texts.setOrientation(LinearLayout.VERTICAL);
         int maxText = Math.max(dp(120), cardHost.getWidth() - dp(70));
         TextView instruction = new TextView(activity);
-        instruction.setText(s("hint_swipe_up", "Swipe up on the card to add the next line"));
+        instruction.setText(s("hint_swipe_up", "Swipe up for the next line"));
         instruction.setTextColor(Color.WHITE);
         instruction.setTextSize(14);
         instruction.setTypeface(Typeface.DEFAULT_BOLD);
+        instruction.setSingleLine(true);
+        instruction.setEllipsize(TextUtils.TruncateAt.END);
         instruction.setMaxWidth(maxText);
         texts.addView(instruction);
         TextView preview = new TextView(activity);
@@ -794,7 +798,11 @@ public final class LyricsShareCardController {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         previewLp.topMargin = dp(2);
         texts.addView(preview, previewLp);
-        chip.addView(texts);
+        // Always the same width, text centred in it: a short next line no longer shrinks the chip
+        // into a small pill that reads as cut off.
+        texts.setGravity(Gravity.CENTER_HORIZONTAL);
+        chip.setGravity(Gravity.CENTER);
+        chip.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         int[] hostAt = new int[2];
         int[] cardAt = new int[2];
         host.getLocationOnScreen(hostAt);
@@ -1073,7 +1081,29 @@ public final class LyricsShareCardController {
         if (artwork != null) {
             ImageView ambience = new ImageView(activity);
             ambience.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            ambience.setImageBitmap(cachedBlur(artwork));
+            Bitmap ready = blurIfCached(artwork);
+            if (ready != null) {
+                ambience.setImageBitmap(ready);
+            } else {
+                // The first blur of an artwork is three bitmap scalings: off the main thread,
+                // where it used to hold the sheet's opening. It fades in when it is ready.
+                Bitmap source = artwork;
+                ambience.setAlpha(0f);
+                RENDER.execute(() -> {
+                    Bitmap blurred;
+                    try {
+                        blurred = cachedBlur(source);
+                    } catch (Throwable error) {
+                        XpLog.log(TAG + " blur failed: " + error);
+                        return;
+                    }
+                    main.post(() -> {
+                        if (!ambience.isAttachedToWindow()) return;
+                        ambience.setImageBitmap(blurred);
+                        ambience.animate().alpha(1f).setDuration(200).start();
+                    });
+                });
+            }
             ColorMatrix saturate = new ColorMatrix();
             saturate.setSaturation(1.4f);
             ambience.setColorFilter(new ColorMatrixColorFilter(saturate));
@@ -2695,7 +2725,6 @@ public final class LyricsShareCardController {
         RENDER.execute(() -> {
             Bitmap base;
             List<Piece> pieces;
-            Bitmap thumb;
             CodeArt codeArt;
             try {
                 // The code's slot is left empty: the preview draws the code over it, animated.
@@ -2703,8 +2732,6 @@ public final class LyricsShareCardController {
                         safe(t.title), safe(t.artist), false, false);
                 pieces = quotePieces(d, style, quotes, translations, code != null, ids);
                 codeArt = code == null || code == PENDING_CODE ? null : codeArt(code, slot.paper);
-                thumb = renderCardScaled(d, style, b, art, artist, lyricsBg, quotes, translations,
-                        safe(t.title), safe(t.artist), thumbScale);
             } catch (Throwable error) {
                 XpLog.log(TAG + " render failed: " + error);
                 return;
@@ -2712,7 +2739,6 @@ public final class LyricsShareCardController {
             main.post(() -> {
                 if (token != generation || cardHost == null) return;
                 currentRecipe = recipe;
-                setThumb(d, thumb);
                 boolean textOnly = transition == Transition.SLIDE_UP || transition == Transition.SLIDE_DOWN
                         || transition == Transition.TEXT || transition == Transition.ALIGN;
                 Runnable apply = () -> {
@@ -2727,6 +2753,20 @@ public final class LyricsShareCardController {
                 // The pieces are placed in the card's own scale: wait for it to be laid out.
                 if (cardHost.getWidth() > 0) apply.run();
                 else cardHost.post(apply);
+            });
+            // Its strip thumbnail after the card has been handed over, not before: the card
+            // used to wait for a second, scaled render of itself.
+            if (token != generation) return;
+            Bitmap thumb;
+            try {
+                thumb = renderCardScaled(d, style, b, art, artist, lyricsBg, quotes, translations,
+                        safe(t.title), safe(t.artist), thumbScale);
+            } catch (Throwable error) {
+                XpLog.log(TAG + " thumbnail failed: " + error);
+                return;
+            }
+            main.post(() -> {
+                if (token == generation && cardHost != null) setThumb(d, thumb);
             });
         });
         // The neighbours after the card itself, so the card never waits behind them.
@@ -4028,6 +4068,10 @@ public final class LyricsShareCardController {
 
     private static Bitmap blurSource;
     private static Bitmap blurResult;
+
+    private static synchronized Bitmap blurIfCached(Bitmap source) {
+        return source == blurSource ? blurResult : null;
+    }
 
     /** The backdrop blur of the last image asked for; the same artwork is blurred once. */
     private static synchronized Bitmap cachedBlur(Bitmap source) {
