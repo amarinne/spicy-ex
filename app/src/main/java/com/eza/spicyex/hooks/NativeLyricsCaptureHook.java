@@ -5,6 +5,7 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.providers.NativeLyricsSource;
 import com.eza.spicyex.lyrics.providers.LyricsRepository;
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -24,8 +25,11 @@ import java.util.ArrayList;
 import java.util.List;
 import org.luckypray.dexkit.query.FindClass;
 import org.luckypray.dexkit.query.FindMethod;
+import org.luckypray.dexkit.query.matchers.AnnotationElementMatcher;
+import org.luckypray.dexkit.query.matchers.AnnotationMatcher;
 import org.luckypray.dexkit.query.matchers.ClassMatcher;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
+import org.luckypray.dexkit.query.matchers.base.AnnotationEncodeValueMatcher;
 
 /** Installs Spotify native lyrics model capture hooks and forwards candidates to NativeLyricsSource. */
 final class NativeLyricsCaptureHook {
@@ -85,33 +89,65 @@ final class NativeLyricsCaptureHook {
     private final SpotifySymbolResolver symbols;
     private final NativeLyricsSource nativeLyricsSource;
     private final TrackProvider trackProvider;
+    private final Context applicationContext;
     private volatile Object spotifyLyricsService;
-    private volatile Object spotifyComponent;
 
     NativeLyricsCaptureHook(
             ClassLoader classLoader,
             SpotifySymbolResolver symbols,
             NativeLyricsSource nativeLyricsSource,
-            TrackProvider trackProvider
+            TrackProvider trackProvider,
+            Context applicationContext
     ) {
         this.classLoader = classLoader;
         this.symbols = symbols;
         this.nativeLyricsSource = nativeLyricsSource;
         this.trackProvider = trackProvider;
+        this.applicationContext = applicationContext;
+    }
+
+    static String resolveClientLanguage(Locale appLocale, Locale systemLocale) {
+        if (appLocale != null) {
+            String appLanguage = appLocale.getLanguage();
+            if (appLanguage != null && !appLanguage.isEmpty()) return appLanguage;
+        }
+        if (systemLocale != null) {
+            String systemLanguage = systemLocale.getLanguage();
+            if (systemLanguage != null && !systemLanguage.isEmpty()) return systemLanguage;
+        }
+        return "";
+    }
+
+    private String clientLanguage() {
+        Locale appLocale = null;
+        try {
+            if (applicationContext != null) {
+                android.content.res.Configuration config =
+                        applicationContext.getResources().getConfiguration();
+                if (config != null && config.getLocales() != null
+                        && !config.getLocales().isEmpty()) {
+                    appLocale = config.getLocales().get(0);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return resolveClientLanguage(appLocale, Locale.getDefault());
     }
 
     void hook() {
         NativeSpicyLyricsHook.dbgEnter("hookNativeLyricsCapture");
+        List<String> missing = new ArrayList<>();
         for (String name : NATIVE_CLASS_NAMES) {
             try {
                 Class<?> cls = XpReflect.findClass(name, classLoader);
                 hookResolvedNativeLyricsClass(cls, name);
             } catch (Throwable t) {
+                missing.add(name);
                 XpLog.log(NativeSpicyLyricsHook.TAG
                         + " native lyrics capture missing " + name + ": " + t.getClass().getSimpleName());
             }
         }
-        hookDeferredNativeLyricsClassLoading();
+        if (missingClassesShipInApk(missing)) hookDeferredNativeLyricsClassLoading();
         discoverNativeLyricsClasses();
         traceNativeLyricsLoad();
         // Spotify's own lyrics arrive as a protobuf message on current builds: the offline
@@ -121,38 +157,59 @@ final class NativeLyricsCaptureHook {
         installExplicitSpotifyRequest();
     }
 
+    /** The Retrofit path of Spotify's own lyrics request: an annotation value, so it survives
+     *  obfuscation where the interface, its method and the owning service are renamed with
+     *  every release (hard-coded 9.1.84 names stopped resolving on 9.1.88). */
+    private static final String COLOR_LYRICS_PATH = "color-lyrics/v2/track/{trackId}";
+
     /** Uses Spotify's own authenticated Retrofit client when its verified service is present. */
     private void installExplicitSpotifyRequest() {
         try {
-            Class<?> service = XpReflect.findClass("p.kqb0", classLoader);
-            Class<?> retrofit = XpReflect.findClass("p.hqb0", classLoader);
             Class<?> single = XpReflect.findClass("io.reactivex.rxjava3.core.Single", classLoader);
-            Method endpoint = retrofit.getMethod("b", String.class, boolean.class,
-                    String.class, boolean.class);
+            Method endpoint = symbols.cache.method("lyrics.colorLyricsEndpoint", () ->
+                    symbols.dexKit().findMethod(FindMethod.create().matcher(MethodMatcher.create()
+                                    .paramTypes(String.class, boolean.class, String.class, boolean.class)
+                                    .addAnnotation(AnnotationMatcher.create().addElement(
+                                            AnnotationElementMatcher.create().name("value").value(
+                                                    AnnotationEncodeValueMatcher.createString(
+                                                            COLOR_LYRICS_PATH))))))
+                            .get(0).getMethodInstance(classLoader));
             if (!single.isAssignableFrom(endpoint.getReturnType())) return;
-            Field client = service.getDeclaredField("a");
+            Class<?> retrofit = endpoint.getDeclaringClass();
+            List<Class<?>> owners = symbols.cache.classes("lyrics.colorLyricsService", () -> {
+                List<String> names = new ArrayList<>();
+                for (var data : symbols.dexKit().findClass(FindClass.create().matcher(
+                        ClassMatcher.create().addFieldForType(retrofit.getName())))) {
+                    names.add(data.getName());
+                }
+                return names;
+            });
+            Class<?> service = null;
+            Field client = null;
+            for (Class<?> owner : owners) {
+                for (Field f : owner.getDeclaredFields()) {
+                    if (f.getType() == retrofit && !Modifier.isStatic(f.getModifiers())) {
+                        service = owner;
+                        client = f;
+                        break;
+                    }
+                }
+                if (service != null) break;
+            }
+            if (service == null) throw new NoSuchFieldException("color-lyrics service");
             client.setAccessible(true);
-            Field language = service.getDeclaredField("c");
-            language.setAccessible(true);
+            final Class<?> serviceClass = service;
+            final Field clientField = client;
             XpHooks.hookAllConstructors(service, "lyrics:explicitSpotifyClient",
                     (XpHooks.After) param -> {
                         spotifyLyricsService = param.thisObject;
                         XpLog.log(NativeSpicyLyricsHook.TAG
                                 + " explicit Spotify client captured");
                     });
-            Class<?> provider = XpReflect.findClass("p.oon", classLoader);
-            Class<?> component = XpReflect.findClass("p.pon", classLoader);
-            XpHooks.hookAllConstructors(provider, "lyrics:spotifyComponentProvider",
-                    (XpHooks.After) param -> {
-                        if (spotifyComponent == null && param.args != null
-                                && param.args.length > 0
-                                && component.isInstance(param.args[0])) {
-                            spotifyComponent = param.args[0];
-                        }
-                    });
             nativeLyricsSource.setRequester((track, callback) ->
-                    requestSpotifyTrack(track, callback, service, client, language, endpoint));
-            XpLog.log(NativeSpicyLyricsHook.TAG + " explicit Spotify request installed");
+                    requestSpotifyTrack(track, callback, serviceClass, clientField, endpoint));
+            XpLog.log(NativeSpicyLyricsHook.TAG + " explicit Spotify request installed "
+                    + service.getName() + " -> " + retrofit.getName() + "#" + endpoint.getName());
         } catch (Throwable error) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " explicit Spotify request unavailable: "
                     + error.getClass().getSimpleName());
@@ -161,9 +218,8 @@ final class NativeLyricsCaptureHook {
 
     private void requestSpotifyTrack(SpotifyTrack track,
             LyricsRepository.NativeLyricsProvider.RequestCallback callback,
-            Class<?> service, Field clientField, Field languageField, Method endpoint) {
+            Class<?> service, Field clientField, Method endpoint) {
         Object owner = spotifyLyricsService;
-        if (owner == null) owner = resolveSpotifyLyricsService(service);
         if (owner == null || track == null || track.uri == null) {
             if (owner == null) XpLog.log(NativeSpicyLyricsHook.TAG
                     + " explicit Spotify client not created");
@@ -185,11 +241,10 @@ final class NativeLyricsCaptureHook {
         };
         try {
             Object client = clientField.get(owner);
-            Object languageOwner = languageField.get(owner);
-            Method languageMethod = languageOwner.getClass().getMethod("j");
-            String language = (String) languageMethod.invoke(languageOwner);
-            Object request = endpoint.invoke(client, id, false,
-                    language == null ? "" : language, false);
+            // clientLanguage: prefer the Spotify app's resource configuration locale,
+            // falling back to the system locale when unavailable or empty.
+            String language = clientLanguage();
+            Object request = endpoint.invoke(client, id, false, language, false);
             Class<?> consumer = XpReflect.findClass(
                     "io.reactivex.rxjava3.functions.Consumer", classLoader);
             Object success = Proxy.newProxyInstance(classLoader, new Class<?>[]{consumer},
@@ -231,27 +286,6 @@ final class NativeLyricsCaptureHook {
         }
     }
 
-    private Object resolveSpotifyLyricsService(Class<?> service) {
-        Object component = spotifyComponent;
-        if (component == null) return null;
-        try {
-            // Spotify 9.1.84's provider for this exact service is the component's `on`
-            // binding. Verify the returned class before retaining or invoking it.
-            Field binding = component.getClass().getDeclaredField("on");
-            binding.setAccessible(true);
-            Object provider = binding.get(component);
-            if (provider == null) return null;
-            Object created = provider.getClass().getMethod("get").invoke(provider);
-            if (!service.isInstance(created)) return null;
-            spotifyLyricsService = created;
-            return created;
-        } catch (Throwable error) {
-            XpLog.log(NativeSpicyLyricsHook.TAG + " Spotify client resolve failed: "
-                    + error.getClass().getSimpleName());
-            return null;
-        }
-    }
-
     private static String spotifyRequestError(Object error) {
         try {
             int code = (Integer) error.getClass().getMethod("code").invoke(error);
@@ -267,6 +301,48 @@ final class NativeLyricsCaptureHook {
             disposable.getClass().getMethod("dispose").invoke(disposable);
         } catch (Throwable ignored) {
         }
+    }
+
+    /**
+     * The deferred hook sits on ClassLoader#loadClass, so every class Spotify loads - thousands
+     * at startup, more on each new screen - pays an Xposed callback for it. It can only ever
+     * catch a class that is in the APK but was not loadable yet; a name that is not in the APK at
+     * all (the offline-database entities and the old models are gone from current builds) never
+     * arrives, so the hook is skipped then.
+     */
+    private boolean missingClassesShipInApk(List<String> missing) {
+        if (missing.isEmpty()) return false;
+        try {
+            if (anyMissingShipsInApk(missing, name ->
+                    !symbols.dexKit().findClass(FindClass.create().matcher(
+                            ClassMatcher.create().className(name))).isEmpty())) {
+                return true;
+            }
+            XpLog.log(NativeSpicyLyricsHook.TAG
+                    + " native lyrics deferred ClassLoader hook skipped: none of the missing classes ship");
+            return false;
+        } catch (Throwable t) {
+            XpLog.log(NativeSpicyLyricsHook.TAG + " native lyrics deferred check failed: " + t);
+        }
+        return true;
+    }
+
+    /**
+     * Presence probe over DexKit name matches. A name counts as shipped when DexKit finds it
+     * in the APK, without loading the class: present-but-not-yet-loadable names must still
+     * install the deferred hook. A probe failure propagates so the caller fails safe to
+     * installing the hook.
+     */
+    interface DeferredPresenceProbe {
+        boolean ships(String className) throws Exception;
+    }
+
+    static boolean anyMissingShipsInApk(List<String> missing, DeferredPresenceProbe probe)
+            throws Exception {
+        for (String name : missing) {
+            if (probe.ships(name)) return true;
+        }
+        return false;
     }
 
     private void hookDeferredNativeLyricsClassLoading() {
@@ -382,7 +458,7 @@ final class NativeLyricsCaptureHook {
         for (Method method : cls.getDeclaredMethods()) {
             int modifiers = method.getModifiers();
             if (Modifier.isAbstract(modifiers) || Modifier.isNative(modifiers)) continue;
-            if (method.getReturnType() == Void.TYPE) continue;
+            if (!canReturnLyrics(method.getReturnType())) continue;
             if (methodHooks >= 18) break;
             try {
                 method.setAccessible(true);
@@ -406,6 +482,23 @@ final class NativeLyricsCaptureHook {
                 + " native lyrics capture hook installed " + className
                 + " methods=" + methodHooks
                 + " source=" + sourceTag);
+    }
+
+    /**
+     * Whether a method's result could be (or own) Spotify's lyrics. The string probes resolve
+     * obfuscated classes that R8 has merged with unrelated code - on 9.1.88 the
+     * "INSERT OR REPLACE INTO lyrics_entities" class has accessors returning String, Boolean and
+     * the main activity - and each hooked accessor paid a callback and a parse attempt on every
+     * call. Plain values and framework objects never carry lyrics, so they are not hooked;
+     * collections still are (their owner is re-read).
+     */
+    private static boolean canReturnLyrics(Class<?> type) {
+        if (type.isPrimitive() || type.isArray()) return false;
+        if (java.util.Collection.class.isAssignableFrom(type)) return true;
+        String name = type.getName();
+        if (type == Object.class) return true;
+        return !(name.startsWith("java.") || name.startsWith("android.")
+                || name.startsWith("androidx.") || name.startsWith("kotlin."));
     }
 
     private static boolean isNativeLyricsClassName(String name) {

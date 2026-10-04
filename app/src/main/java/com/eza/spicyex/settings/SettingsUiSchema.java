@@ -101,7 +101,8 @@ public final class SettingsUiSchema {
             Settings.PIP_SHAPE,
             Settings.PIP_CONTROLS,
             Settings.PIP_FOCUS,
-            Settings.PIP_LEAVE_SPOTIFY));
+            Settings.PIP_LEAVE_SPOTIFY,
+            Settings.PIP_ALBUM_ART));
 
     /** Every renderable setting, in panel row order. */
     public static List<Settings.Setting<?>> orderedSettings() {

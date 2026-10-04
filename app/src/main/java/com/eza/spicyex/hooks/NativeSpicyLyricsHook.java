@@ -71,7 +71,8 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
                 lpparm.classLoader(),
                 symbols,
                 lyricsFetchCoordinator.nativeLyricsSource(),
-                this::getCurrentTrackSafely
+                this::getCurrentTrackSafely,
+                applicationContext
         ).hook();
         playbackBridge.install(lpparm, symbols);
         activityTakeoverHook.hook();
@@ -177,6 +178,11 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
 
     public long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing) {
         return playbackBridge.readBestMeasuredProgressMs(track, playing);
+    }
+
+    @Override
+    public double readEffectivePlaybackRate(boolean playing) {
+        return playbackBridge.readEffectivePlaybackRate(playing);
     }
 
     public boolean isPlayerActuallyPlaying() {

@@ -353,6 +353,7 @@ final class LyricsLayoutEditController {
                 Settings.FORCE_DARK_BACKGROUND, Settings.EXTRA_DARK_BACKGROUND,
                 Settings.SKIP_CHIP_POSITION, Settings.SKIP_CHIP_STYLE,
                 Settings.FOLLOW_CHIP_POSITION, Settings.FOLLOW_CHIP_STYLE,
+                Settings.FOLLOW_CHIP_ICON,
                 Settings.BACKGROUND_RENDER_QUALITY,
                 Settings.LIKED_SONGS_BUTTON, Settings.CHROME_CLUSTER_POSITION,
                 Settings.CHROME_CLUSTER_LAYOUT,
@@ -3385,6 +3386,13 @@ final class LyricsLayoutEditController {
             addOption(text(strings.setting(Settings.FOLLOW_CHIP_STYLE), 12, GROUP_TITLE_COLOR, true), matchWrap(6));
             addOption(chipRow(Settings.FOLLOW_CHIP_STYLE,
                     new String[]{"Auto", "Label", "Icon"},
+                    () -> {
+                        refreshFollowChip();
+                        selectElement(selected, false);
+                    }), matchWrap(12));
+            addOption(text(strings.setting(Settings.FOLLOW_CHIP_ICON), 12, GROUP_TITLE_COLOR, true), matchWrap(6));
+            addOption(chipRow(Settings.FOLLOW_CHIP_ICON,
+                    new String[]{"Adaptive arrow", "Static arrow", "Waveform"},
                     () -> {
                         refreshFollowChip();
                         selectElement(selected, false);

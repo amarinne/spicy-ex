@@ -73,6 +73,9 @@ final class LyricsPipController {
     private WeakReference<Activity> opener;
     /** Hosts that are stopped: leaving PiP while stopped means the window was dismissed. */
     private final WeakHashMap<Activity, Boolean> stopped = new WeakHashMap<>();
+    /** Intents that brought a PiP host forward without the PiP marker: a tap on Spotify's own
+     *  mini player. The window then opens Spotify's now-playing page, not the lyrics screen. */
+    private final WeakHashMap<Activity, Intent> foreignLaunches = new WeakHashMap<>();
     private boolean applyingOwnParams;
     private final WeakHashMap<android.widget.TextView, android.graphics.Typeface> keptTypefaces = new WeakHashMap<>();
     private boolean receiverRegistered;
@@ -104,6 +107,8 @@ final class LyricsPipController {
             if (isPipIntent(activity, intent)) {
                 activity.setIntent(intent);
                 adopt(activity);
+            } else if (hosts.containsKey(activity)) {
+                foreignLaunches.put(activity, intent);
             }
         }, Intent.class);
         XpHooks.findAfter(Activity.class, "onResume", "pip:Activity#onResume", param -> {
@@ -161,6 +166,7 @@ final class LyricsPipController {
                 }, PictureInPictureParams.class);
         XpHooks.findBefore(Activity.class, "onDestroy", "pip:Activity#onDestroy", param -> {
             Activity activity = (Activity) param.thisObject;
+            foreignLaunches.remove(activity);
             if (hosts.remove(activity) != null) unmount(activity);
         });
     }
@@ -222,6 +228,7 @@ final class LyricsPipController {
     }
 
     private void adopt(Activity activity) {
+        foreignLaunches.remove(activity);
         hosts.put(activity, Boolean.FALSE);
         mount(activity);
         // Nothing of the start is shown - not the host at full screen for the moment before
@@ -257,10 +264,10 @@ final class LyricsPipController {
         }
     }
 
-    private static final long REVEAL_POLL_MS = 100L;
+    private static final long REVEAL_POLL_MS = 50L;
     private static final long REVEAL_MAX_WAIT_MS = 3000L;
     /** Settle time after the lyrics arrive: the header's artwork and the scroll to the line. */
-    private static final long REVEAL_SETTLE_MS = 250L;
+    private static final long REVEAL_SETTLE_MS = 120L;
 
     private void reveal(Activity activity, long since) {
         ViewGroup decor = decor(activity);
@@ -271,7 +278,7 @@ final class LyricsPipController {
             main.postDelayed(() -> reveal(activity, since), REVEAL_POLL_MS);
             return;
         }
-        main.postDelayed(() -> decor.animate().alpha(1f).setDuration(220L).start(),
+        main.postDelayed(() -> decor.animate().alpha(1f).setDuration(160L).start(),
                 ready ? REVEAL_SETTLE_MS : 0L);
     }
 
@@ -325,8 +332,22 @@ final class LyricsPipController {
         if (!Boolean.TRUE.equals(hosts.get(activity))) return;
         hosts.remove(activity);
         boolean dismissed = stopped.remove(activity) != null;
+        Intent foreign = foreignLaunches.remove(activity);
         unmount(activity);
         if (activity.isFinishing()) return;
+        if (foreign != null && !dismissed) {
+            // The mini player was tapped, not the PiP window: Spotify's own now-playing page.
+            try {
+                Intent regular = new Intent(foreign);
+                regular.removeExtra(EXTRA_PIP);
+                activity.finish();
+                activity.overridePendingTransition(0, 0);
+                activity.startActivity(regular);
+                return;
+            } catch (Throwable t) {
+                XpLog.log(NativeSpicyLyricsHook.TAG + " lyrics PiP: regular page launch failed " + t);
+            }
+        }
         // Expanded rather than dismissed: continue in the real lyrics screen.
         if (!dismissed) host.launchNativeLyricsFullscreen(activity);
         activity.finish();

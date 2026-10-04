@@ -179,12 +179,20 @@ public final class LyricsAmbientController {
         createAnimatedLayer(parent, forceDark, LyricsBackgroundStyle.isAnimated(style));
     }
 
+    /** Extra scale on the background's render resolution: a picture-in-picture window shows the
+     *  screen scaled far down, so it needs a fraction of the pixels. */
+    private float renderScaleFactor = 1f;
+
+    public void setRenderScaleFactor(float factor) {
+        renderScaleFactor = factor;
+    }
+
     private float readRenderScale() {
         try {
             return (config == null ? Settings.BACKGROUND_RENDER_QUALITY.defaultValue
-                    : config.get(Settings.BACKGROUND_RENDER_QUALITY)) / 100f;
+                    : config.get(Settings.BACKGROUND_RENDER_QUALITY)) / 100f * renderScaleFactor;
         } catch (Throwable ignored) {
-            return Settings.BACKGROUND_RENDER_QUALITY.defaultValue / 100f;
+            return Settings.BACKGROUND_RENDER_QUALITY.defaultValue / 100f * renderScaleFactor;
         }
     }
 

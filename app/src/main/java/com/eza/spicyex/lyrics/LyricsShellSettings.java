@@ -126,7 +126,20 @@ public final class LyricsShellSettings {
      */
     public static final float LANDSCAPE_FIT_SCALE = 0.78f;
 
+    /** Scales the lyrics (and with them the secondary lines) on surfaces that are laid out large
+     *  and shown small, such as the landscape picture-in-picture window. */
+    private float textBoost = 1f;
+
+    public LyricsShellSettings withTextBoost(float boost) {
+        textBoost = boost;
+        return this;
+    }
+
     public float lyricsTextSizeMultiplier() {
+        return rawLyricsTextSizeMultiplier() * textBoost;
+    }
+
+    private float rawLyricsTextSizeMultiplier() {
         float base;
         if ("custom".equals(lyricsTextSizeMode())) {
             int hundredths = config == null ? Settings.LYRICS_TEXT_SIZE_CUSTOM.defaultValue
