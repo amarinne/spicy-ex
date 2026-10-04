@@ -228,6 +228,7 @@ final class LyricsPipController {
     }
 
     private void adopt(Activity activity) {
+        foreignLaunches.remove(activity);
         hosts.put(activity, Boolean.FALSE);
         mount(activity);
         // Nothing of the start is shown - not the host at full screen for the moment before
