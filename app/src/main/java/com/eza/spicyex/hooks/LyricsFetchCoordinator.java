@@ -14,7 +14,6 @@ import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.providers.LyricsParser;
 import com.eza.spicyex.lyrics.providers.LyricsRepository;
 import com.eza.spicyex.lyrics.providers.NativeLyricsSource;
-import com.eza.spicyex.lyrics.providers.SpicyManualTokenStore;
 import com.eza.spicyex.lyrics.catalog.CatalogRequestIdentity;
 
 import java.util.ArrayList;
@@ -84,11 +83,6 @@ final class LyricsFetchCoordinator {
         // Source selection is owned by LyricsSourcePreferences toggles/order. The retired
         // global override must not bypass that policy.
         String sourceOverride = "Auto";
-        String manualSpicyToken = SpicyManualTokenStore.load(context);
-        boolean strictSpicy = false;
-        if (strictSpicy && manualSpicyToken != null && !manualSpicyToken.trim().isEmpty()) {
-            sendToken = true;
-        }
         // M3: in-flight identity uses the non-secret token generation from the token store
         // (never the raw token, never a token-present boolean), so a fresh token generation
         // can never join an in-flight stale-token request. The snapshot binds the token text
@@ -99,8 +93,8 @@ final class LyricsFetchCoordinator {
         String operationKey = fetchKey(track, sendToken, authorized)
                 + "|source=" + sourceOverride
                 + "|scope=" + (scope == null ? "none" : scope.key())
-                + "|manual=" + (manualSpicyToken == null || manualSpicyToken.trim().isEmpty()
-                ? "none" : Integer.toHexString(manualSpicyToken.hashCode()));
+                + "|spicyOrgEpoch=" + com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore.epoch(context)
+                + "|orgAccessRevision=" + com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.revision(context);
         InFlightFetch existing;
         LyricsDocument replay = null;
         boolean joined = false;
@@ -132,9 +126,6 @@ final class LyricsFetchCoordinator {
                 NativeRuntime.LYRICS_IO
         );
         String accessToken = authorized == null ? "" : authorized.token();
-        if (strictSpicy && manualSpicyToken != null && !manualSpicyToken.trim().isEmpty()) {
-            accessToken = manualSpicyToken.trim();
-        }
         final boolean requestSendToken = sendToken;
         final String requestAccessToken = accessToken;
         int tokenGeneration = authorized == null ? TOKEN_GENERATION_NONE : authorized.generation();
@@ -165,12 +156,23 @@ final class LyricsFetchCoordinator {
     void fetchCatalogSource(Context context, SpotifyTrack track, int generation,
                             com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source,
                             NativeSpicyLyricsHook.LyricsResultCallback callback) {
+        fetchCatalogSource(context, track, generation, source, false, callback);
+    }
+
+    void fetchCatalogSource(Context context, SpotifyTrack track, int generation,
+                            com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source,
+                            boolean explicitAccessCheck, NativeSpicyLyricsHook.LyricsResultCallback callback) {
         com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source repositorySource =
                 repositorySource(source);
         boolean karaokeOriginalLyrics = com.eza.spicyex.lyrics.catalog.CatalogPolicy.read(context)
                 .karaokeOriginalLyrics;
         String bare = fetchTrackKey(track);
         String key = pickerKey(bare, source, karaokeOriginalLyrics);
+        if (!key.isEmpty() && source == com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId.SPICY_ORG) {
+            key += "|spicyOrgEpoch=" + com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore.epoch(context)
+                    + "|orgAccessRevision=" + com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.revision(context)
+                    + "|accessCheck=" + explicitAccessCheck;
+        }
         if (repositorySource == null || key.isEmpty() || callback == null) {
             if (callback != null) callback.onError("Unknown lyrics source");
             return;
@@ -196,9 +198,8 @@ final class LyricsFetchCoordinator {
         final InFlightFetch started = operation;
         LyricsRepository repository = new LyricsRepository(
                 http, lyricsParser, nativeLyricsSource, NativeRuntime.LYRICS_IO);
-        started.fetchFuture = NativeRuntime.LYRICS_IO.submit(() -> repository.fetchSource(
-                context, track, generation, repositorySource, karaokeOriginalLyrics,
-                new LyricsRepository.ResultCallback() {
+        started.fetchFuture = NativeRuntime.LYRICS_IO.submit(() -> {
+                LyricsRepository.ResultCallback delivery = new LyricsRepository.ResultCallback() {
                     @Override public void onSuccess(LyricsDocument document) {
                         deliverSuccess(started, document);
                     }
@@ -206,7 +207,13 @@ final class LyricsFetchCoordinator {
                     @Override public void onError(String error) {
                         deliverError(started, error);
                     }
-                }));
+                };
+                if (explicitAccessCheck && repositorySource
+                        == com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPICY)
+                    repository.fetchSpicyOrgAccessCheck(context, track, delivery);
+                else repository.fetchSource(context, track, generation, repositorySource,
+                        karaokeOriginalLyrics, delivery);
+        });
     }
 
     static String pickerKey(String bareTrackId,
@@ -223,6 +230,8 @@ final class LyricsFetchCoordinator {
             com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source) {
         if (source == null) return null;
         switch (source) {
+            case SPICY_ORG:
+                return com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPICY;
             case APPLE:
                 return com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.APPLE_MUSIC;
             case SPOTIFY_NATIVE:

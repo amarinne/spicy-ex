@@ -374,13 +374,18 @@ public final class LyricsRenderConfig {
         return "Left to right (sentence)".equals(lineSyncFillMode);
     }
 
-    public LyricsRenderConfig forLiveCard() {
-        boolean minimal = "Minimal".equals(liveCardAnimationMode);
-        boolean spotlightCard = "Spotlight word".equals(liveCardAnimationMode);
-        boolean glow = !"Off".equals(liveCardGlowMode)
+    public LyricsRenderConfig forLiveCard() { return forLiveCard(false); }
+
+    /** Projected surfaces keep karaoke fill without spatial motion or expensive blur. */
+    public LyricsRenderConfig forAndroidAuto() { return forLiveCard(true); }
+
+    private LyricsRenderConfig forLiveCard(boolean androidAuto) {
+        boolean minimal = !androidAuto && "Minimal".equals(liveCardAnimationMode);
+        boolean spotlightCard = !androidAuto && "Spotlight word".equals(liveCardAnimationMode);
+        boolean glow = !androidAuto && !"Off".equals(liveCardGlowMode)
                 && !"auto".equalsIgnoreCase(liveCardGlowMode)
                 && !spotlightCard;
-        String fillMode = spotlightCard
+        String fillMode = androidAuto ? "Left to right (sentence)" : spotlightCard
                 ? "Left to right (word)"
                 : ("Karaoke fill".equals(liveCardAnimationMode) ? liveCardLineSyncFillMode : "Top to bottom");
         return new LyricsRenderConfig(
@@ -389,9 +394,9 @@ public final class LyricsRenderConfig {
                 extraDarkBackground,
                 !minimal,
                 spotlightCard,
-                 wordBounceEnabled,
+                 !androidAuto && wordBounceEnabled,
                  wordBounceScope,
-                 wordBounceStyle,
+                 androidAuto ? "Phrase zoom" : wordBounceStyle,
                  false, false, false, false,
                  glow,
                  false,

@@ -19,6 +19,16 @@ import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 
 public class LyricsSurfaceRowPlannerTest {
+    @Test public void phoneSentenceFillSweepsVisualLinesInReadingOrder() {
+        LyricsSurfaceRowPlanner.SurfacePolicy policy = new LyricsSurfaceRowPlanner.SurfacePolicy(
+                1f, false, false, "off", false, false, true, false, false,
+                "Regular", "system", 1f, true, true);
+        LyricsSurfaceRowPlanner.RowPlan row = LyricsSurfaceRowPlanner.plan(line("Hello world"), null, policy);
+        assertTrue(row.options.lineLevelFillSentence);
+        assertTrue(row.options.continuousSentenceFill);
+        assertTrue(row.options.sequentialLineFill);
+    }
+
     @Test
     public void wholeLineAiReadingRemainsRenderableWithoutAPlan() {
         AppliedLine line = line("ก็ไม่รู้");

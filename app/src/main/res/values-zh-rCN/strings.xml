@@ -13,7 +13,7 @@
     <string name="settings_label_lyric_sync_offset_ms">同步偏移</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">将歌词发布到 HyperGlow</string>
     <string name="settings_source_none_enabled">未启用任何来源</string>
-    <string name="settings_source_order_title">顺序</string>
+    <string name="settings_source_order_title">来源顺序</string>
     <string name="settings_label_cache_size">缓存大小上限</string>
     <string name="settings_cache_size_usage_suffix">%1$s · 已使用 %2$s</string>
     <string name="settings_cache_details_action">显示缓存详情</string>
@@ -312,4 +312,13 @@
     <string name="settings_ai_response_too_large">响应内容过大</string>
     <string name="lyrics_ai_model_used">模型：%1$s</string>
     <string name="lyrics_follow_chip_label">跟随歌词</string>
+    <string name="settings_label_lyrics_sync_upgrade">改善歌词同步</string>
+    <string name="settings_label_lyrics_source_selection_mode">歌词来源选择</string>
+    <string name="settings_source_ranking_title">选择方式</string>
+    <string name="settings_source_ranking_auto_desc">SpicyLyrics.org → Apple Music → Spotify，然后使用备用来源</string>
+    <string name="settings_source_enabled_title">已启用的来源</string>
+    <string name="settings_label_lyrics_spicy_org_client_key">SpicyLyrics.org 客户端密钥</string>
+    <string name="settings_spicy_key_help">从目录添加 Spicy EX。粘贴你的个人客户端密钥。保存密钥。在“歌词来源”中启用 SpicyLyrics.org。</string>
+    <string name="settings_sync_upgrade_summary">歌词匹配时，此选项使用已启用的 QQ Music 或 NetEase 来源的时间信息。歌词文本保持不变。</string>
+    <string name="source_picker_spicy_key_required">请在设置中添加你的个人客户端密钥</string>
 </resources>

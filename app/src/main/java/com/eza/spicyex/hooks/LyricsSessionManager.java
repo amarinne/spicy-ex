@@ -85,9 +85,10 @@ final class LyricsSessionManager {
         final boolean playing;
         final long positionMs;
         final long sampledAtMs;
+        final double playbackRate;
 
         Snapshot(SpotifyTrack track, String trackUri, int generation, String status,
-                 boolean playing, long positionMs, long sampledAtMs) {
+                 boolean playing, long positionMs, long sampledAtMs, double playbackRate) {
             this.track = track;
             this.trackUri = trackUri;
             this.generation = generation;
@@ -95,6 +96,7 @@ final class LyricsSessionManager {
             this.playing = playing;
             this.positionMs = positionMs;
             this.sampledAtMs = sampledAtMs;
+            this.playbackRate = playbackRate;
         }
     }
 
@@ -132,6 +134,9 @@ final class LyricsSessionManager {
      * reads from the session, this is the base and the mutable document goes away.
      */
     private LyricsDocument canonicalSource;
+    private LyricsDocument timingProjection;
+    private String timingProjectionIdentity = "";
+    private boolean timingProjectionChanged;
     /** Candidate currently rendered; empty for a delivery the catalog could not store. */
     private String displayedCandidateId = "";
     /** Newest catalog view applied here; views read earlier on another IO thread are stale. */
@@ -140,14 +145,18 @@ final class LyricsSessionManager {
     private CatalogPolicy loadedPolicy;
     /** This visit's next automatic fetch; null once the catalog plan settled the visit. */
     private AcquisitionPlanner.Plan pendingPlan;
+    private AcquisitionScope lastAutomaticScope = AcquisitionScope.NONE;
+    private long automaticAttemptId;
     private boolean replanning;
-    /** Spotify native (local, free) was already tried during this visit. */
+    /** Spotify native was already asked by this visit's primary fallback walk. */
     private boolean localTried;
+    private final java.util.Set<CatalogSource.SourceId> attemptedSources =
+            java.util.EnumSet.noneOf(CatalogSource.SourceId.class);
     private int autoAttempts;
     /** Why the current visit shows no lyrics; answers new requests without another fetch. */
     private String noLyricsReason = "";
     /** Hard cap on automatic fetches per visit, whatever the stored outcomes say. */
-    static final int MAX_AUTO_ATTEMPTS = 3;
+    static final int MAX_AUTO_ATTEMPTS = CatalogSource.SourceId.values().length;
     private String canonicalLoadingUri = "";
     /** Last completed detection for the current base, for diagnostics and status. */
     private DetectionArtifact detectionArtifact;
@@ -195,6 +204,13 @@ final class LyricsSessionManager {
     void start() {
         if (started) return;
         started = true;
+        com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.addListener(() -> handler.post(() -> {
+            if (orgAccessBlocked(document)) {
+                retireDisplayedBase(true, policy.generation(), "org-access-terminated");
+            }
+            loadedPolicy = null;
+            reconcileSources();
+        }));
         // Native-first: a hook capture for the current track publishes without waiting for a
         // poll or a fetch retry window. Stale-track captures stay in the native memory cache;
         // generation and adoption guards below drop them from the screen.
@@ -287,7 +303,7 @@ final class LyricsSessionManager {
                     boolean playing = hook.isPlayerActuallyPlaying();
                     long position = hook.readBestMeasuredProgressMs(current, playing);
                     notifyState(new Snapshot(current, policy.trackUri(), policy.generation(), status, playing,
-                            position, SystemClock.elapsedRealtime()));
+                            position, SystemClock.elapsedRealtime(), hook.readEffectivePlaybackRate(playing)));
                     maybeFetch();
                 }
             } catch (Throwable ignored) {
@@ -308,6 +324,9 @@ final class LyricsSessionManager {
         loadingUri = "";
         document = null;
         canonicalSource = null;
+        timingProjection = null;
+        timingProjectionIdentity = "";
+        timingProjectionChanged = false;
         status = uri.isEmpty() ? "idle" : "loading";
         nextFetchAtMs = 0L;
         missingTrackSinceMs = 0L;
@@ -316,6 +335,8 @@ final class LyricsSessionManager {
         pendingPlan = null;
         replanning = false;
         localTried = false;
+        attemptedSources.clear();
+        lastAutomaticScope = AcquisitionScope.NONE;
         autoAttempts = 0;
         noLyricsReason = "";
         canonicalLoadingUri = "";
@@ -342,7 +363,6 @@ final class LyricsSessionManager {
         NativeRuntime.LYRICS_IO.execute(() -> {
             LyricsCatalog.View view = null;
             try {
-                probeNativeLyrics(requestedTrack);
                 view = LyricsCatalog.load(context, requestedTrack, true);
                 finalizeSeat(view);
             } catch (Throwable t) {
@@ -355,44 +375,15 @@ final class LyricsSessionManager {
         });
     }
 
-    /**
-     * A local hit commits immediately. A miss asks Spotify's own lyrics client for this
-     * track; only its confirmed absence records NOT_FOUND. Manual pins never move.
-     * Globally disabled Spotify stays untouched except for an explicit picker check.
-     */
-    private void probeNativeLyrics(SpotifyTrack track) {
-        if (track == null || context == null || fetchCoordinator == null) return;
-        try {
-            if (!CatalogPolicy.read(context).enabled(CatalogSource.SourceId.SPOTIFY_NATIVE)) {
-                return;
-            }
-            LyricsDocument nativeDoc =
-                    fetchCoordinator.nativeLyricsSource().getNativeLyricsDocument(track);
-            if (nativeDoc != null && nativeDoc.lines != null && !nativeDoc.lines.isEmpty()) {
-                CatalogAdapters.recordSuccess(context, CatalogSource.SourceId.SPOTIFY_NATIVE,
-                        track, nativeDoc, CatalogSource.MatchMethod.EXACT_SPOTIFY_ID,
-                        com.eza.spicyex.lyrics.LyricUtils.trackIdFromUri(
-                                track == null ? "" : track.uri),
-                        "", CatalogAdapters.SPOTIFY_NATIVE_ADAPTER_REVISION);
-            } else {
-                // Spotify's player may never mount its lyrics surface during a fullscreen
-                // track change. Ask its authenticated lyrics client for this track directly.
-                fetchCoordinator.nativeLyricsSource().requestNativeLyrics(track, (result, error) -> {
-                    if (result == null && "Spotify has no lyrics for this track".equals(error)) {
-                        CatalogAdapters.recordError(context, CatalogSource.SourceId.SPOTIFY_NATIVE,
-                                track, error);
-                    }
-                });
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
     /** Reproduces exactly what a fresh parse produces for a stored seat document. */
     private void finalizeSeat(LyricsCatalog.View view) {
         if (view == null || view.document == null) return;
         LyricsDocumentProcessor.finalizeParsedDocument(context, view.document,
                 NativeRuntime.GOOGLE_PROCESSING_VERSION);
+        if (view.timingProjection != null) {
+            LyricsDocumentProcessor.finalizeParsedDocument(context, view.timingProjection,
+                    NativeRuntime.GOOGLE_PROCESSING_VERSION);
+        }
     }
 
     private void acceptCatalogLoad(SpotifyTrack requestedTrack, String requestedUri,
@@ -447,8 +438,21 @@ final class LyricsSessionManager {
     /** Drops catalog views read before one already applied: IO threads can post out of order. */
     private boolean applyView(LyricsCatalog.View view) {
         if (view == null || view.sequence < appliedViewSequence) return false;
+        if (view.policy != null && !view.policy.hasCurrentOrgAccess(context)) {
+            loadedPolicy = null;
+            replan();
+            return false;
+        }
         appliedViewSequence = view.sequence;
         loadedPolicy = view.policy;
+        String timingIdentity = view.timingProjection == null ? ""
+                : view.timingProjection.syncUpgradeProvenance.anchorCandidateId
+                        + "|" + view.timingProjection.syncUpgradeProvenance.donorCandidateId
+                        + "|" + view.timingProjection.syncUpgradeProvenance.algorithmVersion
+                        + "|" + view.timingProjection.spicyOrgFetchedAtMs;
+        timingProjectionChanged = !timingIdentity.equals(timingProjectionIdentity);
+        timingProjectionIdentity = timingIdentity;
+        timingProjection = view.timingProjection;
         return true;
     }
 
@@ -459,17 +463,20 @@ final class LyricsSessionManager {
      * reports why they have no lyrics.
      */
     private void schedule(LyricsCatalog.View view, boolean afterAttempt) {
-        long now = SystemClock.elapsedRealtime();
+        long now = snapshotClock.getAsLong();
         if (view == null) {
             pendingPlan = afterAttempt || localTried ? null
-                    : AcquisitionPlanner.refreshAll(CatalogPolicy.read(context));
+                    : AcquisitionPlanner.refreshAllInOrder(CatalogPolicy.read(context));
             nextFetchAtMs = now;
             return;
         }
-        AcquisitionPlanner.Plan plan = view.plan;
+        AcquisitionPlanner.Plan plan = AcquisitionPlanner.plan(view.state, view.policy,
+                view.document == null ? null : view.resolution, System.currentTimeMillis(),
+                !localTried, attemptedSources);
         if (plan.fetches()) {
             pendingPlan = plan;
-            nextFetchAtMs = afterAttempt ? now + AcquisitionPlanner.TRANSIENT_BASE_RETRY_MS : now;
+            nextFetchAtMs = afterAttempt && plan.scope.equals(lastAutomaticScope)
+                    ? now + AcquisitionPlanner.TRANSIENT_BASE_RETRY_MS : now;
         } else if (plan.retryAtMs > 0L) {
             // Nothing is due yet: re-plan from stored state once the earliest source is.
             pendingPlan = plan;
@@ -484,6 +491,13 @@ final class LyricsSessionManager {
     }
 
     private void maybeFetch() {
+        if (orgAccessBlocked(document)
+                || com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.expires(document, System.currentTimeMillis())) {
+            retireDisplayedBase(true, policy.generation(), "spicy-org-expired");
+            loadedPolicy = null;
+            reconcileSources();
+            return;
+        }
         if (track == null || policy.trackUri().isEmpty()
                 || policy.trackUri().equals(loadingUri)
                 // The stored seat may still resolve; never race it to the network.
@@ -497,6 +511,7 @@ final class LyricsSessionManager {
         }
         if (autoAttempts >= MAX_AUTO_ATTEMPTS) {
             pendingPlan = null;
+            if (document == null) reportNoLyrics(policy.generation(), "Lyrics unavailable (source attempts settled)");
             return;
         }
         final AcquisitionScope scope = pendingPlan.scope;
@@ -506,7 +521,10 @@ final class LyricsSessionManager {
         final int requestedGeneration = policy.generation();
         pendingPlan = null;
         autoAttempts++;
-        localTried = true;
+        final long attemptId = ++automaticAttemptId;
+        lastAutomaticScope = scope;
+        attemptedSources.addAll(scope.sources);
+        if (scope.allows(CatalogSource.SourceId.SPOTIFY_NATIVE)) localTried = true;
         loadingUri = requestedUri;
         LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOURCE_FETCH_CALL);
         if (document == null) {
@@ -514,7 +532,7 @@ final class LyricsSessionManager {
             notifyState(snapshot());
         }
         try {
-            fetchAutomaticSources(requestedTrack, requestedUri, requestedGeneration, scope);
+            fetchAutomaticSources(requestedTrack, requestedUri, requestedGeneration, scope, attemptId);
         } catch (Throwable launchFailed) {
             // A fetch that never starts must not keep the fetch gate armed: that strands the
             // session on stale rows with every later maybeFetch declining to run.
@@ -526,12 +544,12 @@ final class LyricsSessionManager {
         }
     }
 
-    /** Auto asks every due configured source; the catalog ranks their stored results. */
+    /** The planner dispatches one primary or supplemental source, then reads its outcome. */
     private void fetchAutomaticSources(SpotifyTrack requestedTrack, String requestedUri,
-                                       int requestedGeneration, AcquisitionScope scope) {
+                                       int requestedGeneration, AcquisitionScope scope, long attemptId) {
         if (scope.sourceOrderMode) {
             fetchCoordinator.fetchLyrics(context, requestedTrack, requestedGeneration, scope,
-                    automaticResult(requestedTrack, requestedUri, requestedGeneration));
+                    automaticResult(requestedTrack, requestedUri, requestedGeneration, attemptId));
             return;
         }
         java.util.concurrent.atomic.AtomicInteger remaining =
@@ -543,14 +561,14 @@ final class LyricsSessionManager {
                     @Override public void onSuccess(LyricsDocument document) {
                         delivered.set(true);
                         acceptProviderResult(requestedTrack, requestedUri, requestedGeneration,
-                                document, null);
+                                document, null, attemptId);
                         remaining.decrementAndGet();
                     }
 
                     @Override public void onError(String error) {
                         if (remaining.decrementAndGet() == 0 && !delivered.get()) {
                             handler.post(() -> acceptError(requestedTrack, requestedUri,
-                                    requestedGeneration, error));
+                                    requestedGeneration, error, attemptId));
                         }
                     }
                 };
@@ -561,16 +579,16 @@ final class LyricsSessionManager {
     }
 
     private NativeSpicyLyricsHook.LyricsResultCallback automaticResult(
-            SpotifyTrack requestedTrack, String requestedUri, int requestedGeneration) {
+            SpotifyTrack requestedTrack, String requestedUri, int requestedGeneration, long attemptId) {
         return new NativeSpicyLyricsHook.LyricsResultCallback() {
             @Override public void onSuccess(LyricsDocument result) {
                 acceptProviderResult(requestedTrack, requestedUri, requestedGeneration,
-                        result, null);
+                        result, null, attemptId);
             }
 
             @Override public void onError(String error) {
                 handler.post(() -> acceptError(requestedTrack, requestedUri,
-                        requestedGeneration, error));
+                        requestedGeneration, error, attemptId));
             }
         };
     }
@@ -587,6 +605,7 @@ final class LyricsSessionManager {
             LyricsCatalog.View view = null;
             try {
                 view = LyricsCatalog.current(context, requestedTrack, includeLocal);
+                finalizeSeat(view);
             } catch (Throwable ignored) {
             }
             final LyricsCatalog.View planned = view;
@@ -596,6 +615,14 @@ final class LyricsSessionManager {
                 if (planned == null) {
                     pendingPlan = null;
                     return;
+                }
+                if (!applyView(planned)) {
+                    replan();
+                    return;
+                }
+                if (planned.document != null) {
+                    publishSeat(requestedTrack, requestedUri, requestedGeneration,
+                            planned.document, planned.sourceRevision);
                 }
                 schedule(planned, false);
                 maybeFetch();
@@ -612,15 +639,35 @@ final class LyricsSessionManager {
      */
     private boolean publishSeat(SpotifyTrack requestedTrack, String requestedUri,
                                 int requestedGeneration, LyricsDocument result, int sourceRevision) {
-        if (result == null || result.lines.isEmpty()) return false;
+        if (result == null || result.lines.isEmpty() || orgAccessBlocked(result)) return false;
         if (!policy.accepts(requestedGeneration, requestedUri)) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
             return false;
         }
         String candidateId = result.catalogCandidateId == null ? "" : result.catalogCandidateId;
         if (document != null && !candidateId.isEmpty() && candidateId.equals(displayedCandidateId)) {
+            boolean refreshedOrigin = document.spicyOrgFetchedAtMs != result.spicyOrgFetchedAtMs;
+            if (refreshedOrigin) {
+                // Active layer callbacks own this document. Refresh response metadata in place.
+                document.spicyOrgFetchedAtMs = result.spicyOrgFetchedAtMs;
+                document.spicyOrgRawPayload = result.spicyOrgRawPayload;
+                document.spicyOrgSource = result.spicyOrgSource;
+                document.spicyOrgUploader = result.spicyOrgUploader;
+                document.spicyOrgUploaderUrl = result.spicyOrgUploaderUrl;
+                document.spicyOrgMaker = result.spicyOrgMaker;
+                document.spicyOrgMakerUrl = result.spicyOrgMakerUrl;
+                document.songWriters = result.songWriters;
+                canonicalSource = LyricsDocument.copyOf(result);
+            }
+            if (timingProjectionChanged || refreshedOrigin) {
+                timingProjectionChanged = false;
+                syncDocumentLayerFlags();
+                notifyDocument(snapshot(), document);
+                return true;
+            }
             return false;
         }
+        timingProjectionChanged = false;
         displayedCandidateId = candidateId;
         CanonicalBase incoming = CanonicalBase.fromDocument(requestedUri, result);
         CanonicalBaseAdoption.Outcome outcome = CanonicalBaseAdoption.evaluate(
@@ -649,8 +696,9 @@ final class LyricsSessionManager {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOURCE_REPLACED);
         }
         Snapshot snapshot = snapshot();
+        LyricsDocument published = publishedProjection(result);
         for (RequestRecord request : takeRequests(requestedGeneration)) {
-            request.callback.onSuccess(LyricsDocument.copyOf(result));
+            request.callback.onSuccess(LyricsDocument.copyOf(published));
         }
         notifyDocument(snapshot, result);
         startDetection(requestedTrack, result, requestedGeneration);
@@ -666,20 +714,27 @@ final class LyricsSessionManager {
     private void acceptProviderResult(SpotifyTrack requestedTrack, String requestedUri,
                                       int requestedGeneration, LyricsDocument result,
                                       LyricsHost.CatalogActionCallback callback) {
+        acceptProviderResult(requestedTrack, requestedUri, requestedGeneration, result, callback, 0L);
+    }
+
+    private void acceptProviderResult(SpotifyTrack requestedTrack, String requestedUri,
+                                      int requestedGeneration, LyricsDocument result,
+                                      LyricsHost.CatalogActionCallback callback, long attemptId) {
         if (result == null || result.lines.isEmpty()) {
             // An empty success is a failed fetch, not a document.
             handler.post(() -> {
-                acceptError(requestedTrack, requestedUri, requestedGeneration, "empty result");
+                acceptError(requestedTrack, requestedUri, requestedGeneration, "empty result", attemptId);
                 completeCatalogAction(callback, false, "No lyrics returned");
             });
             return;
         }
+        final boolean includeLocal = !localTried;
         NativeRuntime.LYRICS_IO.execute(() -> {
             boolean stored = false;
             LyricsCatalog.View view = null;
             try {
                 stored = CatalogAdapters.commitDelivered(context, requestedTrack, result);
-                view = LyricsCatalog.current(context, requestedTrack, false);
+                view = LyricsCatalog.current(context, requestedTrack, includeLocal);
                 finalizeSeat(view);
             } catch (Throwable error) {
                 NativeSpicyLyricsHook.dbg("acceptProviderResult",
@@ -694,7 +749,7 @@ final class LyricsSessionManager {
                     : CatalogAdapters.isRefusedFallback(seated.policy, seated.state,
                             seated.trackId, result);
             handler.post(() -> acceptProviderView(requestedTrack, requestedUri,
-                    requestedGeneration, result, callback, durable, seated, refused));
+                    requestedGeneration, result, callback, durable, seated, refused, attemptId));
         });
     }
 
@@ -703,17 +758,26 @@ final class LyricsSessionManager {
                             int requestedGeneration, LyricsDocument result,
                             LyricsHost.CatalogActionCallback callback, boolean durable,
                             LyricsCatalog.View seated, boolean refused) {
+        acceptProviderView(requestedTrack, requestedUri, requestedGeneration, result, callback,
+                durable, seated, refused, 0L);
+    }
+
+    void acceptProviderView(SpotifyTrack requestedTrack, String requestedUri,
+                            int requestedGeneration, LyricsDocument result,
+                            LyricsHost.CatalogActionCallback callback, boolean durable,
+                            LyricsCatalog.View seated, boolean refused, long attemptId) {
         if (!policy.accepts(requestedGeneration, requestedUri)) {
             LyricPipelineMetrics.increment(
                     LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
             completeCatalogAction(callback, false, "Track changed");
             return;
         }
+        if (attemptId != 0L && attemptId == automaticAttemptId && requestedUri.equals(loadingUri)) loadingUri = "";
         if (seated != null && !applyView(seated)) {
+            replan();
             completeCatalogAction(callback, durable || document != null, "Source checked; newer state retained");
             return;
         }
-        if (requestedUri.equals(loadingUri)) loadingUri = "";
         if (seated != null && seated.document != null) {
             publishSeat(requestedTrack, requestedUri, requestedGeneration,
                     seated.document, seated.sourceRevision);
@@ -722,9 +786,13 @@ final class LyricsSessionManager {
             // use): show the delivery for this visit without claiming it is stored.
             publishSeat(requestedTrack, requestedUri, requestedGeneration, result, 1);
         } else if (document == null) {
-            acceptError(requestedTrack, requestedUri, requestedGeneration,
-                    "Source not eligible for this track");
+            status = "loading";
         }
+        schedule(seated, true);
+        if (document == null && (pendingPlan == null || !pendingPlan.fetches())) {
+            reportNoLyrics(requestedGeneration, "Source not eligible for this track");
+        }
+        maybeFetch();
         completeCatalogAction(callback, durable || document != null,
                 durable ? "Source checked"
                         : refused ? "Source not used" : "Source checked; not saved");
@@ -852,6 +920,8 @@ final class LyricsSessionManager {
                     if (applyView(committed)) {
                         publishSeat(current, uri, generation, committed.document,
                                 committed.sourceRevision);
+                        schedule(committed, false);
+                        maybeFetch();
                     }
                 } else {
                     clearCurrent();
@@ -885,7 +955,7 @@ final class LyricsSessionManager {
             return;
         }
         try {
-            fetchCoordinator.fetchCatalogSource(context, current, generation, source,
+            fetchCoordinator.fetchCatalogSource(context, current, generation, source, true,
                     new NativeSpicyLyricsHook.LyricsResultCallback() {
                         @Override public void onSuccess(LyricsDocument result) {
                             acceptProviderResult(current, uri, generation, result, callback);
@@ -1014,7 +1084,7 @@ final class LyricsSessionManager {
         final SpotifyTrack requestedTrack = track;
         final String requestedUri = policy.trackUri();
         final int requestedGeneration = policy.generation();
-        final boolean includeLocal = !localTried;
+        final boolean includeLocal = true;
         NativeRuntime.LYRICS_IO.execute(() -> {
             LyricsCatalog.View view = null;
             try {
@@ -1029,6 +1099,8 @@ final class LyricsSessionManager {
                     return;
                 }
                 autoAttempts = 0;
+                localTried = false;
+                attemptedSources.clear();
                 schedule(reconciled, false);
                 LyricsSessionSeatTransition.Action action = LyricsSessionSeatTransition.reconcile(
                         document != null, reconciled.document != null, pendingPlan != null);
@@ -1050,6 +1122,9 @@ final class LyricsSessionManager {
                                      String settledReason) {
         document = null;
         canonicalSource = null;
+        timingProjection = null;
+        timingProjectionIdentity = "";
+        timingProjectionChanged = false;
         session = null;
         displayedCandidateId = "";
         detectionArtifact = null;
@@ -1087,20 +1162,20 @@ final class LyricsSessionManager {
      * refresh never replaces a rendered base with an error state.
      */
     private void acceptError(SpotifyTrack requestedTrack, String requestedUri,
-                             int requestedGeneration, String error) {
+                             int requestedGeneration, String error, long attemptId) {
         if (!policy.accepts(requestedGeneration, requestedUri)) return;
-        if (requestedUri.equals(loadingUri)) loadingUri = "";
-        planAfterAttempt(requestedTrack, requestedUri, requestedGeneration);
-        if (!LyricsSessionSeatTransition.fetchFailureNeedsNoLyrics(document != null)) return;
-        reportNoLyrics(requestedGeneration, error);
+        if (attemptId != 0L && attemptId != automaticAttemptId) return;
+        if (attemptId != 0L && requestedUri.equals(loadingUri)) loadingUri = "";
+        planAfterAttempt(requestedTrack, requestedUri, requestedGeneration, error);
     }
 
     private void planAfterAttempt(SpotifyTrack requestedTrack, String requestedUri,
-                                  int requestedGeneration) {
+                                  int requestedGeneration, String error) {
+        final boolean includeLocal = !localTried;
         NativeRuntime.LYRICS_IO.execute(() -> {
             LyricsCatalog.View view = null;
             try {
-                view = LyricsCatalog.current(context, requestedTrack, false);
+                view = LyricsCatalog.current(context, requestedTrack, includeLocal);
             } catch (Throwable ignored) {
             }
             final LyricsCatalog.View planned = view;
@@ -1109,6 +1184,10 @@ final class LyricsSessionManager {
                 // Another attempt may already be armed or running; never double-book one.
                 if (pendingPlan != null || requestedUri.equals(loadingUri)) return;
                 schedule(planned, true);
+                if (document == null && (pendingPlan == null || !pendingPlan.fetches())) {
+                    reportNoLyrics(requestedGeneration, error);
+                }
+                maybeFetch();
             });
         });
     }
@@ -1251,7 +1330,9 @@ final class LyricsSessionManager {
         // An explicit reload bypasses the error backoff: the owner just asked for this track now.
         nextFetchAtMs = 0L;
         autoAttempts = 0;
-        pendingPlan = AcquisitionPlanner.refreshAll(CatalogPolicy.read(context));
+        localTried = false;
+        attemptedSources.clear();
+        pendingPlan = AcquisitionPlanner.refreshAllInOrder(CatalogPolicy.read(context));
         if (document == null) {
             status = "loading";
             notifyState(snapshot());
@@ -1474,7 +1555,7 @@ final class LyricsSessionManager {
         boolean playing = track != null && hook.isPlayerActuallyPlaying();
         long position = track == null ? 0L : hook.readBestMeasuredProgressMs(track, playing);
         return new Snapshot(track, policy.trackUri(), policy.generation(), status, playing, position,
-                snapshotClock.getAsLong());
+                snapshotClock.getAsLong(), track == null ? 0d : hook.readEffectivePlaybackRate(playing));
     }
 
     private void notifyState(Snapshot snapshot) {
@@ -1504,17 +1585,25 @@ final class LyricsSessionManager {
      */
     private LyricsDocument publishedProjection(LyricsDocument value) {
         if (value == null) return null;
-        if (session == null || canonicalSource == null) return LyricsDocument.copyOf(value);
+        if (orgAccessBlocked(value)) return null;
+        if (com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.expires(value, System.currentTimeMillis())) return null;
+        LyricsDocument composed;
         try {
-            LyricsDocument composed = LegacyDocumentComposer.compose(canonicalSource, session);
+            composed = session == null || canonicalSource == null ? LyricsDocument.copyOf(value)
+                    : LegacyDocumentComposer.compose(canonicalSource, session);
             if (composed == null || composed.lines.size() != value.lines.size()) {
-                return LyricsDocument.copyOf(value);
+                composed = LyricsDocument.copyOf(value);
             }
-            return composed;
         } catch (Throwable t) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.COMPOSED_PROJECTION_MISMATCH);
-            return LyricsDocument.copyOf(value);
+            composed = LyricsDocument.copyOf(value);
         }
+        return com.eza.spicyex.lyrics.blend.SyncUpgradeEngine.renderProjection(composed, timingProjection);
+    }
+
+    private boolean orgAccessBlocked(LyricsDocument value) {
+        return com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.isRestricted(value)
+                && com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.isTerminated(context);
     }
 
     private List<RequestRecord> takeRequests(int generation) {

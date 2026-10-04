@@ -1,75 +1,63 @@
 <div align="center">
 
 # Spicy EX
-Animated synced lyrics inside Spotify, as an Xposed/LSPosed module.<br>
+Animated synced lyrics inside Spotify for Android, as an Xposed/LSPosed module.<br>
 Unofficial community project — not affiliated with Spotify or Spicy Lyrics.<br>
-For the desktop version, check out [spicy-lyrics](https://github.com/amarinne/spicy-lyrics).
-Xiaomi HyperOS 3 lockscreen/AOD integration: [HyperGlow](https://github.com/amarinne/hyperglow)
+Desktop: [spicy-lyrics](https://github.com/amarinne/spicy-lyrics) · HyperOS 3 lockscreen/AOD: [HyperGlow](https://github.com/amarinne/hyperglow)
 
-<img src="assets/demo.gif" width="320" alt="Spicy EX lyrics demo">
+<!-- TODO media: new fast-forwarded phone GIF. -->
+<img src="assets/demo.gif" width="320" alt="Spicy EX lyrics in Spotify">
+<img src="assets/android-auto.gif" width="480" alt="Spicy EX lyrics on Android Auto">
 
 </div>
 
-## What's new in v1.58.181
-- Rebuilt in-Spotify settings with a cleaner section layout, Lucide icons, status badges and smoother panel motion.
-- Introduced the new opt-in AI feature set: separate Meaning and Sound lanes for translation and pronunciation/transliteration.
-- New AI setup supports Gemini, official OpenAI and custom OpenAI-compatible providers with provider-scoped credentials, model checks and visible request status.
-- New layered results can show a Google preliminary result immediately, then let accepted AI translation or reading supersede it.
-- New review and cache handling lets accepted AI results be reused without re-running paid work.
-- Improved Arabic/Hebrew right-to-left and mixed-script lyric layout.
-
 ## Features
-- Full-screen synced lyrics — Spicy karaoke wash, per-word animation, interludes.
-- Live current line in the player, with a ♪ placeholder on no-lyric tracks.
-- Transliteration: Japanese (furigana / romaji / both), Chinese (pinyin / jyutping), Korean / Cyrillic / Greek — optionally per-word.
-- Google Translate.
-- Optional AI translation and pronunciation/transliteration features.
-- In-Spotify settings; works even when Spotify itself has no lyrics.
-- [Read more](FEATURES_USER.md)
+- Synced lyrics with per-word animation, in full screen and in the player.
+- Lyrics on Android Auto (root only).
+- Readings: Japanese, Chinese, Korean, Cyrillic and Greek.
+- Translation with Google, or AI with your own key.
+- Lyrics from Spotify, Apple Music, LRCLIB, QQ Music, NetEase and SpicyLyrics.org.
+- [All features](FEATURES_USER.md) · [FAQ](FAQ.md)
 
 ## Install
-APK from [Releases](../../releases). 
+Download the APK from [Releases](../../releases).
+Then download the language models in Spicy EX settings to enable readings.
 
-Download language models in Settings to enable readings. Lyrics remain available without the pack.
+**Rooted (LSPosed):** enable the module, select Spotify in its scope, then restart Spotify.
 
-**Rooted (LSPosed):** install, enable, scope to Spotify — you know the drill.
+<details>
+<summary><b>Non-rooted (LSPatch)</b></summary>
 
-**Non-rooted (LSPatch):**
-Spotify enforces Play Integrity during login. Bypass this using the **Downgrade-Login-Upgrade** method:
+Spotify checks Play Integrity at login. Log in on an old version, then update:
 
-1. Download two Spotify APKs: an older version (e.g., `v8.9.18`) and the target version (`v9.1.28.2252`).
-2. Patch both APKs with Spicy EX using [LSPatch](https://github.com/JingMatrix/LSPatch) (ensures matching signatures).
-3. **Uninstall** current Spotify and **install the patched OLD version**.
-4. **Log in** (Email/Password only, no Google/Facebook).
-5. **Install the patched NEW version** over the old one as an update.
+1. Patch an old Spotify (e.g., `v8.9.18`) and the tested version with Spicy EX in [LSPatch](https://github.com/JingMatrix/LSPatch).
+2. Uninstall Spotify and install the patched old version.
+3. Log in with email and password.
+4. Install the patched new version over it.
+
+</details>
 
 > [!NOTE]
-> Tested on Spotify **v9.1.28.2252**.
+> Tested on Spotify **v9.1.80.2221** and **v9.1.88.2204**.
+> Can conflict with ReVanced, other modified Spotify builds, or the old Spotify Plus module.
 
-> [!WARNING]
-> May conflicts with ReVanced / modified Spotify or old Spotify Plus 
+## Android Auto
+Requires root. Add Android Auto to the module scope, force-stop Android Auto,
+then turn on **Enable Android Auto lyrics** in Spicy EX settings.
+
+## SpicyLyrics.org
+Add [Spicy EX from the Spicy Lyrics catalog](https://developers.spicylyrics.org/catalog/spicy-ex) to get a personal client key.
+Paste it in Spicy EX settings → Lyrics Sources, then enable SpicyLyrics.org.
 
 ## Build
-JDK 21 and an Android SDK are required. Gradle wrapper builds should be run with JDK 21; newer JDKs can fail during build-script compilation. The Android app still targets Java 11 bytecode unless that is changed intentionally.
+Use JDK 21. Newer JDKs can fail to compile the build scripts.
 
 ```sh
-# Build the debug APK and copy the stamped APK into artifacts/.
 JAVA_HOME=/path/to/jdk21 ./gradlew :app:assembleDebug
-
-# Run the primary JVM unit suite.
 JAVA_HOME=/path/to/jdk21 ./gradlew :app:testDebugUnitTest
 ```
 
-The single APK includes transliteration, translation, language dictionaries and extra fonts.
-
-Language models (kuromoji, CharSoup, JMdict) are not in the APK; they are
-delivered as a separate pack that the app downloads from Settings. Create the
-versioned archive with `:app:packageLanguageModelPack` (JMdict sources live in
-`app/language-models/`), publish it over HTTPS, and point builds at it with
-`-PLANGUAGE_MODEL_PACK_URL=...` and its SHA-256 in
-`-PLANGUAGE_MODEL_PACK_SHA256=...`.
-
-Docs-only changes do not require unit/device testing. Device behavior remains the final validation path for UI, hook, and Spotify-host integration changes.
+To translate the settings, start from `app/translation/strings-template.xml`.
 
 ## Credits
 - [LeNerd46/SpotifyPlus](https://github.com/LeNerd46/SpotifyPlus)

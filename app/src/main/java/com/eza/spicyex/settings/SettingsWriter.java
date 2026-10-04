@@ -7,7 +7,7 @@ import com.eza.spicyex.lyrics.LyricsBackgroundStyle;
  * The single commit point for ordinary setting writes: one write site per value kind.
  *
  * <p>View holders, dialogs, and steppers never touch a store directly; they call here.
- * AI credentials, the Spicy manual token, and source preferences stay behind their explicit
+ * AI credentials, the Spicy Lyrics client key, and source preferences stay behind their explicit
  * adapters and never flow through this writer. Cross-namespace commits (ordinary store plus
  * source preferences) are ordered, not atomic — see {@link SourcePreferencesAdapter}.
  */

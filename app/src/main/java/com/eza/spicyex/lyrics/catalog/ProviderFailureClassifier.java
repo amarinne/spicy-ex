@@ -18,6 +18,9 @@ public final class ProviderFailureClassifier {
     public static ProviderStatus classify(SourceId source, String error) {
         if (error == null || error.trim().isEmpty()) return ProviderStatus.TRANSIENT_ERROR;
         String v = error.toLowerCase(Locale.ROOT);
+        if (source == SourceId.SPICY_ORG) {
+            return v.contains("http 404") ? ProviderStatus.NOT_FOUND : ProviderStatus.TRANSIENT_ERROR;
+        }
         if (v.contains("disabled")) return ProviderStatus.DISABLED;
         // Durable absence phrases shared with LyricsFetchErrors, plus the AMLL and general
         // shapes that mean the same thing: the provider answered and has nothing.

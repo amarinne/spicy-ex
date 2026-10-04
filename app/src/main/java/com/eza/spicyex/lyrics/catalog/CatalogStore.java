@@ -20,8 +20,9 @@ import java.util.Set;
 
 /**
  * SQLite shell over {@link CatalogSchema}: the durable owner of accepted lyric sources, user
- * decisions, and completed enrichment. Nothing here has a TTL or eviction; rows disappear only
- * through an explicit, scoped user deletion. A full disk refuses the write and reports failure.
+ * decisions, and completed enrichment. Spicy.org responses expire after 30 days. Other rows
+ * disappear only through an explicit, scoped user deletion. A full disk refuses the write and
+ * reports failure.
  *
  * <p>Every track mutation goes through {@link #transact}: the track's state is read, one pure
  * {@link CatalogDecisions} function decides, and the whole write set lands in the same SQLite
@@ -93,6 +94,7 @@ public final class CatalogStore {
             } finally {
                 db.endTransaction();
             }
+            com.eza.spicyex.lyrics.providers.SpicyOrgRetention.reschedule(context);
             return new Committed(true, before, change);
         } catch (Throwable t) {
             Diagnostics.warn("CatalogStore", "transact", t);
@@ -123,6 +125,7 @@ public final class CatalogStore {
     }
 
     private static CatalogState readState(SQLiteDatabase db, String trackId) {
+        purgeExpiredSpicy(db, System.currentTimeMillis());
         List<CatalogCandidate> candidates = new ArrayList<>();
         try (Cursor cursor = db.query(CatalogSchema.TABLE_CANDIDATES, CANDIDATE_COLUMNS,
                 "track_id = ?", new String[]{trackId}, null, null, "fetched_at_ms ASC")) {
@@ -389,10 +392,13 @@ public final class CatalogStore {
 
     public static CatalogCandidate candidateById(Context context, String candidateId) {
         if (context == null || candidateId == null || candidateId.isEmpty()) return null;
-        try (Cursor cursor = helper(context).getReadableDatabase().query(
-                CatalogSchema.TABLE_CANDIDATES, CANDIDATE_COLUMNS, "candidate_id = ?",
-                new String[]{candidateId}, null, null, null)) {
-            return cursor.moveToFirst() ? candidate(cursor) : null;
+        try {
+            SQLiteDatabase db = helper(context).getWritableDatabase();
+            purgeExpiredSpicy(db, System.currentTimeMillis());
+            try (Cursor cursor = db.query(CatalogSchema.TABLE_CANDIDATES, CANDIDATE_COLUMNS,
+                    "candidate_id = ?", new String[]{candidateId}, null, null, null)) {
+                return cursor.moveToFirst() ? candidate(cursor) : null;
+            }
         } catch (Throwable t) {
             Diagnostics.warn("CatalogStore", "candidateById", t);
             return null;
@@ -543,10 +549,90 @@ public final class CatalogStore {
         }
     }
 
+    /** Deletes all expired Spicy responses and their unshared derived data in one transaction. */
+    private static int purgeExpiredSpicy(SQLiteDatabase db, long nowMs) {
+        db.beginTransaction();
+        try {
+            String expired = "source_id = ? AND (fetched_at_ms <= 0 OR fetched_at_ms <= ? OR fetched_at_ms > ?)";
+            String[] args = {CatalogSource.SourceId.SPICY_ORG.id,
+                    String.valueOf(nowMs - com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.RETENTION_MS),
+                    String.valueOf(nowMs)};
+            Set<String> digests = new LinkedHashSet<>();
+            Set<String> tracks = new LinkedHashSet<>();
+            try (Cursor cursor = db.query(CatalogSchema.TABLE_CANDIDATES,
+                    new String[]{"canonical_digest", "track_id"}, expired, args,
+                    null, null, null)) {
+                while (cursor.moveToNext()) {
+                    digests.add(cursor.getString(0));
+                    tracks.add(cursor.getString(1));
+                }
+            }
+            int removed = db.delete(CatalogSchema.TABLE_CANDIDATES, expired, args);
+            for (String track : tracks) {
+                ContentValues status = new ContentValues();
+                status.put("status", CatalogSource.ProviderStatus.NEEDS_REFRESH.name());
+                db.update(CatalogSchema.TABLE_PROVIDER_STATES, status,
+                        "track_id = ? AND source_id = ?",
+                        new String[]{track, CatalogSource.SourceId.SPICY_ORG.id});
+            }
+            deleteOrphanArtifacts(db, digests);
+            db.setTransactionSuccessful();
+            return removed;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** The alarm and CLI use the same bounded cleanup as normal catalog reads. */
+    public static int pruneExpiredOrg(Context context) {
+        try {
+            SQLiteDatabase db = helper(context).getWritableDatabase();
+            int removed = purgeExpiredSpicy(db, System.currentTimeMillis());
+            try (Cursor ignored = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null)) {
+                // Active readers may postpone truncation; later maintenance retries it.
+                ignored.moveToFirst();
+            }
+            return removed;
+        } catch (Throwable error) {
+            Diagnostics.warn("CatalogStore", "orgMaintenance", error);
+            return -1;
+        }
+    }
+
+    /** Zero means no org rows. Minus one means storage could not be read. */
+    public static long nextOrgExpiryAt(Context context) {
+        try (Cursor cursor = helper(context).getReadableDatabase().rawQuery(
+                "SELECT MIN(fetched_at_ms), MAX(fetched_at_ms) FROM " + CatalogSchema.TABLE_CANDIDATES
+                        + " WHERE source_id = ?", new String[]{SourceId.SPICY_ORG.id})) {
+            if (!cursor.moveToFirst()) return -1;
+            return com.eza.spicyex.lyrics.providers.SpicyOrgRetentionPlan.deadline(
+                    !cursor.isNull(0), cursor.getLong(0), cursor.getLong(1), System.currentTimeMillis());
+        } catch (Throwable error) {
+            Diagnostics.warn("CatalogStore", "orgDeadline", error);
+            return -1;
+        }
+    }
+
     private static final class Helper extends SQLiteOpenHelper {
+        private final Context context;
         Helper(Context context) {
             super(context, CatalogSchema.DATABASE, null, CatalogSchema.VERSION);
+            this.context = context;
             setWriteAheadLoggingEnabled(true);
+        }
+
+        @Override public void onConfigure(SQLiteDatabase db) {
+            super.onConfigure(db);
+            try (Cursor cursor = db.rawQuery("PRAGMA secure_delete=ON", null)) {
+                cursor.moveToFirst();
+            }
+        }
+
+        @Override
+        public void onOpen(SQLiteDatabase db) {
+            super.onOpen(db);
+            purgeExpiredSpicy(db, System.currentTimeMillis());
+            com.eza.spicyex.lyrics.providers.SpicyOrgRetention.reschedule(context);
         }
 
         @Override

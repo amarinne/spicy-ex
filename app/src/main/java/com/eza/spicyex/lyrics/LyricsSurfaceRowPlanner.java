@@ -40,6 +40,8 @@ public final class LyricsSurfaceRowPlanner {
         options.attachTransliterationToWords = safePolicy.attachTransliterationToWords;
         options.lineLevelFillTopDown = safePolicy.lineLevelFillTopDown;
         options.lineLevelFillSentence = safePolicy.lineLevelFillSentence;
+        options.sequentialLineFill = safePolicy.lineLevelFillSentence;
+        options.continuousSentenceFill = safePolicy.lineLevelFillSentence;
         options.wordLevelFill = safePolicy.wordLevelFill;
         options.interludeNoteIcon = safePolicy.interludeNoteIcon;
         options.lyricWeight = safePolicy.lyricWeight;

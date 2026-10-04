@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics.processing;
 
 import com.eza.spicyex.lyrics.language.LyricsLocalRomanizer;
 import com.eza.spicyex.lyrics.language.RomanizationOptions;
+import com.eza.spicyex.lyrics.language.SoundWithholdPolicy;
 import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 
 import android.content.Context;
@@ -144,6 +145,11 @@ public final class LyricsSoundLane {
             for (int i = 0; i < workerSnapshot.lines.size(); i++) {
                 LyricsLine line = workerSnapshot.lines.get(i);
                 if (line == null || isBlank(line.text) || line.interlude) continue;
+                // An Off row is withheld from every Sound tier: the local engine would
+                // deliberately produce nothing, so the Google and AI fallbacks must not treat
+                // that intentional absence as a gap to fill.
+                if (SoundWithholdPolicy.withholdRow(opts, line.text, line.detection,
+                        workerSnapshot.language)) continue;
                 if (LyricsLocalRomanizer.shouldLocalRomanize(
                         showRomanization, opts.chineseMode, workerSnapshot, line, fullText)) {
                     localWork.add(i);
@@ -152,6 +158,8 @@ public final class LyricsSoundLane {
             for (int i = 0; i < workerSnapshot.lines.size(); i++) {
                 LyricsLine line = workerSnapshot.lines.get(i);
                 if (line == null || isBlank(line.text) || line.interlude) continue;
+                if (SoundWithholdPolicy.withholdRow(opts, line.text, line.detection,
+                        workerSnapshot.language)) continue;
                 if (LyricsLocalRomanizer.shouldGoogleRomanize(showRomanization, line)) networkWork.add(i);
             }
         }
@@ -170,7 +178,7 @@ public final class LyricsSoundLane {
             if (aiConfigured) {
                 startAiGapFill(run, id, generation, snapshot, displayedSound, displayedSound, settings,
                         explicitAiRequest || settings.pronunciationAutomatic(), currentGuard, callback,
-                        requiredRowIds);
+                        requiredRowIds, opts);
                 return true;
             }
             post(run, id, generation, snapshot, currentGuard,
@@ -222,12 +230,12 @@ public final class LyricsSoundLane {
 
             if (networkWork.isEmpty()) {
                 finish(run, id, generation, snapshot, currentGuard, callback, entries,
-                        changed.get(), startedAtMs, explicitAiRequest, requiredRowIds);
+                        changed.get(), startedAtMs, explicitAiRequest, requiredRowIds, opts);
                 return;
             }
             runNetworkPass(run, id, generation, snapshot, workerSnapshot, showRomanization,
                     effectiveSourceLang, networkWork, locallyRomanized, changed, currentGuard,
-                    callback, entries, startedAtMs, explicitAiRequest, requiredRowIds);
+                    callback, entries, startedAtMs, explicitAiRequest, requiredRowIds, opts);
         });
         return true;
     }
@@ -251,7 +259,8 @@ public final class LyricsSoundLane {
             Set<Integer> locallyRomanized, AtomicInteger changed,
             LyricsSecondaryProcessor.CurrentGuard currentGuard,
             LyricsSecondaryProcessor.Callback callback, List<SoundEntry> entries,
-            long startedAtMs, boolean explicitAiRequest, Set<String> requiredRowIds
+            long startedAtMs, boolean explicitAiRequest, Set<String> requiredRowIds,
+            RomanizationOptions opts
     ) {
         java.util.Map<String, List<GoogleEnhancer.BatchLine>> byLanguage = new java.util.LinkedHashMap<>();
         for (int index : networkWork) {
@@ -275,7 +284,7 @@ public final class LyricsSoundLane {
         }
         if (batches.isEmpty()) {
             finish(run, id, generation, snapshot, currentGuard, callback, entries,
-                    changed.get(), startedAtMs, explicitAiRequest, requiredRowIds);
+                    changed.get(), startedAtMs, explicitAiRequest, requiredRowIds, opts);
             return;
         }
         final AtomicInteger remaining = new AtomicInteger(batches.size());
@@ -313,7 +322,8 @@ public final class LyricsSoundLane {
                     }
                     if (remaining.decrementAndGet() == 0) {
                         finish(run, id, generation, snapshot, currentGuard, callback, entries,
-                                changed.get(), startedAtMs, explicitAiRequest, requiredRowIds);
+                                changed.get(), startedAtMs, explicitAiRequest, requiredRowIds,
+                                opts);
                     }
                 }
             });
@@ -344,6 +354,10 @@ public final class LyricsSoundLane {
         if (entry != null) entries.add(entry);
     }
 
+    /**
+     * True when the user's Korean reading mode is Off. A null options bundle reads as the
+     * shipped default, which romanizes, so only an explicit Off withholds rows.
+     */
     /**
      * F7: the lane's required rows, addressed by stable canonical ID. Compared against the
      * produced entries at every settlement, so missing or failed coverage persists as
@@ -413,7 +427,7 @@ public final class LyricsSoundLane {
                         LyricsSecondaryProcessor.CurrentGuard currentGuard,
                         LyricsSecondaryProcessor.Callback callback, List<SoundEntry> entries,
                         int changed, long startedAtMs, boolean explicitAiRequest,
-                        Set<String> requiredRowIds) {
+                        Set<String> requiredRowIds, RomanizationOptions opts) {
         LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.SOUND_PROCESSED);
         LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.SOUND_PROCESSING,
                 clock.getAsLong() - startedAtMs);
@@ -436,7 +450,7 @@ public final class LyricsSoundLane {
         }
         startAiGapFill(run, id, generation, snapshot, local, local, settings,
                 explicitAiRequest || settings.pronunciationAutomatic(), currentGuard, callback,
-                requiredRowIds);
+                requiredRowIds, opts);
     }
 
     /**
@@ -452,7 +466,7 @@ public final class LyricsSoundLane {
                                 final AiSettings settings, final boolean allowProviderRequest,
                                 final LyricsSecondaryProcessor.CurrentGuard currentGuard,
                                 final LyricsSecondaryProcessor.Callback callback,
-                                final Set<String> requiredRowIds) {
+                                final Set<String> requiredRowIds, final RomanizationOptions opts) {
         final String orthography = AiContract.ORTHOGRAPHY_LATIN;
         final AiSignal signal = new AiSignal();
         aiSignal = signal;
@@ -472,7 +486,7 @@ public final class LyricsSoundLane {
                     if (!run.accepts(currentGuard, id, generation, snapshot)) return;
                     result = AiSoundRun.run(context, settings, run.base, snapshot, baseline,
                             orthography, settings.soundUsesBaseline(), allowProviderRequest, signal,
-                            monitor);
+                            monitor, opts);
                     if (result != null && result.outcome != null
                             && result.outcome.kind == AiRunOutcome.Kind.FAILED) {
                         aiFailure = result.outcome.failure;

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="module_description">Spotify用Spicyリリックス</string>
+    <string name="module_description">Spotify内で表示するアニメーション同期歌詞</string>
     <string name="artwork_lyrics_close">アートワークリリックスを閉じる</string>
     <string name="artwork_lyrics_expand">全画面リリックスを開く</string>
     <!-- A locale file self-registers by overriding these two values, then overrides any panel strings below. -->
@@ -35,25 +35,19 @@
     <string name="lyrics_like_unavailable">「お気に入りの曲」アクション利用不可</string>
     <string name="settings_label_lyric_sync_offset_ms">同期オフセット</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">HyperGlowにリリックスを公開</string>
-    <string name="settings_label_lyrics_source_selection_mode">リリックスソースランキング</string>
+    <string name="settings_label_lyrics_source_selection_mode">歌詞ソースの選択</string>
     <string name="settings_label_lyrics_source_override">リリックスソース</string>
-    <string name="settings_label_lyrics_spicy_manual_token">Spicy 手動トークン</string>
     <string name="settings_label_lyrics_source_order">リリックスソース順序</string>
     <string name="settings_label_lyrics_source_overrides">トラックごとのリリックスソース</string>
     <string name="settings_option_lyrics_source_selection_mode_auto">自動</string>
     <string name="settings_option_lyrics_source_selection_mode_source_order">ソース順序</string>
     <string name="settings_option_auto">自動</string>
-    <string name="settings_spicy_token_edit">トークンを編集</string>
-    <string name="settings_spicy_token_reveal">トークンを表示</string>
-    <string name="settings_spicy_token_delete">トークンを削除</string>
-    <string name="settings_spicy_token_absent">未設定</string>
-    <string name="settings_spicy_token_rejected">トークン未保存</string>
     <string name="settings_source_none_enabled">有効なものなし</string>
-    <string name="settings_source_pinned_hint">1つのソースを固定するか、すべての有効なソースで自動ランキングを使用します。</string>
-    <string name="settings_source_ranking_title">ランキング</string>
-    <string name="settings_source_ranking_auto_desc"></string>
-    <string name="settings_source_ranking_order_desc">以下の順序に従う</string>
-    <string name="settings_source_order_title">順序</string>
+    <string name="settings_source_pinned_hint">1つのソースを固定するか、主要なソースを優先する自動選択を使用します。</string>
+    <string name="settings_source_ranking_title">選択方法</string>
+    <string name="settings_source_ranking_auto_desc">SpicyLyrics.org → Apple Music → Spotify、その後に代替ソース</string>
+    <string name="settings_source_ranking_order_desc">リストの順序を使用</string>
+    <string name="settings_source_order_title">ソースの順序</string>
     <string name="settings_source_order_hint"></string>
     <string name="settings_source_drag">ドラッグして並び替え</string>
     <string name="settings_label_cache_size">キャッシュサイズ制限</string>
@@ -466,4 +460,16 @@
     <string name="settings_option_lyrics_pip_shape_wide">ワイド (16:9)</string>
     <string name="settings_label_lyrics_pip_enabled">PiPボタンを表示</string>
     <string name="settings_search_lyrics_pip_enabled">pip ボタン, 歌詞を小窓で表示</string>
+    <string name="settings_label_lyrics_spicy_org_client_key">SpicyLyrics.org クライアントキー</string>
+    <string name="settings_spicy_key_edit">キーを追加・変更</string>
+    <string name="settings_spicy_key_delete">キーを削除</string>
+    <string name="settings_spicy_key_present">キーを保存済み</string>
+    <string name="settings_spicy_key_absent">未設定</string>
+    <string name="settings_spicy_key_catalog">個人用キーを取得</string>
+    <string name="settings_spicy_key_help">カタログから Spicy EX を追加してください。個人用クライアントキーを貼り付けてください。キーを保存してください。「歌詞ソース」で SpicyLyrics.org を有効にしてください。</string>
+    <string name="settings_spicy_key_rejected">キーを保存できませんでした。sl_pk_ で始まるクライアントキーを使用してください。</string>
+    <string name="settings_label_lyrics_sync_upgrade">歌詞の同期を改善</string>
+    <string name="settings_source_enabled_title">有効なソース</string>
+    <string name="settings_sync_upgrade_summary">歌詞が一致する場合、有効な QQ Music または NetEase のタイミングを使用します。歌詞のテキストは変更しません。</string>
+    <string name="source_picker_spicy_key_required">設定で個人用クライアントキーを追加してください</string>
 </resources>

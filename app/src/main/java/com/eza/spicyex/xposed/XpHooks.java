@@ -108,6 +108,11 @@ public final class XpHooks {
         }
     }
 
+    /** Restore calls through a hooked method when a compiled caller has inlined it. */
+    public static boolean deoptimize(Executable caller) {
+        return api().deoptimize(caller);
+    }
+
     // Core.
 
     public static XposedInterface.HookHandle hook(Executable executable, String id, Before before, After after) {

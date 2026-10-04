@@ -32,6 +32,7 @@ public final class SettingsUiSchema {
                 Settings.TRANSLITERATION,
                 Settings.TRANSLATION,
                 Settings.AI,
+                Settings.ANDROID_AUTO,
                 Settings.PIP));
     }
 
@@ -57,9 +58,10 @@ public final class SettingsUiSchema {
             // Lyrics sources
             Settings.LYRICS_SOURCE_MODE,
             Settings.LYRICS_SOURCE_OVERRIDE,
-            Settings.SPICY_MANUAL_TOKEN,
+            Settings.SPICY_ORG_CLIENT_KEY,
             Settings.LYRICS_SOURCE_ORDER,
             Settings.KARAOKE_ORIGINAL_LYRICS,
+            Settings.SYNC_UPGRADE,
             Settings.CACHE_SIZE,
             // Layout editor (tap behaviour stays in the panel; looks are edited on-screen)
             Settings.LIVE_CARD_TAP_MODE,
@@ -96,6 +98,9 @@ public final class SettingsUiSchema {
             Settings.AI_PRONUNCIATION_MODE,
             Settings.AI_PRONUNCIATION_SOURCE,
             Settings.AI_BUTTON_BEHAVIOR,
+            // Android Auto
+            Settings.AUTO_ENABLED,
+            Settings.AUTO_SECONDARY_TEXT,
             // Picture-in-picture
             Settings.PIP_ENABLED,
             Settings.PIP_SHAPE,

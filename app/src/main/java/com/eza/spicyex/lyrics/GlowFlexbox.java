@@ -252,6 +252,29 @@ public class GlowFlexbox extends FlexboxLayout {
         return line == null ? -1 : line;
     }
 
+    /** Shares one soft sweep across each wrapped visual line in reading order. */
+    public void applySentenceGradient(SpicyAnimatedTextView view, float gradient, float glow) {
+        int line = visualLineOf(view);
+        if (line < 0) {
+            view.setGradientPosition(gradient, glow);
+            return;
+        }
+        float total = 0f, preceding = 0f;
+        for (int i = 0; i < lineLeft.length; i++) {
+            float width = Math.max(1f, lineRight[i] - lineLeft[i]);
+            total += width;
+            if (i < line) preceding += width;
+        }
+        float offset = 0f;
+        for (View child = view; child != this;) {
+            offset += child.getLeft();
+            child = (View) child.getParent();
+        }
+        float width = Math.max(1f, lineRight[line] - lineLeft[line]);
+        view.setContainerGradientPosition(SentenceFill.lineGradient(gradient, total, preceding, width),
+                glow, Math.max(1, (int) Math.ceil(width)), offset - lineLeft[line]);
+    }
+
     /**
      * Eases each visual line's zoom toward its target: {@code target} for {@code activeLine},
      * {@code heldTarget} for the lines before it (already sung - they keep their zoom until the

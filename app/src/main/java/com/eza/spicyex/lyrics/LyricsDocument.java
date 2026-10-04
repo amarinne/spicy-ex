@@ -13,6 +13,16 @@ import java.util.List;
 public class LyricsDocument {
     public String trackId = "";
     public String provider = "Spicy Lyrics";
+    /** SpicyLyrics.org origin, credit, and original marked response. */
+    public String spicyOrgSource = "";
+    public String spicyOrgUploader = "";
+    public String spicyOrgUploaderUrl = "";
+    public String spicyOrgMaker = "";
+    public String spicyOrgMakerUrl = "";
+    public String spicyOrgRawPayload = "";
+    public long spicyOrgFetchedAtMs;
+    /** In-memory derived timing only. Provider candidates never persist this projection. */
+    public com.eza.spicyex.lyrics.blend.SyncUpgradeProvenance syncUpgradeProvenance;
     public String songWriters = ""; // "Written by" credits from the lyrics response, if any
     public String type = "Unknown";
     public String language = "";
@@ -77,6 +87,14 @@ public class LyricsDocument {
         copy.trackId = safe(source.trackId);
         copy.provider = safe(source.provider);
         copy.songWriters = safe(source.songWriters);
+        copy.spicyOrgSource = safe(source.spicyOrgSource);
+        copy.spicyOrgUploader = safe(source.spicyOrgUploader);
+        copy.spicyOrgUploaderUrl = safe(source.spicyOrgUploaderUrl);
+        copy.spicyOrgMaker = safe(source.spicyOrgMaker);
+        copy.spicyOrgMakerUrl = safe(source.spicyOrgMakerUrl);
+        copy.spicyOrgRawPayload = safe(source.spicyOrgRawPayload);
+        copy.spicyOrgFetchedAtMs = source.spicyOrgFetchedAtMs;
+        copy.syncUpgradeProvenance = source.syncUpgradeProvenance;
         copy.type = safe(source.type);
         copy.language = safe(source.language);
         copy.fetchSource = safe(source.fetchSource);

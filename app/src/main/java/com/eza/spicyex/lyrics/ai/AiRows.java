@@ -3,6 +3,8 @@ package com.eza.spicyex.lyrics.ai;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
+import com.eza.spicyex.lyrics.language.SoundWithholdPolicy;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
@@ -75,14 +77,30 @@ public final class AiRows {
     public static List<AiLine> forSound(CanonicalBase base, LyricsDocument document,
                                         SoundArtifact existing, String orthography,
                                         boolean useBaseline) {
+        return forSound(base, document, existing, orthography, useBaseline, null);
+    }
+
+    /**
+     * @param opts the reading options the Sound lane runs under; rows it withholds (a language
+     *             set to Off) stay enumerated but are never gaps, so an Off song bills nothing
+     *             and a withheld row can never be overwritten by a model opinion. Null reads as
+     *             defaults.
+     */
+    public static List<AiLine> forSound(CanonicalBase base, LyricsDocument document,
+                                        SoundArtifact existing, String orthography,
+                                        boolean useBaseline, RomanizationOptions opts) {
         List<AiLine> rows = new ArrayList<>();
         if (base == null) return rows;
+        String docLanguage = document == null ? "" : AiText.nz(document.language);
         for (CanonicalRow row : base.rows) {
             if (row == null) continue;
             SoundEntry entry = existing == null ? null : existing.sound(row.rowId);
             AiLineClass lineClass = AiLineClassifier.classify(row.text);
-            boolean unresolvedHan = unresolvedHan(document, row);
-            boolean gap = !unresolvedHan && lineClass != AiLineClass.STRUCTURAL
+            LyricsLine docLine = lineAt(document, row);
+            boolean unresolvedHan = unresolvedHan(docLine);
+            boolean withheld = SoundWithholdPolicy.withholdRow(opts, row.text,
+                    docLine == null ? null : docLine.detection, docLanguage);
+            boolean gap = !withheld && !unresolvedHan && lineClass != AiLineClass.STRUCTURAL
                     && AiSoundCoverage.isGap(row.text, entry, orthography);
             String baseline = useBaseline && gap
                     ? AiSoundCoverage.baselineFor(entry, orthography) : null;
@@ -94,8 +112,7 @@ public final class AiRows {
         return rows;
     }
 
-    private static boolean unresolvedHan(LyricsDocument document, CanonicalRow row) {
-        LyricsLine line = lineAt(document, row);
+    private static boolean unresolvedHan(LyricsLine line) {
         return line != null && line.detection != null
                 && ReadingLanguagePolicy.unresolvedHan(line.text, line.detection);
     }

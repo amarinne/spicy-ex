@@ -120,6 +120,7 @@ public final class ProcessedLyricsCache {
     public static boolean saveSound(Context context, LyricsDocument doc, CanonicalBase base,
                                     String soundConfigId, boolean complete) {
         if (context == null || doc == null || base == null || base.isEmpty()) return false;
+        if (base.fetchSource.startsWith("spicy_org")) return false;
         try {
             JsonObject rows = new JsonObject();
             for (CanonicalRow row : base.rows) {
@@ -161,6 +162,7 @@ public final class ProcessedLyricsCache {
      */
     public static boolean saveSound(Context context, CanonicalBase base, SoundArtifact artifact) {
         if (context == null || base == null || artifact == null || artifact.isEmpty()) return false;
+        if (base.fetchSource.startsWith("spicy_org")) return false;
         if (!artifact.canonicalDigest.equals(base.digest)) return false;
         try {
             JsonObject rows = new JsonObject();
@@ -201,6 +203,7 @@ public final class ProcessedLyricsCache {
     /** Persists a Meaning artifact directly, without going through a document. */
     public static boolean saveMeaning(Context context, CanonicalBase base, MeaningArtifact artifact) {
         if (context == null || base == null || artifact == null || artifact.isEmpty()) return false;
+        if (base.fetchSource.startsWith("spicy_org")) return false;
         if (!artifact.canonicalDigest.equals(base.digest)) return false;
         try {
             JsonObject rows = new JsonObject();
@@ -251,6 +254,7 @@ public final class ProcessedLyricsCache {
     public static boolean saveMeaning(Context context, LyricsDocument doc, CanonicalBase base,
                                       String meaningConfigId, boolean complete) {
         if (context == null || doc == null || base == null || base.isEmpty()) return false;
+        if (base.fetchSource.startsWith("spicy_org")) return false;
         try {
             JsonObject rows = new JsonObject();
             for (CanonicalRow row : base.rows) {
@@ -308,7 +312,9 @@ public final class ProcessedLyricsCache {
 
     /** Persists a detection artifact under its canonical digest and detection schema. */
     public static boolean saveDetection(Context context, CanonicalBase base, DetectionArtifact artifact) {
+        if (base != null && base.fetchSource.startsWith("spicy_org")) return false;
         if (context == null || base == null || artifact == null || artifact.isEmpty()) return false;
+        if (base.fetchSource.startsWith("spicy_org")) return false;
         if (!artifact.canonicalDigest.equals(base.digest)) return false;
         try {
             JsonObject rows = new JsonObject();

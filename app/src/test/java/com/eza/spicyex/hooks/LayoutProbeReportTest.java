@@ -13,6 +13,15 @@ import java.util.List;
  * indistinguishable from a rule that is broken, and a rule that always fires is worse.
  */
 public class LayoutProbeReportTest {
+    @Test public void responseCreditBelongsToTheScrollingFooter() {
+        LayoutProbeReport report = new LayoutProbeReport().flag("credit_present", true)
+                .flag("credit_in_footer", false);
+        assertViolations(report, "R13 credit_outside_footer");
+        report.flag("credit_in_footer", true);
+        assertViolations(report);
+        report.flag("credit_present", false).flag("credit_in_footer", false);
+        assertViolations(report);
+    }
 
     /** A clean lyrics screen with the editor closed: no rule may complain about it. */
     private static LayoutProbeReport clean() {

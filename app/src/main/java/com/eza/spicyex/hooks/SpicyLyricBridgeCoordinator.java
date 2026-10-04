@@ -108,7 +108,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
     public void onDocumentChanged(LyricsSessionManager.Snapshot snapshot, LyricsDocument nextDocument) {
         if (!enabled || snapshot == null
                 || lastSnapshot == null || snapshot.generation != lastSnapshot.generation) return;
-        if (nextDocument == null) {
+        if (nextDocument == null || com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.isRestricted(nextDocument)) {
             document = null;
             documentRevision++;
             publishedFingerprint = "";

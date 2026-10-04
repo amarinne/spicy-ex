@@ -27,6 +27,13 @@ public final class DisplayLayoutGroup {
         this.confidence = confidence;
     }
 
+    public static List<DisplayLayoutGroup> forLine(AppliedLine line) {
+        if (line == null) return Collections.emptyList();
+        if (line.displayLayoutGroups != null) return line.displayLayoutGroups;
+        return forLine(com.eza.spicyex.lyrics.language.ReadingLanguagePolicy.layoutLanguage(line),
+                line.text, line.japaneseReading);
+    }
+
     public static List<DisplayLayoutGroup> forLine(
             String language,
             String text,

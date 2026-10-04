@@ -21,6 +21,7 @@ public final class CatalogSource {
      * native, AMLL, LRCLIB, QQ, NetEase.
      */
     public enum SourceId {
+        SPICY_ORG("spicy_org"),
         APPLE("apple"),
         SPOTIFY_NATIVE("spotify_native"),
         AMLL("amll"),
@@ -158,6 +159,7 @@ public final class CatalogSource {
         }
         // Parsers tag deliveries with a route suffix (apple_music_cache, amll_ttml,
         // spotify_native_model:tag, qq_music); the prefix names the source.
+        if (v.startsWith("spicy_org")) return SourceId.SPICY_ORG;
         if (v.startsWith("amll")) return SourceId.AMLL;
         if (v.startsWith("apple") || v.equals("aml") || v.startsWith("lenerd")
                 || v.startsWith("spicy")) {

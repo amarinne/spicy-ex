@@ -7,11 +7,10 @@ import java.util.List;
 /**
  * What is known about one chunk: what was asked, how often, at what cost, and how it ended.
  *
- * <p>It holds the serialized request rather than a reference to the plan, which is what makes a
- * resume honest — a later attempt replays the same bytes instead of re-planning a document that may
- * meanwhile have been re-enumerated. The one exception is explicit {@link Status#REPLANNED} state:
- * its request reached the true ceiling and must never be replayed; deterministic child records own
- * the remaining work instead.
+ * <p>Request text is diagnostic data. Resumes rebuild requests from the current source under the
+ * same document and configuration hashes. Org-backed records omit stored input text. Explicit
+ * {@link Status#REPLANNED} state preserves billed parent accounting while deterministic child
+ * records own the remaining work.
  *
  * <p>Tokens accumulate across attempts including failed and repaired ones, because those bill too.
  */

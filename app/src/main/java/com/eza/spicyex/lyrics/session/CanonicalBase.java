@@ -127,6 +127,8 @@ public final class CanonicalBase {
         StringBuilder payload = new StringBuilder(256);
         payload.append(trackId).append(Digests.SEP).append(language).append(Digests.SEP)
                 .append(timingType).append(Digests.SEP).append(durationMs);
+        // Spicy source text cannot borrow an indefinitely retained copy from another provider.
+        if (fetchSource.startsWith("spicy_org")) payload.append(Digests.SEP).append("spicy_org");
         for (CanonicalRow row : rows) payload.append(Digests.SEP).append(row.digestPayload());
         return Digests.sha256(payload.toString());
     }

@@ -15,6 +15,7 @@ import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.catalog.CatalogSource;
 import com.eza.spicyex.lyrics.catalog.LyricsCatalog;
+import com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore;
 import com.eza.spicyex.lyrics.session.LayerKind;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source;
@@ -59,6 +60,7 @@ import java.util.function.Consumer;
  * <ul>
  *   <li>{@code status} — ack with the current track and whether a document is loaded</li>
  *   <li>{@code fullscreen open|close|back|status} — use the native takeover and exit owners</li>
+ *   <li>{@code share-preview open INDEX|design 0..7|code 0..1|capture|close|status} — use the share sheet without sending</li>
  *   <li>{@code settings open|close|status} — use the settings dialog lifecycle</li>
  *   <li>{@code layer refresh|restore|ai SOUND|MEANING} — use the shared layer scheduler</li>
  *   <li>{@code sources} — commit ranking, order, and enabled flags through the settings adapter</li>
@@ -69,7 +71,7 @@ import java.util.function.Consumer;
  *   <li>{@code check <source>} — ask one source, e.g. {@code check apple}</li>
  *   <li>{@code select-candidate <id>} — pin one exact stored catalog candidate</li>
  *   <li>{@code restore-selection <uri> <mode> [id]} — restore a gate's previous seat</li>
- *   <li>{@code footer} — read the source footer currently rendered by the lyrics surface</li>
+ *   <li>{@code footer [reveal]} — read or reveal the footer currently rendered by the lyrics surface</li>
  *   <li>{@code picker open|close|status} — open or inspect the source picker</li>
  *   <li>{@code editor open [lyrics|card]} — open the layout editor, no tap needed</li>
  *   <li>{@code editor close} — close it again</li>
@@ -229,15 +231,51 @@ final class AgentCommandChannel {
                                 + " document=" + (shell != null && shell.hasLyricsDocument()), correlation);
                     });
                     return;
+                case "org-retention":
+                    if ("status".equals(argument)) {
+                        reply("ok", verb, com.eza.spicyex.lyrics.providers.SpicyOrgRetention.status(context), correlation);
+                    } else if ("run".equals(argument)) {
+                        com.eza.spicyex.lyrics.providers.SpicyOrgRetention.run(context, () ->
+                                reply(com.eza.spicyex.lyrics.providers.SpicyOrgRetention.lastRunSucceeded(context) ? "ok" : "error",
+                                        verb, com.eza.spicyex.lyrics.providers.SpicyOrgRetention.status(context), correlation));
+                    } else if (argument.matches("alarm [0-9]{1,2}")) {
+                        com.eza.spicyex.lyrics.providers.SpicyOrgRetention.testAlarm(context,
+                                Integer.parseInt(argument.substring(6)));
+                        reply("ok", verb, "alarm requested", correlation);
+                    } else {
+                        reply("error", verb, "expected status, run, or alarm SECONDS", correlation);
+                    }
+                    return;
                 case "fullscreen":
                     fullscreen(argument, correlation);
+                    return;
+                case "share-preview":
+                    String[] shareArgs = argument.split("\\s+");
+                    boolean shareIndexed = shareArgs.length == 2 && (
+                            "open".equals(shareArgs[0]) && shareArgs[1].matches("[0-9]{1,6}")
+                            || "design".equals(shareArgs[0]) && shareArgs[1].matches("[0-7]")
+                            || "code".equals(shareArgs[0]) && shareArgs[1].matches("[01]"));
+                    boolean shareSimple = shareArgs.length == 1 && ("close".equals(shareArgs[0])
+                            || "status".equals(shareArgs[0]) || "capture".equals(shareArgs[0]));
+                    if (!shareIndexed && !shareSimple) {
+                        reply("error", verb, "expected open INDEX, design 0..7, code 0..1, capture, close, or status", correlation);
+                        return;
+                    }
+                    int shareIndex = shareIndexed ? Integer.parseInt(shareArgs[1]) : -1;
+                    onMain(verb, correlation, () -> {
+                        NativeSpicyShellView shell = requireShell(verb, correlation);
+                        if (shell == null) return;
+                        boolean result = shell.agentSharePreview(shareArgs[0], shareIndex);
+                        reply(result || "status".equals(shareArgs[0]) ? "ok" : "error", verb,
+                                shareArgs[0] + "=" + result + " " + shell.agentShareCaptureStatus(), correlation);
+                    });
                     return;
                 case "settings":
                     String settingsAction = argument;
                     onMain(verb, correlation, () -> {
                         if (!"open".equals(settingsAction) && !"close".equals(settingsAction)
-                                && !"status".equals(settingsAction)) {
-                            reply("error", verb, "expected open, close, or status", correlation);
+                                && !"status".equals(settingsAction) && !settingsAction.startsWith("section ")) {
+                            reply("error", verb, "expected open, close, status, or section ID", correlation);
                             return;
                         }
                         NativeSpicyShellView shell = requireShell(verb, correlation);
@@ -317,7 +355,16 @@ final class AgentCommandChannel {
                     restoreSelection(argument, correlation);
                     return;
                 case "footer":
-                    readFooter(correlation);
+                    if (argument.isEmpty()) readFooter(correlation);
+                    else if ("reveal".equals(argument)) {
+                        onMain(verb, correlation, () -> {
+                            NativeSpicyShellView shell = requireShell(verb, correlation);
+                            if (shell == null) return;
+                            boolean accepted = shell.agentRevealFooter();
+                            reply(accepted ? "ok" : "error", verb,
+                                    accepted ? "reveal requested" : "no rendered footer", correlation);
+                        });
+                    } else reply("error", verb, "expected reveal or no action", correlation);
                     return;
                 case "picker":
                     picker(argument.isEmpty() ? "open" : argument, correlation);
@@ -333,6 +380,9 @@ final class AgentCommandChannel {
                     return;
                 case "setting-get":
                     readSetting(argument, correlation);
+                    return;
+                case "spicy-key":
+                    spicyKey(argument, correlation);
                     return;
                 case "sources":
                     sources(argument, correlation);
@@ -539,6 +589,53 @@ final class AgentCommandChannel {
         });
     }
 
+    /** Credentials use a separate, consumed payload file and never enter command or reply text. */
+    private void spicyKey(String action, String correlation) {
+        onMain("spicy-key", correlation, () -> {
+            File payload = new File(dir, "spicy-key");
+            try {
+                if (!"status".equals(action) && !"catalog".equals(action) && !"set".equals(action)
+                        && !"remove confirm".equals(action)) {
+                    reply("error", "spicy-key", "expected status, catalog, set, or remove confirm", correlation);
+                    return;
+                }
+                if ("catalog".equals(action)) {
+                    boolean opened = com.eza.spicyex.settings.SettingsPanel.openSpicyOrgCatalog(context);
+                    reply(opened ? "ok" : "error", "spicy-key",
+                            opened ? "catalog requested" : "no browser available", correlation);
+                    return;
+                }
+                if ("set".equals(action)) {
+                    String key;
+                    try (RandomAccessFile input = new RandomAccessFile(payload, "r")) {
+                        if (input.length() == 0 || input.length() > 512) {
+                            reply("error", "spicy-key", "invalid client key payload", correlation);
+                            return;
+                        }
+                        byte[] bytes = new byte[(int) input.length()];
+                        input.readFully(bytes);
+                        key = new String(bytes, UTF8).trim();
+                    } finally {
+                        if (payload.exists() && !payload.delete()) {
+                            throw new IllegalStateException("credential payload cleanup failed");
+                        }
+                    }
+                    if (!SpicyOrgKeyStore.save(context, key)) {
+                        reply("error", "spicy-key", "client key not saved", correlation);
+                        return;
+                    }
+                    host.reconcileLyricsSources();
+                } else if ("remove confirm".equals(action)) {
+                    SpicyOrgKeyStore.delete(context);
+                    host.reconcileLyricsSources();
+                }
+                reply("ok", "spicy-key", "configured=" + SpicyOrgKeyStore.has(context), correlation);
+            } catch (Throwable ignored) {
+                reply("error", "spicy-key", "credential action failed", correlation);
+            }
+        });
+    }
+
     private void sources(String argument, String correlation) {
         onMain("sources", correlation, () -> {
             Activity activity = References.currentActivity();
@@ -557,7 +654,8 @@ final class AgentCommandChannel {
                 enabled.put(source,
                         LyricsSourcePreferences.sourceEnabled(activity, source));
             }
-            String before = "mode=" + mode.id + " order=" + order + " enabled=" + enabled;
+            String before = "mode=" + mode.id + " order=" + order + " enabled=" + enabled
+                    + " sync_upgrade=" + com.eza.spicyex.SpotifyPlusConfig.from(activity).get(Settings.SYNC_UPGRADE);
             String[] args = argument.split("\\s+");
             if ("status".equals(argument)) {
                 reply("ok", "sources", before, correlation);
@@ -570,8 +668,8 @@ final class AgentCommandChannel {
                     && ("true".equals(args[2]) || "false".equals(args[2]))) {
                 Source source =
                         Source.parse(args[1]);
-                if (source == null || source == Source.SPICY)
-                    throw new IllegalArgumentException("unknown or retired source");
+                if (source == null)
+                    throw new IllegalArgumentException("unknown source");
                 enabled.put(source, Boolean.valueOf(args[2]));
             } else if (args.length == 2 && "order".equals(args[0])) {
                 order.clear();
@@ -657,6 +755,7 @@ final class AgentCommandChannel {
                     case "back":
                     case "demo":
                     case "tab":
+                    case "reveal":
                     case "reset": {
                         boolean reset = "reset".equals(action);
                         if (reset && (args.length != 3 || !"all".equals(args[1])
@@ -674,7 +773,7 @@ final class AgentCommandChannel {
                         return;
                     }
                     default:
-                        reply("error", "editor", "expected open, close, select, back, demo, tab, or reset", correlation);
+                        reply("error", "editor", "expected open, close, select, back, demo, tab, reveal, or reset", correlation);
                 }
             } catch (Throwable t) {
                 reply("error", "editor", "threw " + t, correlation);
@@ -715,6 +814,10 @@ final class AgentCommandChannel {
                 Settings.Setting<?> setting = findSetting(args[0]);
                 if (setting == null) {
                     reply("error", "setting", "unknown setting '" + args[0] + "'", correlation);
+                    return;
+                }
+                if (setting == Settings.SPICY_ORG_CLIENT_KEY) {
+                    reply("error", "setting", "use spicy-key to manage this credential", correlation);
                     return;
                 }
                 Object value = coerceTyped(setting, args[1].trim());
@@ -787,6 +890,10 @@ final class AgentCommandChannel {
                     reply("error", "setting-get", "unknown setting '" + key + "'", correlation);
                     return;
                 }
+                if (setting == Settings.SPICY_ORG_CLIENT_KEY) {
+                    reply("error", "setting-get", "use spicy-key status", correlation);
+                    return;
+                }
                 reply("ok", "setting-get", "key=" + key + " value="
                         + new SettingsStore(activity).get(setting), correlation);
             } catch (Throwable t) {
@@ -808,7 +915,8 @@ final class AgentCommandChannel {
      * namespace would diverge them, so the channel refuses these keys outright.
      */
     static boolean isAdapterOwnedSetting(Settings.Setting<?> setting) {
-        return setting == Settings.LYRICS_SOURCE_OVERRIDE
+        return setting == Settings.SPICY_ORG_CLIENT_KEY
+                || setting == Settings.LYRICS_SOURCE_OVERRIDE
                 || setting == Settings.LYRICS_SOURCE_ORDER;
     }
 

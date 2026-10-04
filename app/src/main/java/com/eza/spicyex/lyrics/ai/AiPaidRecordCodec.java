@@ -21,7 +21,7 @@ import java.util.Map;
  * not speak, and the honest response is to ignore it rather than to guess.
  *
  * <p>The payload carries no credential and no provider response body: accepted item text, the
- * request bytes needed to resume a chunk, and accounting.
+ * optional diagnostic request text, and accounting. Org-backed writes omit request text.
  */
 final class AiPaidRecordCodec {
 
@@ -31,6 +31,10 @@ final class AiPaidRecordCodec {
     }
 
     static String encode(AiPaidRecord record) {
+        return encode(record, true);
+    }
+
+    static String encode(AiPaidRecord record, boolean retainRequestText) {
         JsonObject root = new JsonObject();
         root.addProperty("v", PAYLOAD_VERSION);
         root.addProperty("layer", record.layer.name());
@@ -60,7 +64,7 @@ final class AiPaidRecordCodec {
 
         JsonObject chunks = new JsonObject();
         for (Map.Entry<String, AiChunkRecord> entry : record.chunks().entrySet()) {
-            chunks.add(entry.getKey(), encodeChunk(entry.getValue()));
+            chunks.add(entry.getKey(), encodeChunk(entry.getValue(), retainRequestText));
         }
         root.add("chunks", chunks);
         return root.toString();
@@ -118,12 +122,12 @@ final class AiPaidRecordCodec {
         }
     }
 
-    private static JsonObject encodeChunk(AiChunkRecord chunk) {
+    private static JsonObject encodeChunk(AiChunkRecord chunk, boolean retainRequestText) {
         JsonObject out = new JsonObject();
         JsonArray ids = new JsonArray();
         for (String id : chunk.ids) ids.add(id);
         out.add("ids", ids);
-        out.addProperty("requestJson", chunk.requestJson);
+        if (retainRequestText && !chunk.requestJson.isEmpty()) out.addProperty("requestJson", chunk.requestJson);
         out.addProperty("status", chunk.status.name());
         out.addProperty("attempts", chunk.attempts);
         out.addProperty("repairs", chunk.repairs);

@@ -1,0 +1,92 @@
+{
+  "target": {
+    "trackId": "spotify:synthetic",
+    "durationMs": 90000
+  },
+  "anchor": {
+    "source": "spotify",
+    "providerTrackId": "spotify:synthetic",
+    "verifiedTrackId": "spotify:synthetic",
+    "durationMs": 90000,
+    "lines": [
+      {
+        "text": "Hello sunshine",
+        "startMs": 10000,
+        "endMs": 13000
+      },
+      {
+        "text": "Welcome home",
+        "startMs": 25000,
+        "endMs": 28000
+      },
+      {
+        "text": "Stay forever",
+        "startMs": 40000,
+        "endMs": 43000
+      }
+    ]
+  },
+  "donor": {
+    "source": "synthetic",
+    "durationMs": 95000,
+    "lines": [
+      {
+        "text": "Hello sunshine",
+        "startMs": 9500,
+        "endMs": 12500,
+        "segments": [
+          {
+            "text": "Hello",
+            "startMs": 9500,
+            "endMs": 9900,
+            "boundaryAfter": true
+          },
+          {
+            "text": "sunshine",
+            "startMs": 10000,
+            "endMs": 10400,
+            "boundaryAfter": true
+          }
+        ]
+      },
+      {
+        "text": "Welcome home",
+        "startMs": 24500,
+        "endMs": 27500,
+        "segments": [
+          {
+            "text": "Welcome",
+            "startMs": 24500,
+            "endMs": 24900,
+            "boundaryAfter": true
+          },
+          {
+            "text": "home",
+            "startMs": 25000,
+            "endMs": 25400,
+            "boundaryAfter": true
+          }
+        ]
+      },
+      {
+        "text": "Stay forever",
+        "startMs": 39500,
+        "endMs": 42500,
+        "segments": [
+          {
+            "text": "Stay",
+            "startMs": 39500,
+            "endMs": 39900,
+            "boundaryAfter": true
+          },
+          {
+            "text": "forever",
+            "startMs": 40000,
+            "endMs": 40400,
+            "boundaryAfter": true
+          }
+        ]
+      }
+    ]
+  }
+}

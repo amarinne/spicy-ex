@@ -80,7 +80,7 @@ public final class AiMeaningRun {
         AiRunConfig config = new AiRunConfig(LayerKind.MEANING, docDigest, configId,
                 settings.providerId(), lyricContext, providerConfig, instructions, null, null);
 
-        AiRecordStore records = AiRecordStores.forRun(context);
+        AiRecordStore records = AiRecordStores.forRun(context, document);
         AiPaidRecord cached = records.read(config);
         if (cached != null && cached.isComplete()) {
             MeaningArtifact artifact = artifactOf(base, config, cached);

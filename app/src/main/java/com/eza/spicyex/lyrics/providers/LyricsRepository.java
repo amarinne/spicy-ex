@@ -120,6 +120,11 @@ public final class LyricsRepository {
                 karaokeOriginalLyrics, callback, 0);
     }
 
+    /** Only an explicit source check may verify restored access with a terminated key. */
+    public void fetchSpicyOrgAccessCheck(Context context, SpotifyTrack track, ResultCallback callback) {
+        new SpicyOrgAdapter(http, parser).fetchForAccessCheck(context, track, callback);
+    }
+
     /** Source-order Auto: first enabled source in user order that yields lyrics wins. */
     private void fetchOrderedSources(Context context, SpotifyTrack track, int generation,
                                      java.util.List<com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source> enabledOrder,
@@ -194,10 +199,11 @@ public final class LyricsRepository {
                                    String source, String accessToken,
                                    boolean karaokeOriginalLyrics, ResultCallback callback,
                                    int nativeRetryCount) {
-        if ("Apple Music".equals(source) || "Spicy".equals(source)) {
-            // "Spicy" is a retired legacy alias: it resolves to the same Apple Music (Lenerd)
-            // endpoint so old persisted strict selections keep working without hitting
-            // the retired spicylyrics.org remote.
+        if ("Spicy".equals(source)) {
+            new SpicyOrgAdapter(http, parser).fetch(context, track, callback);
+            return;
+        }
+        if ("Apple Music".equals(source)) {
             Request request = buildLenerdLyricsRequest(trackIdFromUri(track.uri));
             http.newCall(request).enqueue(new Callback() {
                 @Override public void onFailure(Call call, IOException error) {
@@ -1587,6 +1593,9 @@ public final class LyricsRepository {
 
     public interface Parser {
         LyricsDocument parseSpicyLyrics(Context context, SpotifyTrack track, String raw, boolean fromCache);
+        default LyricsDocument parseSpicyOrgLyrics(Context context, SpotifyTrack track, String raw) {
+            return parseSpicyLyrics(context, track, raw, false);
+        }
         LyricsDocument parseLrclibLyrics(Context context, SpotifyTrack track, String body);
         LyricsDocument parseAmllTtml(Context context, SpotifyTrack track, String ttml);
         LyricsDocument parseNeteaseLyrics(Context context, SpotifyTrack track, String body);

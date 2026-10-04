@@ -17,6 +17,8 @@ public class LyricsLine {
     public SpicyJapaneseChineseProcessor.JapaneseReading japaneseReading;
     public RenderPlan readingRenderPlan;
     public List<SyllableSegment> syllables = new ArrayList<>();
+    /** Derived sync spans are separate from the authored provider spans. Never persist them. */
+    public List<SyllableSegment> derivedSyllables = new ArrayList<>();
     public List<BackgroundLine> backgroundLines = new ArrayList<>();
     public String chineseMode = "";
     public long startMs;
@@ -49,6 +51,7 @@ public class LyricsLine {
         copy.interlude = source.interlude;
         copy.oppositeAligned = source.oppositeAligned;
         for (SyllableSegment seg : source.syllables) copy.syllables.add(SyllableSegment.copyOf(seg));
+        for (SyllableSegment seg : source.derivedSyllables) copy.derivedSyllables.add(SyllableSegment.copyOf(seg));
         for (BackgroundLine bg : source.backgroundLines) copy.backgroundLines.add(BackgroundLine.copyOf(bg));
         return copy;
     }

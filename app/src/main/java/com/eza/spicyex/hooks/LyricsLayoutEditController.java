@@ -950,6 +950,14 @@ final class LyricsLayoutEditController {
                     if (!"live".equals(value) && !"synthetic".equals(value)) return false;
                     if (demoActive != "synthetic".equals(value)) toggleDemo();
                     return true;
+                case "reveal":
+                    View target = optionsCard.findViewWithTag("setting." + value);
+                    if (target == null || !panelVisible) return false;
+                    android.graphics.Rect bounds = new android.graphics.Rect();
+                    target.getDrawingRect(bounds);
+                    optionsCard.offsetDescendantRectToMyCoords(target, bounds);
+                    optionsScroll.scrollTo(0, bounds.top);
+                    return true;
                 case "tab":
                     if (cardMode) return false;
                     switch (value) {
@@ -990,9 +998,30 @@ final class LyricsLayoutEditController {
             // reveals, and then there is no panel on screen to argue about.
             if (panelContainer.getVisibility() == View.VISIBLE) {
                 report.rect("sheet", screenRectOf(panelContainer));
+                reportOptionTruncation(report, panelContainer);
             }
             report.rect("card", screenRectOf(cardCapture));
             report.rect("card_caption", screenRectOf(cardCaption));
+        }
+
+        private void reportOptionTruncation(LayoutProbeReport report, View view) {
+            if (view instanceof TextView && view.getTag() instanceof String
+                    && ((String) view.getTag()).startsWith("option.")) {
+                android.text.Layout layout = ((TextView) view).getLayout();
+                if (layout != null) {
+                    boolean truncated = false;
+                    for (int line = 0; line < layout.getLineCount(); line++) {
+                        truncated |= layout.getEllipsisCount(line) > 0;
+                    }
+                    report.flag("truncated." + view.getTag(), truncated);
+                }
+            }
+            if (view instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) view;
+                for (int i = 0; i < group.getChildCount(); i++) {
+                    reportOptionTruncation(report, group.getChildAt(i));
+                }
+            }
         }
 
         /** The agent-facing name of an element, which is also what a probe reports as selected. */
@@ -3025,6 +3054,8 @@ final class LyricsLayoutEditController {
                         new String[]{"Off", "Word/syllable synced only", "All synced rows"},
                         () -> selectElement(Element.TEXT)), matchWrap(8));
                 if (!"Off".equals(store.get(Settings.WORD_BOUNCE))) {
+                    addDivider();
+                    addSectionLabel(Settings.WORD_BOUNCE_STYLE, 10);
                     addOption(chipRow(Settings.WORD_BOUNCE_STYLE,
                             new String[]{"Phrase zoom", "Word zoom", "Phrase lift", "Word lift", "Apple lift"},
                             () -> selectElement(Element.TEXT)), matchWrap(14));
@@ -3462,6 +3493,7 @@ final class LyricsLayoutEditController {
                 Runnable onChanged) {
             LinearLayout row = new LinearLayout(activity);
             row.setOrientation(LinearLayout.VERTICAL);
+            row.setTag("setting." + setting.key);
             TextView[] chips = new TextView[values.length];
             String current = store.get(setting);
             int labelCharacters = 0;
@@ -3470,6 +3502,10 @@ final class LyricsLayoutEditController {
             }
             int maxPerLine = values.length <= 3 ? values.length
                     : (values.length == 4 || labelCharacters > 36 || values.length >= 5 ? 2 : 3);
+            // Scope and fill labels must show their distinguishing words on narrow screens.
+            boolean stacked = setting == Settings.WORD_BOUNCE || setting == Settings.LINE_SYNC_FILL
+                    || setting == Settings.LIVE_CARD_LINE_SYNC_FILL;
+            if (stacked) maxPerLine = 1;
             LinearLayout line = null;
             for (int i = 0; i < values.length; i++) {
                 if (i % maxPerLine == 0) {
@@ -3480,6 +3516,12 @@ final class LyricsLayoutEditController {
                     row.addView(line, lineLp);
                 }
                 TextView chip = chip(strings.option((Settings.StringSetting) setting, values[i]));
+                chip.setTag("option." + setting.key + "." + i);
+                if (stacked || setting == Settings.WORD_BOUNCE_STYLE
+                        || setting == Settings.ANIMATION_STYLE) {
+                    chip.setSingleLine(false);
+                    chip.setEllipsize(null);
+                }
                 chips[i] = chip;
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -3745,8 +3787,7 @@ final class LyricsLayoutEditController {
             chip.setPadding(dp(6), dp(11), dp(6), dp(11));
             chip.setMinHeight(dp(CONTROL_MIN_HEIGHT_DP));
             chip.setSingleLine(true);
-            // Long option names ("Left to right (sentence)") shrink to fit rather than being cut
-            // off or wrapping the chip to two lines, which was most of the panel's raggedness.
+            // Compact options stay on one line; long animation choices opt into wrapping.
             chip.setEllipsize(android.text.TextUtils.TruncateAt.END);
             return chip;
         }

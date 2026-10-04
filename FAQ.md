@@ -2,27 +2,14 @@
 
 ### It does not work with my Spotify version
 
-Spicy EX compatibility depends on the Spotify version.
-
-This release was built and tested against Spotify **9.1.68.1888** (`versionCode 144192416`) from
-Google Play. Older, beta, ReVanced, or modified builds may not work.
-
-### What is included?
-
-- Translation, transliteration, romanization, dictionaries, extra fonts, and the
-	renderer are included in the single APK.
-- The now-playing card, settings, and HyperGlow bridge are included as well.
-- Language models (Japanese/Chinese dictionaries, language detection) are downloaded
-	on demand from Settings instead of being bundled.
+Use a tested Spotify version from Google Play. The [Install note](readme.md#install) lists them.
+Older, beta, ReVanced, or modified builds can fail.
 
 ### Which LSPosed scope?
 
-Spotify only.
+Spotify. Add Android Auto only for car lyrics.
 
-After install or update:
-
-1. Force-stop Spotify.
-2. Reopen Spotify.
+After an install or update, force-stop Spotify and open it again.
 
 ### Spicy EX settings are missing
 
@@ -37,19 +24,13 @@ Still broken? Submit a compatibility report.
 
 ### Does LSPatch work?
 
-Possible, but less reliable. Patched Spotify may fail Play Integrity or login.
-Follow the [downgrade-login-upgrade method](README.md#install) in the Install section.
+Yes, but it is less reliable. Follow the LSPatch steps in the [Install section](readme.md#install).
+Android Auto lyrics need root.
 
 ### Lyrics are missing, wrong, or delayed
 
 Lyric availability, text, language, and timing quality can vary by track and upstream source.
 
-### HyperGlow
-
-Optional.
-
 ### How do I update?
 
-Install the new APK over the old installation. Then restart Spotify.
-
-If you use LSPatch, enable **Override version code**.
+Install the new APK over the old one. Then restart Spotify.

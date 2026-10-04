@@ -152,7 +152,9 @@ public final class LyricsShareCardController {
     private ImageView peekNext;
     private int peekGeneration;
     /** The shown card as it is shared: drawn full size on demand. */
-    private CardRecipe currentRecipe;
+    private volatile CardRecipe currentRecipe;
+    private volatile int captureRequest;
+    private String captureState = "idle";
     /** The Spotify Code on the shown card (null without one), drawn by its own view. */
     private Bitmap currentCode;
     /** The code view on the shown card: a stand-in dancing until the real code arrives. */
@@ -181,6 +183,9 @@ public final class LyricsShareCardController {
     private final List<TextView> designNames = new ArrayList<>();
     private volatile int thumbGeneration;
     private LyricsDocument document;
+    private boolean watchingOrgAccess;
+    private final Runnable accessCheck = this::dismissIfUnavailable;
+    private final Runnable orgAccessListener = () -> main.post(accessCheck);
     /** The lyric lines on the card, by document index: any lines, not only a run of them. */
     private final java.util.TreeSet<Integer> picked = new java.util.TreeSet<>();
     private boolean showTranslation = true;
@@ -191,7 +196,7 @@ public final class LyricsShareCardController {
     private Backdrop backdrop;
     private boolean spotifyCode;
     private TextStyle textStyle;
-    private int generation;
+    private volatile int generation;
     private BackgroundSnapshot backgroundSnapshot;
     /** The lyrics background frozen when the sheet opened; the "lyrics background" backdrop. */
     private Bitmap lyricsBackground;
@@ -248,6 +253,7 @@ public final class LyricsShareCardController {
     }
 
     public void showForLine(ViewGroup root, LyricsDocument doc, SpotifyTrack track, Bitmap art, int index) {
+        if (!ShareCardPolicy.usable(activity, doc, System.currentTimeMillis())) return;
         this.root = root;
         this.document = doc;
         this.track = track;
@@ -275,13 +281,24 @@ public final class LyricsShareCardController {
     }
 
     private void show() {
-        if (activity == null || root == null || track == null) return;
+        if (activity == null || root == null || track == null
+                || !ShareCardPolicy.usable(activity, document, System.currentTimeMillis())) return;
         dismiss();
         lyricsBackground = null;
         fitCache.clear();
         codePlayed = false;
         codeFailed = false;
         overlay = buildPreview();
+        overlay.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(View view) {
+                main.post(() -> {
+                    if (overlay == view && view.isAttachedToWindow()) watchOrgAccess();
+                });
+            }
+            @Override public void onViewDetachedFromWindow(View view) {
+                if (overlay == view) stopWatchingOrgAccess();
+            }
+        });
         // Above the lyric screen's own chrome, which is raised with elevation and otherwise draws
         // through the sheet regardless of child order.
         overlay.setElevation(dp(64));
@@ -393,7 +410,8 @@ public final class LyricsShareCardController {
         }
         if (runs.isEmpty() || !quote.substring(cursor).trim().isEmpty()) return false;
 
-        TextBox box = lyricBox(design, textStyle, layoutCode(design) != null);
+        TextBox box = lyricBox(design, textStyle, layoutCode(design) != null,
+                ShareCardPolicy.creditText(document, false));
         Fitted fitted = layoutLyrics(quotes, collectTranslations(selection()), box, false);
         if (fitted.main.size() != quotes.size()) return false;
         StaticLayout target = fitted.main.get(0);
@@ -686,7 +704,8 @@ public final class LyricsShareCardController {
             if (text == null || text.getTextSize() <= 0f) return;
             List<String> quotes = collectQuotes(selection());
             if (quotes.isEmpty()) return;
-            TextBox box = lyricBox(design, textStyle, layoutCode(design) != null);
+            TextBox box = lyricBox(design, textStyle, layoutCode(design) != null,
+                ShareCardPolicy.creditText(document, false));
             Fitted fitted = layoutLyrics(quotes, collectTranslations(selection()), box, false);
             if (fitted.main.isEmpty()) return;
             float cardScale = cardHost.getWidth() / (float) W;
@@ -1010,8 +1029,81 @@ public final class LyricsShareCardController {
         return overlay != null;
     }
 
+    private java.io.File captureFile() {
+        return new java.io.File(activity.getCacheDir(), "spicyex-share-preview.png");
+    }
+
+    public String agentCaptureStatus() {
+        return "capture=" + captureState + " path=" + captureFile().getAbsolutePath()
+                + " design=" + design.name() + " code=" + spotifyCode;
+    }
+
+    /** Use the existing design and code controls without sending an image. */
+    public boolean agentConfigure(String action, int value) {
+        if (!isShowing()) return false;
+        if ("design".equals(action) && value >= 0 && value < Design.values().length) {
+            selectDesign(Design.values()[value]);
+            return true;
+        }
+        if ("code".equals(action) && (value == 0 || value == 1) && codeChip != null) {
+            if (spotifyCode != (value == 1)) codeChip.performClick();
+            return true;
+        }
+        return false;
+    }
+
+    /** Capture the same image recipe used by Save and Share into private debug cache only. */
+    public boolean agentCapture() {
+        CardRecipe recipe = currentRecipe;
+        LyricsDocument shareDocument = document;
+        if (!com.eza.spicyex.BuildConfig.DEBUG || !isShowing() || recipe == null
+                || !ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) return false;
+        int token = generation;
+        int request = ++captureRequest;
+        captureState = "pending";
+        captureFile().delete();
+        java.io.File temporary = new java.io.File(activity.getCacheDir(),
+                "spicyex-share-preview-" + request + ".tmp");
+        RENDER.execute(() -> {
+            boolean written = false;
+            try {
+                if (token == generation && request == captureRequest && recipe == currentRecipe
+                        && ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) {
+                    Bitmap card = recipe.get();
+                    if (token == generation && request == captureRequest && recipe == currentRecipe) {
+                        try (OutputStream out = new java.io.FileOutputStream(temporary)) {
+                            written = card.compress(Bitmap.CompressFormat.PNG, 100, out);
+                        }
+                    }
+                }
+            } catch (Throwable error) {
+                XpLog.log(TAG + " preview capture failed: " + error.getClass().getSimpleName());
+            }
+            boolean ready = written;
+            main.post(() -> {
+                if (request != captureRequest) {
+                    temporary.delete();
+                    return;
+                }
+                boolean current = token == generation && recipe == currentRecipe && isShowing()
+                        && ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis());
+                captureState = current && ready && temporary.renameTo(captureFile()) ? "ready" : "failed";
+                temporary.delete();
+            });
+        });
+        return true;
+    }
+
+    private void clearCapture() {
+        captureRequest++;
+        captureState = "idle";
+        captureFile().delete();
+    }
+
     public void dismiss() {
+        stopWatchingOrgAccess();
         generation++;
+        clearCapture();
         if (overlay != null) reportSheet(false, false);
         if (overlay != null && overlay.getParent() instanceof ViewGroup) {
             View leaving = overlay;
@@ -1062,6 +1154,38 @@ public final class LyricsShareCardController {
         pickRows.clear();
         pieceViews = new java.util.HashMap<>();
         pieceData = new java.util.HashMap<>();
+    }
+
+    /** Retire only a share snapshot whose org access or retention window ended. */
+    public void dismissIfUnavailable() {
+        if (overlay == null || !ShareCardPolicy.requiresImage(document)) return;
+        if (!ShareCardPolicy.usable(activity, document, System.currentTimeMillis())) {
+            overlay.setVisibility(View.GONE);
+            dismiss();
+            return;
+        }
+        if (watchingOrgAccess) {
+            main.removeCallbacks(accessCheck);
+            long remaining = document.spicyOrgFetchedAtMs
+                    + com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.RETENTION_MS
+                    - System.currentTimeMillis();
+            main.postDelayed(accessCheck, Math.max(1L, remaining));
+        }
+    }
+
+    private void watchOrgAccess() {
+        if (!ShareCardPolicy.requiresImage(document) || watchingOrgAccess) return;
+        watchingOrgAccess = true;
+        com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.addListener(orgAccessListener);
+        dismissIfUnavailable();
+    }
+
+    private void stopWatchingOrgAccess() {
+        if (watchingOrgAccess) {
+            com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.removeListener(orgAccessListener);
+            watchingOrgAccess = false;
+        }
+        main.removeCallbacks(accessCheck);
     }
 
     // ---------------------------------------------------------------- preview UI
@@ -2113,6 +2237,7 @@ public final class LyricsShareCardController {
         Bitmap artist = null;
         Bitmap lyricsBg = lyricsBackground;
         SpotifyTrack t = track;
+        String credit = ShareCardPolicy.creditText(document, false);
         float scale = thumbScale();
         // The current design first, then outward from it - what is on screen fills in first.
         List<Design> order = new ArrayList<>();
@@ -2131,7 +2256,7 @@ public final class LyricsShareCardController {
                 Bitmap small;
                 try {
                     small = renderCardScaled(d, style, b, art, artist, lyricsBg, quotes, translations,
-                            safe(t.title), safe(t.artist), scale);
+                            safe(t.title), safe(t.artist), credit, scale);
                 } catch (Throwable error) {
                     XpLog.log(TAG + " thumbnail " + d + " failed: " + error);
                     continue;
@@ -2151,7 +2276,7 @@ public final class LyricsShareCardController {
 
     private static Bitmap shrink(Bitmap full, float scale) {
         return Bitmap.createScaledBitmap(full, Math.max(1, Math.round(W * scale)),
-                Math.max(1, Math.round(H * scale)), true);
+                Math.max(1, Math.round(full.getHeight() * W * scale / full.getWidth())), true);
     }
 
     /** A card rendered anyway (the current one, a neighbour) doubles as its thumbnail. */
@@ -2569,6 +2694,7 @@ public final class LyricsShareCardController {
         Bitmap artist = null;
         Bitmap lyricsBg = lyricsBackground;
         SpotifyTrack t = track;
+        String credit = ShareCardPolicy.creditText(document, false);
         float thumbScale = thumbScale();
         float peekScale = Math.max(thumbScale, Math.min(1f, cardWidthPx / (float) W));
         RENDER.execute(() -> {
@@ -2579,9 +2705,9 @@ public final class LyricsShareCardController {
             try {
                 // At the size they are shown (dimmed, mostly off-screen), not the full 1080px.
                 left = renderCardScaled(prev, style, b, art, artist, lyricsBg, quotes, translations,
-                        safe(t.title), safe(t.artist), peekScale);
+                        safe(t.title), safe(t.artist), credit, peekScale);
                 right = renderCardScaled(next, style, b, art, artist, lyricsBg, quotes, translations,
-                        safe(t.title), safe(t.artist), peekScale);
+                        safe(t.title), safe(t.artist), credit, peekScale);
                 leftThumb = shrink(left, thumbScale);
                 rightThumb = shrink(right, thumbScale);
             } catch (Throwable error) {
@@ -2700,6 +2826,9 @@ public final class LyricsShareCardController {
 
     private void render(Transition transition) {
         int token = ++generation;
+        // Export becomes ready only when this generation completes successfully.
+        currentRecipe = null;
+        clearCapture();
         List<String> quotes = collectQuotes(selection());
         List<String> translations = collectTranslations(selection());
         List<Integer> ids = collectQuoteIds(selection());
@@ -2712,15 +2841,22 @@ public final class LyricsShareCardController {
         Bitmap artist = null;
         Bitmap lyricsBg = lyricsBackground;
         SpotifyTrack t = track;
+        String credit = ShareCardPolicy.creditText(document, false);
         float thumbScale = thumbScale();
-        CodeSlot slot = codeSlot(d, !quotes.isEmpty());
+        // The same lift drawCard applies to the card under it: the animated code sits where the
+        // exported one is drawn.
+        CodeSlot slot = codeSlot(d, !quotes.isEmpty(), creditLift(d, !quotes.isEmpty(), credit));
         // The image that is shared: drawn only when it is actually shared or saved - every
         // render used to copy and redraw a full-size card for it, most of them never used.
         // The code as it is when shared: the stand-in is swapped for the real one if it came.
+        LyricsDocument shareDocument = document;
         CardRecipe recipe = new CardRecipe(rounded -> {
+            if (!ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) {
+                throw new IllegalStateException("Lyrics response expired");
+            }
             Bitmap shared = wantCode ? cachedCode(t, onPaper(d)) : null;
             return renderCard(d, style, b, shared, art, artist, lyricsBg,
-                    quotes, translations, safe(t.title), safe(t.artist), true, true, rounded);
+                    quotes, translations, safe(t.title), safe(t.artist), credit, true, true, rounded);
         });
         RENDER.execute(() -> {
             Bitmap base;
@@ -2729,20 +2865,29 @@ public final class LyricsShareCardController {
             try {
                 // The code's slot is left empty: the preview draws the code over it, animated.
                 base = renderCard(d, style, b, code, art, artist, lyricsBg, quotes, translations,
-                        safe(t.title), safe(t.artist), false, false);
-                pieces = quotePieces(d, style, quotes, translations, code != null, ids);
+                        safe(t.title), safe(t.artist), credit, false, false);
+                pieces = quotePieces(d, style, quotes, translations, code != null, ids, credit);
                 codeArt = code == null || code == PENDING_CODE ? null : codeArt(code, slot.paper);
+
             } catch (Throwable error) {
                 XpLog.log(TAG + " render failed: " + error);
                 return;
             }
             main.post(() -> {
                 if (token != generation || cardHost == null) return;
+                if (!ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) {
+                    dismissIfUnavailable();
+                    return;
+                }
                 currentRecipe = recipe;
                 boolean textOnly = transition == Transition.SLIDE_UP || transition == Transition.SLIDE_DOWN
                         || transition == Transition.TEXT || transition == Transition.ALIGN;
                 Runnable apply = () -> {
                     if (token != generation || cardHost == null) return;
+                    if (!ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) {
+                        dismissIfUnavailable();
+                        return;
+                    }
                     // Only the text may change in place; a code that came or went swaps the card.
                     if (textOnly && currentCard != null && code == currentCode) {
                         swapText(base, pieces, transition);
@@ -2760,7 +2905,7 @@ public final class LyricsShareCardController {
             Bitmap thumb;
             try {
                 thumb = renderCardScaled(d, style, b, art, artist, lyricsBg, quotes, translations,
-                        safe(t.title), safe(t.artist), thumbScale);
+                        safe(t.title), safe(t.artist), credit, thumbScale);
             } catch (Throwable error) {
                 XpLog.log(TAG + " thumbnail failed: " + error);
                 return;
@@ -3056,10 +3201,10 @@ public final class LyricsShareCardController {
      */
     private static List<Piece> quotePieces(Design design, TextStyle style, List<String> quotes,
                                            List<String> translations, boolean withCode,
-                                           List<Integer> ids) {
+                                           List<Integer> ids, String credit) {
         List<Piece> out = new ArrayList<>();
         if (quotes == null || quotes.isEmpty()) return out;
-        TextBox box = lyricBox(design, style, withCode);
+        TextBox box = lyricBox(design, style, withCode, credit);
         Fitted f = layoutLyrics(quotes, translations, box, false);
         float top = quoteTop(design, style, box, f.height);
         int width = Math.max(1, (int) Math.ceil(box.width));
@@ -3239,10 +3384,11 @@ public final class LyricsShareCardController {
     // ---------------------------------------------------------------- card drawing
 
     /** The box the lyric is set in: the design's, with the user's alignment. */
-    private static TextBox lyricBox(Design design, TextStyle style, boolean withCode) {
+    private static TextBox lyricBox(Design design, TextStyle style, boolean withCode, String credit) {
         TextBox box = textBox(design, true);
         // Glass without the code: the lyric also takes the panel's footer.
         if (design == Design.GLASS && !withCode) box = box.moved(box.left, box.top, box.height + 170);
+        box = reserveCredit(design, box, withCode, credit);
         switch (style.align) {
             case START:
                 return box.aligned(Layout.Alignment.ALIGN_NORMAL);
@@ -3286,7 +3432,8 @@ public final class LyricsShareCardController {
     }
 
     private boolean fits(List<String> quotes, List<String> translations) {
-        TextBox box = textBox(design, !quotes.isEmpty());
+        TextBox box = reserveCredit(design, textBox(design, !quotes.isEmpty()), true,
+                ShareCardPolicy.creditText(document, false));
         return layoutLyrics(quotes, translations, box, true) != null;
     }
 
@@ -3330,7 +3477,13 @@ public final class LyricsShareCardController {
     private static final int POLAROID_PHOTO_BOTTOM = 750;
     private static final int POLAROID_FOOTER_Y = 1180;
 
-    private static CodeSlot codeSlot(Design design, boolean hasQuotes) {
+    /** The code's slot, risen by {@code lift} with the bottom band when the card carries a credit. */
+    private static CodeSlot codeSlot(Design design, boolean hasQuotes, float lift) {
+        CodeSlot slot = uncreditedCodeSlot(design, hasQuotes);
+        return lift == 0f ? slot : new CodeSlot(slot.right, slot.centreY - lift, slot.width, slot.paper);
+    }
+
+    private static CodeSlot uncreditedCodeSlot(Design design, boolean hasQuotes) {
         switch (design) {
             case POLAROID:
                 return new CodeSlot(W - POLAROID_IN, hasQuotes ? POLAROID_FOOTER_Y : POLAROID_FOOTER_Y - 20,
@@ -3451,22 +3604,22 @@ public final class LyricsShareCardController {
     private static Bitmap renderCard(Design design, TextStyle style, Backdrop backdrop, Bitmap code,
                                      Bitmap art, Bitmap artist, Bitmap lyricsBg, List<String> quotes,
                                      List<String> translations,
-                                     String title, String artistName) {
+                                     String title, String artistName, String credit) {
         return renderCard(design, style, backdrop, code, art, artist, lyricsBg, quotes, translations,
-                title, artistName, true);
+                title, artistName, credit, true);
     }
 
     /** The whole card drawn at {@code scale} of its size - thumbnails without a full-size pass. */
     private static Bitmap renderCardScaled(Design design, TextStyle style, Backdrop backdrop,
                                            Bitmap art, Bitmap artist, Bitmap lyricsBg,
                                            List<String> quotes, List<String> translations,
-                                           String title, String artistName, float scale) {
+                                           String title, String artistName, String credit, float scale) {
         Bitmap bitmap = Bitmap.createBitmap(Math.max(1, Math.round(W * scale)),
                 Math.max(1, Math.round(H * scale)), Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(bitmap);
         canvas.scale(scale, scale);
         drawCard(canvas, design, style, backdrop, null, art, artist, lyricsBg, quotes, translations,
-                title, artistName, true, false, true);
+                title, artistName, credit, true, false, true);
         return bitmap;
     }
 
@@ -3475,9 +3628,9 @@ public final class LyricsShareCardController {
      * separately from the card (see swapText). Same boxes and sizes as the full card.
      */
     private static void drawQuoteText(Canvas canvas, Design design, TextStyle style, List<String> quotes,
-                                      List<String> translations, boolean withCode) {
+                                      List<String> translations, boolean withCode, String credit) {
         if (quotes == null || quotes.isEmpty()) return;
-        TextBox box = lyricBox(design, style, withCode);
+        TextBox box = lyricBox(design, style, withCode, credit);
         Fitted f = layoutLyrics(quotes, translations, box, false);
         drawFitted(canvas, f, box, quoteTop(design, style, box, f.height));
     }
@@ -3485,9 +3638,9 @@ public final class LyricsShareCardController {
     private static Bitmap renderCard(Design design, TextStyle style, Backdrop backdrop, Bitmap code,
                                      Bitmap art, Bitmap artist, Bitmap lyricsBg, List<String> quotes,
                                      List<String> translations,
-                                     String title, String artistName, boolean withQuoteText) {
+                                     String title, String artistName, String credit, boolean withQuoteText) {
         return renderCard(design, style, backdrop, code, art, artist, lyricsBg, quotes, translations,
-                title, artistName, withQuoteText, true);
+                title, artistName, credit, withQuoteText, true);
     }
 
     /**
@@ -3496,10 +3649,10 @@ public final class LyricsShareCardController {
      */
     private static Bitmap renderCard(Design design, TextStyle style, Backdrop backdrop, Bitmap code,
                                      Bitmap art, Bitmap artist, Bitmap lyricsBg, List<String> quotes,
-                                     List<String> translations, String title, String artistName,
+                                     List<String> translations, String title, String artistName, String credit,
                                      boolean withQuoteText, boolean drawCode) {
         return renderCard(design, style, backdrop, code, art, artist, lyricsBg, quotes, translations,
-                title, artistName, withQuoteText, drawCode, true);
+                title, artistName, credit, withQuoteText, drawCode, true);
     }
 
     /**
@@ -3509,21 +3662,28 @@ public final class LyricsShareCardController {
      */
     private static Bitmap renderCard(Design design, TextStyle style, Backdrop backdrop, Bitmap code,
                                      Bitmap art, Bitmap artist, Bitmap lyricsBg, List<String> quotes,
-                                     List<String> translations, String title, String artistName,
+                                     List<String> translations, String title, String artistName, String credit,
                                      boolean withQuoteText, boolean drawCode, boolean rounded) {
         Bitmap bitmap = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
         drawCard(new Canvas(bitmap), design, style, backdrop, code, art, artist, lyricsBg, quotes,
-                translations, title, artistName, withQuoteText, drawCode, rounded);
+                translations, title, artistName, credit, withQuoteText, drawCode, rounded);
         return bitmap;
     }
 
     private static void drawCard(Canvas canvas, Design design, TextStyle style, Backdrop backdrop,
                                  Bitmap code, Bitmap art, Bitmap artist, Bitmap lyricsBg,
                                  List<String> quotes, List<String> translations,
-                                 String title, String artistName, boolean withQuoteText,
+                                 String title, String artistName, String credit, boolean withQuoteText,
                                  boolean drawCode, boolean rounded) {
         boolean withCode = code != null;
         Bitmap codeInk = drawCode ? code : null;
+        // The credit belongs to the lyric it attributes; a card without one carries no response text.
+        // Checked before anything is drawn: an overlong credit makes no image, never a clipped one.
+        CreditBlock creditBlock = quotes == null || quotes.isEmpty() ? null
+                : creditBlock(design, lyricBox(design, style, withCode, ""), withCode, credit);
+        if (creditBlock != null && !creditBlock.fits) throw new CreditOverflowException();
+        // The bottom band (title, code, dividers) rises by this much; 0 leaves every design as it was.
+        float lift = creditBlock == null ? 0f : creditBlock.lift;
         if (rounded) {
             Path clip = new Path();
             clip.addRoundRect(new RectF(0, 0, W, H), 64, 64, Path.Direction.CW);
@@ -3570,21 +3730,21 @@ public final class LyricsShareCardController {
                 canvas.drawRect(photo, rim);
                 float footerWidth = W - 2 * POLAROID_IN - (withCode ? CODE_W_POLAROID + 36 : 0);
                 if (hasQuotes) {
-                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode);
-                    drawTitleBlock(canvas, title, artistName, POLAROID_IN, POLAROID_FOOTER_Y, footerWidth,
+                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode, credit);
+                    drawTitleBlock(canvas, title, artistName, POLAROID_IN, POLAROID_FOOTER_Y - lift, footerWidth,
                             Color.rgb(40, 40, 44), Color.rgb(122, 120, 126), 34, 28);
                 } else {
                     // No quote: the caption is the song itself, set large in the print's margin.
                     drawTitleBlock(canvas, title, artistName, POLAROID_IN, POLAROID_PHOTO_BOTTOM + 150,
                             W - 2 * POLAROID_IN, Color.rgb(34, 34, 38), Color.rgb(110, 110, 116), 56, 36);
                 }
-                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes));
+                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes, lift));
                 break;
             }
             case MINIMAL: {
                 if (hasQuotes) {
-                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode);
-                    drawTitleBlock(canvas, title, artistName, 90, H - 125, W - 180 - (withCode ? CODE_W + 40 : 0),
+                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode, credit);
+                    drawTitleBlock(canvas, title, artistName, 90, H - 125 - lift, W - 180 - (withCode ? CODE_W + 40 : 0),
                             Color.WHITE, Color.argb(170, 255, 255, 255), 34, 28);
                 } else {
                     // No quote: the cover fills the card, the song name under it.
@@ -3592,7 +3752,7 @@ public final class LyricsShareCardController {
                     drawTitleBlock(canvas, title, artistName, 110, H - 140, W - 220 - (withCode ? CODE_W + 30 : 0),
                             Color.WHITE, Color.argb(170, 255, 255, 255), 44, 32);
                 }
-                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes));
+                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes, lift));
                 break;
             }
             case CLASSIC: {
@@ -3602,13 +3762,13 @@ public final class LyricsShareCardController {
                 mark.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD));
                 Paint line = new Paint();
                 line.setColor(Color.argb(50, 255, 255, 255));
-                canvas.drawRect(90, H - 290, W - 90, H - 288, line);
+                canvas.drawRect(90, H - 290 - lift, W - 90, H - 288 - lift, line);
                 if (hasQuotes) {
                     canvas.drawText("“", 70, 330, mark);
-                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode);
-                    RectF thumb = new RectF(90, H - 250, 90 + 150, H - 100);
+                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode, credit);
+                    RectF thumb = new RectF(90, H - 250 - lift, 90 + 150, H - 100 - lift);
                     drawCover(canvas, art, thumb, 20);
-                    drawTitleBlock(canvas, title, artistName, 90 + 180, H - 175,
+                    drawTitleBlock(canvas, title, artistName, 90 + 180, H - 175 - lift,
                             W - 90 - 180 - 90 - (withCode ? CODE_W_CLASSIC + 40 : 0),
                             Color.WHITE, Color.argb(180, 255, 255, 255), 40, 32);
                 } else {
@@ -3619,7 +3779,7 @@ public final class LyricsShareCardController {
                             W - 180 - (withCode ? CODE_W_CLASSIC + 40 : 0),
                             Color.WHITE, Color.argb(180, 255, 255, 255), 44, 32);
                 }
-                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes));
+                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes, lift));
                 break;
             }
             case POSTER: {
@@ -3640,30 +3800,30 @@ public final class LyricsShareCardController {
                                 ground, ground},
                         new float[]{0f, 0.28f, 0.55f, 0.88f, 1f}, Shader.TileMode.CLAMP));
                 canvas.drawRect(0, 0, W, W + 2, melt);
-                float rowY = hasQuotes ? H - 120 : H - 190;
+                float rowY = (hasQuotes ? H - 120 : H - 190) - lift;
                 if (hasQuotes) {
-                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode);
+                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode, credit);
                     drawTitleBlock(canvas, title, artistName, 90, rowY, W - 180 - (withCode ? CODE_W + 40 : 0),
                             Color.WHITE, Color.argb(180, 255, 255, 255), 36, 29);
                 } else {
                     drawTitleBlock(canvas, title, artistName, 90, rowY, W - 180 - (withCode ? CODE_W + 40 : 0),
                             Color.WHITE, Color.argb(180, 255, 255, 255), 62, 38);
                 }
-                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes));
+                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes, lift));
                 break;
             }
             case VINYL: {
                 // Vinyl: a record with the artwork as its label, the lyric set centred beneath it.
                 float cx = W / 2f;
                 drawRecord(canvas, art, cx, hasQuotes ? 330 : 560, hasQuotes ? 250 : 400);
-                if (hasQuotes && withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode);
-                float rowY = hasQuotes ? H - 130 : H - 170;
+                if (hasQuotes && withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode, credit);
+                float rowY = (hasQuotes ? H - 130 : H - 170) - lift;
                 float titleSize = hasQuotes ? 36 : 50;
                 float artistSize = hasQuotes ? 29 : 34;
                 if (withCode) {
                     drawTitleBlock(canvas, title, artistName, 110, rowY, W - 220 - CODE_W_CLASSIC - 40,
                             Color.WHITE, Color.argb(180, 255, 255, 255), titleSize, artistSize);
-                    drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes));
+                    drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes, lift));
                 } else {
                     drawTitleBlock(canvas, title, artistName, 110, rowY, W - 220,
                             Color.WHITE, Color.argb(180, 255, 255, 255), titleSize, artistSize, true);
@@ -3673,7 +3833,7 @@ public final class LyricsShareCardController {
             case TICKET: {
                 // Ticket: a paper stub with notches at the perforation, the lyric typed on it.
                 RectF paper = new RectF(110, 110, W - 110, H - 110);
-                float perforation = H - 340;
+                float perforation = H - 340 - lift;
                 Path shape = new Path();
                 shape.addRoundRect(paper, 24, 24, Path.Direction.CW);
                 Path notches = new Path();
@@ -3705,17 +3865,18 @@ public final class LyricsShareCardController {
                 head.setColor(Color.rgb(70, 66, 60));
                 canvas.drawText("♪ ADMIT ONE", 170, 200, head);
                 if (hasQuotes) {
-                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode);
+                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode, credit);
                 } else {
                     drawCover(canvas, art, new RectF((W - 600) / 2f, 290, (W + 600) / 2f, 890), 12);
                 }
-                float stubY = (perforation + paper.bottom) / 2f;
+                // The stub's own centre, risen with the perforation; the credit takes the paper's foot.
+                float stubY = (H - 340 + paper.bottom) / 2f - lift;
                 int ink = Color.rgb(30, 30, 34);
                 int faded = Color.rgb(112, 108, 100);
                 if (withCode) {
                     drawTitleBlock(canvas, title, artistName, 170, stubY, W - 340 - 360 - 30,
                             ink, faded, 36, 28);
-                    drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes));
+                    drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes, lift));
                 } else {
                     drawCover(canvas, art, new RectF(170, stubY - 75, 320, stubY + 75), 10);
                     drawTitleBlock(canvas, title, artistName, 350, stubY, W - 170 - 350,
@@ -3733,13 +3894,13 @@ public final class LyricsShareCardController {
                     Paint rule = new Paint();
                     rule.setColor(Color.argb(90, 255, 255, 255));
                     canvas.drawRect(cx - 36, 490, cx + 36, 493, rule);
-                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode);
+                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode, credit);
                 } else {
                     drawRoundCover(canvas, art, cx, 540, 330);
                     drawTitleBlock(canvas, title, artistName, 100, 1000, W - 200,
                             Color.WHITE, Color.argb(180, 255, 255, 255), 54, 36, true);
                 }
-                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes));
+                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes, lift));
                 break;
             }
             default: {
@@ -3770,8 +3931,11 @@ public final class LyricsShareCardController {
                     drawTitleBlock(canvas, title, artistName, titleLeft, thumb.centerY(), W - GLASS_IN - titleLeft,
                             Color.WHITE, Color.argb(185, 255, 255, 255), 38, 30);
                     canvas.drawRect(GLASS_IN, GLASS_RULE_Y, W - GLASS_IN, GLASS_RULE_Y + 2, rule);
-                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode);
-                    if (withCode) canvas.drawRect(GLASS_IN, GLASS_FOOTER_Y - 82, W - GLASS_IN, GLASS_FOOTER_Y - 80, rule);
+                    if (withQuoteText) drawQuoteText(canvas, design, style, quotes, translations, withCode, credit);
+                    if (withCode) {
+                        canvas.drawRect(GLASS_IN, GLASS_FOOTER_Y - 82 - lift, W - GLASS_IN,
+                                GLASS_FOOTER_Y - 80 - lift, rule);
+                    }
                 } else {
                     // No quote: the cover fills the pane, the song name beneath it.
                     drawCover(canvas, art, new RectF(GLASS_IN, 210, W - GLASS_IN, 210 + W - 2 * GLASS_IN), 32);
@@ -3779,11 +3943,195 @@ public final class LyricsShareCardController {
                             W - 2 * GLASS_IN - (withCode ? CODE_W_POLAROID + 30 : 0),
                             Color.WHITE, Color.argb(185, 255, 255, 255), 44, 32);
                 }
-                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes));
+                drawCodeAt(canvas, codeInk, codeSlot(design, hasQuotes, lift));
                 break;
             }
         }
         drawBrandMark(canvas, design);
+        if (creditBlock != null) creditBlock.draw(canvas);
+    }
+
+    // Credit: the card's bottom-most item, inside its native bottom padding (inside the paper or pane
+    // on Polaroid, Ticket and Glass). The title, code and dividers of the bottom band move up by
+    // CreditSpace.lift to make room; the lyric stops above the moved band.
+    private static final float CREDIT_GAP = 28f;
+    /** Air between the lyric box's foot and the top of the (moved) bottom band. */
+    private static final float CREDIT_LYRIC_GAP = 36f;
+    private static final float CREDIT_MIN_LYRIC = 120f;
+    private static final float CREDIT_SIZE = 26f;
+    private static final float CREDIT_MIN_SIZE = 20f;
+
+    /**
+     * Where a template's bottom band sits and where its credit ends, in the uncredited card's
+     * coordinates, and the ink the credit uses. {@code bandTop} is the first thing the lyric must
+     * stay above (title, code, rule or perforation); {@code bandBottom} the lowest edge of that band
+     * at its tallest (a two-line title); {@code creditBottom} where the credit's last line ends.
+     */
+    private static final class CreditSpec {
+        final float bandTop, bandBottom, creditBottom;
+        final int providerInk, rowInk;
+        final boolean mono;
+
+        CreditSpec(float bandTop, float bandBottom, float creditBottom, int providerInk, int rowInk,
+                   boolean mono) {
+            this.bandTop = bandTop;
+            this.bandBottom = bandBottom;
+            this.creditBottom = creditBottom;
+            this.providerInk = providerInk;
+            this.rowInk = rowInk;
+            this.mono = mono;
+        }
+    }
+
+    /**
+     * Native bottom padding per design (credited cards only; the uncredited geometry is untouched):
+     * <ul>
+     * <li>Minimal, Poster, Vinyl: the credit ends where the title row's tallest foot did (1287,
+     * 1292, 1282), the row rising above it.</li>
+     * <li>Classic: ends with the cover thumbnail (1250); rule, thumbnail, title and code rise.</li>
+     * <li>Ticket: ends 48 px inside the paper's foot (1192 of 1240); perforation, notches and stub rise.</li>
+     * <li>Polaroid: ends 40 px inside the print's foot (1230 of 1270); the footer row rises.</li>
+     * <li>Glass: ends with the code's old foot (1160, panel foot 1200); footer rule and code rise.</li>
+     * <li>Spotlight: ends 10 px below the code's old foot (1290); the code rises.</li>
+     * </ul>
+     * Paper designs take dark ink; the others, quiet white as for the artist line.
+     */
+    private static CreditSpec creditSpec(Design design, boolean withCode) {
+        final int light = Color.argb(205, 255, 255, 255);
+        final int lightRows = Color.argb(180, 255, 255, 255);
+        switch (design) {
+            case POLAROID:
+                return new CreditSpec(POLAROID_FOOTER_Y - 61, POLAROID_FOOTER_Y + 61, 1230,
+                        Color.rgb(48, 48, 54), Color.rgb(96, 94, 100), false);
+            case MINIMAL:
+                return new CreditSpec(H - 125 - 62, H - 125 + 62, H - 125 + 62, light, lightRows, false);
+            case CLASSIC:
+                return new CreditSpec(H - 290, H - 100, H - 100, light, lightRows, false);
+            case POSTER:
+                return new CreditSpec(H - 120 - 62, H - 120 + 62, H - 120 + 62, light, lightRows, false);
+            case VINYL:
+                return new CreditSpec(H - 130 - 62, H - 130 + 62, H - 130 + 62, light, lightRows, false);
+            case TICKET:
+                return new CreditSpec(H - 340, H - 340 + 176, H - 110 - 48, Color.rgb(58, 54, 48),
+                        Color.rgb(92, 88, 80), true);
+            case SPOTLIGHT:
+                return new CreditSpec(H - 120 - 50, H - 120 + 50, H - 60, light, lightRows, false);
+            default:
+                // Glass without the code has no band: the lyric stops a gap above the credit instead.
+                return new CreditSpec(withCode ? GLASS_FOOTER_Y - 82 : 1160 + CREDIT_LYRIC_GAP,
+                        1160, 1160, light, lightRows, false);
+        }
+    }
+
+    /** The credit cannot be set in its room at the smallest size: the image is not made. */
+    private static final class CreditOverflowException extends IllegalStateException {
+        CreditOverflowException() {
+            super("Response credit does not fit the card");
+        }
+    }
+
+    /** The credit laid out for one design: the provider row, then the contributors' row. */
+    private static final class CreditBlock {
+        final StaticLayout provider;
+        final StaticLayout rows;
+        final float left, top, height;
+        /** How far the template's bottom band rises to make room for this block. */
+        final float lift;
+        /** False when even the smallest size overruns the room the lyric leaves above the band. */
+        final boolean fits;
+
+        CreditBlock(StaticLayout provider, StaticLayout rows, float left, float top, float height,
+                    float lift, boolean fits) {
+            this.provider = provider;
+            this.rows = rows;
+            this.left = left;
+            this.top = top;
+            this.height = height;
+            this.lift = lift;
+            this.fits = fits;
+        }
+
+        void draw(Canvas canvas) {
+            canvas.save();
+            canvas.translate(left, top);
+            provider.draw(canvas);
+            if (rows != null) {
+                canvas.translate(0, provider.getHeight() + 6);
+                rows.draw(canvas);
+            }
+            canvas.restore();
+        }
+    }
+
+    /** The contributors' names underlined, not the lead-ins ("uploaded by", "made by") or commas. */
+    private static CharSequence underlinedNames(String contributors) {
+        android.text.SpannableString text = new android.text.SpannableString(contributors);
+        for (int[] span : CreditSpace.nameSpans(contributors)) {
+            text.setSpan(new android.text.style.UnderlineSpan(), span[0], span[1],
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        return text;
+    }
+
+    private static StaticLayout creditRow(CharSequence text, TextBox box, CreditSpec spec, float size,
+                                          boolean provider) {
+        TextPaint paint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(provider ? spec.providerInk : spec.rowInk);
+        paint.setTextSize(size);
+        paint.setLetterSpacing(spec.mono ? 0.04f : 0.02f);
+        Typeface base = spec.mono ? Typeface.MONOSPACE : Typeface.DEFAULT;
+        paint.setTypeface(Typeface.create(base, provider ? Typeface.BOLD : Typeface.NORMAL));
+        return StaticLayout.Builder.obtain(text, 0, text.length(), paint, (int) box.width)
+                .setAlignment(box.align).setIncludePad(false).setLineSpacing(4f, 1f).build();
+    }
+
+    /**
+     * The credit set at the largest size whose block still leaves the lyric its room, wrapping
+     * complete names rather than cutting them. {@code box} is the design's lyric box before any
+     * reserve: the block takes its width, left edge and alignment, so it reads as the quote's byline.
+     * If the smallest size still overruns, the block says so ({@link CreditBlock#fits}) and the
+     * image is refused rather than clipped or drawn over the quote.
+     */
+    private static CreditBlock creditBlock(Design design, TextBox box, boolean withCode, String credit) {
+        if (credit == null || credit.isEmpty()) return null;
+        CreditSpec spec = creditSpec(design, withCode);
+        String[] parts = CreditSpace.rows(credit);
+        // Fit is judged with the code's band (Glass's tighter case) so a preview with the code and
+        // an export without it always agree on whether the credit fits.
+        CreditSpec tight = creditSpec(design, true);
+        float overhang = Math.max(0f, tight.bandBottom - tight.creditBottom);
+        float room = CreditSpace.maxBlockHeight(box.top, tight.bandTop - overhang,
+                CREDIT_GAP + CREDIT_LYRIC_GAP, CREDIT_MIN_LYRIC);
+        float size = CREDIT_SIZE;
+        while (true) {
+            StaticLayout provider = creditRow(parts[0], box, spec, size, true);
+            StaticLayout rows = parts[1].isEmpty() ? null
+                    : creditRow(underlinedNames(parts[1]), box, spec, size - 2f, false);
+            float height = provider.getHeight() + (rows == null ? 0f : 6f + rows.getHeight());
+            if (height <= room || size <= CREDIT_MIN_SIZE) {
+                return new CreditBlock(provider, rows, box.left,
+                        CreditSpace.blockTop(spec.creditBottom, height), height,
+                        CreditSpace.lift(height, CREDIT_GAP, spec.bandBottom, spec.creditBottom),
+                        CreditSpace.fits(height, room));
+            }
+            size -= 2f;
+        }
+    }
+
+    /** The lyric box stopped above the lifted bottom band, so quote and credit never overlap. */
+    private static TextBox reserveCredit(Design design, TextBox box, boolean withCode, String credit) {
+        CreditBlock block = creditBlock(design, box, withCode, credit);
+        if (block == null) return box;
+        float limit = creditSpec(design, withCode).bandTop - block.lift - CREDIT_LYRIC_GAP;
+        return box.moved(box.left, box.top,
+                CreditSpace.lyricHeight(box.top, box.height, limit, 0f, 0f, CREDIT_MIN_LYRIC));
+    }
+
+    /** How far {@code design}'s bottom band rises for this credit; 0 with no credit or no quote. */
+    private static float creditLift(Design design, boolean hasQuotes, String credit) {
+        if (!hasQuotes) return 0f;
+        CreditBlock block = creditBlock(design, textBox(design, true), true, credit);
+        return block == null ? 0f : block.lift;
     }
 
     /**
@@ -4280,10 +4628,14 @@ public final class LyricsShareCardController {
     private void saveOnly() {
         CardRecipe recipe = currentRecipe;
         if (recipe == null) return;
+        LyricsDocument shareDocument = document;
         RENDER.execute(() -> {
+            if (!ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) return;
             Uri uri = null;
             try {
-                uri = saveToGallery(recipe.get());
+                Bitmap card = recipe.get();
+                if (!ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) return;
+                uri = saveToGallery(card);
             } catch (Throwable error) {
                 XpLog.log(TAG + " save failed: " + error);
             }
@@ -4296,21 +4648,27 @@ public final class LyricsShareCardController {
     /** The system share sheet with every app ({@code target} null), or straight to one app. */
     private void shareCard(android.content.ComponentName target) {
         CardRecipe recipe = currentRecipe;
+        if (recipe == null) return;
         SpotifyTrack t = track;
         if (t == null) return;
         List<String> quotes = collectQuotes(selection());
+        LyricsDocument shareDocument = document;
         RENDER.execute(() -> {
             try {
-                Bitmap card = recipe == null ? null : recipe.get();
+                if (!ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) return;
+                Bitmap card = recipe.get();
+                if (!ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) return;
                 // Behind Spotify's own share provider, so a share leaves nothing in the gallery.
                 Uri cardUri = card == null ? null : shareableUri(card);
                 if (card != null && cardUri == null) cardUri = saveToGallery(card);
+                if (cardUri == null && ShareCardPolicy.requiresImage(shareDocument)) {
+                    throw new IllegalStateException("Could not prepare the card image");
+                }
                 String link = webLink(t);
                 if (isBlank(link)) link = safe(t.uri);
                 String quote = TextUtils.join("\n", quotes);
-                String text = isBlank(quote)
-                        ? safe(t.title) + " - " + safe(t.artist)
-                        : "\"" + quote + "\"\n" + safe(t.title) + " - " + safe(t.artist);
+                String text = ShareCardPolicy.sharedText(shareDocument, quote,
+                        safe(t.title), safe(t.artist), link);
                 Intent send = new Intent(Intent.ACTION_SEND);
                 if (cardUri != null) {
                     send.setType("image/png");
@@ -4321,7 +4679,7 @@ public final class LyricsShareCardController {
                 } else {
                     send.setType("text/plain");
                 }
-                send.putExtra(Intent.EXTRA_TEXT, text + "\n" + link);
+                send.putExtra(Intent.EXTRA_TEXT, text);
                 Intent launch;
                 if (target != null) {
                     send.setComponent(target);
@@ -4335,6 +4693,10 @@ public final class LyricsShareCardController {
                 }
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 main.post(() -> {
+                    if (!ShareCardPolicy.usable(activity, shareDocument, System.currentTimeMillis())) {
+                        dismissIfUnavailable();
+                        return;
+                    }
                     try {
                         activity.startActivity(launch);
                         dismiss();

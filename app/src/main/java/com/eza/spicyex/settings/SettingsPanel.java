@@ -32,7 +32,7 @@ import com.eza.spicyex.lyrics.cache.CacheClearKind;
 import com.eza.spicyex.lyrics.cache.CacheStoragePolicy;
 import com.eza.spicyex.lyrics.language.LanguageModelPack;
 import com.eza.spicyex.lyrics.providers.LyricsFetchDiagnosticsState;
-import com.eza.spicyex.lyrics.providers.SpicyManualTokenStore;
+import com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore;
 import com.eza.spicyex.settings.PanelDialogs;
 import com.eza.spicyex.settings.PanelPolicy;
 import com.eza.spicyex.settings.PanelSnapshot;
@@ -244,6 +244,23 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                 : Kind.CHEVRONS_UP_DOWN;
     }
 
+    /** Opens and reveals a section through its existing header action. */
+    public boolean openSection(String id) {
+        for (Settings.Section section : SettingsUiSchema.orderedSections()) {
+            if (!section.id.equals(id)) continue;
+            int index = indexOfChildByTag(PanelTags.header(section));
+            if (index < 0 || scrollRoot == null) return false;
+            View header = sectionsContainer.getChildAt(index);
+            if (!expandedSections.contains(id)) header.performClick();
+            scrollRoot.postDelayed(() -> {
+                if (scrollRoot.isAttachedToWindow()) scrollRoot.scrollTo(0,
+                        sectionsContainer.getTop() + header.getTop());
+            }, Motion.dur(Motion.BASE) + 50L);
+            return true;
+        }
+        return false;
+    }
+
     // --- Section rendering ---
 
     private void renderSections(LinearLayout content) {
@@ -295,6 +312,7 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                         context, com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPICY));
         snapshot.put(Settings.AI_ENABLED, store.get(Settings.AI_ENABLED));
         snapshot.put(Settings.PIP_ENABLED, store.get(Settings.PIP_ENABLED));
+        snapshot.put(Settings.AUTO_ENABLED, store.get(Settings.AUTO_ENABLED));
         snapshot.put(Settings.AI_PROVIDER, store.get(Settings.AI_PROVIDER));
         snapshot.put(Settings.TRANSLATION_ENABLED, store.get(Settings.TRANSLATION_ENABLED));
         snapshot.put(Settings.TRANSLITERATION_ENABLED, store.get(Settings.TRANSLITERATION_ENABLED));
@@ -429,8 +447,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
                 || setting == Settings.LYRICS_SOURCE_ORDER) {
             return;
         }
-        if (setting == Settings.SPICY_MANUAL_TOKEN) {
-            spicyTokenRow(content);
+        if (setting == Settings.SPICY_ORG_CLIENT_KEY) {
+            spicyKeyRow(content);
             return;
         }
         if (setting == Settings.LYRICS_FONT_CUSTOM_PATH) {
@@ -761,25 +779,43 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
 
     // --- Credentials row (composite) ---
 
-    private void spicyTokenRow(LinearLayout content) {
-        String masked = SpicyManualTokenStore.masked(context);
+    private void spicyKeyRow(LinearLayout content) {
+        LinearLayout group = new LinearLayout(context);
+        group.setOrientation(LinearLayout.VERTICAL);
+        group.setTag(PanelTags.row(Settings.SPICY_ORG_CLIENT_KEY));
+        content.addView(group, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        boolean configured = SpicyOrgKeyStore.has(context);
         List<AiSettingsRows.IconAction> actions = new ArrayList<>();
         actions.add(new AiSettingsRows.IconAction(Kind.EDIT,
-                uiStrings.get("settings_spicy_token_edit", "Edit token"), v -> dialogs.promptSpicyToken()));
-        if (!masked.isEmpty()) {
-            actions.add(new AiSettingsRows.IconAction(Kind.VISIBILITY,
-                    uiStrings.get("settings_spicy_token_reveal", "Reveal token"),
-                    v -> dialogs.revealSpicyToken()));
+                uiStrings.get("settings_spicy_key_edit", "Add or change key"), v -> dialogs.promptSpicyKey()));
+        if (configured) {
             actions.add(new AiSettingsRows.IconAction(Kind.DELETE,
-                    uiStrings.get("settings_spicy_token_delete", "Delete token"), v -> {
-                SpicyManualTokenStore.delete(context);
-                rebuildSection(Settings.LYRICS_SOURCES);
+                    uiStrings.get("settings_spicy_key_delete", "Remove key"), v -> {
+                SpicyOrgKeyStore.delete(context);
+                onSpicyKeyChanged();
             }));
         }
-        rows.aiFieldRow(content, uiStrings.setting(Settings.SPICY_MANUAL_TOKEN),
-                masked.isEmpty() ? uiStrings.get("settings_spicy_token_absent", "Not set") : masked,
-                false, Settings.SPICY_MANUAL_TOKEN.key, v -> dialogs.promptSpicyToken(),
+        rows.aiFieldRow(group, uiStrings.setting(Settings.SPICY_ORG_CLIENT_KEY),
+                configured ? uiStrings.get("settings_spicy_key_present", "Key saved")
+                        : uiStrings.get("settings_spicy_key_absent", "Not set"),
+                false, null, v -> dialogs.promptSpicyKey(),
                 actions.toArray(new AiSettingsRows.IconAction[0]));
+        rows.actionRow(group, Kind.EXTERNAL_LINK,
+                uiStrings.get("settings_spicy_key_catalog", "Get your personal key"),
+                v -> openSpicyOrgCatalog(context));
+    }
+
+    /** The shared UI and debug-channel route to the approved personal-key catalog. */
+    public static boolean openSpicyOrgCatalog(Context context) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(SpicyOrgKeyStore.CATALOG_URL));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+            return true;
+        } catch (android.content.ActivityNotFoundException ignored) {
+            return false;
+        }
     }
 
     private void lyricsFontPathRow(LinearLayout content) {
@@ -1121,7 +1157,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         return panelStrings;
     }
 
-    @Override public void onSpicyTokenChanged() {
+    @Override public void onSpicyKeyChanged() {
+        if (lyricsHost != null) lyricsHost.reconcileLyricsSources();
         rebuildSection(Settings.LYRICS_SOURCES);
     }
 

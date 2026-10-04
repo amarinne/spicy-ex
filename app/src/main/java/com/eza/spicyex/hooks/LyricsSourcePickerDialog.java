@@ -306,9 +306,14 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
         CatalogPickerModel.Row row = shown.row;
         view.title.setText((row.selected ? "✓ " : "") + row.title);
         view.title.setTextColor(row.selected ? PanelDialog.COL_ACCENT : PanelDialog.COL_TITLE);
-        view.subtitle.setText(row.subtitle);
+        String subtitle = row.kind == CatalogPickerModel.RowKind.SOURCE && !shown.pending && !row.stored
+                && row.sourceId == com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId.SPICY_ORG
+                && !com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore.has(activity)
+                ? text(strings, "source_picker_spicy_key_required", "Add your personal client key in Settings")
+                : row.subtitle;
+        view.subtitle.setText(subtitle);
         patchTrailing(view, row);
-        view.root.setContentDescription(row.title + ", " + row.subtitle
+        view.root.setContentDescription(row.title + ", " + subtitle
                 + (row.selected ? ", selected" : ""));
         view.root.setEnabled(!shown.pending);
         view.root.setAlpha(shown.pending ? 0.5f : 1f);

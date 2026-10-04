@@ -8,8 +8,8 @@ This is the user-facing feature list.
 
 ## APK Contents
 
-- The APK includes transliteration, romanization, translation, language dictionaries,
-  extra fonts, the complete lyric renderer, and the HyperGlow bridge.
+- The APK includes the lyric renderer, reading and translation engines, Apple font, and HyperGlow bridge.
+- Download the language model pack in Spicy EX settings to enable dictionary-based readings.
 
 ## Lyrics Experience
 
@@ -25,7 +25,23 @@ This is the user-facing feature list.
 - Tap-to-seek on lyric rows, configurable as off, single tap, or double tap.
 - Manual sync offset from -5000 ms to +5000 ms.
 - Jump back to the current lyric after manual scrolling.
+- Adaptive up/down arrow, static arrow, or waveform for the Follow lyrics button.
+- Lyrics in picture-in-picture, with optional album artwork in landscape.
 - Dedicated lyrics entry when Spotify does not expose its native lyric card.
+
+## Lyrics Sources
+
+- Spotify, Apple Music, AMLL, LRCLIB, QQ Music, NetEase, and SpicyLyrics.org.
+- SpicyLyrics.org requires your personal client key from the [Spicy Lyrics catalog](https://developers.spicylyrics.org/catalog/spicy-ex).
+
+## Android Auto
+
+- Lyrics in the full player and available dashboard cards.
+- Main lyrics, with selected readings or translations in the full player when they fit.
+- Requires root and LSPosed.
+- Add Android Auto to the module scope.
+- Force-stop Android Auto.
+- Turn on **Enable Android Auto lyrics** in Spicy EX settings.
 
 ## Now-Playing Lyrics
 
@@ -69,14 +85,13 @@ Supported reading modes:
 ## Translation
 
 - Optional lyric translation.
-- Google unofficial translation backend.
+- Google unofficial translation backend, or AI translation with your own provider key.
 - Batched translation for faster line processing.
 - Configurable target language.
 - Translation brightness: dimmed or bright.
 - Translation cache avoids repeated requests.
 
-Translation uses an unofficial Google endpoint. Eligible lyric text is sent only when translation
-is enabled.
+Google translation uses an unofficial endpoint. Translation sends eligible lyric text to the selected provider when enabled.
 
 ## Visual Customization
 
@@ -112,8 +127,8 @@ is enabled.
 ## In-Spotify Settings
 
 - Settings panel inside Spotify.
-- English and Simplified Chinese settings/report UI. The `Interface language` row stays English so
-  it remains findable after a language change.
+- Settings languages: English, Simplified Chinese, Japanese, Korean, and Russian.
+  The `Interface language` row stays English so it remains easy to find.
 - Controls grouped by lyrics, transliteration, translation, now-playing, text, animation, and
   background.
 - Cache actions:

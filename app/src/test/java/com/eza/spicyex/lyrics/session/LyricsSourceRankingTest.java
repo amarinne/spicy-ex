@@ -8,7 +8,7 @@ import com.eza.spicyex.lyrics.providers.LyricQualityRanker;
 
 import org.junit.Test;
 
-/** Auto ranking accepts syllable > word > line > static, and legacy modes migrate to it. */
+/** Default source gates, legacy mode migration, and within-provider timing helpers. */
 public class LyricsSourceRankingTest {
     @Test
     public void legacyRankingModesParseToAuto() {
@@ -33,7 +33,7 @@ public class LyricsSourceRankingTest {
     }
 
     @Test
-    public void searchProvidersAreOptInWhileEstablishedSourcesKeepTheirDefaults() {
+    public void newInstallUsesAppleSpotifyAndLrclibWithOtherSourcesOptIn() {
         assertFalse(LyricsSourcePreferences.enabledByDefault(null));
         assertFalse(LyricsSourcePreferences.enabledByDefault(
                 LyricsSourcePreferences.Source.SPICY));
@@ -45,14 +45,14 @@ public class LyricsSourceRankingTest {
                 LyricsSourcePreferences.Source.APPLE_MUSIC));
         assertTrue(LyricsSourcePreferences.enabledByDefault(
                 LyricsSourcePreferences.Source.SPOTIFY));
-        assertTrue(LyricsSourcePreferences.enabledByDefault(
+        assertFalse(LyricsSourcePreferences.enabledByDefault(
                 LyricsSourcePreferences.Source.AMLL));
         assertTrue(LyricsSourcePreferences.enabledByDefault(
                 LyricsSourcePreferences.Source.LRCLIB));
     }
 
     @Test
-    public void candidateSyncLevelMatchesAutoOrder() {
+    public void timingHelpersOrderVariantsWithinTheSameSource() {
         assertEquals(3, LyricQualityRanker.syncLevel("Syllable"));
         assertEquals(2, LyricQualityRanker.syncLevel("Word"));
         assertEquals(1, LyricQualityRanker.syncLevel("Line"));

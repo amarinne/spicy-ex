@@ -6,6 +6,7 @@ import java.util.List;
 
 /** Renderer-owned mount and animation state for one applied lyric row. */
 public final class AppliedLineRenderState {
+    public boolean continuousSentenceFill;
     public int baseTextSp;
     public int measuredHeightPx;
     public Spring opacitySpring;

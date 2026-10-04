@@ -24,6 +24,22 @@ import io.github.libxposed.api.XposedInterface;
 
 /** Interceptor-chain semantics: early return, throwable suppression, exact match, registry. */
 public class XpHooksTest {
+    @Test public void deoptimizationUsesTheExactDiscoveredCallerAndPreservesFailure() throws Exception {
+        Method caller = Fixture.class.getDeclaredMethod("greet", String.class);
+        AtomicReference<Executable> received = new AtomicReference<>();
+        AtomicBoolean accepted = new AtomicBoolean(true);
+        XpHooks.attach((XposedInterface) Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{XposedInterface.class}, (proxy, method, args) -> {
+                    if (!"deoptimize".equals(method.getName())) throw new AssertionError(method);
+                    received.set((Executable) args[0]);
+                    return accepted.get();
+                }));
+        assertTrue(XpHooks.deoptimize(caller));
+        assertSame(caller, received.get());
+        accepted.set(false);
+        assertFalse(XpHooks.deoptimize(caller));
+    }
+
     static class Fixture {
         String greet(String name) {
             return "hi " + name;

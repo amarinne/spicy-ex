@@ -8,7 +8,7 @@ import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.lyrics.providers.LyricsResponseCache;
 import com.eza.spicyex.lyrics.cache.CacheStoragePolicy;
-import com.eza.spicyex.lyrics.providers.SpicyManualTokenStore;
+import com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore;
 import com.eza.spicyex.lyrics.session.AIPaidArtifactCache;
 import com.eza.spicyex.lyrics.session.CanonicalSourceCache;
 import com.eza.spicyex.ui.ActionIconDrawable;
@@ -51,8 +51,8 @@ public final class PanelDialogs {
 
         PanelStrings panelStrings();
 
-        /** The Spicy manual token changed; refresh the owning section. */
-        void onSpicyTokenChanged();
+        /** The Spicy Lyrics client key changed; refresh the owning section. */
+        void onSpicyKeyChanged();
     }
 
     private final Host host;
@@ -154,18 +154,20 @@ public final class PanelDialogs {
                 .show();
     }
 
-    public void promptSpicyToken() {
+    public void promptSpicyKey() {
         PanelStyle style = host.style();
         SettingsUiStrings strings = host.strings();
         PanelDialog dialog = new PanelDialog(style.context(),
-                strings.setting(Settings.SPICY_MANUAL_TOKEN)).secure();
+                strings.setting(Settings.SPICY_ORG_CLIENT_KEY)).secure();
+        dialog.paragraph(strings.get("settings_spicy_key_help",
+                "Add Spicy EX from the catalog. Paste your personal client key. Save the key. Enable SpicyLyrics.org in Lyrics source."));
         EditText field = dialog.field(true, "");
         dialog.primary(strings.get("settings_ai_save", "Save"), () -> {
-            if (SpicyManualTokenStore.save(style.context(), field.getText().toString().trim())) {
-                host.onSpicyTokenChanged();
+            if (SpicyOrgKeyStore.save(style.context(), field.getText().toString().trim())) {
+                host.onSpicyKeyChanged();
             } else {
                 android.widget.Toast.makeText(style.context(),
-                        strings.get("settings_spicy_token_rejected", "Token not saved"),
+                        strings.get("settings_spicy_key_rejected", "The key is not saved. Use a client key that starts with sl_pk_."),
                         android.widget.Toast.LENGTH_SHORT).show();
             }
         });
@@ -226,15 +228,4 @@ public final class PanelDialogs {
         result.show();
     }
 
-    public void revealSpicyToken() {
-        PanelStyle style = host.style();
-        SettingsUiStrings strings = host.strings();
-        String token = SpicyManualTokenStore.load(style.context());
-        if (token.isEmpty()) return;
-        PanelDialog dialog = new PanelDialog(style.context(),
-                strings.setting(Settings.SPICY_MANUAL_TOKEN))
-                .secure().closeIcon(strings.get("lyrics_ai_close", "Close"));
-        dialog.secretValue(token);
-        dialog.show();
-    }
 }

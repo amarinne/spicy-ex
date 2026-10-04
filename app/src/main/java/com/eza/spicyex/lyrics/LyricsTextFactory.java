@@ -2,7 +2,6 @@ package com.eza.spicyex.lyrics;
 
 import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 
-import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -26,11 +25,11 @@ import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /** Text, font, and chip factory for the native lyrics shell. */
 public final class LyricsTextFactory {
-    private final Activity activity;
+    private final Context activity;
     private final SpotifyPlusConfig config;
     private final Map<String, Typeface> typefaceCache = new LinkedHashMap<>();
 
-    public LyricsTextFactory(Activity activity, SpotifyPlusConfig config) {
+    public LyricsTextFactory(Context activity, SpotifyPlusConfig config) {
         this.activity = activity;
         this.config = config;
     }

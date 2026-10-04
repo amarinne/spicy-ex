@@ -3,6 +3,7 @@ package com.eza.spicyex.lyrics.ai;
 import android.content.Context;
 
 import com.eza.spicyex.lyrics.LyricsDocument;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.LayerAuthority;
 import com.eza.spicyex.lyrics.session.LayerKind;
@@ -54,6 +55,19 @@ public final class AiSoundRun {
                              LyricsDocument document, SoundArtifact existing, String orthography,
                              boolean layered, boolean allowProviderRequest, AiSignal signal,
                              AiRunMonitor monitor) {
+        return run(context, settings, base, document, existing, orthography, layered,
+                allowProviderRequest, signal, monitor, null);
+    }
+
+    /**
+     * @param opts the reading options the Sound lane runs under; rows it withholds (a language
+     *             set to Off) stay enumerated for digest stability but are never sent, billed,
+     *             or filled. Null reads as defaults.
+     */
+    public static Result run(Context context, AiSettings settings, CanonicalBase base,
+                             LyricsDocument document, SoundArtifact existing, String orthography,
+                             boolean layered, boolean allowProviderRequest, AiSignal signal,
+                             AiRunMonitor monitor, RomanizationOptions opts) {
         if (settings == null || base == null || base.rows.isEmpty()) {
             return new Result(null, AiRunOutcome.nothingToDo());
         }
@@ -61,7 +75,8 @@ public final class AiSoundRun {
             return new Result(null, AiRunOutcome.nothingToDo());
         }
 
-        List<AiLine> rows = AiRows.forSound(base, document, existing, orthography, layered);
+        List<AiLine> rows = AiRows.forSound(base, document, existing, orthography, layered,
+                opts);
         // Every row covered locally: the engines did their job and this costs nothing.
         if (!AiRows.hasWork(rows)) return new Result(null, AiRunOutcome.nothingToDo());
 
@@ -96,7 +111,7 @@ public final class AiSoundRun {
         AiLayerRunner.Args args = new AiLayerRunner.Args();
         args.config = config;
         args.provider = settings.provider();
-        args.store = AiRecordStores.forRun(context);
+        args.store = AiRecordStores.forRun(context, document);
         args.rows = rows;
         args.signal = signal;
         args.monitor = monitor;

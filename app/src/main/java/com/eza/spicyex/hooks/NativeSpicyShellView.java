@@ -70,8 +70,20 @@ final class NativeSpicyShellView extends FrameLayout {
         return delegate.agentEditorAction(action, argument);
     }
 
+    boolean agentSharePreview(String action, int index) {
+        return delegate.agentSharePreview(action, index);
+    }
+
+    String agentShareCaptureStatus() {
+        return delegate.agentShareCaptureStatus();
+    }
+
     boolean agentAction(String action) {
         return delegate.agentAction(action);
+    }
+
+    boolean agentRevealFooter() {
+        return delegate.agentRevealFooter();
     }
 
     /** One JSON line of live geometry plus rule violations, or null if it could not be built. */

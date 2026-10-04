@@ -115,6 +115,8 @@ public final class CatalogAdapters {
                 break;
             }
         }
+        // Org retention starts at acquisition, not at a later cache or catalog write.
+        long originFetchedAtMs = source == SourceId.SPICY_ORG ? doc.spicyOrgFetchedAtMs : fetchedAtMs;
         return new CatalogCandidate(candidateId, bareId, source, item,
                 method == null ? MatchMethod.STRONG_SEARCH : method, 0.8, 0L, timing, true,
                 timing == TimingLevel.UNSYNCED || hasTiming(doc), hasProviderTranslation(doc),
@@ -122,8 +124,8 @@ public final class CatalogAdapters {
                 !isBlank(doc.songWriters),
                 base.digest, normalized,
                 CatalogCodec.encodeProviderTransliteration(transliteration),
-                CatalogCodec.deflate(rawPayload), CanonicalSourceCodec.SCHEMA_VERSION,
-                adapterRevision, fetchedAtMs);
+                CatalogCodec.deflate(source == SourceId.SPICY_ORG ? doc.spicyOrgRawPayload : rawPayload), CanonicalSourceCodec.SCHEMA_VERSION,
+                adapterRevision, originFetchedAtMs);
     }
 
     /**
@@ -172,7 +174,7 @@ public final class CatalogAdapters {
         if (!doc.catalogCandidateId.isEmpty()) return true;
         SourceId source = CatalogSource.inferSourceId(doc.fetchSource, doc.provider);
         if (source == null) return false;
-        boolean exact = source == SourceId.APPLE || source == SourceId.SPOTIFY_NATIVE;
+        boolean exact = source == SourceId.SPICY_ORG || source == SourceId.APPLE || source == SourceId.SPOTIFY_NATIVE;
         String bare = CatalogSource.bareTrackId(track == null ? "" : track.uri);
         return recordSuccess(context, source, track, doc,
                 exact ? MatchMethod.EXACT_SPOTIFY_ID : MatchMethod.STRONG_SEARCH,
@@ -193,7 +195,7 @@ public final class CatalogAdapters {
                     || (!policy.karaokeOriginalLyrics
                     && delivery.matchMethod == MatchMethod.KARAOKE_SUBSTITUTION);
         }
-        boolean exact = source == SourceId.APPLE || source == SourceId.SPOTIFY_NATIVE;
+        boolean exact = source == SourceId.SPICY_ORG || source == SourceId.APPLE || source == SourceId.SPOTIFY_NATIVE;
         String item = exact ? (bareTrackId == null ? "" : bareTrackId) : "";
         return state.isRejected(source, item);
     }

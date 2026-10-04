@@ -30,6 +30,7 @@ final class LyricsSettingsDialogController {
     private final String logTag;
     private Dialog currentDialog;
     private PanelSurface currentSurface;
+    private SettingsPanel currentPanel;
 
     LyricsSettingsDialogController(
             Activity activity,
@@ -128,6 +129,7 @@ final class LyricsSettingsDialogController {
                 if (currentDialog == dialog) {
                     currentDialog = null;
                     currentSurface = null;
+                    currentPanel = null;
                 }
                 frameScheduler.start();
                 // Source toggles and order are saved inside the panel; the session re-seats the
@@ -144,6 +146,7 @@ final class LyricsSettingsDialogController {
             dialog.show();
             currentDialog = dialog;
             currentSurface = surface;
+            currentPanel = panel;
             PanelSurface.configureWindow(dialog.getWindow());
             surface.enter(halfMode ? 0.1f : 0.5f);
             return true;
@@ -152,6 +155,10 @@ final class LyricsSettingsDialogController {
             if (currentDialog != null) currentDialog.dismiss();
             return false;
         }
+    }
+
+    boolean showSection(String id) {
+        return show() && currentPanel != null && currentPanel.openSection(id);
     }
 
     boolean isShowing() {

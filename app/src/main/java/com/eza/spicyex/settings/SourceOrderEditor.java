@@ -14,6 +14,9 @@ import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source;
+import com.eza.spicyex.lyrics.catalog.CatalogPolicy;
+import com.eza.spicyex.lyrics.catalog.CatalogPickerModel;
+import com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId;
 import com.eza.spicyex.ui.ActionIconDrawable.Kind;
 import com.eza.spicyex.ui.PanelDialog;
 
@@ -33,9 +36,7 @@ import java.util.List;
  * label silently broke selection. Display labels resolve through the locale; the value that is
  * read, compared, and saved stays the stable persisted token.
  *
- * <p>Retired sources (Spicy's remote path) stay in the backing order for compatibility with
- * old persisted data but are never shown. Because the visible list is therefore a projection,
- * a visible drop position maps back to a full-order index by identity.
+
  */
 public final class SourceOrderEditor {
     /** The two persisted ranking tokens. They are values, not labels; do not localize them. */
@@ -101,9 +102,9 @@ public final class SourceOrderEditor {
         SettingsUiStrings strings = host.strings();
         String ranking = host.store().get(Settings.LYRICS_SOURCE_MODE);
         StringBuilder order = new StringBuilder();
-        for (Source source : LyricsSourcePreferences.enabledSourceOrder(style.context())) {
+        for (SourceId source : CatalogPolicy.read(style.context()).automaticOrder()) {
             if (order.length() > 0) order.append(" · ");
-            order.append(sourceLabel(source));
+            order.append(CatalogPickerModel.displaySource(source));
         }
         String rankLabel = strings.option(modeSetting(), ranking);
         String summary = order.length() == 0
@@ -150,13 +151,7 @@ public final class SourceOrderEditor {
 
     /** Provider names are brands and stay as authored; only the surrounding copy localizes. */
     public String sourceLabel(Source source) {
-        if (source == Source.APPLE_MUSIC) return "Apple Music";
-        if (source == Source.SPICY) return "Spicy";
-        if (source == Source.SPOTIFY) return "Spotify";
-        if (source == Source.AMLL) return "AMLL";
-        if (source == Source.QQ) return "QQ Music";
-        if (source == Source.NETEASE) return "NetEase";
-        return "LRCLIB";
+        return CatalogPickerModel.displaySource(CatalogPolicy.sourceId(source));
     }
 
     // --- Dialog ---
@@ -172,25 +167,30 @@ public final class SourceOrderEditor {
                 strings.setting(Settings.LYRICS_SOURCE_OVERRIDE));
 
         // The source list is always visible: in Source order mode it edits priority with
-        // drag grips; in Auto it edits the allow-list with toggles only, since order does
-        // not arbitrate there. Hiding it in Auto implied the toggles did nothing.
+        // drag grips; in Auto it edits enabled sources, with fixed primary priority and
+        // the saved order for fallbacks.
         final LinearLayout orderSection = new LinearLayout(style.context());
         orderSection.setOrientation(LinearLayout.VERTICAL);
+        final TextView orderTitle = style.text("", 15, PanelStyle.COL_SECTION, true);
         final ArrayList<ImageView> grips = new ArrayList<>();
         final Runnable refreshOrderVisibility = () -> {
             boolean ordered = MODE_SOURCE_ORDER.equals(ranking[0]);
+            orderTitle.setText(ordered
+                    ? strings.get("settings_source_order_title", "Source order")
+                    : strings.get("settings_source_enabled_title", "Enabled sources"));
             for (ImageView grip : grips) {
                 grip.setVisibility(ordered ? View.VISIBLE : View.GONE);
             }
         };
 
-        dialog.paragraph(strings.get("settings_source_ranking_title", "Ranking"));
+        dialog.paragraph(strings.get("settings_source_ranking_title", "Selection mode"));
         final ArrayList<LinearLayout> rankingRows = new ArrayList<>();
-        // The value drives selection; the option label is authored English, as before.
+        // Localize labels while keeping persisted tokens stable.
         final String[][] rankingOptions = new String[][]{
-                {MODE_AUTO, MODE_AUTO},
-                {MODE_SOURCE_ORDER, MODE_SOURCE_ORDER + " — "
-                        + strings.get("settings_source_ranking_order_desc", "follow the order below")}
+                {MODE_AUTO, strings.option(modeSetting(), MODE_AUTO) + " — "
+                        + strings.get("settings_source_ranking_auto_desc", "SpicyLyrics.org → Apple Music → Spotify, then backup sources")},
+                {MODE_SOURCE_ORDER, strings.option(modeSetting(), MODE_SOURCE_ORDER) + " — "
+                        + strings.get("settings_source_ranking_order_desc", "use the order in the list")}
         };
         for (final String[] option : rankingOptions) {
             LinearLayout row = style.radioRow(option[1], option[0].equals(ranking[0]));
@@ -204,8 +204,6 @@ public final class SourceOrderEditor {
             dialog.add(row);
         }
 
-        TextView orderTitle = style.text(strings.get("settings_source_order_title", "Order"),
-                15, PanelStyle.COL_SECTION, true);
         orderTitle.setPadding(style.dp(12), style.dp(12), style.dp(8), style.dp(2));
         orderSection.addView(orderTitle);
         LinearLayout list = new LinearLayout(style.context());
@@ -214,9 +212,6 @@ public final class SourceOrderEditor {
         dialog.add(orderSection);
         refreshOrderVisibility.run();
         for (Source source : order) {
-            // Spicy's remote path is retired from the user-selectable set. Keep it in the
-            // backing order for old persisted data, but never expose it.
-            if (source == Source.SPICY) continue;
             LinearLayout row = new LinearLayout(style.context());
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -347,15 +342,12 @@ public final class SourceOrderEditor {
     }
 
     /**
-     * Maps a visible-list insertion position to an index in the full source order, which can
-     * contain retired entries hidden from the reorder UI. Hidden entries keep their slots: the
-     * dragged source lands before the visible item at the target position, or at the end when
-     * the target is past the last visible item.
+     * Maps a visible-list insertion position to an index in the full source order, which contains
+     * each source shown by the reorder UI.
      */
     static int visibleInsertionToOrderIndex(List<Source> order, int visibleTarget) {
         int seen = 0;
         for (int i = 0; i < order.size(); i++) {
-            if (order.get(i) == Source.SPICY) continue;
             if (seen == visibleTarget) return i;
             seen++;
         }

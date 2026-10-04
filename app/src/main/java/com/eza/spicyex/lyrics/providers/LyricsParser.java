@@ -18,6 +18,8 @@ import com.eza.spicyex.lyrics.SyllableSegment;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalLine;
 import com.eza.spicyex.lyrics.reading.SyllableCanonicalizer;
 
+import com.eza.spicyex.lyrics.ProviderTimingPolicy;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -43,6 +45,17 @@ public final class LyricsParser implements LyricsRepository.Parser {
 
     @Override
     public LyricsDocument parseSpicyLyrics(Context context, SpotifyTrack track, String raw, boolean fromCache) {
+        return parseSpicyDocument(context, track, raw, fromCache, false);
+    }
+
+    @Override
+    public LyricsDocument parseSpicyOrgLyrics(Context context, SpotifyTrack track, String raw) {
+        SpicyOrgProtocol.body(raw, trackIdFromUri(track == null ? "" : track.uri));
+        return parseSpicyDocument(context, track, raw, false, true);
+    }
+
+    private LyricsDocument parseSpicyDocument(Context context, SpotifyTrack track, String raw,
+                                               boolean fromCache, boolean org) {
         log(TAG + " parseSpicyLyrics track=" + (track == null ? "null" : safe(track.uri))
                 + " fromCache=" + fromCache + " bytes=" + (raw == null ? 0 : raw.length()));
         SpicyResponseMetadata metadata = new SpicyResponseMetadata();
@@ -77,6 +90,30 @@ public final class LyricsParser implements LyricsRepository.Parser {
                 Json.findFirstString(root, "source", "Source", "Provider", "provider")
         ), type);
         doc.songWriters = joinSongWriters(Json.optArray(data, "SongWriters", "songWriters", "Writers"));
+        if (org) {
+            doc.fetchSource = "spicy_org";
+            doc.spicyOrgFetchedAtMs = System.currentTimeMillis();
+            doc.spicyOrgRawPayload = raw;
+            doc.spicyOrgSource = safe(Json.optString(data, "source"));
+            switch (doc.spicyOrgSource) {
+                case "spicy_lyrics": doc.provider = "Spicy Lyrics"; break;
+                case "apple_music": doc.provider = "Apple Music"; break;
+                case "spotify": doc.provider = "Spotify (Musixmatch)"; break;
+                default: doc.provider = "Unknown";
+            }
+            JsonObject credit = Json.optObject(data, "UploadAttribution");
+            JsonObject uploader = Json.optObject(credit, "Uploader");
+            JsonObject maker = Json.optObject(credit, "Maker");
+            doc.spicyOrgUploader = safe(Json.optString(uploader, "username"));
+            doc.spicyOrgUploaderUrl = safe(Json.optString(uploader, "url"));
+            doc.spicyOrgMaker = safe(Json.optString(maker, "username"));
+            doc.spicyOrgMakerUrl = safe(Json.optString(maker, "url"));
+            if ("spicy_lyrics".equals(doc.spicyOrgSource)
+                    && (isBlank(doc.spicyOrgUploader) || !validCreditUrl(doc.spicyOrgUploaderUrl)
+                    || (!isBlank(doc.spicyOrgMaker) && !validCreditUrl(doc.spicyOrgMakerUrl)))) {
+                throw new IllegalArgumentException("Missing Spicy Lyrics contributor credit");
+            }
+        }
         JsonArray selectedLines = Json.optArray(data, "Lines", "lines", "Content", "content");
         log(TAG + " spicy parse selected type=" + type + " candidateLines=" + (selectedLines == null ? 0 : selectedLines.size()));
 
@@ -241,7 +278,9 @@ public final class LyricsParser implements LyricsRepository.Parser {
         for (JsonElement lineElement : lines) {
             if (!lineElement.isJsonObject()) continue;
             JsonObject object = lineElement.getAsJsonObject();
-            String text = cleanInvisibles(Json.optString(object, "Text", "text"));
+            String text = SpicyOrgPolicy.isRestricted(doc)
+                    ? safe(Json.optString(object, "Text", "text"))
+                    : cleanInvisibles(Json.optString(object, "Text", "text"));
             if (isBlank(text)) continue;
             LyricsLine line = new LyricsLine();
             line.text = text;
@@ -261,7 +300,9 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonObject object = item.getAsJsonObject();
             String type = Json.optString(object, "Type", "type");
             if (type == null || "Vocal".equalsIgnoreCase(type)) {
-                String text = cleanInvisibles(Json.optString(object, "Text", "text"));
+                String text = SpicyOrgPolicy.isRestricted(doc)
+                    ? safe(Json.optString(object, "Text", "text"))
+                    : cleanInvisibles(Json.optString(object, "Text", "text"));
                 if (isBlank(text)) continue;
                 LyricsLine line = new LyricsLine();
                 line.text = text;
@@ -292,15 +333,17 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonObject lead = Json.optObject(object, "Lead", "lead");
             if (lead == null) continue;
             JsonArray syllables = Json.optArray(lead, "Syllables", "syllables");
-            String providerLineText = cleanInvisibles(firstNonBlank(
+            String providerLineText = firstNonBlank(
                     Json.optString(lead, "Text", "text"),
-                    Json.optString(object, "Text", "text")));
+                    Json.optString(object, "Text", "text"));
+            if (!SpicyOrgPolicy.isRestricted(doc)) providerLineText = cleanInvisibles(providerLineText);
             long lineStartMs = secondsToMs(Json.optDouble(lead,
                     Json.optDouble(object, 0d, "StartTime", "startTime"), "StartTime", "startTime"));
             long lineEndMs = secondsToMs(Json.optDouble(lead,
                     Json.optDouble(object, 0d, "EndTime", "endTime"), "EndTime", "endTime"));
             ParsedSyllableLine parsed = parseSyllableLine(syllables, providerLineText,
-                    lineStartMs, lineEndMs, "line-" + lineStartMs + "-" + lineEndMs);
+                    lineStartMs, lineEndMs, "line-" + lineStartMs + "-" + lineEndMs,
+                    SpicyOrgPolicy.isRestricted(doc));
             if (parsed == null || isBlank(parsed.text)) continue;
 
             LyricsLine line = new LyricsLine();
@@ -317,7 +360,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
                     "ProviderTranslatedText", "providerTranslatedText",
                     "TranslatedText", "translatedText", "Translation", "translation");
             captureProviderTranslation(line, translated, providerTranslationLanguage(lead));
-            line.backgroundLines = parseBackgroundLines(object);
+            line.backgroundLines = parseBackgroundLines(object, SpicyOrgPolicy.isRestricted(doc));
             applySecondaryText(line, lead);
             applySecondaryText(line, object);
             doc.lines.add(line);
@@ -388,7 +431,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
                 new SpicyJapaneseChineseProcessor.JapaneseReading(sourceText, romaji, furigana, groups));
     }
 
-    private static List<BackgroundLine> parseBackgroundLines(JsonObject object) {
+    private static List<BackgroundLine> parseBackgroundLines(JsonObject object, boolean preserveMarks) {
         ArrayList<BackgroundLine> out = new ArrayList<>();
         JsonArray backgrounds = Json.optArray(object, "Background", "background");
         if (backgrounds == null || backgrounds.isEmpty()) return out;
@@ -402,7 +445,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
             line.endMs = secondsToMs(Json.optDouble(bg, line.startMs / 1000d, "EndTime", "endTime"));
             ParsedSyllableLine parsed = parseSyllableLine(syllables,
                     Json.optString(bg, "Text", "text"), line.startMs, line.endMs,
-                    "background-" + line.startMs + "-" + line.endMs);
+                    "background-" + line.startMs + "-" + line.endMs, preserveMarks);
             if (parsed == null) continue;
             line.syllables = parsed.segments;
             line.text = parsed.text;
@@ -445,6 +488,12 @@ public final class LyricsParser implements LyricsRepository.Parser {
 
     private static ParsedSyllableLine parseSyllableLine(JsonArray syllables, String providerLine,
                                                         long lineStartMs, long lineEndMs, String lineId) {
+        return parseSyllableLine(syllables, providerLine, lineStartMs, lineEndMs, lineId, false);
+    }
+
+    private static ParsedSyllableLine parseSyllableLine(JsonArray syllables, String providerLine,
+                                                        long lineStartMs, long lineEndMs, String lineId,
+                                                        boolean preserveMarks) {
         if (syllables == null || syllables.isEmpty()) return null;
         ArrayList<SyllableSegment> segments = new ArrayList<>();
         long fallbackDuration = Math.max(1, lineEndMs - lineStartMs);
@@ -453,7 +502,8 @@ public final class LyricsParser implements LyricsRepository.Parser {
             JsonElement element = syllables.get(i);
             if (!element.isJsonObject()) continue;
             JsonObject syllable = element.getAsJsonObject();
-            String rawText = cleanSyllableTextPreserveEdges(Json.optString(syllable, "Text", "text"));
+            String rawText = preserveMarks ? safe(Json.optString(syllable, "Text", "text"))
+                    : cleanSyllableTextPreserveEdges(Json.optString(syllable, "Text", "text"));
             if (isBlank(rawText)) continue;
             String text = rawText.trim();
             if (text.isEmpty()) continue;
@@ -688,6 +738,16 @@ public final class LyricsParser implements LyricsRepository.Parser {
         return value;
     }
 
+    private static boolean validCreditUrl(String url) {
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            return "https".equals(uri.getScheme()) && "spicylyrics.org".equals(uri.getHost())
+                    && uri.getRawUserInfo() == null && uri.getPort() == -1;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
     private static long secondsToMs(double seconds) {
         return Math.max(0, Math.round(seconds * 1000d));
     }
@@ -766,6 +826,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         if (!isBlank(translated)) applyNeteaseTranslation(doc, translated);
 
         if (markInstrumentalPlaceholder(doc)) return doc;
+        if (!ProviderTimingPolicy.normalizeAndValidate(doc)) throw new IllegalStateException("NetEase timing does not fit track");
         finalizeParsedDocument(context, doc);
         return doc;
     }
@@ -850,6 +911,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         String translated = ytlrcObject == null ? "" : Json.optString(ytlrcObject, "lyric");
         if (!isBlank(translated)) applyNeteaseTranslation(doc, translated);
 
+        if (!ProviderTimingPolicy.normalizeAndValidate(doc)) return null;
         finalizeParsedDocument(context, doc);
         return doc;
     }
@@ -927,6 +989,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         }
 
         if (markInstrumentalPlaceholder(doc)) return doc;
+        if (!ProviderTimingPolicy.normalizeAndValidate(doc)) throw new IllegalStateException("QQ Music timing does not fit track");
         finalizeParsedDocument(context, doc);
         return doc;
     }
@@ -1008,6 +1071,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         String transText = decryptQqQrcField(QQ_QRC_TRANS_TAG, body);
         if (!isBlank(transText)) applyQqQrcTranslation(doc, transText);
 
+        if (!ProviderTimingPolicy.normalizeAndValidate(doc)) return null;
         finalizeParsedDocument(context, doc);
         return doc;
     }

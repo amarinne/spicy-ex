@@ -54,6 +54,7 @@ public final class PanelStyle {
         SECTION_ICONS.put("apple_music", Kind.WAND_SPARKLES);
         SECTION_ICONS.put("ai", Kind.SPARKLES);
         SECTION_ICONS.put("pip", Kind.PICTURE_IN_PICTURE);
+        SECTION_ICONS.put("android_auto", Kind.CAR);
         SECTION_ICONS.put("debug", Kind.ACTIVITY);
     }
 

@@ -53,6 +53,12 @@ public final class SpicyEXModule extends XposedModule {
 
     @Override
     public void onPackageReady(@NonNull PackageReadyParam param) {
+        if ("com.google.android.projection.gearhead".equals(param.getPackageName())) {
+            ClassLoader loader = param.getClassLoader();
+            XpHooks.findAfter(Application.class, "attach", "auto:Application#attach", p ->
+                    com.eza.spicyex.auto.AndroidAutoPrototype.install((Context) p.args[0], loader), Context.class);
+            return;
+        }
         if (!TARGET_PACKAGE.equals(param.getPackageName())) return;
         Diagnostics.markHookRuntimeActive();
         XpLog.log(TAG + " Loading SpotifyPlus");
@@ -102,6 +108,7 @@ public final class SpicyEXModule extends XposedModule {
                 p -> {
                     Context context = (Context) p.args[0];
                     Diagnostics.initialize(context);
+                    com.eza.spicyex.hooks.SpicyOrgRetentionHook.install(context, classLoader);
                     LyricsMemoryPressure.install(context);
                     com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor.attachContext(context);
                     Diagnostics.event("bootstrap", "application_attach",

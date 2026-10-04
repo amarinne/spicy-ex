@@ -140,6 +140,10 @@ final class LayoutProbeReport {
         chromeEdge(out);
         chromeCorner(out);
         chromeOverChip(out);
+        truncatedOptions(out);
+        if (isTrue("credit_present") && !isTrue("credit_in_footer")) {
+            out.add("R13 credit_outside_footer");
+        }
         return out;
     }
 
@@ -297,6 +301,15 @@ final class LayoutProbeReport {
 
     private static int centerX(int[] rect) {
         return (rect[0] + rect[2]) / 2;
+    }
+
+    /** R12: an option hides the words needed to distinguish its stored value. */
+    private void truncatedOptions(List<String> out) {
+        for (Map.Entry<String, Object> fact : facts.entrySet()) {
+            if (fact.getKey().startsWith("truncated.option.") && Boolean.TRUE.equals(fact.getValue())) {
+                out.add("R12 option_text_truncated " + fact.getKey().substring("truncated.option.".length()));
+            }
+        }
     }
 
     private boolean isTrue(String name) {

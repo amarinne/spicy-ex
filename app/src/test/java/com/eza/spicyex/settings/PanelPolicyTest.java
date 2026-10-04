@@ -54,6 +54,16 @@ public class PanelPolicyTest {
         assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.PIP_ENABLED));
     }
 
+    @Test public void androidAutoOptionsFollowMasterSwitch() {
+        PanelSnapshot off = PanelSnapshot.builder().build();
+        assertTrue(PanelPolicy.shouldRender(Settings.AUTO_ENABLED, off));
+        assertFalse(PanelPolicy.shouldRender(Settings.AUTO_SECONDARY_TEXT, off));
+        PanelSnapshot on = PanelSnapshot.builder().put(Settings.AUTO_ENABLED, true).build();
+        assertTrue(PanelPolicy.shouldRender(Settings.AUTO_ENABLED, on));
+        assertTrue(PanelPolicy.shouldRender(Settings.AUTO_SECONDARY_TEXT, on));
+        assertTrue(PanelPolicy.shouldRebuildSectionAfterChange(Settings.AUTO_ENABLED));
+    }
+
     // --- AI nesting (migrated) ---
 
     @Test
@@ -263,11 +273,11 @@ public class PanelPolicyTest {
     }
 
     @Test
-    public void spicyTokenRowNeedsSpicyEnabled() {
-        assertFalse(PanelPolicy.shouldRender(Settings.SPICY_MANUAL_TOKEN, full()));
+    public void spicyKeySetupIsAvailableBeforeSourceIsEnabled() {
+        assertTrue(PanelPolicy.shouldRender(Settings.SPICY_ORG_CLIENT_KEY, full()));
         PanelSnapshot spicy = PanelSnapshot.builder().allCapabilities()
                 .spicySourceEnabled(true).build();
-        assertTrue(PanelPolicy.shouldRender(Settings.SPICY_MANUAL_TOKEN, spicy));
+        assertTrue(PanelPolicy.shouldRender(Settings.SPICY_ORG_CLIENT_KEY, spicy));
     }
 
     @Test

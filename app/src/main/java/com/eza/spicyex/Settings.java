@@ -30,6 +30,7 @@ public final class Settings {
     public static final Section ANIMATION = LYRICS_SCREEN;
     public static final Section BACKGROUND = LYRICS_SCREEN;
     public static final Section AI = new Section("AI", "ai");
+    public static final Section ANDROID_AUTO = new Section("Android Auto", "android_auto");
     public static final Section PIP = new Section("Picture-in-picture", "pip");
     public static final Section DEBUG = new Section("About & Diagnostics", "debug");
     public static final Section DISPLAY = TEXT;
@@ -39,6 +40,13 @@ public final class Settings {
 
     // NOTE: panel section order = order sections first appear here (SettingsPanel.renderSections
     // groups by declaration order in ALL). Keep each section's settings contiguous.
+
+    // --- Android Auto ---
+    public static final Setting<Boolean> AUTO_ENABLED = boolSetting(
+            "auto_enabled", ANDROID_AUTO, "Enable Android Auto lyrics", false);
+    public static final Setting<String> AUTO_SECONDARY_TEXT = enumSetting(
+            "auto_secondary_text", ANDROID_AUTO, "Secondary text", "Main only",
+            "Main only", "Transliteration", "Translation", "Both");
 
     // --- Lyrics ---
     public static final Setting<String> UI_LANGUAGE = stringSetting(
@@ -167,7 +175,7 @@ public final class Settings {
 
     /** Automatic lyric source arbitration mode shared by fullscreen and now-playing. */
     public static final Setting<String> LYRICS_SOURCE_MODE = enumSetting(
-            "lyrics_source_selection_mode", LYRICS_SOURCES, "Lyrics source ranking", "Auto",
+            "lyrics_source_selection_mode", LYRICS_SOURCES, "Lyrics source selection", "Auto",
             "Auto", "Source order"
     );
 
@@ -177,9 +185,9 @@ public final class Settings {
             "Auto", "Apple Music", "Spicy", "Spotify", "LRCLIB"
     );
 
-    /** Optional desktop-captured Spotify token (legacy; the retired Spicy remote is no longer queried). */
-    public static final Setting<String> SPICY_MANUAL_TOKEN = stringSetting(
-            "lyrics_spicy_manual_token", LYRICS_SOURCES, "Spicy manual token", ""
+    /** Composite marker only. The personal client key lives in SpicyOrgKeyStore. */
+    public static final Setting<String> SPICY_ORG_CLIENT_KEY = stringSetting(
+            "lyrics_spicy_org_client_key", LYRICS_SOURCES, "SpicyLyrics.org client key", ""
     );
 
     /** JSON array of source ids, persisted in the desktop-compatible order. */
@@ -191,6 +199,10 @@ public final class Settings {
     public static final Setting<Boolean> KARAOKE_ORIGINAL_LYRICS = boolSetting(
             "lyrics_karaoke_original_lyrics", LYRICS_SOURCES,
             "Show original lyrics for karaoke versions", false
+    );
+
+    public static final Setting<Boolean> SYNC_UPGRADE = boolSetting(
+            "lyrics_sync_upgrade", LYRICS_SOURCES, "Upgrade lyric sync", false
     );
 
     /** Bounded JSON map of spotify track URI to source id; auto is represented by omission. */

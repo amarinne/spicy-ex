@@ -239,7 +239,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private final LyricsSpaceView topStaticSpacer;
     private final LyricsSpaceView topVirtualSpacer;
     private final LyricsSpaceView bottomVirtualSpacer;
+    private final TextView writerFooter;
     private final TextView sourceFooter;
+    private final com.eza.spicyex.lyrics.SpicyOrgAttributionView responseAttribution;
     private final SpotifyPlusConfig config;
     private final AiSettings aiSettings;
     private final FrameStyleBatcher styleBatcher;
@@ -471,6 +473,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     };
 
     private void retireSessionDocument(LyricsSessionManager.Snapshot snapshot) {
+        if (shareCardController != null) shareCardController.dismissIfUnavailable();
         documentGate.invalidate();
         ++NativeSpicyLyricsHook.fetchGeneration;
         document = null;
@@ -816,6 +819,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     boolean agentSettings(String action) {
+        if (action.startsWith("section ")) return settingsDialogController.showSection(action.substring(8));
         if ("open".equals(action)) return settingsDialogController.show();
         if ("close".equals(action)) return settingsDialogController.close();
         return settingsDialogController.isShowing();
@@ -844,6 +848,28 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 return true;
             default: return false;
         }
+    }
+
+    /** Reveals the rendered footer and preserves the source and the user's follow state. */
+    boolean agentRevealFooter() {
+        if (document == null || document.lines.isEmpty() || sourceFooter.getParent() != lyricsColumn
+                || sourceFooter.getHeight() <= 0 || lyricsScroll.getHeight() <= 0) return false;
+        View start = writerFooter.getVisibility() == VISIBLE ? writerFooter : sourceFooter;
+        View end = responseAttribution.getVisibility() == VISIBLE ? responseAttribution : sourceFooter;
+        android.graphics.Rect textBounds = new android.graphics.Rect(0,
+                start.getTop() + start.getPaddingTop(), lyricsColumn.getWidth(),
+                end.getBottom() - end.getPaddingBottom());
+        updateScrollEndLimit();
+        scrollSpring = null;
+        clearScrollSubpixel();
+        boolean wasApplying = applyingLyricScroll;
+        applyingLyricScroll = true;
+        try {
+            lyricsColumn.requestRectangleOnScreen(textBounds, true);
+        } finally {
+            applyingLyricScroll = wasApplying;
+        }
+        return true;
     }
 
     /**
@@ -883,6 +909,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             report.number("edge_margin", edgeMargin);
             report.number("chrome_top_floor", shellOnScreen[1] + chromeCornerTopPx() - edgeMargin);
             report.rect("lyrics_frame", LyricsLayoutEditController.screenRectOf(lyricsFrame));
+            report.flag("credit_present", responseAttribution.getVisibility() == VISIBLE);
+            report.flag("credit_in_footer", responseAttribution.getParent() == lyricsColumn);
+            report.number("credit_links", responseAttribution.getUrls().length);
+            report.flag("writers_present", writerFooter.getVisibility() == VISIBLE);
+            report.flag("writers_in_footer", writerFooter.getParent() == lyricsColumn);
+            report.flag("writers_interactive", writerFooter.isClickable() || writerFooter.isFocusable());
+            report.text("writer_credit", writerFooter.getText().toString());
+            report.rect("writer_footer", LyricsLayoutEditController.screenRectOf(writerFooter));
+            report.text("source_credit", sourceFooter.getText().toString());
+            report.rect("source_footer", LyricsLayoutEditController.screenRectOf(sourceFooter));
             addChipFact(report, "skip", skipGapController == null ? null : skipGapController.view());
             addChipFact(report, "follow",
                     jumpToCurrentController == null ? null : jumpToCurrentController.view());
@@ -1702,15 +1738,24 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         mountedRowsHost.setClipToPadding(false);
         secondaryRowUpdater = new LyricsSecondaryRowUpdater(mountedRowsHost, lineVisualController::invalidate);
         bottomVirtualSpacer = new LyricsSpaceView(activity, 0);
+        writerFooter = textFactory.createText(activity, "", 12, Color.rgb(125, 125, 125), textFactory.resolveTypeface(false));
+        writerFooter.setGravity(Gravity.CENTER);
+        writerFooter.setAlpha(0.8f);
+        writerFooter.setPadding(dp(16), dp(38), dp(16), 0);
+        writerFooter.setVisibility(GONE);
         sourceFooter = textFactory.createText(activity, "", 12, Color.rgb(125, 125, 125), textFactory.resolveTypeface(false));
         sourceFooter.setGravity(Gravity.CENTER);
         sourceFooter.setAlpha(0.8f);
         sourceFooter.setPadding(dp(16), dp(38), dp(16), dp(180));
-        // The source line is the picker action: it stays visually separated from the
-        // songwriter/provider credit below it, and reads as an action ("Source: … ›").
+        // Writers remain plain text above the source picker action ("Source: … ›").
         sourceFooter.setClickable(true);
         sourceFooter.setFocusable(true);
         sourceFooter.setOnClickListener(v -> openSourcePicker());
+        responseAttribution = new com.eza.spicyex.lyrics.SpicyOrgAttributionView(activity);
+        responseAttribution.setTextColor(Color.rgb(125, 125, 125));
+        responseAttribution.setLinkTextColor(Color.rgb(160, 160, 160));
+        responseAttribution.setAlpha(0.8f);
+        responseAttribution.setPadding(dp(16), dp(6), dp(16), dp(180));
         rowMountController = new LyricsRowMountController(
                 mountedRowsHost,
                 topVirtualSpacer,
@@ -2502,6 +2547,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void showLoading(String message) {
+        writerFooter.setText("");
+        writerFooter.setVisibility(GONE);
+        responseAttribution.bind(null);
         rowMountController.reset();
         followState.resetActive();
         emptyStateController.showLoading(lyricsScroll, lyricsColumn, message,
@@ -2509,6 +2557,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void showError(String error) {
+        writerFooter.setText("");
+        writerFooter.setVisibility(GONE);
+        responseAttribution.bind(null);
         songChangeHadSkeleton = false;
         document = null;
         loadingTrackId = "";
@@ -2543,6 +2594,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void renderDocument(boolean prepareDocument) {
+        boolean hasWriters = document != null && !isBlank(document.songWriters);
+        writerFooter.setText(hasWriters ? "Written by: " + document.songWriters.trim() : "");
+        writerFooter.setVisibility(hasWriters ? VISIBLE : GONE);
+        responseAttribution.bind(document, false);
+        sourceFooter.setPadding(dp(16), dp(hasWriters ? 6 : 38), dp(16),
+                responseAttribution.getVisibility() == VISIBLE ? 0 : dp(180));
         dbg("NativeSpicyShellView.renderDocument", "doc=" + (document == null ? "null" : document.fetchSource + "/" + document.type + "/" + document.lines.size()));
         updateToggleVisuals();
         ensureLyricsColumnScaffold();
@@ -2561,12 +2618,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             showError("Empty applied lyrics rows");
             return;
         }
-        sourceFooter.setText("Source: " + sourceProviderLabel(document.provider)
+        String sourceLabel = com.eza.spicyex.lyrics.SpicyOrgAttribution.sourceLabel(document);
+        sourceFooter.setText("Source: " + sourceLabel
                 + " · " + com.eza.spicyex.lyrics.catalog.CatalogPickerModel.displayTypeTiming(document.type) + " ›"
-                + "\n" + (!isBlank(document.songWriters)
-                ? "Written by " + document.songWriters
-                : "lyrics provided by " + sourceProviderLabel(document.provider)));
-        sourceFooter.setContentDescription("Lyrics source: " + sourceProviderLabel(document.provider)
+                + (!hasWriters && !com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.isRestricted(document)
+                ? "\nlyrics provided by " + sourceProviderLabel(document.provider) : ""));
+        sourceFooter.setContentDescription("Lyrics source: " + sourceLabel
                 + ", " + com.eza.spicyex.lyrics.catalog.CatalogPickerModel.displayTypeTiming(document.type)
                 + ". Activate to change source.");
         rowMountController.markDirty();
@@ -2842,7 +2899,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         lyricsColumn.addView(topVirtualSpacer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         lyricsColumn.addView(mountedRowsHost, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         lyricsColumn.addView(bottomVirtualSpacer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        lyricsColumn.addView(writerFooter, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         lyricsColumn.addView(sourceFooter, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        lyricsColumn.addView(responseAttribution, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private void renderWindowForActive(int active) {
@@ -3428,8 +3487,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 int focusLimit = Math.max(0, scrollController.centeredScrollTarget(
                         last, dp(56), true));
                 // Reveal the footer text without scrolling through its large bottom padding.
-                int footerTextBottom = sourceFooter.getTop() + sourceFooter.getHeight()
-                        - sourceFooter.getPaddingBottom();
+                View footerEnd = responseAttribution.getVisibility() == VISIBLE
+                        ? responseAttribution : sourceFooter;
+                int footerTextBottom = footerEnd.getTop() + footerEnd.getHeight()
+                        - footerEnd.getPaddingBottom();
                 limit = scrollEndLimit(focusLimit, footerTextBottom, lyricsScroll.getHeight(),
                         lyricsScroll.getPaddingTop(), dp(24));
             }
@@ -3882,8 +3943,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void shareLyricLineAt(float yInScroll) {
         releasePressedLyric();
         if (config == null || !Boolean.TRUE.equals(config.get(Settings.LONG_PRESS_SHARE))) return;
-        SpotifyTrack track = currentTrackThrottled();
-        if (track == null) return;
         // Only a press on a lyric line opens the sheet. The nearest-row lookup used to pick a line
         // however far away the touch was, so holding the empty space below the last line (or the
         // credits) opened it too.
@@ -3893,9 +3952,20 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         // Only a real lyric line opens the sheet: a null or empty document never does.
         if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) return;
+        openShareLyricLine(appliedLineIndexUnder(yInScroll));
+    }
+
+    private boolean openShareLyricLine(int index) {
+        if (config == null || !Boolean.TRUE.equals(config.get(Settings.LONG_PRESS_SHARE))) return false;
+        SpotifyTrack track = currentTrackThrottled();
+        if (track == null || document == null || document.appliedLines == null
+                || index < 0 || index >= document.appliedLines.size()
+                || com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.expires(document, System.currentTimeMillis())) return false;
+        AppliedLine line = document.appliedLines.get(index);
+        if (line == null || line.dotLine || line.text == null || line.text.trim().isEmpty()) return false;
         // Don't share during ads - only share actual songs
         String shareTrackUri = track.uri == null ? "" : track.uri;
-        if (shareTrackUri.startsWith("spotify:ad:")) return;
+        if (shareTrackUri.startsWith("spotify:ad:")) return false;
         if (shareCardController == null) {
             shareCardController = new LyricsShareCardController(activity);
             shareCardController.setBackgroundSnapshot(
@@ -3907,13 +3977,25 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             art = TrackInfoReadoutController.ART_NETWORK_CACHE.get(track.imageId);
             if (art == null) TrackInfoReadoutController.fetchArtworkFromNetwork(track.imageId);
         }
-        int index = appliedLineIndexUnder(yInScroll);
-        AppliedLine line = (document != null && index >= 0 && index < document.appliedLines.size())
-                ? document.appliedLines.get(index) : null;
-        if (line != null && line.text != null && !line.text.trim().isEmpty()) {
-            shareCardController.showForLine(this, document, track, art, index,
-                    rowMountController.attachedRowView(line));
+        shareCardController.showForLine(this, document, track, art, index,
+                rowMountController.attachedRowView(line));
+        return shareCardController.isShowing();
+    }
+
+    boolean agentSharePreview(String action, int index) {
+        if ("open".equals(action)) return openShareLyricLine(index);
+        if ("capture".equals(action)) return shareCardController != null && shareCardController.agentCapture();
+        if ("design".equals(action) || "code".equals(action))
+            return shareCardController != null && shareCardController.agentConfigure(action, index);
+        if ("close".equals(action)) {
+            if (shareCardController != null) shareCardController.dismiss();
+            return true;
         }
+        return shareCardController != null && shareCardController.isShowing();
+    }
+
+    String agentShareCaptureStatus() {
+        return shareCardController == null ? "capture=idle" : shareCardController.agentCaptureStatus();
     }
 
     private void seekToLine(AppliedLine line, int index) {
@@ -3959,7 +4041,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
         AppliedLine line = document.appliedLines.get(index);
         String currentReading = line.readingRenderPlan == null ? "" : line.readingRenderPlan.joinedDisplayText;
-        CurrentLyricState.updateLine(track, document.provider, document.language, line.dotLine ? "" : line.text, line.dotLine ? "" : currentReading, line.dotLine ? "" : line.translatedText, positionMs, index, host.isPlayerActuallyPlaying(), "active");
+        boolean redact = line.dotLine || com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.isRestricted(document);
+        CurrentLyricState.updateLine(track, document.provider, document.language, redact ? "" : line.text,
+                redact ? "" : currentReading, redact ? "" : line.translatedText, positionMs, index,
+                host.isPlayerActuallyPlaying(), "active");
 
         if (followState.isHoldingNow()) return;
         View row = rowMountController.attachedRowView(line);

@@ -85,6 +85,7 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
             // storage; it performs no provider request and leaves the source XML untouched.
             AIPaidArtifactCache.prepare(applicationContext);
             lyricsSessionManager.start();
+            new AutoPrototypePublisher(applicationContext, lyricsSessionManager).start();
             bridgeCoordinator = new SpicyLyricBridgeCoordinator(
                     lyricsSessionManager, applicationContext);
             bridgeCoordinator.start();

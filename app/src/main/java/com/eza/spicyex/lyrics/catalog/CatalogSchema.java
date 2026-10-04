@@ -6,7 +6,8 @@ import java.util.List;
 
 /**
  * Dedicated catalog database shape. This store must never drop accepted data on upgrade: accepted
- * payloads and completed enrichment have no TTL and disappear only through explicit deletion. The
+ * payloads and completed enrichment survive upgrades. SpicyLyrics.org data expires after 30 days;
+ * other providers disappear only through explicit deletion. The
  * generic {@code SpicyLyricCaches.db} drops its tables on upgrade and is unsuitable for this data.
  *
  * <p>Version 2 is the first released shape. Version 1 existed only on owner test builds; its one

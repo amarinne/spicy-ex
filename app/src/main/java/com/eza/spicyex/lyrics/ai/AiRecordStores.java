@@ -1,6 +1,8 @@
 package com.eza.spicyex.lyrics.ai;
 
 import android.content.Context;
+import com.eza.spicyex.lyrics.LyricsDocument;
+import com.eza.spicyex.lyrics.providers.SpicyOrgPolicy;
 
 import java.util.function.Function;
 
@@ -22,6 +24,23 @@ public final class AiRecordStores {
     /** The store for this run: the durable one, unless a test installed another. */
     public static AiRecordStore forRun(Context context) {
         return factory.apply(context);
+    }
+
+    /** Paid outputs remain durable; org input text is reconstructed from the live source. */
+    public static AiRecordStore forRun(Context context, LyricsDocument document) {
+        AiRecordStore store = forRun(context);
+        if (!SpicyOrgPolicy.isRestricted(document)) return store;
+        return new AiRecordStore() {
+            @Override public AiPaidRecord read(AiRunConfig config) { return store.read(config); }
+            @Override public Reservation reserve(AiRunConfig config, long maxRecordBytes) {
+                return store.reserve(config, maxRecordBytes);
+            }
+            @Override public boolean commit(AiRunConfig config, AiPaidRecord record) {
+                return store.commit(config, AiPaidRecordCodec.decode(AiPaidRecordCodec.encode(record, false)));
+            }
+            @Override public void release(AiRunConfig config) { store.release(config); }
+            @Override public void forget(AiRunConfig config) { store.forget(config); }
+        };
     }
 
     /** Test seam; pass null to restore the durable store. */

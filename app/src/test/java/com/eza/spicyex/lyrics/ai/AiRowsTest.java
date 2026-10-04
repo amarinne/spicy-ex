@@ -7,6 +7,8 @@ import static org.junit.Assert.assertTrue;
 
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
+import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.eza.spicyex.lyrics.reading.ReadingModels.ReadingUnit;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
@@ -85,6 +87,12 @@ public class AiRowsTest {
         List<String> ids = new ArrayList<>();
         for (AiLine row : rows) if (row.isSent()) ids.add(row.id);
         return ids;
+    }
+
+    private static com.eza.spicyex.lyrics.language.RomanizationOptions offOpts(
+            String chineseMode, String koreanMode, String cyrillicMode) {
+        return new com.eza.spicyex.lyrics.language.RomanizationOptions(
+                chineseMode, koreanMode, false, cyrillicMode, false);
     }
 
     // --- Meaning ------------------------------------------------------------
@@ -267,6 +275,68 @@ public class AiRowsTest {
 
         assertTrue(sentIds(rows).isEmpty());
         assertEquals(AiLineClass.STRUCTURAL, rows.get(0).lineClass);
+    }
+
+    @Test
+    public void koreanOffRowsAreEnumeratedButNeverSent() {
+        LyricsDocument document = document("안녕하세요", "사랑해요");
+        CanonicalBase base = baseOf(document);
+        RomanizationOptions off = offOpts("", KoreanDisplayMode.OFF.value, "Russian");
+
+        List<AiLine> on = AiRows.forSound(base, document, null, LATIN, true);
+        List<AiLine> offRows = AiRows.forSound(base, document, null, LATIN, true, off);
+
+        assertEquals("Off keeps the rows in the document so the digest is unchanged",
+                on.size(), offRows.size());
+        assertEquals(2, sentIds(on).size());
+        assertTrue("an Off song has no gaps and bills nothing", sentIds(offRows).isEmpty());
+        assertFalse(AiRows.hasWork(offRows));
+    }
+
+    @Test
+    public void koreanOffLeavesOtherScriptsAlone() {
+        LyricsDocument document = document("안녕하세요", "สวัสดี");
+        CanonicalBase base = baseOf(document);
+        RomanizationOptions off = offOpts("", KoreanDisplayMode.OFF.value, "Russian");
+
+        List<AiLine> rows = AiRows.forSound(base, document, null, LATIN, true, off);
+
+        assertEquals("only the Thai row remains a gap",
+                Collections.singletonList(base.rows.get(1).rowId), sentIds(rows));
+        assertTrue(AiRows.hasWork(rows));
+    }
+
+    @Test
+    public void cyrillicOffRowsAreEnumeratedButNeverSent() {
+        LyricsDocument document = document("Моя любовь");
+        CanonicalBase base = baseOf(document);
+        RomanizationOptions off = offOpts("", KoreanDisplayMode.RR_STANDARD.value, "Off");
+
+        List<AiLine> rows = AiRows.forSound(base, document, null, LATIN, true, off);
+
+        assertEquals(1, rows.size());
+        assertTrue("an Off row is not a gap and bills nothing", sentIds(rows).isEmpty());
+        assertFalse(AiRows.hasWork(rows));
+    }
+
+    @Test
+    public void chineseOffRowsAreEnumeratedButNeverSent() {
+        LyricsDocument document = document("你好", "谢谢");
+        document.language = "zh";
+        for (LyricsLine line : document.lines) {
+            line.detection = com.eza.spicyex.lyrics.session.DetectionResult.detected(
+                    "r", line.text,
+                    com.eza.spicyex.lyrics.language.ScriptClassifier.ScriptClass.CHINESE,
+                    "zh", 1.0);
+        }
+        CanonicalBase base = baseOf(document);
+        RomanizationOptions off = offOpts("", KoreanDisplayMode.RR_STANDARD.value, "Russian");
+
+        List<AiLine> rows = AiRows.forSound(base, document, null, LATIN, true, off);
+
+        assertEquals(2, rows.size());
+        assertTrue("an Off row is not a gap and bills nothing", sentIds(rows).isEmpty());
+        assertFalse(AiRows.hasWork(rows));
     }
 
     // --- coverage rules -----------------------------------------------------

@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">Spicy EX</string>
-    <string name="module_description">Spicy lyrics for Spotify.</string>
+    <string name="module_description">Animated synced lyrics inside Spotify.</string>
     <string name="artwork_lyrics_close">Close artwork lyrics</string>
     <string name="artwork_lyrics_expand">Open fullscreen lyrics</string>
     <!-- A locale file self-registers by overriding these two values, then overrides any panel strings below. -->
@@ -37,9 +37,8 @@
     <string name="lyrics_like_unavailable">Liked Songs action unavailable</string>
     <string name="settings_label_lyric_sync_offset_ms">Sync offset</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">Publish lyrics to HyperGlow</string>
-    <string name="settings_label_lyrics_source_selection_mode">Lyrics source ranking</string>
+    <string name="settings_label_lyrics_source_selection_mode">Lyrics source selection</string>
     <string name="settings_label_lyrics_source_override">Lyrics source</string>
-    <string name="settings_label_lyrics_spicy_manual_token">Spicy manual token</string>
     <string name="settings_label_lyrics_source_order">Lyrics source order</string>
     <string name="settings_label_lyrics_source_overrides">Per-track lyric sources</string>
     <string name="settings_label_lyrics_karaoke_original_lyrics">Show original lyrics for karaoke versions</string>
@@ -49,17 +48,12 @@
     <string name="settings_option_apple_music">Apple Music</string>
     <string name="settings_option_spicy">Spicy</string>
     <string name="settings_option_lrclib">LRCLIB</string>
-    <string name="settings_spicy_token_edit">Edit token</string>
-    <string name="settings_spicy_token_reveal">Reveal token</string>
-    <string name="settings_spicy_token_delete">Delete token</string>
-    <string name="settings_spicy_token_absent">Not set</string>
-    <string name="settings_spicy_token_rejected">Token not saved</string>
     <string name="settings_source_none_enabled">None enabled</string>
-    <string name="settings_source_pinned_hint">Pin one source, or use Auto ranking across every enabled source.</string>
-    <string name="settings_source_ranking_title">Ranking</string>
-    <string name="settings_source_ranking_auto_desc"></string>
-    <string name="settings_source_ranking_order_desc">follow the order below</string>
-    <string name="settings_source_order_title">Order</string>
+    <string name="settings_source_pinned_hint">Pin one source, or use Auto with primary sources first.</string>
+    <string name="settings_source_ranking_title">Selection mode</string>
+    <string name="settings_source_ranking_auto_desc">SpicyLyrics.org → Apple Music → Spotify, then backup sources</string>
+    <string name="settings_source_ranking_order_desc">use the order in the list</string>
+    <string name="settings_source_order_title">Source order</string>
     <string name="settings_source_order_hint"></string>
     <string name="settings_source_drag">Drag to reorder</string>
     <string name="settings_option_lyrics_source_order_spicy_spotify_lrclib">Spicy, Spotify, LRCLIB</string>
@@ -582,6 +576,24 @@
     <string name="settings_option_lyrics_pip_shape_wide">Wide (16:9)</string>
     <string name="settings_label_lyrics_pip_enabled">Show picture-in-picture button</string>
     <string name="settings_search_lyrics_pip_enabled">pip button, minimize lyrics, floating lyrics</string>
+
+    <!-- Android Auto -->
+    <string name="settings_section_android_auto">Android Auto</string>
+    <string name="settings_label_auto_enabled">Enable Android Auto lyrics</string>
+    <string name="settings_auto_root_requirement">Requires root and LSPosed/Vector. Scope Spotify and Android Auto.</string>
+    <string name="settings_label_auto_secondary_text">Secondary text</string>
+    <string name="settings_label_lyrics_spicy_org_client_key">SpicyLyrics.org client key</string>
+    <string name="settings_spicy_key_edit">Add or change key</string>
+    <string name="settings_spicy_key_delete">Remove key</string>
+    <string name="settings_spicy_key_present">Key saved</string>
+    <string name="settings_spicy_key_absent">Not set</string>
+    <string name="settings_spicy_key_catalog">Get your personal key</string>
+    <string name="settings_spicy_key_help">Add Spicy EX from the catalog. Paste your personal client key. Save the key. Enable SpicyLyrics.org in Lyrics source.</string>
+    <string name="settings_spicy_key_rejected">The key is not saved. Use a client key that starts with sl_pk_.</string>
+    <string name="settings_label_lyrics_sync_upgrade">Upgrade lyric sync</string>
+    <string name="settings_source_enabled_title">Enabled sources</string>
+    <string name="settings_sync_upgrade_summary">This option uses timing from enabled QQ Music or NetEase sources when the lyrics match. The lyric text does not change.</string>
+    <string name="source_picker_spicy_key_required">Add your personal client key in Settings</string>
     <string name="settings_label_lyrics_pip_album_art">Show album art</string>
     <string name="settings_search_lyrics_pip_album_art">pip album art, cover, artwork, thumbnail</string>
 </resources>

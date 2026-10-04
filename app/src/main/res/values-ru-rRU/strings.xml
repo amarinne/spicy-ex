@@ -2,7 +2,7 @@
 
 <resources>
     <string name="app_name">Spicy EX</string>
-    <string name="module_description">Spicy текста для Spotify.</string>
+    <string name="module_description">Анимированные синхронные тексты прямо в Spotify.</string>
     <string name="artwork_lyrics_close">Закрыть полноэкранный режим</string>
     <string name="artwork_lyrics_expand">Открыть полноэкранный режим</string>
     
@@ -21,10 +21,9 @@
     <string name="settings_label_lyric_auto_resume_follow">Авто-возобновление воспроизведения текста</string>
     <string name="settings_label_lyric_sync_offset_ms">Смещение синхронизации (мс)</string>
     <string name="settings_label_lyrics_hyper_aod_lyrics_enabled">Публиковать текста в HyperGlow</string>
-    <string name="settings_label_lyrics_source_selection_mode">Оценка источника</string>
+    <string name="settings_label_lyrics_source_selection_mode">Выбор источника текста</string>
     <string name="settings_label_lyrics_karaoke_original_lyrics">Показывать оригинальный текст для караоке-версий</string>
     <string name="settings_label_lyrics_source_override">Источник текстов</string>
-    <string name="settings_label_lyrics_spicy_manual_token">Токен Spicy вручную</string>
     <string name="settings_label_lyrics_source_order">Порядок источников текста</string>
     <string name="settings_label_lyrics_source_overrides">Разные источники для каждого трека</string>
     <string name="settings_option_lyrics_source_selection_mode_auto">Авто</string>
@@ -33,17 +32,12 @@
     <string name="settings_option_apple_music">Apple Music</string>
     <string name="settings_option_spicy">Spicy</string>
     <string name="settings_option_lrclib">LRCLIB</string>
-    <string name="settings_spicy_token_edit">Изменить токен</string>
-    <string name="settings_spicy_token_reveal">Раскрыть токен</string>
-    <string name="settings_spicy_token_delete">Удалить токен</string>
-    <string name="settings_spicy_token_absent">Не указано</string>
-    <string name="settings_spicy_token_rejected">Токен не сохранен</string>
     <string name="settings_source_none_enabled">Ничего не включено</string>
-    <string name="settings_source_pinned_hint">Закрепить один источник, или использовать Оценку в каждом включенном источнике</string>
-    <string name="settings_source_ranking_title">Оценка источников</string>
-    <string name="settings_source_ranking_auto_desc"></string>
-    <string name="settings_source_ranking_order_desc">Следовать за порядком ниже</string>
-    <string name="settings_source_order_title">Порядок</string>
+    <string name="settings_source_pinned_hint">Закрепите один источник или используйте Auto с приоритетом основных источников.</string>
+    <string name="settings_source_ranking_title">Режим выбора</string>
+    <string name="settings_source_ranking_auto_desc">SpicyLyrics.org → Apple Music → Spotify, затем запасные источники</string>
+    <string name="settings_source_ranking_order_desc">использовать порядок в списке</string>
+    <string name="settings_source_order_title">Порядок источников</string>
     <string name="settings_source_order_hint"></string>
     <string name="settings_source_drag">Зажмите и переместите чтобы изменить порядок</string>
     <string name="settings_option_lyrics_source_order_spicy_spotify_lrclib">Spicy, Spotify, LRCLIB</string>
@@ -272,4 +266,16 @@
     <string name="settings_option_slight">Лёгкое</string>
     <string name="settings_option_heavy">Тяжёлое</string>
     <string name="lyrics_follow_chip_label">Следовать за текстом</string>
+    <string name="settings_label_lyrics_spicy_org_client_key">Клиентский ключ SpicyLyrics.org</string>
+    <string name="settings_spicy_key_edit">Добавить или изменить ключ</string>
+    <string name="settings_spicy_key_delete">Удалить ключ</string>
+    <string name="settings_spicy_key_present">Ключ сохранён</string>
+    <string name="settings_spicy_key_absent">Не указано</string>
+    <string name="settings_spicy_key_catalog">Получить личный ключ</string>
+    <string name="settings_spicy_key_help">Добавьте Spicy EX из каталога. Вставьте личный клиентский ключ. Сохраните ключ. Включите SpicyLyrics.org в разделе выбора источника текста.</string>
+    <string name="settings_spicy_key_rejected">Ключ не сохранён. Используйте клиентский ключ, который начинается с sl_pk_.</string>
+    <string name="settings_label_lyrics_sync_upgrade">Улучшать синхронизацию текста</string>
+    <string name="settings_source_enabled_title">Включённые источники</string>
+    <string name="settings_sync_upgrade_summary">Если текст совпадает, этот параметр использует временные метки из включённых QQ Music или NetEase. Текст песни не меняется.</string>
+    <string name="source_picker_spicy_key_required">Добавьте личный клиентский ключ в настройках</string>
 </resources>

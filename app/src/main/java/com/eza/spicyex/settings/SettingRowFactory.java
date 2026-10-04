@@ -69,7 +69,7 @@ public final class SettingRowFactory {
         row.setTag(PanelTags.row(setting));
         boolean unavailable = host.unavailable(setting);
         style.titleColumn(row, host.strings().setting(setting),
-                unavailable ? host.unavailableSummary(setting) : null);
+                switchSummary(setting, unavailable));
         style.applyRowLead(row, setting.key);
         GlossyToggle toggle = new GlossyToggle(style.context());
         toggle.setAccent(PanelStyle.COL_ACCENT);
@@ -85,6 +85,16 @@ public final class SettingRowFactory {
             row.setOnClickListener(v -> toggle.setChecked(!toggle.isChecked(), true));
         }
         row.addView(toggle);
+    }
+
+    private String switchSummary(Settings.Setting<?> setting, boolean unavailable) {
+        if (unavailable) return host.unavailableSummary(setting);
+        if (setting == Settings.SYNC_UPGRADE) return host.strings().get("settings_sync_upgrade_summary",
+                "This option uses timing from enabled QQ Music or NetEase sources when the lyrics match. The lyric text does not change.");
+        return setting == Settings.AUTO_ENABLED
+                ? host.strings().get("settings_auto_root_requirement",
+                        "Requires root and LSPosed/Vector. Scope Spotify and Android Auto.")
+                : null;
     }
 
     public void selectorRow(LinearLayout content, final Settings.StringSetting setting) {
@@ -177,7 +187,7 @@ public final class SettingRowFactory {
         row.addView(style.text(host.strings().setting(setting), 14, PanelStyle.COL_SUMMARY, false));
         EditText field = new EditText(style.context());
         field.setText(host.store().get(setting));
-        if (setting == Settings.SPICY_MANUAL_TOKEN) {
+        if (setting == Settings.SPICY_ORG_CLIENT_KEY) {
             field.setInputType(android.text.InputType.TYPE_CLASS_TEXT
                     | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         }
@@ -253,7 +263,7 @@ public final class SettingRowFactory {
                 && kind == SettingUiSpec.RowKind.TOGGLE) {
             TextView sub = row.findViewWithTag(PanelTags.ROW_SUMMARY);
             if (sub instanceof TextView) {
-                String text = unavailable ? host.unavailableSummary(setting) : null;
+                String text = switchSummary(setting, unavailable);
                 sub.setText(text == null ? "" : text);
                 sub.setVisibility(text == null || text.isEmpty() ? View.GONE : View.VISIBLE);
             }

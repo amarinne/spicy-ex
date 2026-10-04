@@ -5,7 +5,7 @@ import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
 import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 
 import android.annotation.SuppressLint;
-import android.app.Activity;
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.text.LineBreakConfig;
@@ -35,10 +35,10 @@ import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
 /** Builds mounted Android views for applied lyric rows. */
 public final class LyricsRowViewFactory {
-    private final Activity activity;
+    private final Context activity;
     private final LyricsTextFactory textFactory;
 
-    public LyricsRowViewFactory(Activity activity, LyricsTextFactory textFactory) {
+    public LyricsRowViewFactory(Context activity, LyricsTextFactory textFactory) {
         this.activity = activity;
         this.textFactory = textFactory;
     }
@@ -123,6 +123,7 @@ public final class LyricsRowViewFactory {
         String weight = options == null ? "Medium" : options.lyricWeight;
         String font = options == null ? "spotify" : options.lyricsFont;
         LyricsLineViewState.clearMainView(line);
+        LyricsLineViewState.setContinuousSentenceFill(line, options.continuousSentenceFill);
         boolean hasSyllableWords = line.words != null && !line.words.isEmpty();
         boolean hasRealTimedWords = hasSyllableWords && !line.syntheticWords;
         boolean indicLine = SpicyTextDetection.hasIndicScript(line.text);
@@ -151,53 +152,74 @@ public final class LyricsRowViewFactory {
         } else {
             buildLineLevelMain(row, line, showJapaneseFurigana, lineLevelFillTopDown,
                     options.lineLevelFillSentence, weight, font, wrapLongLines,
-                    options.adaptiveSectioningEnabled);
+                    options.adaptiveSectioningEnabled, options.sequentialLineFill);
         }
 
-        boolean showTimedRomanRow = !line.bgLine
-                && !showAlignedRomaji
-                && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)
-                && exactTimedReading
-                && canBuildTimedRomanRow(line, useSyllableWords, romanizedWordProvider != null);
-        if (showTimedRomanRow) {
-            buildTimedRomanRow(row, line, options, romanizedWordProvider, wrapLongLines);
-        } else if (!line.bgLine && !showAlignedRomaji
-                && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)) {
-            SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, readingText, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)), textFactory.resolveTypefaceForText(readingText, false));
-            roman.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
-            roman.setMaxLines(wrapLongLines ? 3 : 1);
-            applyAdaptiveWrapping(roman, wrapLongLines && options.adaptiveSectioningEnabled, false);
-            roman.setSelfGlow(true);
-            roman.setVerticalGradient(lineLevelFillTopDown);
-            roman.setContentGradient(options.lineLevelFillSentence);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.topMargin = dp(2);
-            if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
-            row.addView(roman, lp);
-            LyricsLineViewState.setRomanView(line, roman);
-        }
+        if (options.staticSecondaryText) {
+            if (!line.bgLine && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji))
+                addStaticSecondary(row, readingText, options, wrapLongLines);
+            if (!line.bgLine && options.showTranslation && !isBlank(line.translatedText))
+                addStaticSecondary(row, line.translatedText, options, wrapLongLines);
+        } else {
+            boolean showTimedRomanRow = !line.bgLine
+                    && !showAlignedRomaji
+                    && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)
+                    && exactTimedReading
+                    && canBuildTimedRomanRow(line, useSyllableWords, romanizedWordProvider != null);
+            if (showTimedRomanRow) {
+                buildTimedRomanRow(row, line, options, romanizedWordProvider, wrapLongLines);
+            } else if (!line.bgLine && !showAlignedRomaji
+                    && (showJapaneseRomaji || showChineseRomaji || showGenericRomaji)) {
+                SpicyAnimatedTextView roman = textFactory.createSecondaryAnimatedText(activity, readingText, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)), textFactory.resolveTypefaceForText(readingText, false));
+                roman.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
+                roman.setMaxLines(wrapLongLines ? 3 : 1);
+                applyAdaptiveWrapping(roman, wrapLongLines && options.adaptiveSectioningEnabled, false);
+                roman.setSelfGlow(true);
+                roman.setVerticalGradient(lineLevelFillTopDown);
+                roman.setContentGradient(options.lineLevelFillSentence);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.topMargin = dp(2);
+                if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+                row.addView(roman, lp);
+                LyricsLineViewState.setRomanView(line, roman);
+            }
 
-        if (!line.bgLine && options.showTranslation && !isBlank(line.translatedText)) {
-            Typeface translatedTypeface = LyricsTextFactory.shouldUseSystemFallbackForText(line.translatedText)
-                    ? Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-                    : Typeface.create(textFactory.resolveTypeface(false), Typeface.ITALIC);
-            SpicyAnimatedTextView translated = textFactory.createSecondaryAnimatedText(activity, line.translatedText, Math.max(13, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 1), translatedTypeface);
-            translated.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
-            translated.setMaxLines(wrapLongLines ? 3 : 1);
-            applyAdaptiveWrapping(translated, wrapLongLines && options.adaptiveSectioningEnabled, false);
-            translated.setAlpha(1f);
-            translated.setBrightnessMultiplier(options.translationBright ? 1f : 0.42f);
-            translated.setVerticalGradient(lineLevelFillTopDown);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.topMargin = dp(2);
-            if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
-            row.addView(translated, lp);
-            LyricsLineViewState.setTranslationView(line, translated);
-        }
+            if (!line.bgLine && options.showTranslation && !isBlank(line.translatedText)) {
+                Typeface translatedTypeface = LyricsTextFactory.shouldUseSystemFallbackForText(line.translatedText)
+                        ? Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+                        : Typeface.create(textFactory.resolveTypeface(false), Typeface.ITALIC);
+                SpicyAnimatedTextView translated = textFactory.createSecondaryAnimatedText(activity, line.translatedText, Math.max(13, LyricVisuals.secondaryTextSizeSp(LyricsLineViewState.baseTextSp(line)) - 1), translatedTypeface);
+                translated.setGravity(line.oppositeAligned ? Gravity.END : Gravity.START);
+                translated.setMaxLines(wrapLongLines ? 3 : 1);
+                applyAdaptiveWrapping(translated, wrapLongLines && options.adaptiveSectioningEnabled, false);
+                translated.setAlpha(1f);
+                translated.setBrightnessMultiplier(options.translationBright ? 1f : 0.42f);
+                translated.setVerticalGradient(lineLevelFillTopDown);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.topMargin = dp(2);
+                if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+                row.addView(translated, lp);
+                LyricsLineViewState.setTranslationView(line, translated);
+            }
 
+        }
         attachHeightListener(row, line, heightListener);
         LyricsLineViewState.setRowView(line, row);
         return row;
+    }
+
+    private void addStaticSecondary(LinearLayout row, String text, Options options, boolean wrap) {
+        // Plain text has no timing registration, shader, glow, or word animation.
+        TextView view = textFactory.createText(activity, text, 20, Color.WHITE,
+                textFactory.resolveTypefaceForText(text, false));
+        view.setLineSpacing(0f, 1.04f);
+        view.setMaxLines(wrap ? 3 : 1);
+        applyAdaptiveWrapping(view, wrap && options.adaptiveSectioningEnabled, false);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                wrap ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(2);
+        row.addView(view, lp);
     }
 
     static boolean canBuildTimedRomanRow(AppliedLine line, boolean useSyllableWords,
@@ -214,7 +236,7 @@ public final class LyricsRowViewFactory {
     }
 
     /** Plan text wins when aligned; AI and other whole-line readings use the legacy line slot. */
-    static String displayReading(AppliedLine line) {
+    public static String displayReading(AppliedLine line) {
         if (line == null) return "";
         String planned = line.readingRenderPlan == null
                 ? "" : LyricUtils.safe(line.readingRenderPlan.joinedDisplayText);
@@ -459,7 +481,7 @@ public final class LyricsRowViewFactory {
         String text = LyricUtils.safe(line == null ? "" : line.text);
         List<DisplayLayoutGroup> groups = line == null || text.isEmpty()
                 ? Collections.<DisplayLayoutGroup>emptyList()
-                : DisplayLayoutGroup.forLine(adaptiveLayoutLanguage(line), text, line.japaneseReading);
+                : DisplayLayoutGroup.forLine(line);
         flex.setAdaptiveSectioning(true,
                 adaptiveForbiddenBreaks(groups, childRanges),
                 adaptiveKeepTogetherGroups(groups, childRanges));
@@ -602,8 +624,7 @@ public final class LyricsRowViewFactory {
         if (adaptiveRomanRanges != null && !adaptiveRomanRanges.isEmpty()) {
             GlowFlexbox flex = (GlowFlexbox) romanWords;
             String source = LyricUtils.safe(line == null ? "" : line.text);
-            List<DisplayLayoutGroup> groups = DisplayLayoutGroup.forLine(
-                    adaptiveLayoutLanguage(line), source, line == null ? null : line.japaneseReading);
+            List<DisplayLayoutGroup> groups = DisplayLayoutGroup.forLine(line);
             flex.setAdaptiveSectioning(true,
                     adaptiveForbiddenBreaks(groups, adaptiveRomanRanges),
                     adaptiveKeepTogetherGroups(groups, adaptiveRomanRanges));
@@ -807,10 +828,13 @@ public final class LyricsRowViewFactory {
     private void buildLineLevelMain(LinearLayout row, AppliedLine line, boolean showJapaneseFurigana,
                                     boolean lineLevelFillTopDown, boolean lineLevelFillSentence,
                                     String weight, String font, boolean wrapLongLines,
-                                    boolean adaptiveSectioningEnabled) {
+                                    boolean adaptiveSectioningEnabled, boolean sequentialLineFill) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
         SpicyAnimatedTextView main = new SpicyAnimatedTextView(activity);
         CharSequence mainText = showJapaneseFurigana ? FuriganaText.build(line) : line.text;
+        if (!showJapaneseFurigana && adaptiveSectioningEnabled && line.displayLayoutGroups != null) {
+            mainText = KeepTogetherText.build(line.text, line.displayLayoutGroups);
+        }
         applyTextDirection(main, line.text);
         main.setTextSize(LyricsLineViewState.baseTextSp(line));
         main.setTextColor(color);
@@ -827,6 +851,7 @@ public final class LyricsRowViewFactory {
                 isCjkPhraseLine(line));
         main.setVerticalGradient(lineLevelFillTopDown);
         main.setContentGradient(lineLevelFillSentence);
+        main.setSequentialLineFill(lineLevelFillSentence && sequentialLineFill);
         main.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, 0f);
         row.addView(main, new LinearLayout.LayoutParams(
                 wrapLongLines ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -940,11 +965,14 @@ public final class LyricsRowViewFactory {
         public float lineSpacingMultiplier = 1f;
         public boolean showRomanization;
         public boolean showTranslation;
+        public boolean staticSecondaryText;
         public boolean showJapaneseFurigana;
         public boolean showJapaneseRomaji;
         public boolean attachTransliterationToWords;
         public boolean lineLevelFillTopDown;
         public boolean lineLevelFillSentence;
+        public boolean sequentialLineFill;
+        public boolean continuousSentenceFill;
         public boolean wordLevelFill;
         public boolean interludeNoteIcon;
         public String lyricWeight = "Medium";

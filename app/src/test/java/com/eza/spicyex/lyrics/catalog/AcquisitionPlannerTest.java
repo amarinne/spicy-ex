@@ -1,322 +1,217 @@
 package com.eza.spicyex.lyrics.catalog;
 
-import java.util.List;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 import com.eza.spicyex.lyrics.catalog.AcquisitionPlanner.Plan;
-import com.eza.spicyex.lyrics.catalog.CatalogSource.MatchMethod;
-import com.eza.spicyex.lyrics.catalog.CatalogSource.ProviderStatus;
-import com.eza.spicyex.lyrics.catalog.CatalogSource.SelectionMode;
-import com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId;
-import com.eza.spicyex.lyrics.catalog.CatalogSource.TimingLevel;
-
+import com.eza.spicyex.lyrics.catalog.CatalogSource.*;
 import org.junit.Test;
+import java.util.*;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.EnumMap;
-import java.util.Map;
-
-/** Acquisition corpus: which sources a visit asks, given only stored state, policy, and clock. */
+/** Provider outcomes drive sequential fallback; content completeness gates donor acquisition. */
 public class AcquisitionPlannerTest {
     private static final String TRACK = "track1";
-    private static final long NOW = 10L * 24L * 60L * 60L * 1000L;
-    private static final CatalogPolicy AUTO = new CatalogPolicy(Arrays.asList(SourceId.APPLE,
-            SourceId.SPOTIFY_NATIVE, SourceId.AMLL, SourceId.LRCLIB, SourceId.QQ,
-            SourceId.NETEASE), false);
+    private static final long NOW = System.currentTimeMillis();
+    private static final CatalogPolicy AUTO = new CatalogPolicy(Arrays.asList(SourceId.SPICY_ORG,
+            SourceId.APPLE, SourceId.SPOTIFY_NATIVE, SourceId.LRCLIB, SourceId.AMLL,
+            SourceId.QQ, SourceId.NETEASE), false);
 
-    private static CatalogState state(CatalogSelection selection, ProviderRecord... records) {
-        return state(selection, new CatalogCandidate[0], records);
+    private static CatalogCandidate candidate(SourceId source, TimingLevel timing, boolean complete) {
+        return candidate(source, timing, complete, NOW);
     }
 
-    private static CatalogState state(CatalogSelection selection, CatalogCandidate[] candidates,
-                                      ProviderRecord... records) {
+    private static CatalogCandidate candidate(SourceId source, TimingLevel timing, boolean complete,
+                                               long fetchedAt) {
+        return new CatalogCandidate(source.id, TRACK, source, "item", MatchMethod.EXACT_SPOTIFY_ID,
+                .9, 0, timing, complete, true, false, false, false, false, false,
+                source.id, "", "[]", null, 1, 1, fetchedAt);
+    }
+
+    private static CatalogState state(CatalogCandidate seat, ProviderRecord... records) {
         Map<SourceId, ProviderRecord> providers = new EnumMap<>(SourceId.class);
         for (ProviderRecord record : records) providers.put(record.source, record);
-        return new CatalogState(TRACK, Arrays.asList(candidates), providers, selection, null, true);
+        return new CatalogState(TRACK, seat == null ? Collections.emptyList()
+                : Collections.singletonList(seat), providers, CatalogSelection.auto(TRACK), null, true);
     }
 
-    private static ProviderRecord answered(SourceId source, ProviderStatus status, long atMs,
-                                           int attempts) {
-        return new ProviderRecord(source, status, atMs, atMs, 0L, attempts);
+    private static ProviderRecord answered(SourceId source, ProviderStatus status, long at, int attempts) {
+        return new ProviderRecord(source, status, at, at, 0, attempts);
     }
 
-    private static Plan plan(CatalogState state, CatalogPolicy policy, boolean includeLocal) {
-        return AcquisitionPlanner.plan(state, policy, CatalogDecisions.render(state, policy), NOW,
-                includeLocal);
+    private static Plan plan(CatalogState state, CatalogPolicy policy, boolean local) {
+        return AcquisitionPlanner.plan(state, policy, CatalogDecisions.render(state, policy), NOW, local);
     }
 
-    private static CatalogCandidate seated(SourceId source, TimingLevel timing) {
-        return CatalogDecisionsTest.cand(source, "item", "d-" + source.id, timing,
-                MatchMethod.EXACT_SPOTIFY_ID);
+    @Test public void unseenTrackAsksOnlyRouterThenPrimaryAfterMiss() {
+        Plan first = plan(state(null), AUTO, true);
+        assertEquals(Collections.singletonList(SourceId.SPICY_ORG), first.scope.sources);
+        assertTrue(first.scope.sourceOrderMode);
+        Plan backup = plan(state(null, answered(SourceId.SPICY_ORG, ProviderStatus.NOT_FOUND,
+                NOW, 1)), AUTO, true);
+        assertEquals(Collections.singletonList(SourceId.APPLE), backup.scope.sources);
     }
 
-    private static CatalogSelection auto(CatalogCandidate candidate) {
-        return new CatalogSelection(TRACK, SelectionMode.AUTO, candidate.candidateId,
-                candidate.sourceId, candidate.providerItemId, candidate.canonicalDigest);
-    }
-
-    @Test
-    public void anUnseenTrackAsksEveryEnabledSource() {
-        Plan plan = plan(CatalogState.empty(TRACK), AUTO, true);
-
-        assertTrue(plan.fetches());
-        assertEquals("no-seat", plan.reason);
-        assertEquals(Arrays.asList(SourceId.APPLE, SourceId.SPOTIFY_NATIVE, SourceId.AMLL,
-                SourceId.LRCLIB, SourceId.QQ, SourceId.NETEASE), plan.scope.sources);
-    }
-
-    @Test
-    public void aWordOrSyllableSeatRevisitCostsNoRequestAfterEnabledSourcesAnswered() {
-        for (TimingLevel good : new TimingLevel[]{TimingLevel.SYLLABLE, TimingLevel.WORD}) {
-            CatalogCandidate seat = seated(SourceId.APPLE, good);
-            Plan plan = plan(state(auto(seat), new CatalogCandidate[]{seat},
-                    answered(SourceId.APPLE, ProviderStatus.AVAILABLE, NOW, 1),
-                    answered(SourceId.SPOTIFY_NATIVE, ProviderStatus.AVAILABLE, NOW, 1),
-                    answered(SourceId.AMLL, ProviderStatus.AVAILABLE, NOW, 1),
-                    answered(SourceId.LRCLIB, ProviderStatus.AVAILABLE, NOW, 1),
-                    answered(SourceId.QQ, ProviderStatus.AVAILABLE, NOW, 1),
-                    answered(SourceId.NETEASE, ProviderStatus.AVAILABLE, NOW, 1)), AUTO, true);
-
-            assertFalse(good.name(), plan.fetches());
-            assertEquals(good.name(), "final-seat", plan.reason);
-            assertEquals(good.name(), 0L, plan.retryAtMs);
+    @Test public void completeOrgLineAndStaticSuppressAllOtherSourcesFreshOrCached() {
+        for (TimingLevel timing : TimingLevel.values()) {
+            CatalogCandidate org = candidate(SourceId.SPICY_ORG, timing, true);
+            assertFalse(plan(state(org), AUTO, true).fetches());
+            assertFalse(plan(state(org, answered(SourceId.SPICY_ORG, ProviderStatus.AVAILABLE,
+                    NOW, 0)), AUTO, false).fetches());
         }
     }
 
-    @Test
-    public void aFinalSeatStillChecksNewlyEnabledSources() {
-        CatalogCandidate seat = seated(SourceId.APPLE, TimingLevel.WORD);
-        Plan plan = plan(state(auto(seat), new CatalogCandidate[]{seat},
-                answered(SourceId.APPLE, ProviderStatus.AVAILABLE, NOW, 1),
-                answered(SourceId.SPOTIFY_NATIVE, ProviderStatus.AVAILABLE, NOW, 1),
-                answered(SourceId.AMLL, ProviderStatus.AVAILABLE, NOW, 1),
-                answered(SourceId.LRCLIB, ProviderStatus.AVAILABLE, NOW, 1)), AUTO, true);
-
-        assertTrue(plan.fetches());
-        assertEquals("enabled-source-probe", plan.reason);
-        assertEquals(Arrays.asList(SourceId.QQ, SourceId.NETEASE), plan.scope.sources);
+    @Test public void lowerCachedSeatCannotSuppressEarlierEligiblePrimary() {
+        CatalogCandidate apple = candidate(SourceId.APPLE, TimingLevel.SYLLABLE, true);
+        assertEquals(Collections.singletonList(SourceId.SPICY_ORG),
+                plan(state(apple), AUTO, true).scope.sources);
+        CatalogCandidate fallback = candidate(SourceId.QQ, TimingLevel.WORD, true);
+        assertEquals(Collections.singletonList(SourceId.SPICY_ORG),
+                plan(state(fallback), AUTO, true).scope.sources);
     }
 
-    @Test
-    public void aLineSeatKeepsSearchingBecauseTheThresholdIsWordNotLine() {
-        CatalogCandidate line = seated(SourceId.SPOTIFY_NATIVE, TimingLevel.LINE);
-        Plan plan = plan(state(auto(line), new CatalogCandidate[]{line}), AUTO, true);
-
-        assertTrue(plan.fetches());
-        assertEquals("upgrade-probe", plan.reason);
-        // Every automatic source is reachable again, so a better document can still be found.
-        assertTrue(plan.scope.allows(SourceId.APPLE));
-        assertTrue(plan.scope.allows(SourceId.AMLL));
-        assertTrue(plan.scope.allows(SourceId.LRCLIB));
-    }
-
-    @Test
-    public void aLineSeatSettlesOntoTheUpgradeHorizonInsteadOfHammeringSources() {
-        CatalogCandidate line = seated(SourceId.SPOTIFY_NATIVE, TimingLevel.LINE);
-        long justAsked = NOW - 60_000L;
-        Plan after = plan(state(auto(line), new CatalogCandidate[]{line},
-                answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.AMLL, ProviderStatus.AVAILABLE, justAsked, 1),
-                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.QQ, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.NETEASE, ProviderStatus.NOT_FOUND, justAsked, 1)), AUTO, true);
-
+    @Test public void completeBackupStopsOnceEarlierRouterUnavailable() {
+        CatalogCandidate apple = candidate(SourceId.APPLE, TimingLevel.UNSYNCED, true);
+        Plan after = plan(state(apple, answered(SourceId.SPICY_ORG,
+                ProviderStatus.TRANSIENT_ERROR, NOW, 1)), AUTO, true);
         assertFalse(after.fetches());
-        assertEquals("upgrade-suppressed", after.reason);
-        assertEquals(justAsked + AcquisitionPlanner.NOT_FOUND_RETRY_MS, after.retryAtMs);
+        assertEquals(NOW + AcquisitionPlanner.TRANSIENT_BASE_RETRY_MS, after.retryAtMs);
     }
 
-    @Test
-    public void aManualPinIsFinalEvenWhenStatic() {
-        CatalogCandidate plain = seated(SourceId.SPOTIFY_NATIVE, TimingLevel.UNSYNCED);
+    @Test public void syncUpgradeOnlyProbesEligibleDonorsAndNeverReasksAvailableDonor() {
+        CatalogPolicy enabled = new CatalogPolicy(AUTO.enabledOrder, false, false, true);
+        CatalogCandidate org = candidate(SourceId.SPICY_ORG, TimingLevel.LINE, true);
+        assertFalse(plan(state(org), AUTO, true).fetches());
+        assertEquals(Collections.singletonList(SourceId.QQ), plan(state(org), enabled, true).scope.sources);
+        Plan next = plan(state(org, answered(SourceId.QQ, ProviderStatus.AVAILABLE, NOW, 0)), enabled, true);
+        assertEquals(Collections.singletonList(SourceId.NETEASE), next.scope.sources);
+        assertFalse(plan(state(org, answered(SourceId.QQ, ProviderStatus.AVAILABLE, NOW, 0),
+                answered(SourceId.NETEASE, ProviderStatus.AVAILABLE, NOW, 0)), enabled, true).fetches());
+    }
+
+    @Test public void partialPrimaryStaysSeatedDuringOptInTimingUpgrade() {
+        CatalogCandidate org = candidate(SourceId.SPICY_ORG, TimingLevel.WORD, false);
+        CatalogState stored = state(org);
+        assertFalse(plan(stored, AUTO, true).fetches());
+        CatalogPolicy upgrade = new CatalogPolicy(AUTO.enabledOrder, false, false, true);
+        Plan next = plan(stored, upgrade, true);
+        assertEquals(Collections.singletonList(SourceId.QQ), next.scope.sources);
+        assertEquals("sync-upgrade-probe", next.reason);
+        assertSame(org, CatalogDecisions.render(stored, upgrade).winner);
+    }
+
+    @Test public void manualPinSuppressesAutomaticAcquisition() {
+        CatalogCandidate apple = candidate(SourceId.APPLE, TimingLevel.UNSYNCED, true);
+        CatalogState stored = state(apple);
         CatalogSelection pin = new CatalogSelection(TRACK, SelectionMode.MANUAL,
-                plain.candidateId, plain.sourceId, plain.providerItemId, plain.canonicalDigest);
-        Plan plan = plan(state(pin, new CatalogCandidate[]{plain}), AUTO, true);
-
-        assertFalse(plan.fetches());
-        assertEquals("manual-pin", plan.reason);
+                apple.candidateId, apple.sourceId, "item", apple.canonicalDigest);
+        stored = new CatalogState(TRACK, stored.candidates, stored.providers, pin, null, true);
+        assertEquals("manual-pin", plan(stored, AUTO, true).reason);
     }
 
-    @Test
-    public void aStaticSeatProbesUncheckedNetworkSourcesThenWaitsTheUpgradeHorizon() {
-        CatalogCandidate plain = seated(SourceId.SPOTIFY_NATIVE, TimingLevel.UNSYNCED);
-        Plan first = plan(state(auto(plain), new CatalogCandidate[]{plain}), AUTO, true);
-        assertTrue(first.fetches());
-        assertEquals("upgrade-probe", first.reason);
-        assertTrue(first.scope.allows(SourceId.APPLE));
-
-        long justAsked = NOW - 60_000L;
-        Plan after = plan(state(auto(plain), new CatalogCandidate[]{plain},
-                answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.AMLL, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.QQ, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.NETEASE, ProviderStatus.NOT_FOUND, justAsked, 1)), AUTO, true);
-        assertFalse(after.fetches());
-        assertEquals("upgrade-suppressed", after.reason);
-        assertEquals(justAsked + AcquisitionPlanner.NOT_FOUND_RETRY_MS, after.retryAtMs);
+    @Test public void configuredSourceOrderRemainsAnExplicitPreferenceWalk() {
+        CatalogPolicy order = new CatalogPolicy(Arrays.asList(SourceId.NETEASE, SourceId.APPLE), true);
+        assertEquals(Collections.singletonList(SourceId.NETEASE), plan(state(null), order, true).scope.sources);
     }
 
-    @Test
-    public void durableMissesAreNotReaskedWithinTheirHorizonButNativeStaysFree() {
-        long justAsked = NOW - 1_000L;
-        CatalogState missed = state(CatalogSelection.auto(TRACK),
-                answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.AMLL, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.QQ, ProviderStatus.NOT_FOUND, justAsked, 1),
-                answered(SourceId.NETEASE, ProviderStatus.NOT_FOUND, justAsked, 1));
-
-        Plan visit = plan(missed, AUTO, true);
-        assertTrue(visit.fetches());
-        assertEquals(Collections.singletonList(SourceId.SPOTIFY_NATIVE), visit.scope.sources);
-
-        Plan afterNative = plan(missed, AUTO, false);
-        assertFalse(afterNative.fetches());
-        assertEquals(justAsked + AcquisitionPlanner.NOT_FOUND_RETRY_MS, afterNative.retryAtMs);
+    @Test public void priorFailuresSkipToNextDueSourceWithoutErasingTheirRetryHorizon() {
+        CatalogState stored = state(null,
+                answered(SourceId.SPICY_ORG, ProviderStatus.TRANSIENT_ERROR, NOW, 1),
+                answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, NOW, 1));
+        Plan next = plan(stored, AUTO, true);
+        assertEquals(Collections.singletonList(SourceId.SPOTIFY_NATIVE), next.scope.sources);
+        assertEquals(NOW + AcquisitionPlanner.TRANSIENT_BASE_RETRY_MS, next.retryAtMs);
+        assertEquals(Collections.singletonList(SourceId.LRCLIB), plan(stored, AUTO, false).scope.sources);
     }
 
-    @Test
-    public void aDurableMissBecomesDueAgainAfterItsHorizon() {
-        long longAgo = NOW - AcquisitionPlanner.NOT_FOUND_RETRY_MS - 1L;
-        CatalogState missed = state(CatalogSelection.auto(TRACK),
-                answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, longAgo, 1));
-        Plan plan = plan(missed, AUTO, false);
-
-        assertTrue(plan.fetches());
-        assertTrue(plan.scope.allows(SourceId.APPLE));
+    @Test public void durableMissBecomesDueAfterHorizon() {
+        CatalogPolicy orgOnly = new CatalogPolicy(Collections.singletonList(SourceId.SPICY_ORG), false);
+        assertFalse(plan(state(null, answered(SourceId.SPICY_ORG, ProviderStatus.NOT_FOUND,
+                NOW, 1)), orgOnly, true).fetches());
+        assertTrue(plan(state(null, answered(SourceId.SPICY_ORG, ProviderStatus.NOT_FOUND,
+                NOW - AcquisitionPlanner.NOT_FOUND_RETRY_MS, 1)), orgOnly, true).fetches());
     }
 
-    @Test
-    public void transientFailuresBackOffExponentiallyUpToTheCap() {
-        assertEquals(30_000L, AcquisitionPlanner.transientBackoffMs(1));
-        assertEquals(60_000L, AcquisitionPlanner.transientBackoffMs(2));
-        assertEquals(120_000L, AcquisitionPlanner.transientBackoffMs(3));
-        assertEquals(AcquisitionPlanner.TRANSIENT_MAX_RETRY_MS,
-                AcquisitionPlanner.transientBackoffMs(40));
-
-        ProviderRecord failing = answered(SourceId.APPLE, ProviderStatus.TRANSIENT_ERROR,
-                NOW - 10_000L, 1);
-        assertEquals(NOW + 20_000L, AcquisitionPlanner.dueAtMs(failing, false));
+    @Test public void transientFailuresBackOffToCap() {
+        assertEquals(30_000, AcquisitionPlanner.transientBackoffMs(1));
+        assertEquals(60_000, AcquisitionPlanner.transientBackoffMs(2));
+        assertEquals(120_000, AcquisitionPlanner.transientBackoffMs(3));
+        assertEquals(AcquisitionPlanner.TRANSIENT_MAX_RETRY_MS, AcquisitionPlanner.transientBackoffMs(40));
+        assertEquals(Long.MAX_VALUE, AcquisitionPlanner.dueAtMs(
+                answered(SourceId.APPLE, ProviderStatus.AVAILABLE, NOW, 0), false));
+        assertEquals(0, AcquisitionPlanner.dueAtMs(ProviderRecord.notChecked(SourceId.APPLE), false));
+        assertEquals(0, AcquisitionPlanner.dueAtMs(answered(SourceId.APPLE,
+                ProviderStatus.NEEDS_REFRESH, NOW, 0), false));
     }
 
-    @Test
-    public void aSourceThatAlreadyDeliveredIsNeverReaskedWithoutASeatToUpgrade() {
-        ProviderRecord delivered = answered(SourceId.APPLE, ProviderStatus.AVAILABLE, NOW, 0);
-        assertEquals(Long.MAX_VALUE, AcquisitionPlanner.dueAtMs(delivered, false));
-        assertEquals(NOW + AcquisitionPlanner.STATIC_UPGRADE_RETRY_MS,
-                AcquisitionPlanner.dueAtMs(delivered, true));
-    }
-
-    @Test
-    public void needsRefreshAndUncheckedAreDueImmediately() {
-        assertEquals(0L, AcquisitionPlanner.dueAtMs(
-                answered(SourceId.AMLL, ProviderStatus.NEEDS_REFRESH, NOW, 0), false));
-        assertEquals(0L, AcquisitionPlanner.dueAtMs(ProviderRecord.notChecked(SourceId.AMLL), false));
-    }
-
-    @Test
-    public void disabledSourcesAreNeverAskedAndAllDisabledAsksNothing() {
-        CatalogPolicy onlyLrclib = new CatalogPolicy(Collections.singletonList(SourceId.LRCLIB), false);
-        Plan plan = plan(CatalogState.empty(TRACK), onlyLrclib, true);
-        assertEquals(Collections.singletonList(SourceId.LRCLIB), plan.scope.sources);
-
-        Plan none = plan(CatalogState.empty(TRACK), new CatalogPolicy(null, false), true);
-        assertFalse(none.fetches());
-        assertEquals("all-sources-disabled", none.reason);
-    }
-
-    @Test
-    public void sourceOrderAsksEveryEnabledSourceInTheOwnersOrder() {
-        CatalogPolicy order = new CatalogPolicy(Arrays.asList(SourceId.QQ, SourceId.LRCLIB,
-                SourceId.APPLE), true);
-        Plan plan = plan(CatalogState.empty(TRACK), order, true);
-
-        assertTrue(plan.scope.sourceOrderMode);
-        assertEquals(Arrays.asList(SourceId.QQ, SourceId.LRCLIB, SourceId.APPLE),
-                plan.scope.sources);
-    }
-
-    @Test
-    public void autoCanAskOnlyTheEnabledSearchSources() {
-        CatalogPolicy searchOnly = new CatalogPolicy(Arrays.asList(SourceId.NETEASE, SourceId.QQ),
-                false);
-        Plan plan = plan(CatalogState.empty(TRACK), searchOnly, true);
-
-        assertTrue(plan.fetches());
-        assertEquals(Arrays.asList(SourceId.NETEASE, SourceId.QQ), plan.scope.sources);
-    }
-
-    @Test
-    public void ineligibleStoredKaraokeResultIsRecheckedVerbatimInSourceOrder() {
-        CatalogPolicy off = new CatalogPolicy(Collections.singletonList(SourceId.QQ), true, false);
-        CatalogCandidate karaoke = CatalogDecisionsTest.cand(SourceId.QQ, "song", "k1",
+    @Test public void ineligibleKaraokeCandidateCanBeRecheckedWithoutKaraokeSubstitution() {
+        CatalogCandidate karaoke = CatalogDecisionsTest.cand(SourceId.QQ, "item", "digest",
                 TimingLevel.WORD, MatchMethod.KARAOKE_SUBSTITUTION);
-        CatalogState stored = state(CatalogSelection.auto(TRACK),
-                new CatalogCandidate[]{karaoke},
-                answered(SourceId.QQ, ProviderStatus.AVAILABLE, NOW, 0));
-
-        Plan retry = plan(stored, off, false);
+        CatalogPolicy qq = new CatalogPolicy(Collections.singletonList(SourceId.QQ), false, false);
+        Plan retry = plan(state(karaoke, answered(SourceId.QQ, ProviderStatus.AVAILABLE, NOW, 0)), qq, true);
         assertTrue(retry.fetches());
-        assertEquals(Collections.singletonList(SourceId.QQ), retry.scope.sources);
         assertFalse(retry.scope.karaokeOriginalLyrics);
     }
 
-    @Test
-    public void requestScopeCarriesKaraokeSearchPolicyInItsIdentity() {
-        CatalogPolicy on = new CatalogPolicy(Arrays.asList(SourceId.QQ), true, true);
-        Plan refresh = AcquisitionPlanner.refreshAll(on);
-
-        assertTrue(refresh.scope.karaokeOriginalLyrics);
-        assertTrue(refresh.scope.key().contains("karaoke-original"));
-        assertFalse(refresh.scope.key().equals(
-                new AcquisitionScope(refresh.scope.sources, true, false).key()));
+    @Test public void slowFailuresFinishUnaskedSourcesBeforeDueEarlierRetries() {
+        CatalogState failed = state(null,
+                answered(SourceId.SPICY_ORG, ProviderStatus.TRANSIENT_ERROR, NOW - 60_000, 1),
+                answered(SourceId.APPLE, ProviderStatus.TRANSIENT_ERROR, NOW - 40_000, 1));
+        Set<SourceId> attempted = EnumSet.of(SourceId.SPICY_ORG, SourceId.APPLE);
+        Plan next = AcquisitionPlanner.plan(failed, AUTO, CatalogDecisions.render(failed, AUTO),
+                NOW, true, attempted);
+        assertEquals(Collections.singletonList(SourceId.SPOTIFY_NATIVE), next.scope.sources);
+        attempted.add(SourceId.SPOTIFY_NATIVE);
+        Plan afterNative = AcquisitionPlanner.plan(failed, AUTO, CatalogDecisions.render(failed, AUTO),
+                NOW, false, attempted);
+        assertEquals(Collections.singletonList(SourceId.LRCLIB), afterNative.scope.sources);
+        attempted.add(SourceId.LRCLIB);
+        assertEquals(Collections.singletonList(SourceId.AMLL), AcquisitionPlanner.plan(failed,
+                AUTO, CatalogDecisions.render(failed, AUTO), NOW, false, attempted).scope.sources);
     }
 
-    @Test
-    public void anOwnerRefreshAsksEverySourceRegardlessOfStoredOutcomes() {
+    @Test public void initialFallbackWalkReachesOptionalDonorsBeforeDuePrimaryRetry() {
+        CatalogState failed = state(null,
+                answered(SourceId.SPICY_ORG, ProviderStatus.TRANSIENT_ERROR, NOW - 60_000, 1),
+                answered(SourceId.APPLE, ProviderStatus.TRANSIENT_ERROR, NOW - 60_000, 1),
+                answered(SourceId.SPOTIFY_NATIVE, ProviderStatus.NOT_FOUND, NOW, 1),
+                answered(SourceId.LRCLIB, ProviderStatus.NOT_FOUND, NOW, 1),
+                answered(SourceId.AMLL, ProviderStatus.NOT_FOUND, NOW, 1));
+        Set<SourceId> attempted = EnumSet.of(SourceId.SPICY_ORG, SourceId.APPLE,
+                SourceId.SPOTIFY_NATIVE, SourceId.LRCLIB, SourceId.AMLL);
+        assertEquals(Collections.singletonList(SourceId.QQ), AcquisitionPlanner.plan(failed,
+                AUTO, CatalogDecisions.render(failed, AUTO), NOW, false, attempted).scope.sources);
+        attempted.add(SourceId.QQ);
+        assertEquals(Collections.singletonList(SourceId.NETEASE), AcquisitionPlanner.plan(failed,
+                AUTO, CatalogDecisions.render(failed, AUTO), NOW, false, attempted).scope.sources);
+        attempted.add(SourceId.NETEASE);
+        assertEquals(Collections.singletonList(SourceId.SPICY_ORG), AcquisitionPlanner.plan(failed,
+                AUTO, CatalogDecisions.render(failed, AUTO), NOW, false, attempted).scope.sources);
+    }
+
+    @Test public void completedOrgStillSuppressesUnattemptedBackupsDuringDueRefreshRetry() {
+        CatalogCandidate org = candidate(SourceId.SPICY_ORG, TimingLevel.LINE, true,
+                NOW - 22L * 24 * 60 * 60 * 1000);
+        CatalogState stored = state(org, answered(SourceId.SPICY_ORG,
+                ProviderStatus.TRANSIENT_ERROR, NOW - 60_000, 1));
+        Plan next = AcquisitionPlanner.plan(stored, AUTO, CatalogDecisions.render(stored, AUTO),
+                NOW, true, EnumSet.of(SourceId.SPICY_ORG));
+        assertEquals(Collections.singletonList(SourceId.SPICY_ORG), next.scope.sources);
+        assertEquals("org-refresh", next.reason);
+    }
+
+    @Test public void disabledAndExplicitRefreshContractsRemainAvailable() {
+        assertEquals("all-sources-disabled", plan(state(null), new CatalogPolicy(null, false), true).reason);
         Plan refresh = AcquisitionPlanner.refreshAll(AUTO);
-        assertTrue(refresh.fetches());
-        assertEquals(6, refresh.scope.sources.size());
-    }
-
-    @Test
-    public void theOwnerClimbForcesTheSequentialPathInConfiguredOrder() {
+        assertEquals(AUTO.enabledOrder, refresh.scope.sources);
         Plan ordered = AcquisitionPlanner.refreshAllInOrder(AUTO);
-
-        assertTrue(ordered.fetches());
-        assertEquals("owner-refresh-ordered", ordered.reason);
-        // Sequential, unlike the concurrent checks the automatic visit uses.
         assertTrue(ordered.scope.sourceOrderMode);
-        assertEquals(Arrays.asList(SourceId.APPLE, SourceId.SPOTIFY_NATIVE, SourceId.AMLL,
-                SourceId.LRCLIB, SourceId.QQ, SourceId.NETEASE), ordered.scope.sources);
-        // The plain owner refresh must keep the automatic path's own mode.
-        assertFalse(AcquisitionPlanner.refreshAll(AUTO).scope.sourceOrderMode);
+        assertEquals(AUTO.enabledOrder, ordered.scope.sources);
     }
 
-    /**
-     * The ordered walk is a preference walk, not a quality escalation. Guard the distinction so it
-     * is not quietly advertised as an upgrade path: the sequential fetch recurses on failure and
-     * stops at the first source that returns any lyrics, whatever its timing.
-     */
-    @Test
-    public void theOrderedWalkStopsOnAnyLyricsNotOnFinalQuality() {
-        List<SourceId> order = AcquisitionPlanner.refreshAllInOrder(AUTO).scope.sources;
-        // AMLL sits after Apple, so an Apple success ends the walk before AMLL is ever asked.
-        assertTrue(order.indexOf(SourceId.AMLL) > order.indexOf(SourceId.APPLE));
-        // Escalating a line-timed seat is the automatic visit's job, and only below WORD.
-        assertFalse(TimingLevel.LINE.isFinalQuality());
-        assertTrue(TimingLevel.WORD.isFinalQuality());
-    }
-
-    @Test
-    public void theFinalQualityThresholdIsWordNotLine() {
-        assertTrue(TimingLevel.SYLLABLE.isFinalQuality());
-        assertTrue(TimingLevel.WORD.isFinalQuality());
-        assertFalse(TimingLevel.LINE.isFinalQuality());
-        assertFalse(TimingLevel.UNSYNCED.isFinalQuality());
+    @Test public void policySnapshotAndScopeKeepUpgradeAndKaraokeIdentity() {
+        CatalogPolicy off = new CatalogPolicy(AUTO.enabledOrder, false, true, false);
+        CatalogPolicy on = new CatalogPolicy(AUTO.enabledOrder, false, true, true);
+        assertNotEquals(off, on);
+        assertTrue(AcquisitionPlanner.refreshAll(on).scope.karaokeOriginalLyrics);
+        assertTrue(AcquisitionPlanner.refreshAll(on).scope.key().contains("karaoke-original"));
     }
 }

@@ -22,7 +22,11 @@ public class LyricsSessionProviderViewTest {
         set(manager, "appliedViewSequence", 2L);
         CatalogPolicy disabled = new CatalogPolicy(Collections.emptyList(), false);
         set(manager, "loadedPolicy", disabled);
-        Constructor<?> constructor = LyricsCatalog.View.class.getDeclaredConstructors()[0];
+        Constructor<?> constructor = LyricsCatalog.View.class.getDeclaredConstructor(String.class,
+                CatalogState.class, CatalogPolicy.class,
+                com.eza.spicyex.lyrics.catalog.CatalogResolver.Resolution.class,
+                com.eza.spicyex.lyrics.catalog.AcquisitionPlanner.Plan.class, LyricsDocument.class,
+                int.class, boolean.class, long.class, String.class);
         constructor.setAccessible(true);
         LyricsCatalog.View old = (LyricsCatalog.View) constructor.newInstance("test",
                 CatalogState.empty("test"), new CatalogPolicy(Collections.emptyList(), false),

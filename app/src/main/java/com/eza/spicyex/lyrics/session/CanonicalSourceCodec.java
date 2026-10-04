@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import com.eza.spicyex.lyrics.BackgroundLine;
+import com.eza.spicyex.lyrics.ProviderTimingPolicy;
 import com.eza.spicyex.lyrics.Json;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
@@ -47,6 +48,13 @@ public final class CanonicalSourceCodec {
         root.addProperty("selectionMode", nz(document.selectionMode));
         root.addProperty("selectionOverride", nz(document.selectionOverride));
         root.addProperty("songWriters", nz(document.songWriters));
+        root.addProperty("spicyOrgSource", nz(document.spicyOrgSource));
+        root.addProperty("spicyOrgUploader", nz(document.spicyOrgUploader));
+        root.addProperty("spicyOrgUploaderUrl", nz(document.spicyOrgUploaderUrl));
+        root.addProperty("spicyOrgMaker", nz(document.spicyOrgMaker));
+        root.addProperty("spicyOrgMakerUrl", nz(document.spicyOrgMakerUrl));
+        root.addProperty("spicyOrgRawPayload", nz(document.spicyOrgRawPayload));
+        root.addProperty("spicyOrgFetchedAtMs", document.spicyOrgFetchedAtMs);
         root.addProperty("type", nz(document.type));
         root.addProperty("language", nz(document.language));
         root.addProperty("fetchSource", nz(document.fetchSource));
@@ -103,10 +111,18 @@ public final class CanonicalSourceCodec {
             document.selectionMode = Json.optString(root, "selectionMode");
             document.selectionOverride = Json.optString(root, "selectionOverride");
             document.songWriters = Json.optString(root, "songWriters");
+            document.spicyOrgSource = Json.optString(root, "spicyOrgSource");
+            document.spicyOrgUploader = Json.optString(root, "spicyOrgUploader");
+            document.spicyOrgUploaderUrl = Json.optString(root, "spicyOrgUploaderUrl");
+            document.spicyOrgMaker = Json.optString(root, "spicyOrgMaker");
+            document.spicyOrgMakerUrl = Json.optString(root, "spicyOrgMakerUrl");
+            document.spicyOrgRawPayload = Json.optString(root, "spicyOrgRawPayload");
+            document.spicyOrgFetchedAtMs = (long) Json.optDouble(root, 0, "spicyOrgFetchedAtMs");
             document.type = Json.optString(root, "type");
             document.language = Json.optString(root, "language");
             document.fetchSource = Json.optString(root, "fetchSource");
             document.spicyFormat = Json.optString(root, "spicyFormat");
+            if (com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.expires(document, System.currentTimeMillis())) return null;
             document.durationMs = (long) Json.optDouble(root, 0, "durationMs");
             document.startTimeMs = (long) Json.optDouble(root, 0, "startTimeMs");
             JsonArray lines = Json.optArray(root, "lines");
@@ -145,6 +161,8 @@ public final class CanonicalSourceCodec {
                 document.lines.add(line);
             }
             if (document.lines.isEmpty()) return null;
+            if (ProviderTimingPolicy.appliesTo(document)
+                    && !ProviderTimingPolicy.normalizeAndValidate(document)) return null;
             return new Record(document, (int) Json.optDouble(root, 1, "sourceRevision"),
                     Json.optString(root, "canonicalDigest"), (long) Json.optDouble(root, 0, "savedAtMs"),
                     Json.optString(root, "selectionIdentity"));

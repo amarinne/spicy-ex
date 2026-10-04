@@ -38,7 +38,7 @@ public final class CatalogPickerModel {
 
     /** Source display order matches the automatic tie-break. */
     static final SourceId[] SOURCE_ORDER = {
-            SourceId.APPLE, SourceId.SPOTIFY_NATIVE, SourceId.AMLL, SourceId.LRCLIB,
+            SourceId.SPICY_ORG, SourceId.APPLE, SourceId.SPOTIFY_NATIVE, SourceId.AMLL, SourceId.LRCLIB,
             SourceId.QQ, SourceId.NETEASE,
     };
 
@@ -110,7 +110,7 @@ public final class CatalogPickerModel {
                     !manual, true, false, DataMark.NONE, auto.winner.candidateId,
                     auto.winner.sourceId));
         } else {
-            rows.add(new Row(RowKind.AUTO, "Auto · nothing stored yet", "",
+            rows.add(new Row(RowKind.AUTO, "Auto · no saved lyrics available", "",
                     !manual, false, false, DataMark.NONE, "", null));
         }
         Map<SourceId, CatalogCandidate> bestBySource = bestBySource(candidates);
@@ -155,7 +155,7 @@ public final class CatalogPickerModel {
                         : "Check all: " + enabled,
                 false, false, false, DataMark.NONE, "", null));
         rows.add(new Row(RowKind.ACTION_DELETE_TRACK, "Clear saved lyrics",
-                "stored candidates and states", false, false, false, DataMark.NONE,
+                "All saved lyric sources for this song", false, false, false, DataMark.NONE,
                 "", null));
         return Collections.unmodifiableList(rows);
     }
@@ -196,6 +196,7 @@ public final class CatalogPickerModel {
     public static String displaySource(SourceId source) {
         if (source == null) return "Unknown";
         switch (source) {
+            case SPICY_ORG: return "SpicyLyrics.org";
             case APPLE: return "Apple Music";
             case SPOTIFY_NATIVE: return "Spotify";
             case AMLL: return "AMLL";

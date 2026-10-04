@@ -337,7 +337,7 @@ public final class LyricTimeline {
         return row;
     }
 
-    static AppliedLine createAppliedDotRow(long startMs, long endMs, boolean oppositeAligned) {
+    public static AppliedLine createAppliedDotRow(long startMs, long endMs, boolean oppositeAligned) {
         AppliedLine row = new AppliedLine();
         row.dotLine = true;
         row.text = "• • •";

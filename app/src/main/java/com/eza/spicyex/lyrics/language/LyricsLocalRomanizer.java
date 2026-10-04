@@ -261,9 +261,8 @@ public final class LyricsLocalRomanizer {
     }
 
     private static boolean isChineseLine(LyricsDocument doc, LyricsLine line) {
-        return line != null && SpicyTextDetection.hasCjkIdeograph(line.text)
-                && "zh".equals(ReadingLanguagePolicy.language(line.text, line.detection,
-                        doc == null ? "" : doc.language));
+        return line != null && SoundWithholdPolicy.isChineseLine(line.text, line.detection,
+                doc == null ? "" : doc.language);
     }
 
     /**

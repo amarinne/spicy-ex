@@ -3,10 +3,11 @@ package com.eza.spicyex.lyrics.catalog;
 import com.eza.spicyex.lyrics.catalog.CatalogResolver.Resolution;
 import com.eza.spicyex.lyrics.catalog.CatalogSource.SelectionMode;
 import com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId;
-import com.eza.spicyex.lyrics.catalog.CatalogSource.TimingLevel;
+import com.eza.spicyex.lyrics.providers.SpicyOrgPolicy;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.Collections;
 
 /**
  * Decides whether a track visit asks any provider, and which ones. Pure: the stored catalog
@@ -15,10 +16,11 @@ import java.util.List;
  *
  * <p>Rules:
  * <ul>
-     *   <li>A manual pin is final. A complete Auto seat still checks newly enabled sources.</li>
- *   <li>With no seat, or a static/incomplete one, only sources whose stored outcome is due are
- *       asked. The retry horizon per outcome lives in {@link #dueAtMs} and nowhere else.</li>
- *   <li>Spotify native is local and free, so it is eligible once per visit regardless of state.</li>
+ *   <li>A manual pin stops fallback probes. An enabled org pin still soft-refreshes its source.</li>
+ *   <li>A complete anchor stops lower-priority acquisition.</li>
+ *   <li>Ask one due source, then re-plan after its terminal outcome. Cached lower-priority
+ *       lyrics stay visible while earlier primary sources are checked.</li>
+ *   <li>Only the sync-upgrade option opens donor probes; missing verses do not imply aligned timing.</li>
  *   <li>Explicit picker checks bypass this planner entirely: the owner asked for that source.</li>
  * </ul>
  */
@@ -66,44 +68,66 @@ public final class AcquisitionPlanner {
      */
     public static Plan plan(CatalogState state, CatalogPolicy policy, Resolution rendered,
                             long nowMs, boolean includeLocal) {
+        return plan(state, policy, rendered, nowMs, includeLocal, Collections.emptySet());
+    }
+
+    /** Finish the initial source walk before retrying a source already attempted this visit. */
+    public static Plan plan(CatalogState state, CatalogPolicy policy, Resolution rendered,
+                            long nowMs, boolean includeLocal, Set<SourceId> attemptedThisVisit) {
+        Set<SourceId> attempted = attemptedThisVisit == null
+                ? Collections.emptySet() : attemptedThisVisit;
         CatalogPolicy p = policy == null ? new CatalogPolicy(null, false) : policy;
         if (p.enabledOrder.isEmpty()) return none(0L, "all-sources-disabled");
         CatalogCandidate seat = rendered == null ? null : rendered.winner;
         boolean pinned = seat != null && !rendered.temporary
                 && state.selection.mode == SelectionMode.MANUAL;
-        if (pinned) return none(0L, "manual-pin");
-        boolean finalSeat = seat != null && seat.complete && seat.timingLevel.isFinalQuality();
-        boolean upgradeProbe = seat != null && !finalSeat;
-        List<SourceId> due = new ArrayList<>();
+        boolean orgSeat = seat != null && seat.sourceId == SourceId.SPICY_ORG
+                && p.enabled(SourceId.SPICY_ORG);
+        if (pinned && !orgSeat) return none(0L, "manual-pin");
+        List<SourceId> order = autoSources(p);
+        int seatIndex = seat == null ? order.size() : order.indexOf(seat.sourceId);
+        if (seatIndex < 0) seatIndex = order.size();
+        boolean supplement = seat != null && CatalogPolicy.primary(seat.sourceId)
+                && p.syncUpgradeEnabled;
         long nextDue = 0L;
-        for (SourceId source : autoSources(p)) {
-            ProviderRecord record = state.provider(source);
-            if (source == SourceId.SPOTIFY_NATIVE) {
-                if (includeLocal && (!finalSeat
-                        || record.status == CatalogSource.ProviderStatus.NOT_CHECKED
-                        || record.status == CatalogSource.ProviderStatus.NEEDS_REFRESH)) due.add(source);
-                continue;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int index = 0; index < order.size(); index++) {
+                SourceId source = order.get(index);
+                if (attempted.contains(source) != (pass == 1)) continue;
+                // A cached fallback can render while an earlier source is checked. It does not
+                // suppress that source. A complete anchor never triggers unrelated backup probes.
+                boolean earlier = index < seatIndex;
+                boolean donor = supplement && CatalogPolicy.syncDonor(source)
+                        && source != seat.sourceId;
+                boolean orgRefresh = source == SourceId.SPICY_ORG && orgSeat;
+                if (pinned && !orgRefresh) continue;
+                if (seat != null && !earlier && !donor && !orgRefresh) continue;
+                if (source == SourceId.SPOTIFY_NATIVE && !includeLocal) continue;
+                ProviderRecord record = state.provider(source);
+                long at = record.status == CatalogSource.ProviderStatus.AVAILABLE
+                        && hasOnlyPolicyIneligibleCandidates(state, p, source)
+                        ? 0L : dueAtMs(record, false);
+                if (orgRefresh) {
+                    // Soft refresh does not retire the usable 21–30-day anchor. A failed attempt
+                    // observes the provider horizon instead of repeatedly probing an overdue row.
+                    long refreshAt = seat.fetchedAtMs + SpicyOrgPolicy.REFRESH_AFTER_MS;
+                    at = record.status == CatalogSource.ProviderStatus.AVAILABLE ? refreshAt
+                            : Math.max(refreshAt, at);
+                }
+                if (at <= nowMs) {
+                    String reason = orgRefresh ? "org-refresh" : seat == null ? "no-seat" : earlier ? "primary-probe"
+                            : "sync-upgrade-probe";
+                    // Re-plan after this provider's terminal outcome. Never speculate with a
+                    // parallel fallback request while a prior route is still pending.
+                    return new Plan(Action.FETCH, new AcquisitionScope(
+                            java.util.Collections.singletonList(source), true,
+                            p.karaokeOriginalLyrics), nextDue, reason);
+                }
+                if (at != Long.MAX_VALUE && (nextDue == 0L || at < nextDue)) nextDue = at;
             }
-            long at = record.status == CatalogSource.ProviderStatus.AVAILABLE
-                    && hasOnlyPolicyIneligibleCandidates(state, p, source)
-                    ? 0L : dueAtMs(record, upgradeProbe);
-            if (at <= nowMs) {
-                due.add(source);
-            } else if (at != Long.MAX_VALUE && (nextDue == 0L || at < nextDue)) {
-                nextDue = at;
-            }
         }
-        boolean anyNetwork = false;
-        for (SourceId source : due) {
-            if (source != SourceId.SPOTIFY_NATIVE) anyNetwork = true;
-        }
-        if (due.isEmpty() || (upgradeProbe && !anyNetwork)) {
-            return none(nextDue, finalSeat ? "final-seat"
-                    : upgradeProbe ? "upgrade-suppressed" : "no-seat-suppressed");
-        }
-        return new Plan(Action.FETCH, new AcquisitionScope(due, p.sourceOrderMode,
-                p.karaokeOriginalLyrics), nextDue,
-                finalSeat ? "enabled-source-probe" : upgradeProbe ? "upgrade-probe" : "no-seat");
+        return none(nextDue, pinned ? "manual-pin"
+                : seat != null ? "anchor-satisfied" : "no-seat-suppressed");
     }
 
     /**
@@ -122,14 +146,9 @@ public final class AcquisitionPlanner {
     /**
      * An owner-requested re-ask of every enabled source, walked in configured order.
      *
-     * <p>This is the escape hatch for a track whose stored sources were never asked. It forces the
-     * sequential path rather than the automatic visit's concurrent provider checks, so the outcome
-     * reflects the configured preference instead of whichever adapter happened to answer first.
-     *
-     * <p>It is a preference walk, not a quality escalation: {@code attemptOrderedSource} recurses on
-     * failure and stops at the first source that returns any lyrics, whatever its timing. Escalating
-     * a line-timed seat to word or syllable timing is the automatic visit's job, via the WORD
-     * threshold in {@link #plan}. Do not describe this as an upgrade path.
+     * <p>This explicit preference walk bypasses stored retry horizons and stops at the first
+     * usable response. Automatic acquisition instead asks one due source per plan and re-plans
+     * after each outcome. Sync donors are requested only through the supplemental gate.
      */
     public static Plan refreshAllInOrder(CatalogPolicy policy) {
         CatalogPolicy p = policy == null ? new CatalogPolicy(null, false) : policy;
@@ -179,7 +198,7 @@ public final class AcquisitionPlanner {
      * configured ranking mode after provider outcomes are stored.
      */
     static List<SourceId> autoSources(CatalogPolicy policy) {
-        return policy.enabledOrder;
+        return policy.automaticOrder();
     }
 
     private static boolean hasOnlyPolicyIneligibleCandidates(CatalogState state,

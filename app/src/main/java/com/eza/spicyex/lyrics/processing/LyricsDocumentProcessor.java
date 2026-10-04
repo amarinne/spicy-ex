@@ -120,6 +120,8 @@ public final class LyricsDocumentProcessor {
     public static void applyProcessedCachePreservingAi(Context context, LyricsDocument doc,
                                                        RomanizationOptions opts,
                                                        int processingVersion) {
+        // The session already composed these layers over the anchor's canonical identity.
+        if (doc != null && doc.syncUpgradeProvenance != null) return;
         applyProcessedCache(context, doc, opts, processingVersion, true);
     }
 

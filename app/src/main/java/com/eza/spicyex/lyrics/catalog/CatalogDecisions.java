@@ -35,7 +35,7 @@ public final class CatalogDecisions {
         CatalogPolicy p = policy == null ? new CatalogPolicy(null, false) : policy;
         if (selection != null && selection.mode == SelectionMode.MANUAL) {
             CatalogCandidate pinned = byId(candidates, selection.candidateId);
-            if (pinned != null) {
+            if (p.eligibleForDisplay(pinned)) {
                 return CatalogResolver.resolve(Collections.singletonList(pinned), selection);
             }
             if (selection.candidateId.isEmpty() && selection.sourceId != null) {
@@ -43,7 +43,7 @@ public final class CatalogDecisions {
                 // source's best stored candidate.
                 List<CatalogCandidate> fromSource = new ArrayList<>();
                 for (CatalogCandidate candidate : candidates) {
-                    if (candidate.sourceId == selection.sourceId) fromSource.add(candidate);
+                    if (candidate.sourceId == selection.sourceId && p.eligibleForDisplay(candidate)) fromSource.add(candidate);
                 }
                 Resolution best = CatalogResolver.resolve(fromSource, null);
                 if (best.winner != null) {
@@ -80,6 +80,18 @@ public final class CatalogDecisions {
                 || !state.trackId.equals(candidate.trackId)) {
             return CatalogChange.refused(render(state, policy), "invalid-candidate");
         }
+        if (candidate.sourceId == SourceId.SPICY_ORG) {
+            if (policy != null && policy.spicyOrgTerminated)
+                return CatalogChange.refused(render(state, policy), "org-access-terminated");
+            if (com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.expiredAt(candidate.fetchedAtMs, nowMs)) {
+                return CatalogChange.refused(render(state, policy), "expired-org-response");
+            }
+            for (CatalogCandidate existing : state.candidates) {
+                if (existing.sourceId == SourceId.SPICY_ORG && existing.fetchedAtMs > candidate.fetchedAtMs) {
+                    return CatalogChange.refused(render(state, policy), "stale-org-response");
+                }
+            }
+        }
         ProviderRecord before = state.provider(candidate.sourceId);
         if (state.isRejected(candidate.sourceId, candidate.providerItemId)) {
             return change(state, policy, track, state.candidates, null,
@@ -94,7 +106,8 @@ public final class CatalogDecisions {
             if (existing.candidateId.equals(candidate.candidateId)) {
                 next.add(candidate);
                 replaced = true;
-            } else if (CatalogAdapters.isPartialNativeDuplicate(existing, candidate)) {
+            } else if ((candidate.sourceId == SourceId.SPICY_ORG && existing.sourceId == SourceId.SPICY_ORG)
+                    || CatalogAdapters.isPartialNativeDuplicate(existing, candidate)) {
                 retired.add(existing.candidateId);
                 if (selection.candidateId.equals(existing.candidateId)) {
                     selection = new CatalogSelection(state.trackId, selection.mode,

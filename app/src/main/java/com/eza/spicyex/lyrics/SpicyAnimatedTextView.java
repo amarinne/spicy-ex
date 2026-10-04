@@ -53,6 +53,12 @@ public class SpicyAnimatedTextView extends TextView {
     // Words/letters use horizontal fill; line-level rows can switch to vertical fill by setting.
     private boolean verticalGradient;
     private boolean contentGradient;
+    private boolean sequentialLineFill;
+
+    public void setSequentialLineFill(boolean enabled) {
+        if (sequentialLineFill == enabled) return;
+        sequentialLineFill = enabled; cachedShader = null; invalidate();
+    }
     private int containerGradientWidth = -1;
     private float containerGradientOffsetX = 0f;
     private int containerGradientHeight = -1;
@@ -97,6 +103,7 @@ public class SpicyAnimatedTextView extends TextView {
      * the current point reads as a point, and a soft fade ahead of it into the unsung colour, which
      * keeps the hint of where the sweep is heading.
      */
+    private boolean softSweep;
     /** Full-brightness run just behind the sung position, in em. */
     private static final float FILL_HOT_EM = 0.3f;
     /** Soft fade from the sung position into the unsung colour, in em. */
@@ -129,6 +136,14 @@ public class SpicyAnimatedTextView extends TextView {
     /** Current glow strength (0..1), read by the parent GlowFlexbox to draw a continuous glow. */
     public float getGlow() {
         return glow;
+    }
+
+    /** Wide, bright sweep for low-frame-rate surfaces; ordinary Spotify styling stays unchanged. */
+    public void setSoftSweep(boolean enabled) {
+        if (softSweep == enabled) return;
+        softSweep = enabled;
+        cachedShader = null;
+        invalidate();
     }
 
     /**
@@ -236,8 +251,8 @@ public class SpicyAnimatedTextView extends TextView {
         int baseR = Color.red(base);
         int baseG = Color.green(base);
         int baseB = Color.blue(base);
-        int startAlpha = Math.round(255f * (0.85f + 0.15f * Math.max(0f, Math.min(1f, glow))) * brightnessMultiplier);
-        int endAlpha = Math.round(255f * 0.35f * brightnessMultiplier);
+        int startAlpha = Math.round(255f * (softSweep ? 1f : (0.85f + 0.15f * Math.max(0f, Math.min(1f, glow)))) * brightnessMultiplier);
+        int endAlpha = Math.round(255f * (softSweep ? SoftLyricSweep.UNSUNG_ALPHA : 0.35f) * brightnessMultiplier);
         int sungColor = Color.argb(startAlpha, baseR, baseG, baseB);
         int hotColor = Color.argb(Math.round(255f * brightnessMultiplier), baseR, baseG, baseB);
         int unsungColor = Color.argb(endAlpha, baseR, baseG, baseB);
@@ -249,6 +264,20 @@ public class SpicyAnimatedTextView extends TextView {
             cachedShader = solidShader(unsungColor);
         } else if (gradientPosition >= 99.5f) {
             cachedShader = solidShader(sungColor);
+        } else if (softSweep) {
+            float progress = (gradientPosition - LyricAnimations.GRADIENT_UNSUNG)
+                    / LyricAnimations.GRADIENT_RANGE;
+            float start = SoftLyricSweep.start(shaderExtent, progress);
+            float end = start + SoftLyricSweep.band(shaderExtent);
+            int middle = Color.argb(Math.round(255f * SoftLyricSweep.MIDDLE_ALPHA * brightnessMultiplier),
+                    baseR, baseG, baseB);
+            cachedShader = new LinearGradient(
+                    verticalGradient ? 0f : horizontalRtl ? far - start : origin + start,
+                    verticalGradient ? origin + start : 0f,
+                    verticalGradient ? 0f : horizontalRtl ? far - end : origin + end,
+                    verticalGradient ? origin + end : 0f,
+                    new int[]{sungColor, middle, unsungColor},
+                    new float[]{0f, 0.45f, 1f}, Shader.TileMode.CLAMP);
         } else {
             float textSize = Math.max(1f, getTextSize());
             float hot = FILL_HOT_EM * textSize;
@@ -316,6 +345,12 @@ public class SpicyAnimatedTextView extends TextView {
         // sung/unsung alpha and render every word uniformly. A shader survives that reset.
         if (selfGlow) drawSelfGlow(canvas);
         if (lineShadowAlpha > 0.02f) drawLineShadow(canvas);
+        Layout sentence = getLayout();
+        if (sequentialLineFill && !verticalGradient && sentence != null && sentence.getLineCount() > 0) {
+            drawSentenceFill(canvas, sentence, paint);
+            paint.setShader(oldShader); paint.setColor(oldColor);
+            return;
+        }
         paint.setShader(resolveShader(extent));
         // Word rows usually get their continuous halo from GlowFlexbox. Standalone line/secondary
         // text draws a glyph-only halo above; avoid TextView.setShadowLayer with shaders because
@@ -324,6 +359,35 @@ public class SpicyAnimatedTextView extends TextView {
         super.onDraw(canvas);
         paint.setShader(oldShader);
         paint.setColor(oldColor);
+    }
+
+    private void drawSentenceFill(Canvas canvas, Layout layout, Paint paint) {
+        float savedGradient = gradientPosition;
+        int savedWidth = containerGradientWidth;
+        float savedOffset = containerGradientOffsetX;
+        float total = 0f;
+        for (int i = 0; i < layout.getLineCount(); i++) total += Math.max(1f, layout.getLineMax(i));
+        float preceding = 0f;
+        try {
+            for (int i = 0; i < layout.getLineCount(); i++) {
+                float width = Math.max(1f, layout.getLineMax(i));
+                gradientPosition = SentenceFill.lineGradient(savedGradient, total, preceding, width);
+                containerGradientWidth = Math.max(1, (int) Math.ceil(width));
+                containerGradientOffsetX = getPaddingLeft() - layout.getLineLeft(i);
+                paint.setShader(resolveShader(containerGradientWidth));
+                int save = canvas.save();
+                canvas.clipRect(0, getTotalPaddingTop() + layout.getLineTop(i), getWidth(),
+                        getTotalPaddingTop() + layout.getLineBottom(i));
+                FuriganaText.FuriganaSpan.onBeginDraw();
+                super.onDraw(canvas);
+                canvas.restoreToCount(save);
+                preceding += width;
+            }
+        } finally {
+            gradientPosition = savedGradient;
+            containerGradientWidth = savedWidth;
+            containerGradientOffsetX = savedOffset;
+        }
     }
 
     private void drawSelfGlow(Canvas canvas) {

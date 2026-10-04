@@ -30,6 +30,8 @@ public final class LyricsCatalog {
         public final AcquisitionPlanner.Plan plan;
         /** Decoded seat document, or null when nothing renders or the payload is unreadable. */
         public final LyricsDocument document;
+        /** In-memory derived timing; never replaces the stored provider document. */
+        public final LyricsDocument timingProjection;
         /** Source revision recorded with the seat document, for the session's base revision. */
         public final int sourceRevision;
         /** False when the transaction that produced this view failed. */
@@ -42,12 +44,20 @@ public final class LyricsCatalog {
         View(String trackId, CatalogState state, CatalogPolicy policy, Resolution resolution,
              AcquisitionPlanner.Plan plan, LyricsDocument document, int sourceRevision,
              boolean durable, long sequence, String outcome) {
+            this(trackId, state, policy, resolution, plan, document, sourceRevision,
+                    durable, sequence, outcome, null);
+        }
+
+        View(String trackId, CatalogState state, CatalogPolicy policy, Resolution resolution,
+             AcquisitionPlanner.Plan plan, LyricsDocument document, int sourceRevision,
+             boolean durable, long sequence, String outcome, LyricsDocument timingProjection) {
             this.trackId = trackId;
             this.state = state;
             this.policy = policy;
             this.resolution = resolution;
             this.plan = plan;
             this.document = document;
+            this.timingProjection = timingProjection;
             this.sourceRevision = sourceRevision;
             this.durable = durable;
             this.sequence = sequence;
@@ -77,14 +87,14 @@ public final class LyricsCatalog {
         importPublicRelease(context, track, trackId, policy, row, now);
         CatalogStore.Committed committed = CatalogStore.transact(context, trackId,
                 state -> CatalogDecisions.reconcile(state, policy, row));
-        return readView(context, trackId, includeLocal, committed.committed, "");
+        return readView(context, trackId, includeLocal, committed.committed, "", track.duration);
     }
 
     /** Read-only view after a provider outcome was committed elsewhere. */
     public static View current(Context context, SpotifyTrack track, boolean includeLocal) {
         String trackId = CatalogSource.bareTrackId(track == null ? "" : track.uri);
         if (context == null || trackId.isEmpty()) return null;
-        return readView(context, trackId, includeLocal, true, "");
+        return readView(context, trackId, includeLocal, true, "", track.duration);
     }
 
     /** Runs one user command over the track and returns the committed view. */
@@ -95,8 +105,8 @@ public final class LyricsCatalog {
         long now = System.currentTimeMillis();
         CatalogStore.Committed committed = CatalogStore.transact(context, trackId,
                 state -> command.decide(state, policy, now));
-        return readView(context, trackId, false, committed.committed,
-                committed.change == null ? "storage-failed" : committed.change.outcome);
+        return readView(context, trackId, true, committed.committed,
+                committed.change == null ? "storage-failed" : committed.change.outcome, track.duration);
     }
 
     /** A user command over one track's catalog state. */
@@ -122,7 +132,8 @@ public final class LyricsCatalog {
 
     /** Decodes a stored candidate into a render document stamped with its catalog identity. */
     public static CanonicalSourceCodec.Record decode(CatalogCandidate candidate) {
-        if (candidate == null || candidate.normalizedDocument.isEmpty()) return null;
+        if (candidate == null || candidate.normalizedDocument.isEmpty()
+                || !candidate.hasValidProviderTiming()) return null;
         try {
             CanonicalSourceCodec.Record record =
                     CanonicalSourceCodec.decode(candidate.normalizedDocument);
@@ -138,18 +149,19 @@ public final class LyricsCatalog {
     }
 
     private static View readView(Context context, String trackId, boolean includeLocal,
-                                 boolean durable, String outcome) {
+                                 boolean durable, String outcome, long durationMs) {
         return READS.read(sequence -> {
             CatalogPolicy policy = CatalogPolicy.read(context);
             CatalogState state = CatalogStore.state(context, trackId);
             return view(trackId, state, policy, System.currentTimeMillis(), includeLocal,
-                    durable, sequence, outcome);
+                    durable, sequence, outcome, durationMs);
         });
     }
 
-    private static View view(String trackId, CatalogState state, CatalogPolicy policy,
+    static View view(String trackId, CatalogState state, CatalogPolicy policy,
                              long now, boolean includeLocal, boolean durable, long sequence,
-                             String outcome) {
+                             String outcome, long durationMs) {
+        state = readableState(state);
         Resolution resolution = CatalogDecisions.render(state, policy);
         CanonicalSourceCodec.Record record = decode(resolution.winner);
         AcquisitionPlanner.Plan plan = AcquisitionPlanner.plan(state, policy,
@@ -157,7 +169,36 @@ public final class LyricsCatalog {
         return new View(trackId, state, policy, resolution, plan,
                 record == null ? null : record.document,
                 record == null ? 1 : Math.max(1, record.sourceRevision), durable, sequence,
-                outcome);
+                outcome, CatalogSyncUpgrade.project(state, policy, resolution,
+                        record == null ? null : record.document, durationMs, now));
+    }
+
+    /** Corrupt payloads remain stored, but cannot mask a usable fallback or prevent refresh. */
+    static CatalogState readableState(CatalogState state) {
+        java.util.List<CatalogCandidate> readable = new java.util.ArrayList<>();
+        java.util.Map<CatalogSource.SourceId, ProviderRecord> providers =
+                new java.util.EnumMap<>(CatalogSource.SourceId.class);
+        providers.putAll(state.providers);
+        for (CatalogCandidate candidate : state.candidates) {
+            if (decode(candidate) != null) readable.add(candidate);
+        }
+        for (CatalogSource.SourceId source : CatalogSource.SourceId.values()) {
+            boolean available = false;
+            boolean stored = false;
+            for (CatalogCandidate candidate : state.candidates) {
+                if (candidate.sourceId == source) stored = true;
+            }
+            for (CatalogCandidate candidate : readable) {
+                if (candidate.sourceId == source) available = true;
+            }
+            ProviderRecord record = state.provider(source);
+            if (stored && !available && record.status == CatalogSource.ProviderStatus.AVAILABLE) {
+                providers.put(source, new ProviderRecord(source, CatalogSource.ProviderStatus.NEEDS_REFRESH,
+                        record.updatedAtMs, record.lastAttemptMs, record.lastSuccessMs, record.attemptCount));
+            }
+        }
+        return new CatalogState(state.trackId, readable, providers, state.selection,
+                state.rejections, state.known);
     }
 
     /**

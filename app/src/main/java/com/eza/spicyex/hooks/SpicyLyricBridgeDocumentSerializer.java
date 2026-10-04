@@ -34,6 +34,8 @@ final class SpicyLyricBridgeDocumentSerializer {
             String trackUri
     ) throws IOException {
         if (document == null) throw new IOException("missing document");
+        if (com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.isRestricted(document))
+            throw new IOException("provider does not permit lyric redistribution");
         JsonObject root = new JsonObject();
         root.addProperty("version", DOCUMENT_VERSION);
         root.addProperty("producerId", bounded(producerId));

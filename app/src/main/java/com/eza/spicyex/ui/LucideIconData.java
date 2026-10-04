@@ -76,6 +76,7 @@ public final class LucideIconData {
         // cubic constant plus the upstream lucide circle-check-big check stroke.
         PATHS.put("PICTURE_IN_PICTURE", "M 21 9 L 21 6 C 21 4.9 20.1 4 19 4 L 4 4 C 2.9 4 2 4.9 2 6 L 2 16 C 2 17.1 2.9 18 4 18 L 8 18 M 14 13 L 20 13 C 21.1 13 22 13.9 22 15 L 22 18 C 22 19.1 21.1 20 20 20 L 14 20 C 12.9 20 12 19.1 12 18 L 12 15 C 12 13.9 12.9 13 14 13 Z");
         PATHS.put("CIRCLE_CHECK", "M 22 12 C 22 17.52 17.52 22 12 22 C 6.48 22 2 17.52 2 12 C 2 6.48 6.48 2 12 2 C 17.52 2 22 6.48 22 12 M 9 12 L 11 14 L 15 10");
+        PATHS.put("CAR", "M 19 17 L 21 17 C 21.6 17 22 16.6 22 16 L 22 13 C 22 12.1 21.3 11.3 20.5 11.1 C 18.7 10.6 16 10 16 10 C 16 10 14.7 8.6 13.8 7.7 C 13.3 7.3 12.7 7 12 7 L 5 7 C 4.4 7 3.9 7.4 3.6 7.9 L 2.2 10.8 C 2.07 11.19 2 11.59 2 12 L 2 16 C 2 16.6 2.4 17 3 17 L 5 17 M 9 17 C 9 18.1 8.1 19 7 19 C 5.9 19 5 18.1 5 17 C 5 15.9 5.9 15 7 15 C 8.1 15 9 15.9 9 17 M 9 17 L 15 17 M 19 17 C 19 18.1 18.1 19 17 19 C 15.9 19 15 18.1 15 17 C 15 15.9 15.9 15 17 15 C 18.1 15 19 15.9 19 17");
     }
 
     /** Path data for a Kind name, or null when the kind has no entry. */

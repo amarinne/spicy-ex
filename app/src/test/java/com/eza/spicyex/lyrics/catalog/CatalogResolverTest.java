@@ -34,7 +34,7 @@ public class CatalogResolverTest {
                                          boolean healthy, boolean caps, String digest) {
         String id = source.id + "|item|" + digest + "#" + (nextId++);
         return new CatalogCandidate(id, "track", source, "item", method, confidence, deltaMs,
-                timing, complete, healthy, caps, caps, caps, caps, caps, digest, "{}", "[]",
+                timing, complete, healthy, caps, caps, caps, caps, caps, digest, "", "[]",
                 new byte[0], 1, 1, 0L);
     }
 

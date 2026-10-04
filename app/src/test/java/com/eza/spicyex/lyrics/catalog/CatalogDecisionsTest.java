@@ -39,7 +39,7 @@ public class CatalogDecisionsTest {
                                  MatchMethod method) {
         return new CatalogCandidate(CatalogCandidate.stableId(TRACK, source, item, digest), TRACK,
                 source, item, method, 0.8, 0L, timing, true, true, false, false, false, false,
-                false, digest, "{}", "[]", new byte[0], 2, 1, NOW);
+                false, digest, "", "[]", new byte[0], 2, 1, NOW);
     }
 
     static CatalogCandidate apple(String digest) {
@@ -424,7 +424,7 @@ public class CatalogDecisionsTest {
     public void aCandidateForAnotherTrackIsRefused() {
         CatalogCandidate other = new CatalogCandidate("x", "other", SourceId.APPLE, "i",
                 MatchMethod.EXACT_SPOTIFY_ID, 1.0, 0L, TimingLevel.LINE, true, true, false, false,
-                false, false, false, "d", "{}", "[]", new byte[0], 1, 1, NOW);
+                false, false, false, "d", "", "[]", new byte[0], 1, 1, NOW);
         CatalogChange change = CatalogDecisions.providerSuccess(CatalogState.empty(TRACK), AUTO,
                 other, null, NOW);
         assertFalse(change.accepted);

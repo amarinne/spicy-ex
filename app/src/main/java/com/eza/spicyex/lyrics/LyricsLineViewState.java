@@ -16,6 +16,27 @@ public final class LyricsLineViewState {
     private LyricsLineViewState() {
     }
 
+    public static void setContinuousSentenceFill(AppliedLine line, boolean enabled) {
+        if (line != null) state(line).continuousSentenceFill = enabled;
+    }
+
+    public static boolean continuousSentenceFill(AppliedLine line) {
+        return line != null && state(line).continuousSentenceFill;
+    }
+
+    public static void applySentenceGradient(AppliedLine line, float gradient, float glow,
+                                             float brightness) {
+        if (line == null) return;
+        if (state(line).mainView != null) {
+            state(line).mainView.setSoftSweep(true);
+            state(line).mainView.setSequentialLineFill(true);
+        }
+        applyLineLevelGradient(line, gradient, glow, brightness);
+        if (line.words != null) for (SyllableSegment word : line.words) {
+            LyricsSyllableViewState.applySentenceGradient(word, gradient, glow, brightness);
+        }
+    }
+
     public static void setBaseTextSp(AppliedLine line, int baseTextSp) {
         if (line != null) state(line).baseTextSp = baseTextSp;
     }

@@ -16,6 +16,9 @@ public final class PanelPolicy {
     }
 
     public static boolean shouldRender(Settings.Setting<?> setting, PanelSnapshot snapshot) {
+        if (setting.section == Settings.ANDROID_AUTO) {
+            return setting == Settings.AUTO_ENABLED || Boolean.TRUE.equals(snapshot.get(Settings.AUTO_ENABLED));
+        }
         // The rest of the PiP section only matters while its button is enabled.
         if (setting.section == Settings.PIP && setting != Settings.PIP_ENABLED) {
             return Boolean.TRUE.equals(snapshot.get(Settings.PIP_ENABLED));
@@ -34,8 +37,8 @@ public final class PanelPolicy {
         if (isLayoutEditorOnly(setting)) {
             return false;
         }
-        if (setting == Settings.SPICY_MANUAL_TOKEN) {
-            return snapshot.spicySourceEnabled();
+        if (setting == Settings.SPICY_ORG_CLIENT_KEY) {
+            return true;
         }
         if (setting == Settings.AI_ENABLED) return true;
         if (setting == Settings.AI_DEEPSEEK_REASONING) {
@@ -207,7 +210,8 @@ public final class PanelPolicy {
 
     /** UI language rebuilds every label; dependency settings rebuild only their own section. */
     public static boolean shouldRebuildSectionAfterChange(Settings.Setting<?> setting) {
-        return setting == Settings.PIP_ENABLED
+        return setting == Settings.AUTO_ENABLED
+                || setting == Settings.PIP_ENABLED
                 || setting == Settings.AI_ENABLED
                 || setting == Settings.AI_PROVIDER
                 || setting == Settings.TRANSLATION_ENABLED

@@ -18,7 +18,7 @@ public class SettingsUiSchemaTest {
         for (Settings.Section section : SettingsUiSchema.orderedSections()) ids.add(section.id);
         assertEquals(java.util.Arrays.asList(
                 "lyrics", "lyrics_sources", "lyrics_screen", "apple_music",
-                "transliteration", "translation", "ai", "pip"), ids);
+                "transliteration", "translation", "ai", "android_auto", "pip"), ids);
     }
 
     @Test
@@ -38,7 +38,7 @@ public class SettingsUiSchemaTest {
         assertTrue(SettingsUiSchema.isComposite(Settings.LYRICS_SOURCE_MODE));
         assertTrue(SettingsUiSchema.isComposite(Settings.LYRICS_SOURCE_OVERRIDE));
         assertTrue(SettingsUiSchema.isComposite(Settings.LYRICS_SOURCE_ORDER));
-        assertTrue(SettingsUiSchema.isComposite(Settings.SPICY_MANUAL_TOKEN));
+        assertTrue(SettingsUiSchema.isComposite(Settings.SPICY_ORG_CLIENT_KEY));
         assertFalse(SettingsUiSchema.isComposite(Settings.CACHE_SIZE));
         assertFalse(SettingsUiSchema.isComposite(Settings.AI_PROVIDER));
     }

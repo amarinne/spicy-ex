@@ -30,6 +30,7 @@ public final class LiveLyricCardView extends LinearLayout {
     private static final Set<Integer> ACTIVE_ROW = Collections.singleton(0);
 
     private final OverflowViewport stage;
+    private final SpicyOrgAttributionView attribution;
     private final FrameStyleBatcher styleBatcher;
     private final LyricsFrameRenderer frameRenderer;
     private final LyricsDocument oneRowDocument = new LyricsDocument();
@@ -60,6 +61,8 @@ public final class LiveLyricCardView extends LinearLayout {
         rowHost = newRowHost(context);
         stage.addView(rowHost, rowHostLayoutParams(mountedOverflowMode));
         addView(stage, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        attribution = new SpicyOrgAttributionView(context);
+        addView(attribution, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
     }
 
     public void applyConfig(LyricsRenderConfig config) {
@@ -83,6 +86,11 @@ public final class LiveLyricCardView extends LinearLayout {
                            LyricsDocument document,
                            LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider,
                            boolean animateMount) {
+        boolean hadRestrictedCredit = attribution.getVisibility() == VISIBLE;
+        String previousCredit = attribution.getText().toString();
+        attribution.bind(document);
+        boolean changedCredit = !previousCredit.contentEquals(attribution.getText());
+        if (changedCredit && (hadRestrictedCredit || attribution.getVisibility() == VISIBLE)) animateMount = false;
         if (activity == null || line == null || config == null) {
             clear();
             return;
@@ -140,6 +148,11 @@ public final class LiveLyricCardView extends LinearLayout {
     }
 
     public void clearAnimated() {
+        if (attribution.getVisibility() == VISIBLE) {
+            // Restricted lyrics leave together with their credit, including an outgoing fade.
+            clear();
+            return;
+        }
         LyricsRenderConfig config = LyricsRenderConfig.read(getContext(), null).forLiveCard();
         String mode = config.liveCardTransitionMode;
         if ("None".equals(mode) || !Motion.animationsEnabled() || rowHost == null || rowHost.getChildCount() == 0) {
@@ -160,6 +173,7 @@ public final class LiveLyricCardView extends LinearLayout {
     }
 
     public void clear() {
+        attribution.bind(null);
         rowHost.removeAllViews();
         stage.removeAllViews();
         styleBatcher.clearPendingWrites();
