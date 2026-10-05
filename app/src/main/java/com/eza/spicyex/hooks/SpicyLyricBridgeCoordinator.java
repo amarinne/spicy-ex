@@ -12,7 +12,6 @@ import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.LyricTimeline;
-import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsDocument;
 
@@ -108,7 +107,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
     public void onDocumentChanged(LyricsSessionManager.Snapshot snapshot, LyricsDocument nextDocument) {
         if (!enabled || snapshot == null
                 || lastSnapshot == null || snapshot.generation != lastSnapshot.generation) return;
-        if (nextDocument == null || com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.isRestricted(nextDocument)) {
+        if (nextDocument == null) {
             document = null;
             documentRevision++;
             publishedFingerprint = "";
@@ -146,7 +145,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
         // over IPC — so the saving available here is not republishing at all. A track produces
         // several publications while the lanes settle, and a lane that had no work changes nothing
         // a viewer would see.
-        String fingerprint = LyricsDocumentProcessor.publicationFingerprint(source);
+        String fingerprint = SpicyLyricBridgeDocumentSerializer.publicationFingerprint(source);
         if (fingerprint.equals(publishedFingerprint)) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
             documentSkipped("unchanged_fingerprint");

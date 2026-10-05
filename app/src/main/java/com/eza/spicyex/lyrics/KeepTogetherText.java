@@ -23,6 +23,8 @@ final class KeepTogetherText {
     private static final class GroupSpan extends ReplacementSpan {
         @Override public int getSize(Paint paint, CharSequence text, int start, int end,
                                      Paint.FontMetricsInt metrics) {
+            // Fully grouped text has no plain run to supply its line height.
+            if (metrics != null) paint.getFontMetricsInt(metrics);
             return (int) Math.ceil(paint.measureText(text, start, end));
         }
 

@@ -5,6 +5,10 @@ import com.eza.spicyex.lyrics.DisplayLayoutGroup;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.SyllableSegment;
+import com.eza.spicyex.lyrics.SpicyOrgAttribution;
+import com.eza.spicyex.lyrics.providers.SpicyOrgPolicy;
+import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
+import com.eza.spicyex.lyrics.session.Digests;
 import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.reading.CodePointRanges;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
@@ -14,6 +18,7 @@ import com.google.gson.JsonObject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.zip.GZIPOutputStream;
 
 final class SpicyLyricBridgeDocumentSerializer {
@@ -34,8 +39,6 @@ final class SpicyLyricBridgeDocumentSerializer {
             String trackUri
     ) throws IOException {
         if (document == null) throw new IOException("missing document");
-        if (com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.isRestricted(document))
-            throw new IOException("provider does not permit lyric redistribution");
         JsonObject root = new JsonObject();
         root.addProperty("version", DOCUMENT_VERSION);
         root.addProperty("producerId", bounded(producerId));
@@ -47,6 +50,8 @@ final class SpicyLyricBridgeDocumentSerializer {
         long durationMs = Math.max(0L, document.durationMs);
         root.addProperty("durationMs", durationMs);
         root.addProperty("processingVersion", document.processingVersion);
+        String responseCredit = responseCredit(document);
+        if (!responseCredit.isEmpty()) root.addProperty("responseCredit", responseCredit);
 
         JsonArray rows = new JsonArray();
         int wordCount = 0;
@@ -134,6 +139,25 @@ final class SpicyLyricBridgeDocumentSerializer {
         byte[] compressed = output.toByteArray();
         if (compressed.length > MAX_COMPRESSED_BYTES) throw new IOException("document too large");
         return compressed;
+    }
+
+    static String publicationFingerprint(LyricsDocument document) {
+        return Digests.sha256(LyricsDocumentProcessor.publicationFingerprint(document)
+                + '\u001f' + responseCredit(document));
+    }
+
+    private static String responseCredit(LyricsDocument document) {
+        if (document == null) return "";
+        ArrayList<String> labels = new ArrayList<>();
+        if (SpicyOrgPolicy.isRestricted(document)) {
+            for (SpicyOrgAttribution.Credit credit : SpicyOrgAttribution.credits(document)) {
+                labels.add(credit.label);
+            }
+        }
+        if (document.songWriters != null && !document.songWriters.trim().isEmpty()) {
+            labels.add(0, "Written by: " + document.songWriters.trim());
+        }
+        return bounded(String.join("\n", labels));
     }
 
     private static long clampTiming(long value, long startMs, long endMs) {
