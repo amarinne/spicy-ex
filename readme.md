@@ -1,6 +1,8 @@
 <div align="center">
 
 # Spicy EX
+[![Telegram](https://img.shields.io/badge/Telegram-Join%20group-26A5E4?logo=telegram&logoColor=white)](https://t.me/spicyex)
+
 Animated synced lyrics inside Spotify for Android, as an Xposed/LSPosed module.<br>
 Unofficial community project — not affiliated with Spotify or Spicy Lyrics.<br>
 Desktop: [spicy-lyrics](https://github.com/amarinne/spicy-lyrics) · HyperOS 3 lockscreen/AOD: [HyperGlow](https://github.com/amarinne/hyperglow)
