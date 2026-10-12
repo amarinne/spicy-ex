@@ -36,6 +36,7 @@
     <string name="diagnostic_discard">丢弃</string>
     <string name="diagnostic_uploaded">报告已上传</string>
     <string name="diagnostic_report_id">报告 ID</string>
+    <string name="diagnostic_follow_up_notice">此报告系统不支持开发者或维护者回复。如需跟进，请通过 GitHub 或 Telegram 群直接联系他们。</string>
     <string name="diagnostic_clip_label">Spicy EX 报告 ID</string>
     <string name="diagnostic_retention_status">保留期限</string>
     <string name="diagnostic_retention_indefinite">无限期；仅由维护者手动删除或脱敏</string>

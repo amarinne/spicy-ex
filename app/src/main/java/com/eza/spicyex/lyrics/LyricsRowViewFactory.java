@@ -177,6 +177,7 @@ public final class LyricsRowViewFactory {
                 roman.setSelfGlow(true);
                 roman.setVerticalGradient(lineLevelFillTopDown);
                 roman.setContentGradient(options.lineLevelFillSentence);
+                roman.setSequentialLineFill(options.lineLevelFillSentence && options.sequentialLineFill);
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 lp.topMargin = dp(2);
                 if (!wrapLongLines) lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
@@ -302,11 +303,10 @@ public final class LyricsRowViewFactory {
                 int[] sourceRange = FuriganaText.wordRange(line, flowing, groupStart, furiganaOffset);
                 furiganaOffset = Math.max(furiganaOffset, sourceRange[1]);
                 boolean certain = adaptiveRangeCertain(line.text, flowing.text, sourceRange);
-                TimedTextRowProjection.Chunk mainChunk = groupStart < mainProjection.size()
-                        ? mainProjection.get(groupStart) : null;
-                addFlowingCjkSegment(words, line, flowing, options,
-                        mainChunk != null && mainChunk.spaceAfter,
-                        certain ? sourceRange[0] : -1, adaptiveChildRanges);
+                TimedTextRowProjection.Chunk mainChunk = mainProjection.get(groupStart);
+                int displayStart = sourceRange[0] + Math.max(0, flowing.text.indexOf(mainChunk.text));
+                addFlowingCjkSegment(words, line, flowing, mainChunk.text, options,
+                        mainChunk.spaceAfter, certain ? displayStart : -1, adaptiveChildRanges);
                 groupStart = groupEnd + 1;
                 continue;
             }
@@ -331,7 +331,9 @@ public final class LyricsRowViewFactory {
                 if (!adaptiveRangeCertain(line.text, seg.text, sourceRange)) certainRange = false;
                 if (rangeStart < 0) rangeStart = sourceRange[0];
                 rangeEnd = sourceRange[1];
-                View wordView = buildWordView(line, seg, showJapaneseFurigana, wordStart,
+                String displayText = mainProjection.get(wordIndex).text;
+                int displayStart = wordStart + Math.max(0, seg.text.indexOf(displayText));
+                View wordView = buildWordView(line, seg, displayText, showJapaneseFurigana, displayStart,
                         options == null ? "Medium" : options.lyricWeight,
                         options == null ? "spotify" : options.lyricsFont,
                         options, wrapLongLines);
@@ -393,10 +395,9 @@ public final class LyricsRowViewFactory {
      * a whole); the units only decide where lines may break. The first unit is the segment's
      * motion view and the rest follow its word-level transform.
      */
-    private void addFlowingCjkSegment(ViewGroup words, AppliedLine line, SyllableSegment seg,
+    private void addFlowingCjkSegment(ViewGroup words, AppliedLine line, SyllableSegment seg, String text,
                                       Options options, boolean spaceAfter, int sourceStart,
                                       List<int[]> adaptiveChildRanges) {
-        String text = LyricUtils.safe(seg.text);
         String weight = options == null ? "Medium" : options.lyricWeight;
         String font = options == null ? "spotify" : options.lyricsFont;
         int total = text.codePointCount(0, text.length());
@@ -752,7 +753,7 @@ public final class LyricsRowViewFactory {
         return null;
     }
 
-    private View buildWordView(AppliedLine line, SyllableSegment seg, boolean showJapaneseFurigana, int wordStart, String weight, String font,
+    private View buildWordView(AppliedLine line, SyllableSegment seg, String displayText, boolean showJapaneseFurigana, int wordStart, String weight, String font,
                                Options options, boolean wrapLongLines) {
         int color = line.bgLine ? Color.rgb(170, 170, 170) : Color.WHITE;
         boolean appleStyle = options != null && options.appleStyle;
@@ -765,15 +766,15 @@ public final class LyricsRowViewFactory {
             letters.setClipToPadding(false);
             letters.setClipChildren(false);
             LyricsSyllableViewState.clearLetters(seg);
-            List<String> letterTexts = LyricVisuals.splitCodePoints(seg.text);
+            List<String> letterTexts = LyricVisuals.splitCodePoints(displayText);
             addLetterViews(letters, line, seg, letterTexts, 0, letterTexts.size(), weight, font);
             LyricsSyllableViewState.clearTextView(seg);
             return letters;
         }
 
         SpicyAnimatedTextView word = new SpicyAnimatedTextView(activity);
-        CharSequence wordText = showJapaneseFurigana ? FuriganaText.buildWord(line, seg.text, wordStart) : seg.text;
-        applyTextDirection(word, seg.text);
+        CharSequence wordText = showJapaneseFurigana ? FuriganaText.buildWord(line, displayText, wordStart) : displayText;
+        applyTextDirection(word, displayText);
         word.setTextSize(LyricsLineViewState.baseTextSp(line));
         word.setTextColor(color);
         textFactory.applyLyricTypeface(word, wordText, weight, font);

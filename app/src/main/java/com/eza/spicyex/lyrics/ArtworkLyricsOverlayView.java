@@ -24,6 +24,7 @@ public final class ArtworkLyricsOverlayView extends FrameLayout {
     private static final int STATIC_CANDIDATE_LIMIT = 12;
     private final LinearLayout rowsHost;
     private final SpicyOrgAttributionView attribution;
+    private final ResponseCreditOutro.DocumentWindow creditWindow = new ResponseCreditOutro.DocumentWindow();
     private final FrameStyleBatcher styleBatcher;
     private final LyricsFrameRenderer frameRenderer;
     private final Set<Integer> mountedIndices = new LinkedHashSet<>();
@@ -104,6 +105,7 @@ public final class ArtworkLyricsOverlayView extends FrameLayout {
     public void hideOverlay() {
         setVisibility(GONE);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        attribution.bind(null);
         clearMountedRows();
     }
 
@@ -113,7 +115,7 @@ public final class ArtworkLyricsOverlayView extends FrameLayout {
 
     public void setDocument(LyricsDocument nextDocument, LyricsRenderConfig nextConfig) {
         document = nextDocument;
-        attribution.bind(document);
+        attribution.bind(null);
         renderConfig = nextConfig;
         invalidateMeasurements();
         if (isOverlayVisible()) post(this::requestLayout);
@@ -140,6 +142,14 @@ public final class ArtworkLyricsOverlayView extends FrameLayout {
         if (!isOverlayVisible() || document == null || renderConfig == null
                 || document.appliedLines == null || document.appliedLines.isEmpty()
                 || getWidth() <= 0 || getHeight() <= 0) return;
+        boolean creditOutro = creditWindow.update(document, positionMs,
+                attribution.getVisibility() == VISIBLE && isShown(), android.os.SystemClock.uptimeMillis());
+        if (creditOutro) {
+            clearMountedRows();
+            attribution.bindOutro(document);
+            return;
+        }
+        attribution.bind(null);
         int available = Math.max(1, getHeight()
                 - rowsHost.getPaddingTop() - rowsHost.getPaddingBottom() - attributionHeight());
         ensureMeasurements(positionMs, available);

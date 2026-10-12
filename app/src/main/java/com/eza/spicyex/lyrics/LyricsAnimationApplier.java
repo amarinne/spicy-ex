@@ -122,7 +122,7 @@ public final class LyricsAnimationApplier {
                     }
                 } else {
                     long groupStartMs = TimedWordGrouping.startMs(line, groupStart);
-                    long groupEndMs = TimedWordGrouping.endMs(line, groupStart);
+                    long groupEndMs = TimedWordGrouping.endMs(line, groupStart, groupEnd);
                     boolean grouped = groupEnd > groupStart;
                     int focusIndex = TimedWordGrouping.focusIndex(
                             line, groupStart, groupEnd, positionMs);

@@ -167,8 +167,7 @@ public final class AiOpenAiProvider implements AiProvider {
     private static String bodyOf(AiProviderRequest request, AiProviderConfig config,
                                  WireShape shape) {
         JsonArray messages = new JsonArray();
-        messages.add(message("system", AiContract.buildSystemPrompt(config.layer, config.targetLang,
-                config.repair, config.iteration, config.baselineRefinement)));
+        messages.add(message("system", config.systemPrompt()));
         messages.add(message("user", request.toJson()));
 
         JsonObject body = new JsonObject();

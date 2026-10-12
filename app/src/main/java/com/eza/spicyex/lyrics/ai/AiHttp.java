@@ -166,17 +166,23 @@ public final class AiHttp {
         } catch (InterruptedIOException interrupted) {
             // Cancelled or timed out. Either way the request may already have been served, so this
             // is delivery-unknown and never something to retry on our own initiative.
-            if (signal != null && signal.isAborted()) throw new AiCancelledException(signal.reason());
+            if (signal != null && signal.isAborted()) {
+                throw new AiCancelledException(signal.reason(), interrupted);
+            }
             Diagnostics.event("Ai" + TAG, operation + ":timeout");
             return Result.failed(AiProviderFailure.deliveryUnknown(
                     AiProviderFailure.Cause.TIMEOUT, 0));
         } catch (IOException network) {
-            if (signal != null && signal.isAborted()) throw new AiCancelledException(signal.reason());
+            if (signal != null && signal.isAborted()) {
+                throw new AiCancelledException(signal.reason(), network);
+            }
             Diagnostics.event("Ai" + TAG, operation + ":network");
             return Result.failed(AiProviderFailure.deliveryUnknown(
                     AiProviderFailure.Cause.NETWORK, 0));
         } catch (RuntimeException unexpected) {
-            if (signal != null && signal.isAborted()) throw new AiCancelledException(signal.reason());
+            if (signal != null && signal.isAborted()) {
+                throw new AiCancelledException(signal.reason(), unexpected);
+            }
             Diagnostics.event("Ai" + TAG, operation + ":" + unexpected.getClass().getSimpleName());
             return Result.failed(AiProviderFailure.deliveryUnknown(
                     AiProviderFailure.Cause.NETWORK, 0));

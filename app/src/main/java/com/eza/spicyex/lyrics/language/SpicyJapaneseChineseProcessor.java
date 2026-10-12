@@ -331,6 +331,7 @@ public final class SpicyJapaneseChineseProcessor {
     private static volatile PinyinTrieNode pinyinPhraseTrie;
     private static final Map<String, String> KANA = new HashMap<>();
     private static final HanyuPinyinOutputFormat PINYIN_FORMAT = new HanyuPinyinOutputFormat();
+    private static final HanyuPinyinOutputFormat PINYIN_FORMAT_NUMBERED = new HanyuPinyinOutputFormat();
     private static final HanyuPinyinOutputFormat PINYIN_FORMAT_TONED = new HanyuPinyinOutputFormat();
 
     static {
@@ -338,6 +339,9 @@ public final class SpicyJapaneseChineseProcessor {
         PINYIN_FORMAT.setCaseType(HanyuPinyinCaseType.LOWERCASE);
         PINYIN_FORMAT.setToneType(HanyuPinyinToneType.WITHOUT_TONE);
         PINYIN_FORMAT.setVCharType(HanyuPinyinVCharType.WITH_V);
+        PINYIN_FORMAT_NUMBERED.setCaseType(HanyuPinyinCaseType.LOWERCASE);
+        PINYIN_FORMAT_NUMBERED.setToneType(HanyuPinyinToneType.WITH_TONE_NUMBER);
+        PINYIN_FORMAT_NUMBERED.setVCharType(HanyuPinyinVCharType.WITH_V);
         // Tone-mark variant needs ü as a real unicode char (WITH_V is invalid with tone marks).
         PINYIN_FORMAT_TONED.setCaseType(HanyuPinyinCaseType.LOWERCASE);
         PINYIN_FORMAT_TONED.setToneType(HanyuPinyinToneType.WITH_TONE_MARK);
@@ -766,13 +770,103 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     public static String romanizeChineseLine(String text, String mode, boolean tones) {
-        if ("jyutping".equalsIgnoreCase(mode) || "cantonese".equalsIgnoreCase(mode)) {
+        return romanizeChineseLine(text, mode, tones, ChineseOutputStyle.fromSetting(mode));
+    }
+
+    public static String romanizeChineseLine(String text, String mode, boolean tones,
+                                             ChineseOutputStyle style) {
+        String effectiveMode = mode == null ? "" : mode.toLowerCase(Locale.ROOT)
+                .replace("-eza", "").replace("_eza", "");
+        if ("jyutping".equalsIgnoreCase(effectiveMode) || "cantonese".equalsIgnoreCase(effectiveMode)) {
             String jyutping = JyutpingRomanizer.romanize(text);
-            // Strip the trailing tone digit on each jyutping syllable when tones are off
-            // (only digits attached to a romanized letter, so Latin passthrough is safe).
-            return tones ? jyutping : (jyutping == null ? null : jyutping.replaceAll("(?<=[a-zA-Z])[1-6]", ""));
+            if (style == ChineseOutputStyle.EZA) {
+                // Convert each dictionary/trie reading before appending passthrough content.
+                return convertJyutpingSegments(text, tones);
+            }
+            // Canonical mode keeps authored Latin tokens and digits intact. Strip tone numbers
+            // only from the structured Jyutping segments, never from the joined line.
+            return tones ? jyutping : stripJyutpingSegments(text);
         }
+        if (style == ChineseOutputStyle.EZA) return convertPinyinSegments(text, tones);
         return romanizeChinesePinyinLine(text, tones);
+    }
+
+    private static String convertPinyinSegments(String text, boolean tones) {
+        if (isBlank(text)) return text;
+        PinyinTrieNode phrases = pinyinPhraseTrie();
+        StringBuilder out = new StringBuilder();
+        boolean lastReading = false;
+        for (int i = 0; i < text.length();) {
+            PinyinPhraseMatch phrase = matchPinyinPhrase(phrases, text, i);
+            if (phrase != null) {
+                if (out.length() > 0 && lastReading) out.append(' ');
+                out.append(EzaChineseRomanizer.mandarin(phrase.reading, tones));
+                lastReading = true;
+                i = phrase.endIndex;
+                continue;
+            }
+            int cp = text.codePointAt(i);
+            String[] values = null;
+            if (Character.charCount(cp) == 1) {
+                try { values = PinyinHelper.toHanyuPinyinStringArray((char) cp, PINYIN_FORMAT_NUMBERED); }
+                catch (Throwable ignored) { }
+            }
+            if (values != null && values.length > 0) {
+                if (out.length() > 0 && lastReading) out.append(' ');
+                out.append(EzaChineseRomanizer.mandarin(values[0], tones));
+                lastReading = true;
+            } else {
+                out.appendCodePoint(cp);
+                lastReading = false;
+            }
+            i += Character.charCount(cp);
+        }
+        return Normalizer.normalize(normalizeSpaces(out.toString()), Normalizer.Form.NFC);
+    }
+
+    private static String convertJyutpingSegments(String text, boolean tones) {
+        if (isBlank(text)) return text;
+        // The public conversion path below shares the exact dictionary/trie walk and appends
+        // passthrough code points without ever examining their digits.
+        StringBuilder out = new StringBuilder();
+        boolean lastReading = false;
+        JyutpingRomanizer.TrieWalk walk = JyutpingRomanizer.walk(text);
+        for (JyutpingRomanizer.Segment segment : walk.segments) {
+            if (segment.reading != null) {
+                if (out.length() > 0 && lastReading) out.append(' ');
+                out.append(EzaChineseRomanizer.cantonese(segment.reading, tones));
+                lastReading = true;
+            } else {
+                if (out.length() > 0 && lastReading && segment.codePoint < 128 && Character.isLetterOrDigit(segment.codePoint)) out.append(' ');
+                out.appendCodePoint(segment.codePoint);
+                lastReading = false;
+            }
+        }
+        return normalizeSpaces(out.toString());
+    }
+
+    private static String stripJyutpingSegments(String text) {
+        if (isBlank(text)) return text;
+        StringBuilder out = new StringBuilder();
+        boolean lastReading = false;
+        JyutpingRomanizer.TrieWalk walk = JyutpingRomanizer.walk(text);
+        for (JyutpingRomanizer.Segment segment : walk.segments) {
+            if (segment.reading != null) {
+                if (out.length() > 0 && lastReading) out.append(' ');
+                String[] syllables = segment.reading.trim().split("\\s+");
+                for (int i = 0; i < syllables.length; i++) {
+                    if (i > 0) out.append(' ');
+                    out.append(syllables[i].replaceAll("[1-9]$", ""));
+                }
+                lastReading = true;
+            } else {
+                if (out.length() > 0 && lastReading && segment.codePoint >= 0
+                        && segment.codePoint < 128 && Character.isLetterOrDigit(segment.codePoint)) out.append(' ');
+                out.appendCodePoint(segment.codePoint);
+                lastReading = false;
+            }
+        }
+        return normalizeSpaces(out.toString());
     }
 
     private static List<Entry> buildEntries(String sourceText) {

@@ -143,7 +143,24 @@ final class SpicyLyricBridgeDocumentSerializer {
 
     static String publicationFingerprint(LyricsDocument document) {
         return Digests.sha256(LyricsDocumentProcessor.publicationFingerprint(document)
+                + '\u001f' + (document == null ? "" : document.chineseCharacterForm)
+                + '\u001f' + projectedMainText(document)
                 + '\u001f' + responseCredit(document));
+    }
+
+    private static String projectedMainText(LyricsDocument document) {
+        StringBuilder text = new StringBuilder();
+        if (document != null) for (AppliedLine row : document.appliedLines) {
+            if (row == null) continue;
+            String value = row.text == null ? "" : row.text;
+            text.append(value.length()).append(':').append(value).append(':').append(row.words.size());
+            for (SyllableSegment word : row.words) {
+                value = word == null || word.text == null ? "" : word.text;
+                text.append(':').append(value.length()).append(':').append(value);
+            }
+            text.append(';');
+        }
+        return text.toString();
     }
 
     private static String responseCredit(LyricsDocument document) {

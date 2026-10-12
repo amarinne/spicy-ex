@@ -27,6 +27,10 @@ public final class AiLayerRunner {
         public AiRunMonitor monitor;
         /** False permits exact stored reuse but forbids a new provider dispatch. */
         public boolean allowProviderRequest = true;
+        /** Only a user-requested retry may reopen terminal failures. */
+        public boolean explicitRetry;
+        public AiReplayIdentity replay;
+        public AiSourceBinding binding;
         /** False sends canonical source alone; true permits the layer's existing baseline in p. */
         public boolean useBaseline = true;
         /** Null uses {@link AiWait#DEFAULT}. Tests inject a wait that does not sleep. */
@@ -45,37 +49,89 @@ public final class AiLayerRunner {
         // 1. Ask the store first. An identical finished answer must never be bought twice, and this
         //    is the check that makes revisiting a track free.
         AiPaidRecord stored = store == null ? null : store.read(config);
-        if (stored != null && stored.isComplete()) return AiRunOutcome.reused(stored);
+        if (stored != null && !stored.hasValidStoredItemsForRows(args.rows)) {
+            return terminalProofFailure(stored);
+        }
+        if (stored != null && stored.planning != null && !stored.planning.isValid()) {
+            return terminalProofFailure(stored);
+        }
+        if (stored != null && stored.isComplete() && !stored.isCompleteForRows(args.rows)) {
+            return AiRunOutcome.failed(stored,
+                    AiChunkFailure.of(AiFailureReason.STORAGE_UNAVAILABLE), false);
+        }
+        if (stored != null && stored.isComplete()) {
+            if (args.replay != null) store.bind(stored, args.binding, args.replay);
+            return AiRunOutcome.reused(stored);
+        }
 
-        // On-demand mode still checks the paid store so revisiting an accepted answer is free, but
-        // it must not turn ordinary background processing into a billable request. Only an
-        // explicit action or automatic mode may cross this boundary.
-        if (!args.allowProviderRequest) return AiRunOutcome.nothingToDo();
+        if (args.replay != null && store != null) {
+            AiPaidRecord compatible = store.readReplay(config, args.replay);
+            if (config.matchesConfiguration(compatible)) {
+                AiPaidRecord projected = args.replay.project(compatible);
+                if (projected != null && projected.hasCompleteItemsForRows(args.rows)) {
+                    store.bind(compatible, args.binding, args.replay);
+                    return AiRunOutcome.reused(projected);
+                }
+            }
+        }
 
         // 2. Plan before spending. Both refusals below happen with no call made.
         AiChunkPlan plan;
+        AiChunkPlanner.Input input = plannerInput(args);
+        boolean emptyUnspent = stored != null && stored.isEmptyUnspent();
+        AiPlanningSnapshot planning = stored != null && !emptyUnspent && stored.planning != null
+                ? stored.planning : AiPlanningSnapshot.capture(input.model);
+        if (!planning.isValid()) return terminalProofFailure(stored);
+        input.model = planning.model();
         try {
-            plan = AiChunkPlanner.plan(plannerInput(args));
+            plan = AiChunkPlanner.plan(input);
+            if (stored != null && !stored.hasValidRetainedPlan(plan, input)) {
+                AiChunkPlan recorded = stored.planning == null
+                        ? AiChunkPlanner.recordedRoots(input, plan, stored) : null;
+                if (recorded == null || !stored.hasValidRetainedPlan(recorded, input)) {
+                    return terminalProofFailure(stored);
+                }
+                plan = recorded;
+            }
+            if (!dispatchesFit(args, input, plan.chunks, stored)) {
+                return AiRunOutcome.failed(stored, AiChunkFailure.of(AiFailureReason.OVERSIZED), true);
+            }
         } catch (AiOversizedException oversized) {
             return AiRunOutcome.failed(null, AiChunkFailure.of(AiFailureReason.OVERSIZED), true);
         }
         if (plan.isEmpty()) return AiRunOutcome.nothingToDo();
+        if (stored != null && stored.hasTerminalFallback(plan)) return AiRunOutcome.reused(stored);
+        if (stored != null && stored.hasTerminalRoots(plan) && !stored.hasTerminalOutput(plan)) {
+            return terminalProofFailure(stored);
+        }
+        // Read-only terminal fallback replay precedes the dispatch gate and never rewrites usage.
+        if (!args.allowProviderRequest) return AiRunOutcome.nothingToDo();
+        if (stored != null && !args.explicitRetry) {
+            for (AiChunkRecord chunk : stored.chunks().values()) {
+                if (chunk.status == AiChunkRecord.Status.FAILED) {
+                    return AiRunOutcome.failed(stored, chunk.failure, true);
+                }
+            }
+        }
 
         AiPaidRecord record = stored != null ? stored : AiPaidRecord.begin(config, args.nowMs);
+        if (stored == null || emptyUnspent) record.planning = planning;
+        record.replay = args.replay;
         // A record that failed before is resumable: its completed chunks stand, and only the failed
         // ones are reopened. An explicit retry is the only thing that reaches this line.
-        record.reopenFailedChunks();
+        if (args.explicitRetry) record.reopenFailedChunks();
 
         try {
             boolean durable = store == null || stored != null;
             boolean anyChunkFellBack = false;
             for (AiPlannedChunk chunk : plan.chunks) {
-                ChunkRunResult result = runChunk(args, plannerInput(args), store, config, record,
+                ChunkRunResult result = runChunk(args, input, store, config, record,
                         chunk, durable);
                 durable = result.durable;
                 anyChunkFellBack |= result.fellBack;
                 if (result.cancelReason != null) {
-                    return stop(store, config, record, args, durable, result.cancelReason);
+                    return stop(store, config, record, args, durable, result.cancelReason,
+                            stored == null || emptyUnspent);
                 }
                 if (result.failure != null) {
                     if (isStorageFailure(result.failure)) {
@@ -95,7 +151,16 @@ public final class AiLayerRunner {
             // never be reused as if it were a full one.
             record.status = record.satisfies(plan) ? AiPaidRecord.Status.COMPLETE
                     : anyChunkFellBack ? AiPaidRecord.Status.PARTIAL : record.status;
+            if (!record.hasTerminalOutput(plan)) return terminalProofFailure(record);
+            if (record.isComplete() && !record.isCompleteForRows(args.rows)) {
+                record.status = AiPaidRecord.Status.PARTIAL;
+                return AiRunOutcome.failed(record,
+                        AiChunkFailure.of(AiFailureReason.STORAGE_UNAVAILABLE), durable);
+            }
             if (!commit(store, config, record)) return storageCommitFailure(record);
+            if (record.isComplete() && store != null && args.replay != null) {
+                store.bind(record, args.binding, args.replay);
+            }
             return AiRunOutcome.completed(record, durable);
         } finally {
             if (store != null) store.release(config);
@@ -133,6 +198,11 @@ public final class AiLayerRunner {
                                            boolean durable) {
         AiChunkRecord previous = record.chunk(chunk.id);
         if (previous != null && previous.isTerminal()) {
+            if (!record.hasProvenTerminalChunk(chunk)) {
+                return new ChunkRunResult(durable, false,
+                        new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
+                                "invalid_terminal_proof"), null);
+            }
             return ChunkRunResult.done(durable,
                     previous.status == AiChunkRecord.Status.COMPLETED_FALLBACK);
         }
@@ -141,6 +211,10 @@ public final class AiLayerRunner {
         }
 
         if (previous == null || previous.status != AiChunkRecord.Status.REPLANNED) {
+            if (!dispatchFits(args, chunk)) {
+                return new ChunkRunResult(durable, false,
+                        AiChunkFailure.of(AiFailureReason.OVERSIZED), null);
+            }
             AiRecordStore.Reservation reservation = reserve(store, config, record);
             if (!reservation.accepted()) {
                 return new ChunkRunResult(durable, false, storageFailure(reservation), null);
@@ -154,6 +228,10 @@ public final class AiLayerRunner {
 
             record.account(previous, execution.record);
             record.lastAccessedAtMs = args.nowMs;
+            if (execution.cancelReason != null) {
+                record.putChunk(chunk.id, execution.record);
+                return new ChunkRunResult(durable, false, null, execution.cancelReason);
+            }
             if (!execution.ok && execution.failure.reason == AiFailureReason.TRUNCATED
                     && chunk.items.size() > 1) {
                 execution.record.status = AiChunkRecord.Status.REPLANNED;
@@ -203,6 +281,11 @@ public final class AiLayerRunner {
         completedParent.status = fellBack ? AiChunkRecord.Status.COMPLETED_FALLBACK
                 : AiChunkRecord.Status.COMPLETE;
         completedParent.failure = null;
+        completedParent.fallbackRowIds.clear();
+        for (AiPlannedChunk child : children) {
+            AiChunkRecord childRecord = record.chunk(child.id);
+            if (childRecord != null) completedParent.fallbackRowIds.addAll(childRecord.fallbackRowIds);
+        }
         record.putChunk(chunk.id, completedParent);
         record.status = AiPaidRecord.Status.PARTIAL;
         if (!commit(store, config, record)) {
@@ -213,11 +296,12 @@ public final class AiLayerRunner {
     }
 
     private static AiRunOutcome stop(AiRecordStore store, AiRunConfig config, AiPaidRecord record,
-                                     Args args, boolean durable, String reason) {
+                                     Args args, boolean durable, String reason, boolean unusedPlanning) {
         // Partial, never failed: the run was stopped from outside, and the chunks it did finish
         // are valid answers that a resume must be allowed to keep.
         record.status = AiPaidRecord.Status.PARTIAL;
         record.lastAccessedAtMs = args.nowMs;
+        if (unusedPlanning && record.isEmptyUnspent()) record.planning = null;
         boolean stored = commit(store, config, record);
         return AiRunOutcome.cancelled(record, stored, reason);
     }
@@ -245,6 +329,31 @@ public final class AiLayerRunner {
     private static AiRunOutcome storageCommitFailure(AiPaidRecord record) {
         return AiRunOutcome.failed(record,
                 AiChunkFailure.of(AiFailureReason.STORAGE_UNAVAILABLE), false);
+    }
+
+    private static AiRunOutcome terminalProofFailure(AiPaidRecord record) {
+        return AiRunOutcome.failed(record,
+                new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0, "invalid_terminal_proof"), true);
+    }
+
+    private static boolean dispatchesFit(Args args, AiChunkPlanner.Input input,
+                                         List<AiPlannedChunk> planned, AiPaidRecord record) {
+        for (AiPlannedChunk chunk : planned) {
+            AiChunkRecord held = record == null ? null : record.chunk(chunk.id);
+            if (held != null && held.isTerminal()) continue;
+            if (held != null && held.status == AiChunkRecord.Status.REPLANNED) {
+                if (!dispatchesFit(args, input, AiChunkPlanner.replan(input, chunk), record)) return false;
+            } else if (!dispatchFits(args, chunk)) return false;
+        }
+        return true;
+    }
+
+    /** Stored planning limits never waive the current provider's independent admission bounds. */
+    private static boolean dispatchFits(Args args, AiPlannedChunk chunk) {
+        AiModelLimits model = args.config.provider.model;
+        return (model == null || chunk.estimatedInputTokens <= model.inputTokenLimit)
+                && AiChunkPlanner.estimatedOutputTokens(chunk.sourceUtf8Bytes, chunk.items.size(), model)
+                <= args.config.provider.callOutputTokens();
     }
 
     private static AiChunkPlanner.Input plannerInput(Args args) {

@@ -1,0 +1,108 @@
+{
+  "revision": "37454a682fe76c9a91dfba56937a3a79320990c2",
+  "fixtures": [
+    {
+      "segments": 1,
+      "version": 7,
+      "chunks": [
+        {
+          "id": "C0",
+          "itemCount": 64,
+          "requestDigest": "ef42229ce5366d9e30b1bb44fb4e19a50969bf3756aa8c1cdd1496c249bf0442"
+        },
+        {
+          "id": "C1",
+          "itemCount": 64,
+          "requestDigest": "cce5525d787a0ca25de4c14b64fc887a5f0505b787dc125b05c24b846544bf84"
+        },
+        {
+          "id": "C2",
+          "itemCount": 1,
+          "requestDigest": "42ee08291c29b6794322d73b82ebac77da6727470b372084a2416969d1feb3b2"
+        }
+      ]
+    },
+    {
+      "segments": 2,
+      "version": 7,
+      "chunks": [
+        {
+          "id": "C0",
+          "itemCount": 64,
+          "requestDigest": "1b4ed08445a268897e3c46e00ef6dd650fbda5f4edb244e4c9766cbb527259aa"
+        },
+        {
+          "id": "C1",
+          "itemCount": 64,
+          "requestDigest": "af78248a8f2732bdf33e33774c6f869e6761dea998e139190e7574fe38ac9c86"
+        },
+        {
+          "id": "C2",
+          "itemCount": 64,
+          "requestDigest": "35b7352306a5197baf31480d819d8984c78969ac532d146bc96574e2d1012f98"
+        },
+        {
+          "id": "C3",
+          "itemCount": 64,
+          "requestDigest": "2658198fc24201888c5ebc827916c2316078d6812ad5419924aad206fa42cadb"
+        },
+        {
+          "id": "C4",
+          "itemCount": 2,
+          "requestDigest": "3fe2cc084d48db2b0a5cad3c449ffab34f856d0afc9effdeb58625c0f7f5053a"
+        }
+      ]
+    },
+    {
+      "segments": 4,
+      "version": 7,
+      "chunks": [
+        {
+          "id": "C0",
+          "itemCount": 64,
+          "requestDigest": "1f35a1c3d0fb3f8a2158d98325e236db842d384fad26528e36a7b95a6ad7be0a"
+        },
+        {
+          "id": "C1",
+          "itemCount": 64,
+          "requestDigest": "67591f26359b6cc19c990c14ed923d9e14d5ce29a5e55beb272fb118406379da"
+        },
+        {
+          "id": "C2",
+          "itemCount": 64,
+          "requestDigest": "0ffff887cc3113b49d9352d5bb1a7b16e2b1bc87f3d963c62d3f8cb622e684e9"
+        },
+        {
+          "id": "C3",
+          "itemCount": 64,
+          "requestDigest": "74404c9f90e99c8f4d41500da630a67e1301787609f979958ff9ee834aee1bb3"
+        },
+        {
+          "id": "C4",
+          "itemCount": 64,
+          "requestDigest": "b9f738ecc6f0ee42eb818476c935172a66fb54b6df6a95b3f239de344cb7dd7d"
+        },
+        {
+          "id": "C5",
+          "itemCount": 64,
+          "requestDigest": "d3e50daf48737f31e5c6b6c1369e94215b8252de864909762aa63cbe67527201"
+        },
+        {
+          "id": "C6",
+          "itemCount": 64,
+          "requestDigest": "cfc35a0469ae6b3031683b2e1238198bd4d0490916e9b200be674943913ea5f3"
+        },
+        {
+          "id": "C7",
+          "itemCount": 64,
+          "requestDigest": "2a0990d7210c656bef64ac8db17d422d1e6e81daec612648e81f31a62288b5eb"
+        },
+        {
+          "id": "C8",
+          "itemCount": 4,
+          "requestDigest": "f419ee00bcf28fac21182d4877385a9c2337827e5a0611ec3ef87390b9874429"
+        }
+      ]
+    }
+  ]
+}

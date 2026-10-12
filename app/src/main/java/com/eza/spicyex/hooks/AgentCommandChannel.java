@@ -317,6 +317,36 @@ final class AgentCommandChannel {
                 case "layer":
                     layer(argument, correlation);
                     return;
+                case "paid":
+                    if ("entries".equals(argument)) {
+                        onMain(verb, correlation, () -> host.paidLyricsEntries((ok, detail) ->
+                                reply(ok ? "ok" : "error", verb, detail, correlation)));
+                        return;
+                    }
+                    if (argument.startsWith("forget ")) {
+                        String[] forgetArgs = argument.split("\\s+");
+                        if (forgetArgs.length != 3 || !"confirm".equals(forgetArgs[2])
+                                || !com.eza.spicyex.lyrics.session.AIPaidArtifactCache.isEntryKey(forgetArgs[1])) {
+                            reply("error", verb, "expected forget ENTRY_KEY confirm", correlation);
+                            return;
+                        }
+                        onMain(verb, correlation, () -> host.forgetPaidLyricsEntry(forgetArgs[1], (ok, detail) ->
+                                reply(ok ? "ok" : "error", verb, detail, correlation)));
+                        return;
+                    }
+                    if (argument.startsWith("replay ") && argument.split("\\s+").length == 2) {
+                        String candidateId = argument.substring(7).trim();
+                        onMain(verb, correlation, () -> host.replaySavedMeaning(candidateId, (ok, detail) ->
+                                reply(ok ? "ok" : "error", verb, detail, correlation)));
+                        return;
+                    }
+                    if (!"status".equals(argument)) {
+                        reply("error", verb, "expected status, entries, replay CANDIDATE_ID, or forget ENTRY_KEY confirm", correlation);
+                        return;
+                    }
+                    onMain(verb, correlation, () -> host.paidLyricsStatus((ok, detail) ->
+                            reply(ok ? "ok" : "error", verb, detail, correlation)));
+                    return;
                 case "clear-cache":
                     String[] clearArgs = argument.split("\\s+");
                     if (clearArgs.length != 2 || !"confirm".equals(clearArgs[1])) {
@@ -541,7 +571,7 @@ final class AgentCommandChannel {
     private void layer(String argument, String correlation) {
         String[] args = argument.split("\\s+");
         if (args.length != 2) {
-            reply("error", "layer", "expected refresh|restore|ai SOUND|MEANING", correlation);
+            reply("error", "layer", "expected refresh|restore|ai|replay SOUND|MEANING", correlation);
             return;
         }
         LayerKind layer = LayerKind.valueOf(args[1].toUpperCase(Locale.ROOT));
@@ -549,6 +579,10 @@ final class AgentCommandChannel {
             switch (args[0]) {
                 case "refresh": host.refreshLyricsLayer(layer); break;
                 case "restore": host.restoreLyricsLayer(layer); break;
+                case "replay":
+                    host.replayPaidLyricsLayer(layer, (ok, detail) ->
+                            reply(ok ? "ok" : "error", "layer", detail, correlation));
+                    return;
                 case "ai":
                     com.eza.spicyex.lyrics.ai.AiRequestStartResult result = host.requestAiLyricsLayer(layer);
                     reply(result.started() ? "ok" : "error", "layer", result.token, correlation);
@@ -654,8 +688,7 @@ final class AgentCommandChannel {
                 enabled.put(source,
                         LyricsSourcePreferences.sourceEnabled(activity, source));
             }
-            String before = "mode=" + mode.id + " order=" + order + " enabled=" + enabled
-                    + " sync_upgrade=" + com.eza.spicyex.SpotifyPlusConfig.from(activity).get(Settings.SYNC_UPGRADE);
+            String before = "mode=" + mode.id + " order=" + order + " enabled=" + enabled;
             String[] args = argument.split("\\s+");
             if ("status".equals(argument)) {
                 reply("ok", "sources", before, correlation);
@@ -755,6 +788,7 @@ final class AgentCommandChannel {
                     case "back":
                     case "demo":
                     case "tab":
+                    case "options":
                     case "reveal":
                     case "reset": {
                         boolean reset = "reset".equals(action);
@@ -773,7 +807,7 @@ final class AgentCommandChannel {
                         return;
                     }
                     default:
-                        reply("error", "editor", "expected open, close, select, back, demo, tab, reveal, or reset", correlation);
+                        reply("error", "editor", "expected open, close, select, back, demo, tab, options, reveal, or reset", correlation);
                 }
             } catch (Throwable t) {
                 reply("error", "editor", "threw " + t, correlation);

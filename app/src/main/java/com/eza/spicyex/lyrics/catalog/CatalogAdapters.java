@@ -88,6 +88,8 @@ public final class CatalogAdapters {
                                                   String providerItemId, String rawPayload,
                                                   int adapterRevision, long fetchedAtMs) {
         if (source == null || doc == null || doc.lines.isEmpty()) return null;
+        if (source == SourceId.SPOTIFY_NATIVE
+                && com.eza.spicyex.lyrics.providers.NativeLyricsContent.isLayoutDocument(doc)) return null;
         String bareId = CatalogSource.bareTrackId(track == null ? "" : track.uri);
         if (bareId.isEmpty()) return null;
         CanonicalBase base;

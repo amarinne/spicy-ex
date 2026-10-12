@@ -52,13 +52,16 @@ public final class CatalogCandidate {
     public boolean hasValidProviderTiming() {
         if (sourceId == SourceId.SPICY_ORG) return !com.eza.spicyex.lyrics.providers.SpicyOrgPolicy
                 .expiredAt(fetchedAtMs, System.currentTimeMillis());
-        if (sourceId != SourceId.QQ && sourceId != SourceId.NETEASE) return true;
+        if (sourceId != SourceId.QQ && sourceId != SourceId.NETEASE
+                && sourceId != SourceId.SPOTIFY_NATIVE) return true;
         if (normalizedDocument.isEmpty()) return true;
         Boolean valid = providerTimingValid;
         if (valid == null) {
             CanonicalSourceCodec.Record record = CanonicalSourceCodec.decode(normalizedDocument);
-            valid = record != null && (ProviderTimingPolicy.appliesTo(record.document)
-                    || ProviderTimingPolicy.normalizeAndValidate(record.document));
+            valid = record != null && (sourceId == SourceId.SPOTIFY_NATIVE
+                    ? !com.eza.spicyex.lyrics.providers.NativeLyricsContent.isLayoutDocument(record.document)
+                    : (ProviderTimingPolicy.appliesTo(record.document)
+                    || ProviderTimingPolicy.normalizeAndValidate(record.document)));
             providerTimingValid = valid;
         }
         return valid;
@@ -113,6 +116,15 @@ public final class CatalogCandidate {
 
     public List<String> providerTransliterationLines() {
         return CatalogCodec.decodeProviderTransliteration(providerTransliteration);
+    }
+
+    public String upstreamSource() {
+        String org = "";
+        try {
+            org = com.eza.spicyex.lyrics.Json.optString(
+                    com.google.gson.JsonParser.parseString(normalizedDocument).getAsJsonObject(), "spicyOrgSource");
+        } catch (RuntimeException ignored) { }
+        return CatalogSource.upstream(sourceId, org);
     }
 
     @Override public boolean equals(Object other) {

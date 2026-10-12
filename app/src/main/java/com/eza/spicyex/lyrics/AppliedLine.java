@@ -31,6 +31,8 @@ public class AppliedLine {
     public AppliedLine gradientSource;
     public int gradientStartCp;
     public int gradientEndCp;
+    /** Smooths the sentence wave between authored word anchors without changing their timestamps. */
+    public boolean smoothSentenceGradient;
     public long startMs;
     public long endMs;
     public long totalMs;

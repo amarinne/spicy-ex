@@ -23,6 +23,7 @@ public final class CanonicalBase {
     public final String language;
     public final String provider;
     public final String fetchSource;
+    public final String upstreamSource;
     public final String timingType;
     public final long durationMs;
     public final List<CanonicalRow> rows;
@@ -33,11 +34,18 @@ public final class CanonicalBase {
 
     public CanonicalBase(String trackUri, String trackId, String language, String provider,
                          String fetchSource, String timingType, long durationMs, List<CanonicalRow> rows) {
+        this(trackUri, trackId, language, provider, fetchSource, timingType, durationMs, rows, "unknown");
+    }
+
+    private CanonicalBase(String trackUri, String trackId, String language, String provider,
+                         String fetchSource, String timingType, long durationMs, List<CanonicalRow> rows,
+                         String upstreamSource) {
         this.trackUri = Digests.nz(trackUri);
         this.trackId = Digests.nz(trackId);
         this.language = Digests.nz(language);
         this.provider = Digests.nz(provider);
         this.fetchSource = Digests.nz(fetchSource);
+        this.upstreamSource = upstreamSource;
         this.timingType = Digests.nz(timingType);
         this.durationMs = durationMs;
         this.rows = Collections.unmodifiableList(
@@ -77,7 +85,8 @@ public final class CanonicalBase {
             rows.add(new CanonicalRow(i, line.text, line.startMs, line.endMs, line.interlude, spans));
         }
         return new CanonicalBase(trackUri, document.trackId, document.language, document.provider,
-                document.fetchSource, document.type, document.durationMs, rows);
+                document.fetchSource, document.type, document.durationMs, rows,
+                com.eza.spicyex.lyrics.catalog.CatalogSource.upstream(document));
     }
 
     public boolean isEmpty() {
@@ -128,7 +137,9 @@ public final class CanonicalBase {
         payload.append(trackId).append(Digests.SEP).append(language).append(Digests.SEP)
                 .append(timingType).append(Digests.SEP).append(durationMs);
         // Spicy source text cannot borrow an indefinitely retained copy from another provider.
-        if (fetchSource.startsWith("spicy_org")) payload.append(Digests.SEP).append("spicy_org");
+        if (fetchSource.startsWith("spicy_org")) {
+            payload.append(Digests.SEP).append("spicy_org").append(Digests.SEP).append(upstreamSource);
+        }
         for (CanonicalRow row : rows) payload.append(Digests.SEP).append(row.digestPayload());
         return Digests.sha256(payload.toString());
     }

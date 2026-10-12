@@ -14,6 +14,7 @@ import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsDocument;
+import com.eza.spicyex.lyrics.language.ChineseCharacterForm;
 
 import java.util.UUID;
 
@@ -27,6 +28,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
     private final SpicyLyricBridgePublisher publisher;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final SharedPreferences preferences;
+    private final SpotifyPlusConfig config;
     private final String producerId = UUID.randomUUID().toString();
 
     private LyricsSessionManager.Snapshot lastSnapshot;
@@ -45,6 +47,10 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
 
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
             (sharedPreferences, key) -> {
+                if (Settings.CHINESE_CHARACTER_FORM.key.equals(key)) {
+                    handler.post(this::refreshCharacterForm);
+                    return;
+                }
                 if (!Settings.HYPERGLOW_ENABLED.key.equals(key)) return;
                 handler.post(() -> setEnabled(sharedPreferences.getBoolean(
                         Settings.HYPERGLOW_ENABLED.key,
@@ -54,7 +60,31 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
     SpicyLyricBridgeCoordinator(LyricsSessionManager sessionManager, Context context) {
         this.sessionManager = sessionManager;
         publisher = new SpicyLyricBridgePublisher(context);
+        config = SpotifyPlusConfig.from(context);
         preferences = context.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    private ChineseCharacterForm characterForm() {
+        return ChineseCharacterForm.fromSetting(config.get(Settings.CHINESE_CHARACTER_FORM));
+    }
+
+    private void refreshCharacterForm() {
+        if (!enabled || document == null || lastSnapshot == null) return;
+        ChineseCharacterForm form = characterForm();
+        if (document.chineseCharacterForm == form) return;
+        document.chineseCharacterForm = form;
+        publishDocument(lastSnapshot, document);
+        lastLineIndex = Integer.MIN_VALUE;
+        lastPublishAtMs = 0L;
+        publishCurrent(lastSnapshot);
+    }
+
+    static LyricsDocument projectDocument(LyricsDocument source, ChineseCharacterForm form) {
+        LyricsDocument copy = LyricsDocument.copyOf(source);
+        if (copy == null) return null;
+        copy.chineseCharacterForm = form;
+        LyricTimeline.applySyncedRows(copy);
+        return copy;
     }
 
     void start() {
@@ -116,8 +146,8 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
             publisher.clear(producerId, snapshot.generation);
             return;
         }
-        document = nextDocument;
-        publishDocument(snapshot, nextDocument);
+        document = projectDocument(nextDocument, characterForm());
+        publishDocument(snapshot, document);
         lastLineIndex = Integer.MIN_VALUE;
         lastPublishAtMs = 0L;
         publishCurrent(snapshot);
@@ -177,7 +207,9 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                             lastSnapshot == null ? null : lastSnapshot.generation,
                             generation,
                             revision,
-                            documentRevision)) {
+                            documentRevision,
+                            workerSnapshot.chineseCharacterForm,
+                            characterForm())) {
                         XpLog.log("[SpotifyPlusBridge] document publication superseded"
                                 + " generation=" + generation + " revision=" + revision
                                 + " current=" + documentRevision);
@@ -205,6 +237,19 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
      * <p>The revision rejects work overtaken by a newer encode request. Only successful handoff
      * commits the fingerprint, so copy/encode failures and superseded work remain retryable.
      */
+    static boolean shouldPublishSerializedDocument(
+            boolean enabled,
+            Integer sessionGeneration,
+            int documentGeneration,
+            long revision,
+            long currentRevision,
+            ChineseCharacterForm preparedForm,
+            ChineseCharacterForm currentForm
+    ) {
+        return preparedForm == currentForm && shouldPublishSerializedDocument(
+                enabled, sessionGeneration, documentGeneration, revision, currentRevision);
+    }
+
     static boolean shouldPublishSerializedDocument(
             boolean enabled,
             Integer sessionGeneration,

@@ -113,7 +113,7 @@
     <string name="settings_label_lyrics_track_info_text_overflow">Track info overflow</string>
     <string name="settings_option_scroll">Scroll</string>
     <string name="settings_label_lyrics_track_info_art_size">Track info art size</string>
-    <string name="settings_label_lyrics_adaptive_landscape_layout">Adaptive landscape layout</string>
+    <string name="settings_label_lyrics_adaptive_landscape_layout">Two-column on wide screens</string>
     <string name="settings_label_lyrics_panel_media_controls">Panel media controls</string>
     <string name="settings_label_lyric_animation_style">Animation style</string>
     <string name="settings_label_lyrics_transition_feel">Transition feel</string>
@@ -146,6 +146,9 @@
     <string name="settings_label_lyric_aligned_per_word_romaji">Attach transliteration under each word</string>
     <string name="settings_label_lyrics_japanese_reading_mode">Japanese reading</string>
     <string name="settings_label_lyrics_chinese_mode">Chinese reading</string>
+    <string name="settings_label_lyrics_chinese_character_form">Convert Chinese characters</string>
+    <string name="settings_option_lyrics_chinese_character_form_simplified">Simplified (汉语)</string>
+    <string name="settings_option_lyrics_chinese_character_form_traditional">Traditional (漢語)</string>
     <string name="settings_label_lyrics_korean_romanization">Korean reading</string>
     <string name="settings_label_lyrics_chinese_tones">Show Chinese tones</string>
     <string name="settings_label_lyrics_cyrillic_mode">Cyrillic reading</string>
@@ -156,6 +159,9 @@
 
     <!-- Selector values. Stored values remain locale-independent. -->
     <string name="settings_option_off">Off</string>
+    <string name="settings_option_original">Original</string>
+    <string name="settings_option_simplified">Simplified</string>
+    <string name="settings_option_traditional">Traditional</string>
     <string name="settings_option_portrait">Portrait</string>
     <string name="settings_option_landscape">Landscape</string>
     <string name="settings_option_slight">Slight</string>
@@ -214,10 +220,12 @@
     <string name="settings_option_cycle">Cycle on tap</string>
     <string name="settings_option_pinyin">Pinyin</string>
     <string name="settings_option_jyutping">Jyutping</string>
+    <string name="settings_option_pinyin_eza">Mandarin eza式</string>
+    <string name="settings_option_jyutping_eza">Cantonese eza式</string>
     <string name="settings_option_rrstandard">Standard Korean RR</string>
     <string name="settings_option_wordtranslit">Word-by-word transliteration</string>
     <string name="settings_option_rrpronunciation">Follow pronunciation (RR)</string>
-    <string name="settings_option_vnpronunciation">Follow pronunciation (VN)</string>
+    <string name="settings_option_vnpronunciation">Follow pronunciation (eza式)</string>
     <string name="settings_option_russian">Russian</string>
     <string name="settings_option_ukrainian">Ukrainian</string>
     <string name="settings_option_disabled">Disabled</string>
@@ -515,7 +523,10 @@
     <string name="settings_layout_editor_reset_confirm_title">Reset layout?</string>
     <string name="settings_layout_editor_reset_confirm_message">Reset the layout editor changes to their defaults?</string>
     <string name="settings_layout_editor_done">Done</string>
-    <string name="settings_layout_editor_close">Close</string>
+    <string name="settings_layout_editor_layout">Layout</string>
+    <string name="settings_layout_editor_hide_options">Hide options</string>
+    <string name="settings_layout_editor_show_options">Show options</string>
+    <string name="settings_layout_editor_show_artwork_info">Show artwork &amp; song info</string>
     <string name="settings_layout_editor_options_button">Options</string>
     <string name="settings_layout_editor_element_artwork">Artwork</string>
     <string name="settings_layout_editor_element_track_text">Track text</string>
@@ -590,9 +601,7 @@
     <string name="settings_spicy_key_catalog">Get your personal key</string>
     <string name="settings_spicy_key_help">Add Spicy EX from the catalog. Paste your personal client key. Save the key. Enable SpicyLyrics.org in Lyrics source.</string>
     <string name="settings_spicy_key_rejected">The key is not saved. Use a client key that starts with sl_pk_.</string>
-    <string name="settings_label_lyrics_sync_upgrade">Upgrade lyric sync</string>
     <string name="settings_source_enabled_title">Enabled sources</string>
-    <string name="settings_sync_upgrade_summary">This option uses timing from enabled QQ Music or NetEase sources when the lyrics match. The lyric text does not change.</string>
     <string name="source_picker_spicy_key_required">Add your personal client key in Settings</string>
     <string name="settings_label_lyrics_pip_album_art">Show album art</string>
     <string name="settings_search_lyrics_pip_album_art">pip album art, cover, artwork, thumbnail</string>

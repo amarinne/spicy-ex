@@ -54,6 +54,7 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
     private String contentKey = "";
     private List<int[]> pages = new ArrayList<>();
     private int page = -1, fontSp;
+    private float secondaryTextSp = 24f;
     private boolean active, scheduled, stress, planned, showSecondary = true;
     private boolean interlude;
     private AppliedLine dotTiming;
@@ -165,8 +166,8 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
                 || getHeight() <= getPaddingTop() + getPaddingBottom()) return;
         int width = getWidth() - getPaddingLeft() - getPaddingRight();
         int height = getHeight() - getPaddingTop() - getPaddingBottom();
-        int minimum = creditOutro ? 12 : "player".equals(getTag()) ? 40 : AutoSurfaceFit.MIN_SP;
-        int maximum = creditOutro ? 16 : "weather".equals(getTag()) ? 28
+        int minimum = creditOutro ? 20 : "player".equals(getTag()) ? 40 : AutoSurfaceFit.MIN_SP;
+        int maximum = creditOutro ? 24 : "weather".equals(getTag()) ? 28
                 : AutoSurfaceFit.comfortableMaximum(width, getResources().getDisplayMetrics().scaledDensity);
         if (!planned) pages = creditOutro
                 ? fits(source, minimum, width, height)
@@ -197,6 +198,12 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
             if (mounted != null) LyricsLineViewState.clear(mounted, null, old -> LyricsLineViewState.invalidate(old, styles));
             mounted = slice(source, range[0], range[1]);
             View row = build(mounted, fontSp);
+            if (!creditOutro && row instanceof LinearLayout) {
+                LinearLayout lyrics = (LinearLayout) row;
+                for (int i = 1; i < lyrics.getChildCount(); i++) if (lyrics.getChildAt(i) instanceof TextView)
+                    secondaryTextSp = ((TextView) lyrics.getChildAt(i)).getTextSize()
+                            / getResources().getDisplayMetrics().scaledDensity;
+            }
             float currentAlpha = mainContent(rowHost) == null ? 1f : mainContent(rowHost).getAlpha();
             finishFade();
             outgoing = rowHost;
@@ -259,7 +266,7 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         if (creditOutro) {
             TextView credit = new TextView(getContext());
             credit.setText(creditText(sample, "\n"));
-            credit.setTextSize(size); credit.setTextColor(android.graphics.Color.WHITE);
+            credit.setTextSize(secondaryTextSp); credit.setTextColor(android.graphics.Color.WHITE);
             credit.setTypeface(nativeTypeface); credit.setGravity(Gravity.CENTER);
             return credit;
         }
@@ -308,8 +315,12 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
 
     private void applyNativeTypeface(View view, boolean lineLevel) {
         if (view instanceof TextView) ((TextView) view).setTypeface(nativeTypeface);
-        if (view instanceof com.eza.spicyex.lyrics.SpicyAnimatedTextView)
-            ((com.eza.spicyex.lyrics.SpicyAnimatedTextView) view).setSoftSweep(lineLevel);
+        if (view instanceof com.eza.spicyex.lyrics.SpicyAnimatedTextView) {
+            com.eza.spicyex.lyrics.SpicyAnimatedTextView text =
+                    (com.eza.spicyex.lyrics.SpicyAnimatedTextView) view;
+            text.setSoftSweep(lineLevel);
+            text.setSentenceGradientBase(!lineLevel);
+        }
         if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++)
             applyNativeTypeface(((ViewGroup) view).getChildAt(i), lineLevel);
     }
@@ -334,6 +345,8 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
 
     private boolean mainFits(View view, int width) {
         if (view.getMeasuredWidth() > width) return false;
+        if (view instanceof com.eza.spicyex.lyrics.GlowFlexbox
+                && ((com.eza.spicyex.lyrics.GlowFlexbox) view).sentenceVisualLineCount() > 3) return false;
         if (view instanceof TextView) {
             TextView text = (TextView) view;
             android.text.Layout layout = text.getLayout();
@@ -375,6 +388,7 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         line.romanizedText = source.romanizedText; line.translatedText = source.translatedText;
         line.syntheticWords = source.syntheticWords;
         line.gradientSource = source.gradientSource == null ? source : source.gradientSource;
+        line.smoothSentenceGradient = true;
         int origin = source.gradientSource == null ? 0 : source.gradientStartCp;
         line.gradientStartCp = origin + source.text.codePointCount(0, start);
         line.gradientEndCp = origin + source.text.codePointCount(0, end);

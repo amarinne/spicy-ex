@@ -31,6 +31,7 @@ public final class LiveLyricCardView extends LinearLayout {
 
     private final OverflowViewport stage;
     private final SpicyOrgAttributionView attribution;
+    private final ResponseCreditOutro.DocumentWindow creditWindow = new ResponseCreditOutro.DocumentWindow();
     private final FrameStyleBatcher styleBatcher;
     private final LyricsFrameRenderer frameRenderer;
     private final LyricsDocument oneRowDocument = new LyricsDocument();
@@ -86,11 +87,7 @@ public final class LiveLyricCardView extends LinearLayout {
                            LyricsDocument document,
                            LyricsRowViewFactory.RomanizedWordProvider romanizedWordProvider,
                            boolean animateMount) {
-        boolean hadRestrictedCredit = attribution.getVisibility() == VISIBLE;
-        String previousCredit = attribution.getText().toString();
-        attribution.bind(document);
-        boolean changedCredit = !previousCredit.contentEquals(attribution.getText());
-        if (changedCredit && (hadRestrictedCredit || attribution.getVisibility() == VISIBLE)) animateMount = false;
+        attribution.bind(null);
         if (activity == null || line == null || config == null) {
             clear();
             return;
@@ -127,6 +124,7 @@ public final class LiveLyricCardView extends LinearLayout {
     }
 
     public void setInterlude(boolean note) {
+        attribution.bind(null);
         LyricsRenderConfig config = LyricsRenderConfig.read(getContext(), null).forLiveCard();
         mountedOverflowMode = config.liveCardOverflowMode;
         LinearLayout nextHost = replaceRowHost(true, config.liveCardTransitionMode);
@@ -149,7 +147,6 @@ public final class LiveLyricCardView extends LinearLayout {
 
     public void clearAnimated() {
         if (attribution.getVisibility() == VISIBLE) {
-            // Restricted lyrics leave together with their credit, including an outgoing fade.
             clear();
             return;
         }
@@ -187,6 +184,18 @@ public final class LiveLyricCardView extends LinearLayout {
         mountedConfigKey = "";
         oneRowDocument.appliedLines.clear();
         invalidateForFrame();
+    }
+
+    public boolean renderCreditOutro(LyricsDocument document, long positionMs) {
+        boolean show = creditWindow.update(document, positionMs,
+                attribution.getVisibility() == VISIBLE && isShown(), android.os.SystemClock.uptimeMillis());
+        if (show) {
+            if (attribution.getVisibility() != VISIBLE) clear();
+            attribution.bindOutro(document);
+        } else {
+            attribution.bind(null);
+        }
+        return show;
     }
 
     private void mountLine(Activity activity, AppliedLine sourceLine, LyricsSurfaceRowPlanner.RowPlan rowPlan,

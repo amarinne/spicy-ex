@@ -31,6 +31,10 @@ public final class LyricsLineViewState {
             state(line).mainView.setSoftSweep(true);
             state(line).mainView.setSequentialLineFill(true);
         }
+        if (state(line).romanView != null) {
+            state(line).romanView.setSoftSweep(true);
+            state(line).romanView.setSequentialLineFill(true);
+        }
         applyLineLevelGradient(line, gradient, glow, brightness);
         if (line.words != null) for (SyllableSegment word : line.words) {
             LyricsSyllableViewState.applySentenceGradient(word, gradient, glow, brightness);

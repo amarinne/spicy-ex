@@ -53,8 +53,11 @@ public final class LyricsLocalRomanizer {
                 line.japaneseReading = new SpicyJapaneseChineseProcessor.JapaneseReading("", "", new ArrayList<>());
                 line.readingRenderPlan = null;
                 line.romanizedText = "";
-                line.chineseMode = normalizeChineseMode(opts.chineseMode);
-                return SpicyJapaneseChineseProcessor.romanizeChineseLine(line.text, line.chineseMode, opts.chineseTones);
+                String selectedMode = opts.chineseMode
+                        + (opts.chineseOutputStyle == ChineseOutputStyle.EZA ? "-eza" : "");
+                line.chineseMode = normalizeChineseMode(selectedMode);
+                return SpicyJapaneseChineseProcessor.romanizeChineseLine(line.text, line.chineseMode, opts.chineseTones,
+                        opts.chineseOutputStyle);
             }
             if (doc != null && isJapaneseLine(doc, line)) {
                 line.chineseMode = "";
@@ -208,6 +211,12 @@ public final class LyricsLocalRomanizer {
     }
 
     public static String normalizeChineseMode(String mode) {
+        if (mode != null && mode.toLowerCase(java.util.Locale.ROOT).endsWith("-eza")) {
+            String base = mode.substring(0, mode.length() - 4);
+            return ("jyutping".equalsIgnoreCase(base) || "cantonese".equalsIgnoreCase(base))
+                    ? SpotifyPlusConfig.CHINESE_MODE_JYUTPING + "-eza"
+                    : SpotifyPlusConfig.CHINESE_MODE_PINYIN + "-eza";
+        }
         if ("jyutping".equalsIgnoreCase(mode) || "cantonese".equalsIgnoreCase(mode)) return SpotifyPlusConfig.CHINESE_MODE_JYUTPING;
         return SpotifyPlusConfig.CHINESE_MODE_PINYIN;
     }
@@ -226,7 +235,9 @@ public final class LyricsLocalRomanizer {
             if ("zh".equals(language) && SpicyTextDetection.hasCjkIdeograph(text)) {
                 if (opts == null || isBlank(opts.chineseMode)) return "";
                 String mode = normalizeChineseMode(isBlank(lineChineseMode) ? opts.chineseMode : lineChineseMode);
-                return SpicyJapaneseChineseProcessor.romanizeChineseLine(text, mode, opts.chineseTones);
+                return SpicyJapaneseChineseProcessor.romanizeChineseLine(text, mode, opts.chineseTones,
+                        isBlank(lineChineseMode) ? opts.chineseOutputStyle
+                                : ChineseOutputStyle.fromSetting(lineChineseMode));
             }
             if ("ja".equals(language)) {
                 SpicyJapaneseChineseProcessor.JapaneseReading local =

@@ -4,8 +4,11 @@ import com.eza.spicyex.lyrics.session.LayerKind;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * Decides what is sent, in how many calls, and in what order.
@@ -104,13 +107,18 @@ public final class AiChunkPlanner {
         List<AiPlannedChunk> chunks = new ArrayList<>();
         List<Entry> current = new ArrayList<>();
         int currentBytes = 0;
-        for (Entry entry : sent) {
-            int itemBytes = entry.item.sourceUtf8Bytes();
-            boolean fits = current.size() + 1 <= AiContract.CHUNK_MAX_ITEMS
+        for (List<Entry> row : rowsOf(sent)) {
+            int itemBytes = 0;
+            for (Entry entry : row) itemBytes += entry.item.sourceUtf8Bytes();
+            if (row.size() > AiContract.CHUNK_MAX_ITEMS
+                    || itemBytes > AiContract.CHUNK_MAX_SOURCE_BYTES) {
+                throw new AiOversizedException("row_chunk");
+            }
+            boolean fits = current.size() + row.size() <= AiContract.CHUNK_MAX_ITEMS
                     && currentBytes + itemBytes <= AiContract.CHUNK_MAX_SOURCE_BYTES;
             if (fits) {
                 List<Entry> candidate = new ArrayList<>(current);
-                candidate.add(entry);
+                candidate.addAll(row);
                 fits = probeFits(candidate, context, input, iteration);
             }
             if (!fits && !current.isEmpty()) {
@@ -118,7 +126,7 @@ public final class AiChunkPlanner {
                 current = new ArrayList<>();
                 currentBytes = 0;
             }
-            current.add(entry);
+            current.addAll(row);
             currentBytes += itemBytes;
             if (!probeFits(current, context, input, iteration)) {
                 throw new AiOversizedException("chunk");
@@ -136,7 +144,7 @@ public final class AiChunkPlanner {
      *
      * <p>The tighter output estimate is derived rather than guessed: keep the reasoning allowance
      * each new call must pay, then halve the failed chunk's remaining visible/envelope payload.
-     * Greedy enumeration under that bound preserves order and stable resume IDs. A single item is
+     * Greedy enumeration under that bound preserves order and stable resume IDs. A single row is
      * indivisible and returns no children, leaving truncation terminal.
      */
     static List<AiPlannedChunk> replan(Input input, AiPlannedChunk failed) {
@@ -149,9 +157,9 @@ public final class AiChunkPlanner {
         List<AiPlannedChunk> children = new ArrayList<>();
         List<Entry> current = new ArrayList<>();
 
-        for (Entry entry : entries) {
+        for (List<Entry> row : rowsOf(entries)) {
             List<Entry> candidate = new ArrayList<>(current);
-            candidate.add(entry);
+            candidate.addAll(row);
             AiPlannedChunk candidateChunk = createChunk("probe", failed.context, candidate, input,
                     false);
             if (!current.isEmpty()
@@ -160,13 +168,60 @@ public final class AiChunkPlanner {
                         current, input, false));
                 current = new ArrayList<>();
             }
-            current.add(entry);
+            current.addAll(row);
         }
         if (!current.isEmpty()) {
             children.add(createChunk(failed.id + "." + children.size(), failed.context,
                     current, input, false));
         }
         return children.size() < 2 ? Collections.<AiPlannedChunk>emptyList() : children;
+    }
+
+    /** Existing root evidence can recover only a fully recorded, atomic ordered partition. */
+    static AiChunkPlan recordedRoots(Input input, AiChunkPlan current, AiPaidRecord record) {
+        if (record.chunkPlanVersion != current.version || record.chunks().isEmpty()
+                || current.isEmpty()) return null;
+        List<Entry> entries = new ArrayList<>();
+        for (AiPlannedChunk chunk : current.chunks) entries.addAll(entriesOf(chunk));
+        List<AiPlannedChunk> roots = new ArrayList<>();
+        Set<String> coveredRows = new LinkedHashSet<>();
+        int offset = 0;
+        for (int i = 0; i < record.chunks().size(); i++) {
+            String id = "C" + i;
+            AiChunkRecord held = record.chunk(id);
+            if (held == null || held.ids.isEmpty()
+                    || held.status == AiChunkRecord.Status.REPLANNED) return null;
+            List<Entry> root = new ArrayList<>();
+            Set<String> rootRows = new LinkedHashSet<>();
+            int sourceBytes = 0;
+            for (String itemId : held.ids) {
+                if (offset >= entries.size() || !itemId.equals(entries.get(offset).item.id)) return null;
+                root.add(entries.get(offset++));
+                sourceBytes += root.get(root.size() - 1).item.sourceUtf8Bytes();
+                rootRows.add(AiContract.rowIdOf(itemId));
+            }
+            if (!Collections.disjoint(coveredRows, rootRows)) return null;
+            boolean single = record.chunks().size() == 1;
+            if (root.size() > (single ? AiContract.SINGLE_CALL_MAX_ITEMS : AiContract.CHUNK_MAX_ITEMS)
+                    || sourceBytes > (single ? AiContract.SINGLE_CALL_MAX_SOURCE_BYTES
+                    : AiContract.CHUNK_MAX_SOURCE_BYTES)
+                    || (single && ceilHalf(sourceBytes) + root.size() * AiContract.RESPONSE_ITEM_OVERHEAD_TOKENS
+                    > AiContract.SINGLE_CALL_MAX_OUTPUT_TOKENS)) return null;
+            coveredRows.addAll(rootRows);
+            roots.add(createChunk(id, current.chunks.get(0).context, root, input, false));
+        }
+        return offset == entries.size() ? new AiChunkPlan(current.version, roots,
+                current.enumerableRows, current.canonicalSourceUtf8Bytes) : null;
+    }
+
+    /** Segment entries travel separately, but a canonical row is one planning unit. */
+    private static List<List<Entry>> rowsOf(List<Entry> entries) {
+        Map<String, List<Entry>> rows = new LinkedHashMap<>();
+        for (Entry entry : entries) {
+            rows.computeIfAbsent(AiContract.rowIdOf(entry.item.id), key -> new ArrayList<>())
+                    .add(entry);
+        }
+        return new ArrayList<>(rows.values());
     }
 
     private static List<Entry> entriesOf(AiPlannedChunk chunk) {

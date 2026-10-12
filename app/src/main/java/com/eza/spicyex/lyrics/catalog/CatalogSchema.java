@@ -15,7 +15,7 @@ import java.util.List;
  */
 public final class CatalogSchema {
     public static final String DATABASE = "LyricsCatalog.db";
-    public static final int VERSION = 2;
+    public static final int VERSION = 3;
 
     static final String TABLE_TRACKS = "tracks";
     static final String TABLE_CANDIDATES = "candidates";
@@ -45,6 +45,7 @@ public final class CatalogSchema {
                 + "candidate_id TEXT PRIMARY KEY NOT NULL,"
                 + "track_id TEXT NOT NULL,"
                 + "source_id TEXT NOT NULL,"
+                + "upstream_source TEXT NOT NULL DEFAULT 'unknown',"
                 + "provider_item_id TEXT NOT NULL,"
                 + "match_method TEXT NOT NULL,"
                 + "match_confidence REAL NOT NULL,"
@@ -137,6 +138,7 @@ public final class CatalogSchema {
         out.add(createTracks(TABLE_TRACKS));
         out.add(createCandidates());
         out.add(createCandidatesIndex());
+        out.add("CREATE INDEX idx_candidates_upstream ON candidates (source_id, upstream_source)");
         out.add(createProviderStates());
         out.add(createSelection());
         out.add(createRejections());
@@ -175,6 +177,10 @@ public final class CatalogSchema {
             out.add(createRejections());
             out.add(createArtifacts());
             out.add(createArtifactsIndex());
+        }
+        if (oldVersion > 0 && oldVersion < 3 && newVersion >= 3) {
+            out.add("ALTER TABLE candidates ADD COLUMN upstream_source TEXT NOT NULL DEFAULT 'unknown'");
+            out.add("CREATE INDEX idx_candidates_upstream ON candidates (source_id, upstream_source)");
         }
         if (out.isEmpty()) return Collections.emptyList();
         return Collections.unmodifiableList(out);

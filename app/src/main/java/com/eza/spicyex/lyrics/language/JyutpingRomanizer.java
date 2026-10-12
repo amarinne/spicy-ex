@@ -5,6 +5,15 @@ import java.util.Map;
 
 /** Android port/adaptation of Spicy to-jyutping path. Uses packaged to-jyutping-derived char map. */
 final class JyutpingRomanizer {
+    static final class Segment {
+        final String reading;
+        final int codePoint;
+        Segment(String reading, int codePoint) { this.reading = reading; this.codePoint = codePoint; }
+    }
+    static final class TrieWalk {
+        final java.util.List<Segment> segments;
+        TrieWalk(java.util.List<Segment> segments) { this.segments = segments; }
+    }
     private static final class TrieNode {
         final Map<Integer, TrieNode> children = new HashMap<>();
         String reading;
@@ -44,6 +53,26 @@ final class JyutpingRomanizer {
             i += Character.charCount(cp);
         }
         return out.toString().replaceAll("[ \\t]+", " ").trim();
+    }
+
+    static TrieWalk walk(String text) {
+        java.util.ArrayList<Segment> segments = new java.util.ArrayList<>();
+        if (text == null) return new TrieWalk(segments);
+        TrieNode localTrie = trie();
+        Map<Integer, String> local = map();
+        for (int i = 0; i < text.length();) {
+            PhraseMatch phrase = matchPhrase(localTrie, text, i);
+            if (phrase != null) {
+                segments.add(new Segment(phrase.reading, -1));
+                i = phrase.endIndex;
+                continue;
+            }
+            int cp = text.codePointAt(i);
+            String value = local.get(cp);
+            segments.add(new Segment(value == null || value.trim().isEmpty() ? null : value, cp));
+            i += Character.charCount(cp);
+        }
+        return new TrieWalk(segments);
     }
 
     private static boolean shouldSeparateFallback(int cp) {

@@ -2,8 +2,6 @@ package com.eza.spicyex.hooks;
 
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
-import com.eza.spicyex.lyrics.SyllableSegment;
-import com.eza.spicyex.lyrics.blend.SyncUpgradeEngine;
 import com.eza.spicyex.lyrics.catalog.*;
 import com.eza.spicyex.lyrics.session.*;
 import com.eza.spicyex.testsupport.FakeAndroidContext;
@@ -80,20 +78,17 @@ public class LyricsSessionAnchorRoutingTest {
         assertEquals(LayerStatus.READY, ((LyricSession) get(manager, "session")).meaning.status);
     }
 
-    @Test public void projectionAddsTimingAfterCompositionAndExpiresWithOrgAnchor() throws Exception {
+    @Test public void compositionPreservesAuthoredTimingAndExpiresWithOrgAnchor() throws Exception {
         LyricsSessionManager manager = manager();
-        LyricsDocument anchor = anchor(), donor = donor(anchor);
-        LyricsDocument timing = SyncUpgradeEngine.upgrade(anchor.trackId, 90000, anchor, donor,
-                System.currentTimeMillis()).document;
-        assertNotNull(timing);
+        LyricsDocument anchor = anchor();
         set(manager, "document", anchor);
         set(manager, "canonicalSource", anchor);
         LyricSession session = session(anchor);
         set(manager, "session", session);
-        set(manager, "timingProjection", timing);
         LyricsDocument rendered = (LyricsDocument) call(manager, "publishedProjection", new Class<?>[]{LyricsDocument.class}, anchor);
-        assertNotNull(rendered.syncUpgradeProvenance);
-        assertFalse(rendered.lines.get(0).syllables.isEmpty());
+        assertTrue(rendered.lines.get(0).syllables.isEmpty());
+        assertEquals(anchor.lines.get(0).startMs, rendered.lines.get(0).startMs);
+        assertEquals(anchor.lines.get(0).endMs, rendered.lines.get(0).endMs);
         assertEquals("[HELLO, sunshine!]", rendered.lines.get(0).text);
         assertEquals("Authoritative reading", rendered.lines.get(0).romanizedText);
         assertEquals("Authoritative translation", rendered.lines.get(0).translatedText);
@@ -103,7 +98,7 @@ public class LyricsSessionAnchorRoutingTest {
         assertNull(call(manager, "publishedProjection", new Class<?>[]{LyricsDocument.class}, anchor));
     }
 
-    @Test public void firstWaitingRequestReceivesTheSameTimingProjectionAsSubscribers() throws Exception {
+    @Test public void firstWaitingRequestReceivesTheSelectedSourceTiming() throws Exception {
         LyricsDetectionSession.Cache cache = new LyricsDetectionSession.Cache() {
             public DetectionArtifact restore(android.content.Context c, CanonicalBase b) { return null; }
             public boolean save(android.content.Context c, CanonicalBase b, DetectionArtifact a) { return false; }
@@ -120,8 +115,6 @@ public class LyricsSessionAnchorRoutingTest {
         LyricsSessionPolicy policy = (LyricsSessionPolicy) get(manager, "policy");
         policy.adoptTrack(URI);
         LyricsDocument anchor = anchor();
-        set(manager, "timingProjection", SyncUpgradeEngine.upgrade(anchor.trackId, 90000,
-                anchor, donor(anchor), System.currentTimeMillis()).document);
         LyricsDocument[] received = new LyricsDocument[1];
         NativeSpicyLyricsHook.LyricsResultCallback callback = new NativeSpicyLyricsHook.LyricsResultCallback() {
             public void onSuccess(LyricsDocument document) { received[0] = document; }
@@ -135,8 +128,9 @@ public class LyricsSessionAnchorRoutingTest {
         call(manager, "publishSeat", new Class<?>[]{com.eza.spicyex.SpotifyTrack.class, String.class,
                 int.class, LyricsDocument.class, int.class}, null, URI, policy.generation(), anchor, 1);
         assertNotNull(received[0]);
-        assertNotNull(received[0].syncUpgradeProvenance);
-        assertFalse(received[0].lines.get(0).syllables.isEmpty());
+        assertTrue(received[0].lines.get(0).syllables.isEmpty());
+        assertEquals(anchor.lines.get(0).startMs, received[0].lines.get(0).startMs);
+        assertEquals(anchor.lines.get(0).endMs, received[0].lines.get(0).endMs);
         assertEquals("[HELLO, sunshine!]", received[0].lines.get(0).text);
         assertTrue(anchor.lines.get(0).syllables.isEmpty());
     }
@@ -171,26 +165,6 @@ public class LyricsSessionAnchorRoutingTest {
             anchor.lines.add(row);
         }
         return anchor;
-    }
-
-    private static LyricsDocument donor(LyricsDocument anchor) {
-        LyricsDocument donor = LyricsDocument.copyOf(anchor);
-        donor.fetchSource = "netease"; donor.provider = "NetEase"; donor.type = "Word";
-        donor.spicyOrgSource = ""; donor.spicyOrgFetchedAtMs = 0;
-        donor.catalogDelivery = new CatalogDelivery(CatalogSource.SourceId.NETEASE,
-                "fixture-donor", CatalogSource.MatchMethod.STRONG_SEARCH, true);
-        for (LyricsLine row : donor.lines) {
-            row.text = row.text.equals("[HELLO, sunshine!]") ? "Hello sunshine" : row.text;
-            row.startMs -= 500; row.endMs -= 500;
-            String[] words = row.text.split(" ");
-            for (int i = 0; i < words.length; i++) {
-                SyllableSegment span = new SyllableSegment();
-                span.text = words[i]; span.startMs = row.startMs + i * 500;
-                span.endMs = span.startMs + 400; span.totalMs = 400; span.boundaryAfter = true;
-                row.syllables.add(span);
-            }
-        }
-        return donor;
     }
 
     private static LyricsSessionManager manager() {

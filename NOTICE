@@ -94,3 +94,13 @@ This product includes software developed at The Apache Software Foundation
 Upstream: https://tika.apache.org/
 The dependency's META-INF/NOTICE is retained in the Full APK. The Apache License,
 Version 2.0 is available at https://www.apache.org/licenses/LICENSE-2.0.
+
+OpenCC Chinese character conversion
+----------------------------------
+This product bundles eight dictionaries from opencc-js 1.4.1 / opencc-data 1.4.1.
+Dictionary data is licensed under Apache License, Version 2.0. Spicy EX changes
+the serialization to UTF-8 tab-separated pairs. Conversion behavior is adapted
+from the opencc-js MIT implementation, Copyright (c) 2020-2021 The nk2028 Project.
+Upstream: https://github.com/nk2028/opencc-js and https://github.com/nk2028/opencc-data
+The APK includes both license texts, attribution, and SHA-256 provenance under
+opencc/. The source copies are in app/src/main/resources/opencc/.

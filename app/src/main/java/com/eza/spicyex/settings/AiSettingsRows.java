@@ -11,11 +11,11 @@ import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import com.eza.spicyex.lyrics.ai.AiCredentialStore;
-import com.eza.spicyex.lyrics.ai.AiLastProbe;
 import com.eza.spicyex.lyrics.ai.AiEndpoint;
 import com.eza.spicyex.lyrics.ai.AiGeminiProvider;
 import com.eza.spicyex.lyrics.ai.AiModelDescriptor;
 import com.eza.spicyex.lyrics.ai.AiModelLiveState;
+import com.eza.spicyex.lyrics.ai.AiModelDiscoveryState;
 import com.eza.spicyex.lyrics.ai.AiModelListResult;
 import com.eza.spicyex.lyrics.ai.AiProviderFailure;
 import com.eza.spicyex.lyrics.ai.AiModelProbe;
@@ -79,6 +79,7 @@ public final class AiSettingsRows {
     private final SettingsWriter writer;
     private final AiSettings settings;
     private final ApiKeyRowState keyRow;
+    private final AiModelDiscoveryState discovery = new AiModelDiscoveryState();
 
     AiSettingsRows(Context context, Host host, SettingsStore store) {
         this.context = context;
@@ -152,24 +153,21 @@ public final class AiSettingsRows {
 
     /** Runs one tiny liveness probe per provider/model configuration in this Spotify process. */
     void ensureInitialModelCheck() {
-        if (!AiModelLiveState.begin(settings)) return;
+        final AiModelLiveState.Attempt attempt = AiModelLiveState.begin(settings, false);
+        if (attempt == null) return;
         final Handler handler = new Handler(context.getMainLooper());
         new Thread(() -> {
             AiModelProbe.Result outcome = null;
             try {
-                outcome = AiModelProbe.probe(settings, null);
+                outcome = AiModelProbe.probe(attempt.snapshot.provider, attempt.snapshot.config, null);
             } catch (Throwable failure) {
                 XpLog.log("[SpotifyPlusAiSettings] initial model probe failed: "
                         + AiRuntimeFailureLog.describe(failure));
             }
-            if (outcome != null) {
-                AiLastProbe.record(outcome);
-                settings.recordProbeOutcome(outcome);
-            }
-            final boolean result = outcome != null && outcome.ok;
+            final AiModelProbe.Result result = outcome;
             handler.post(() -> {
-                AiModelLiveState.finish(settings, result);
-                host.updateAiBadge(result);
+                if (!AiModelLiveState.finish(settings, attempt, result)) return;
+                host.updateAiBadge(result != null && result.ok);
             });
         }, "ai-model-initial-probe").start();
     }
@@ -243,37 +241,47 @@ public final class AiSettingsRows {
             toast(host.string("settings_ai_needs_endpoint", "Set an endpoint first"));
             return;
         }
+        final AiModelDiscoveryState.Attempt attempt = discovery.begin(settings);
+        if (attempt == null) return;
         toast(host.string("settings_ai_checking", "Checking…"));
         final Handler handler = new Handler(context.getMainLooper());
-        final java.util.concurrent.atomic.AtomicBoolean finished = new java.util.concurrent.atomic.AtomicBoolean();
-        final com.eza.spicyex.lyrics.ai.AiSignal discoverySignal = new com.eza.spicyex.lyrics.ai.AiSignal();
         // Backstop only: paged discovery on a slow link (dead-route fallback plus several
         // model-list pages) legitimately exceeds 30s. The transport enforces its own ceiling;
         // this only reclaims a hung settings action so it never spins forever.
-        handler.postDelayed(() -> {
-            discoverySignal.abort("model_discovery_timeout");
-            if (finished.compareAndSet(false, true)) {
+        final Runnable timeout = () -> {
+            attempt.signal.abort("model_discovery_timeout");
+            if (discovery.finish(settings, attempt) && anchor.isAttachedToWindow()) {
                 toast(host.string("settings_ai_runtime_unavailable", "AI runtime unavailable"));
             }
-        }, 60000L);
+        };
+        handler.postDelayed(timeout, 60000L);
         new Thread(() -> {
             try {
                 XpLog.log("[SpotifyPlusAiSettings] model discovery started provider="
-                        + settings.providerChoice());
-                final AiModelListResult result = settings.provider().listModels(discoverySignal);
+                        + attempt.snapshot.providerChoice);
+                final AiModelListResult result = attempt.snapshot.provider.listModels(attempt.signal);
                 XpLog.log("[SpotifyPlusAiSettings] model discovery finished ok=" + result.ok
                         + failureToken(result));
-                if (finished.compareAndSet(false, true)) handler.post(() -> showModels(anchor, result));
+                handler.post(() -> {
+                    handler.removeCallbacks(timeout);
+                    if (discovery.finish(settings, attempt) && anchor.isAttachedToWindow()) {
+                        showModels(anchor, result, attempt);
+                    }
+                });
             } catch (Throwable failure) {
                 XpLog.log("[SpotifyPlusAiSettings] model discovery failed: "
                         + AiRuntimeFailureLog.describe(failure));
-                if (finished.compareAndSet(false, true)) handler.post(() -> toast(host.string("settings_ai_runtime_unavailable",
-                        "AI runtime unavailable")));
+                handler.post(() -> {
+                    handler.removeCallbacks(timeout);
+                    if (discovery.finish(settings, attempt) && anchor.isAttachedToWindow()) {
+                        toast(host.string("settings_ai_runtime_unavailable", "AI runtime unavailable"));
+                    }
+                });
             }
         }, "ai-model-discovery").start();
     }
 
-    private void showModels(View anchor, AiModelListResult result) {
+    private void showModels(View anchor, AiModelListResult result, AiModelDiscoveryState.Attempt attempt) {
         if (!result.ok) {
             toast(failureLabel(result));
             return;
@@ -287,13 +295,15 @@ public final class AiSettingsRows {
         java.util.List<String> names = new java.util.ArrayList<>();
         for (AiModelDescriptor model : models) names.add(model.name);
         PanelPickerPopup.show(context, anchor, names, current, name -> {
+            if (!anchor.isAttachedToWindow() || !discovery.canSelect(settings, attempt)) return;
             settings.setModelName(name);
             host.rebuild();
         });
     }
 
     private void testModel() {
-        if (!settings.canRequest()) {
+        final AiModelLiveState.Attempt attempt = AiModelLiveState.begin(settings, true);
+        if (attempt == null) {
             toast(host.string("settings_ai_not_ready", "Complete AI setup first"));
             return;
         }
@@ -301,11 +311,10 @@ public final class AiSettingsRows {
         final Handler handler = new Handler(context.getMainLooper());
         new Thread(() -> {
             try {
-                AiModelProbe.Result result = AiModelProbe.probe(settings, null);
-                AiLastProbe.record(result);
-                settings.recordProbeOutcome(result);
+                AiModelProbe.Result result = AiModelProbe.probe(
+                        attempt.snapshot.provider, attempt.snapshot.config, null);
                 handler.post(() -> {
-                    AiModelLiveState.finish(settings, result.ok);
+                    if (!AiModelLiveState.finish(settings, attempt, result)) return;
                     if (result.ok) {
                         toast(host.string("settings_ai_model_ready", "Model ready"));
                     } else {
@@ -319,7 +328,7 @@ public final class AiSettingsRows {
                 XpLog.log("[SpotifyPlusAiSettings] model probe failed: "
                         + AiRuntimeFailureLog.describe(failure));
                 handler.post(() -> {
-                    AiModelLiveState.finish(settings, false);
+                    if (!AiModelLiveState.finish(settings, attempt, null)) return;
                     toast(host.string("settings_ai_runtime_unavailable",
                             "AI runtime unavailable"));
                     host.updateAiBadge(false);

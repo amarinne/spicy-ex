@@ -12,8 +12,10 @@ import com.eza.spicyex.lyrics.session.SoundArtifact;
 import com.eza.spicyex.lyrics.session.SoundEntry;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * One AI pronunciation pass over the rows the local engines could not read.
@@ -68,6 +70,14 @@ public final class AiSoundRun {
                              LyricsDocument document, SoundArtifact existing, String orthography,
                              boolean layered, boolean allowProviderRequest, AiSignal signal,
                              AiRunMonitor monitor, RomanizationOptions opts) {
+        return run(context, settings, base, document, existing, orthography, layered,
+                allowProviderRequest, signal, monitor, opts, false);
+    }
+
+    public static Result run(Context context, AiSettings settings, CanonicalBase base,
+                             LyricsDocument document, SoundArtifact existing, String orthography,
+                             boolean layered, boolean allowProviderRequest, AiSignal signal,
+                             AiRunMonitor monitor, RomanizationOptions opts, boolean explicitRetry) {
         if (settings == null || base == null || base.rows.isEmpty()) {
             return new Result(null, AiRunOutcome.nothingToDo());
         }
@@ -119,6 +129,9 @@ public final class AiSoundRun {
         // The runner still reads the paid store first. A missing/deleted credential therefore
         // keeps exact reuse available, but can never fall through into a live request.
         args.allowProviderRequest = allowProviderRequest && settings.canRequest();
+        args.explicitRetry = explicitRetry;
+        args.replay = AiReplayIdentity.of(rows, layered);
+        args.binding = new AiSourceBinding(base, document);
 
         AiRunOutcome outcome = AiLayerRunner.run(args);
         if (!outcome.hasOutput()) return new Result(null, outcome);
@@ -133,17 +146,46 @@ public final class AiSoundRun {
     private static AiChunkFailure validateStoredOutput(AiPaidRecord record, List<AiLine> rows,
                                                        String orthography) {
         if (record == null) return AiChunkFailure.of(AiFailureReason.PROTOCOL_INVALID);
+        Set<String> sentIds = new HashSet<>();
+        for (AiLine row : rows) if (row != null && row.isSent()) sentIds.add(row.id);
+        if (!sentIds.containsAll(record.items().keySet())) {
+            return new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
+                    "id_set_mismatch:unexpected");
+        }
         for (AiLine row : rows) {
             if (row == null || !row.isSent()) continue;
             String output = record.item(row.id);
             if (output == null) {
+                if (record.permitsFallback(row.id)) continue;
                 return new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
                         "id_set_mismatch:missing:" + row.id);
             }
-            if (!AiResponseValidator.soundOrthographyAccepts(
-                    output, orthography, row.sourceText)) {
+            if (AiText.containsForbiddenText(output)) {
                 return new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
-                        "target_orthography_mismatch:" + row.id);
+                        "invalid_stored_text:" + row.id);
+            }
+            List<String> sources = AiText.splitSegments(row.sourceText);
+            List<String> outputs = AiText.splitSegments(output);
+            boolean allBlank = true;
+            for (String segment : outputs) allBlank &= AiText.trim(segment).isEmpty();
+            if (row.lineClass == AiLineClass.ORDINARY && allBlank) {
+                return new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
+                        "invalid_stored_text:" + row.id);
+            }
+            if (sources.size() != outputs.size()) {
+                return new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
+                        "delimiter_mismatch:" + row.id);
+            }
+            for (int index = 0; index < sources.size(); index++) {
+                if (AiText.utf8Bytes(outputs.get(index)) > AiContract.MAX_TRANSLATED_ITEM_BYTES) {
+                    return new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
+                            "invalid_stored_text:" + row.id);
+                }
+                if (!AiResponseValidator.soundOrthographyAccepts(
+                        outputs.get(index), orthography, sources.get(index))) {
+                    return new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
+                            "target_orthography_mismatch:" + row.id);
+                }
             }
         }
         return null;
@@ -162,6 +204,6 @@ public final class AiSoundRun {
                 new LayerProvenance(LayerAuthority.AI, config.providerId,
                         AiIdentity.promptContractId(LayerKind.SOUND, config.configId),
                         config.modelName, System.currentTimeMillis()),
-                entries, false);
+                entries, !record.isComplete());
     }
 }

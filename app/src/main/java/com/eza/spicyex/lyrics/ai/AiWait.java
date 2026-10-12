@@ -21,7 +21,7 @@ public interface AiWait {
                 if (signal.awaitAbort(millis)) throw new AiCancelledException(signal.reason());
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
-                throw new AiCancelledException("interrupted");
+                throw new AiCancelledException("interrupted", interrupted);
             }
         }
 
@@ -30,7 +30,7 @@ public interface AiWait {
                 Thread.sleep(Math.max(0L, millis));
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
-                throw new AiCancelledException("interrupted");
+                throw new AiCancelledException("interrupted", interrupted);
             }
         }
     };

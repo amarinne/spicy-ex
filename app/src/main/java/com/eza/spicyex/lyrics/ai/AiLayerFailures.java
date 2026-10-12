@@ -10,7 +10,7 @@ import java.util.Locale;
  * <p>The mapping is deliberately lossy in one direction only. {@link LayerFailure.Reason} is a
  * coarse vocabulary shared by every layer, so several AI reasons collapse onto one of its values —
  * but the precise reason always survives in {@link LayerFailure#detail} as its own token. Anything
- * that decides whether to retry, what to charge, or what to tell the owner must read that token,
+ * that decides whether to retry, what to charge, or what to tell the owner must read aiFailureToken,
  * never the coarse reason: {@code delivery_unknown} and {@code truncated} both look like ordinary
  * failures from the lane's side, and only one of them may have been billed.
  */
@@ -22,7 +22,7 @@ public final class AiLayerFailures {
     /** @return a lane failure carrying the coarse reason, the exact AI token, and any HTTP status */
     public static LayerFailure toLayerFailure(AiChunkFailure failure) {
         if (failure == null || failure.reason == null) return LayerFailure.NONE;
-        return new LayerFailure(reasonOf(failure.reason), token(failure.reason), failure.status);
+        return LayerFailure.ai(reasonOf(failure.reason), token(failure.reason), failure.status);
     }
 
     /** The AI reason as a stable lowercase token, safe to log and to put in a diagnostic report. */

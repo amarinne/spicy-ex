@@ -11,6 +11,7 @@ import com.eza.spicyex.lyrics.session.LayerKind;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 
 /**
  * This payload is what a paid answer becomes between one launch and the next.
@@ -136,6 +137,26 @@ public class AiPaidRecordCodecTest {
     public void aPayloadFromAnotherContractVersionIsNotTrusted() {
         String encoded = AiPaidRecordCodec.encode(populated());
         assertNull(AiPaidRecordCodec.decode(encoded.replace("\"v\":1", "\"v\":2")));
+    }
+
+    @Test
+    public void aCompletePayloadMustContainOnlyFullyCompletedChunks() {
+        AiPaidRecord record = new AiPaidRecord(LayerKind.MEANING, "digest-1", "config-1",
+                "fake", "model", "en", null, null, AiContract.MEANING_SCHEMA,
+                AiContract.CHUNK_PLAN_VERSION);
+        record.status = AiPaidRecord.Status.COMPLETE;
+        record.putItem("r0", "translated");
+
+        AiChunkRecord incomplete = new AiChunkRecord(
+                Collections.singletonList("r0"), "{\"items\":[]}");
+        record.putChunk("C0", incomplete);
+        assertNull("a COMPLETE marker cannot rescue an unfinished chunk",
+                AiPaidRecordCodec.decode(AiPaidRecordCodec.encode(record)));
+
+        incomplete.status = AiChunkRecord.Status.COMPLETE;
+        record.putItem("foreign", "not covered by any chunk");
+        assertNull("every retained item must be covered by the paid chunks",
+                AiPaidRecordCodec.decode(AiPaidRecordCodec.encode(record)));
     }
 
     @Test

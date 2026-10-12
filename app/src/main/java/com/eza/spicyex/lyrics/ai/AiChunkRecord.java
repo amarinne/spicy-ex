@@ -36,6 +36,8 @@ public final class AiChunkRecord {
     }
 
     public final List<String> ids;
+    /** Canonical rows deliberately left on baseline, rather than missing through interruption. */
+    public final List<String> fallbackRowIds = new ArrayList<>();
     public final String requestJson;
     public Status status;
     public int attempts;
@@ -67,6 +69,7 @@ public final class AiChunkRecord {
         copy.outputTokens = outputTokens;
         copy.usageEstimated = usageEstimated;
         copy.failure = failure;
+        copy.fallbackRowIds.addAll(fallbackRowIds);
         return copy;
     }
 

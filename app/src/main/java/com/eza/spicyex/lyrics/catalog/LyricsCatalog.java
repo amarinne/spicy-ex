@@ -30,8 +30,6 @@ public final class LyricsCatalog {
         public final AcquisitionPlanner.Plan plan;
         /** Decoded seat document, or null when nothing renders or the payload is unreadable. */
         public final LyricsDocument document;
-        /** In-memory derived timing; never replaces the stored provider document. */
-        public final LyricsDocument timingProjection;
         /** Source revision recorded with the seat document, for the session's base revision. */
         public final int sourceRevision;
         /** False when the transaction that produced this view failed. */
@@ -44,20 +42,12 @@ public final class LyricsCatalog {
         View(String trackId, CatalogState state, CatalogPolicy policy, Resolution resolution,
              AcquisitionPlanner.Plan plan, LyricsDocument document, int sourceRevision,
              boolean durable, long sequence, String outcome) {
-            this(trackId, state, policy, resolution, plan, document, sourceRevision,
-                    durable, sequence, outcome, null);
-        }
-
-        View(String trackId, CatalogState state, CatalogPolicy policy, Resolution resolution,
-             AcquisitionPlanner.Plan plan, LyricsDocument document, int sourceRevision,
-             boolean durable, long sequence, String outcome, LyricsDocument timingProjection) {
             this.trackId = trackId;
             this.state = state;
             this.policy = policy;
             this.resolution = resolution;
             this.plan = plan;
             this.document = document;
-            this.timingProjection = timingProjection;
             this.sourceRevision = sourceRevision;
             this.durable = durable;
             this.sequence = sequence;
@@ -142,6 +132,8 @@ public final class LyricsCatalog {
             }
             CatalogAdapters.applyProviderTransliteration(candidate, record.document);
             record.document.catalogCandidateId = candidate.candidateId;
+            record.document.catalogDelivery = new CatalogDelivery(candidate.sourceId,
+                    candidate.providerItemId, candidate.matchMethod, true);
             return record;
         } catch (Throwable ignored) {
             return null;
@@ -169,8 +161,7 @@ public final class LyricsCatalog {
         return new View(trackId, state, policy, resolution, plan,
                 record == null ? null : record.document,
                 record == null ? 1 : Math.max(1, record.sourceRevision), durable, sequence,
-                outcome, CatalogSyncUpgrade.project(state, policy, resolution,
-                        record == null ? null : record.document, durationMs, now));
+                outcome);
     }
 
     /** Corrupt payloads remain stored, but cannot mask a usable fallback or prevent refresh. */

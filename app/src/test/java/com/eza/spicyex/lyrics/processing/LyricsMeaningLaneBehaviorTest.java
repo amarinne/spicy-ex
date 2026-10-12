@@ -10,6 +10,7 @@ import android.content.Context;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.lyrics.ai.AiCredentialStore;
+import com.eza.spicyex.lyrics.ai.AiChunkRecord;
 import com.eza.spicyex.lyrics.ai.AiHttpTestControl;
 import com.eza.spicyex.lyrics.ai.AiPaidRecord;
 import com.eza.spicyex.lyrics.ai.AiRecordStore;
@@ -491,6 +492,62 @@ public final class LyricsMeaningLaneBehaviorTest {
 
     // --- Harness ----------------------------------------------------------
 
+    @Test public void routedPaidDraftReplaysWithoutGoogleCredentialOrReservation() throws Exception {
+        configureAi(AiSettings.TRANSLATION_PIPELINE_GOOGLE_DRAFT, true);
+        LyricsDocument old = pendingDocument();
+        old.fetchSource = "apple_music"; old.provider = "Apple Music";
+        CanonicalBase original = CanonicalBase.fromDocument("spotify:track:track", old);
+        com.eza.spicyex.lyrics.ai.AiReplayIdentity savedRows = com.eza.spicyex.lyrics.ai.AiReplayIdentity.of(
+                com.eza.spicyex.lyrics.ai.AiRows.forMeaning(original, old, null, true), true);
+        AiRecordStores.installFactoryForTest(ignored -> new AiRecordStore() {
+            @Override public AiPaidRecord read(AiRunConfig config) { return null; }
+            @Override public AiPaidRecord readReplay(AiRunConfig config,
+                    com.eza.spicyex.lyrics.ai.AiReplayIdentity requested) {
+                AiPaidRecord saved = new AiPaidRecord(config.layer, "old-paid-digest", config.configId,
+                        config.providerId, config.modelName, config.targetLang, null, null,
+                        com.eza.spicyex.lyrics.ai.AiContract.schemaFor(config.layer),
+                        com.eza.spicyex.lyrics.ai.AiContract.CHUNK_PLAN_VERSION);
+                saved.status = AiPaidRecord.Status.COMPLETE; saved.replay = savedRows;
+                for (String rowId : savedRows.rowIds) saved.putItem(rowId, "Saved English translation");
+                AiChunkRecord chunk = new AiChunkRecord(savedRows.rowIds, "");
+                chunk.status = AiChunkRecord.Status.COMPLETE;
+                saved.putChunk("C0", chunk);
+                return saved;
+            }
+            @Override public Reservation reserve(AiRunConfig config, long bytes) {
+                throw new AssertionError("Replay must not reserve paid storage");
+            }
+            @Override public boolean commit(AiRunConfig config, AiPaidRecord record) {
+                throw new AssertionError("Replay must not copy a purchase");
+            }
+            @Override public void release(AiRunConfig config) {}
+            @Override public void forget(AiRunConfig config) {
+                throw new AssertionError("Replay must not delete a purchase");
+            }
+        });
+        LyricsDocument routed = pendingDocument();
+        routed.fetchSource = "spicy_org"; routed.provider = "Apple Music";
+        routed.spicyOrgSource = "apple_music";
+        for (LyricsLine row : routed.lines) { row.startMs += 50; row.endMs += 50; }
+        AtomicReference<DerivedLayerArtifact> output = new AtomicReference<>();
+        aiExecutor.openGate();
+        assertTrue(newLane().start("track", 1, routed, BACKEND, "en", "ko", "ko", false,
+                alwaysCurrent(), new LyricsSecondaryProcessor.Callback() {
+                    @Override public void rerender(LayerKind layer, DerivedLayerArtifact artifact, String message) {}
+                    @Override public void progress(String message) {}
+                    @Override public void complete(LayerKind layer, DerivedLayerArtifact artifact,
+                            LayerFailure failure, String message, int changed) {
+                        output.set(artifact); events.add("saved:complete");
+                    }
+                }));
+        assertTrue(events.await("saved:complete", WAIT_MS));
+        assertTrue(output.get() instanceof com.eza.spicyex.lyrics.session.MeaningArtifact);
+        assertEquals(2, output.get().size());
+        assertEquals(0, provider.translateCalls());
+        assertEquals(0, AiHttpTestControl.count());
+        assertFalse(aiSettings.hasCredential());
+    }
+
     private LyricsMeaningLane newLane() {
         return newLane(aiExecutor);
     }
@@ -801,6 +858,9 @@ public final class LyricsMeaningLaneBehaviorTest {
             for (java.util.Map.Entry<String, String> answer : answers.entrySet()) {
                 record.putItem(answer.getKey(), answer.getValue());
             }
+            AiChunkRecord chunk = new AiChunkRecord(new ArrayList<>(answers.keySet()), "");
+            chunk.status = AiChunkRecord.Status.COMPLETE;
+            record.putChunk("C0", chunk);
             record.status = AiPaidRecord.Status.COMPLETE;
             return record;
         }

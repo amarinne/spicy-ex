@@ -263,11 +263,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private LinearLayout contentColumn;
     /** Non-null only in the adaptive two-column landscape mode; owns header/lyrics/status. */
     private LinearLayout landscapeRightColumn;
-    /** Non-null only in the adaptive two-column landscape mode; hosts the readout's column
-     *  placement (cover + song info) beside the lyrics column. */
+    /** Allocated on first two-column use and retained for later live transitions; hosts the
+     * readout placement (cover + song info) beside the lyrics column while attached. */
     private LinearLayout landscapeLeftColumn;
-    /** Construction-time two-column decision (rotation remounts, same as the readout). */
-    private final boolean twoColumn;
+    /** Effective fullscreen layout; preference changes reparent the existing presentation. */
+    private boolean twoColumn;
     private ViewGroup chromeHeader;
     private LyricsShellChromeController.ChromeViews chromeViews;
     private LyricsLayoutEditController.EditorHandle layoutEditorHandle;
@@ -476,6 +476,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (shareCardController != null) shareCardController.dismissIfUnavailable();
         documentGate.invalidate();
         ++NativeSpicyLyricsHook.fetchGeneration;
+        soundAiFeedback.reset();
+        meaningAiFeedback.reset();
         document = null;
         String id = trackIdFromUri(snapshot.trackUri);
         loadingTrackId = id;
@@ -503,6 +505,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     void refreshPreferences() {
         preferenceRefreshPosted = false;
         if (!running) return;
+        boolean layoutChanged = applyLandscapeLayoutPreference();
         applyStatusBarPreference();
         likedMode = config.get(Settings.LIKED_SONGS_BUTTON);
         refreshLikedButton(currentTrackThrottled());
@@ -522,7 +525,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             refreshChromeClusterSpacing();
             applyBackVisibility();
         }
+        if (layoutChanged && demoModeActive && trackInfoController != null) {
+            trackInfoController.showDemoTrack(demoTrack, demoArtBitmap);
+        }
         revealChrome();
+        if (layoutChanged && layoutEditorHandle != null) {
+            layoutEditorHandle.onLayoutChanged(twoColumn);
+        }
     }
 
     /** Top readout owns the top corners: art top-left, controls top-right, no Back. */
@@ -744,7 +753,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 .mountedRowsHostSupplier(() -> mountedRowsHost)
                 .chromeClusterSupplier(() -> chromeViews == null ? null : chromeViews.configCluster)
                 .backButtonSupplier(() -> chromeViews == null ? null : chromeViews.back)
-                .landscape(isLandscape() || twoColumn)
+                .landscape(isLandscape())
                 .twoColumn(twoColumn)
                 .focusFraction(this::resolveFocusAnchorFraction)
                 .artSizeMaxDp(() -> twoColumn && trackInfoController != null
@@ -964,25 +973,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void addLyricRowFacts(LayoutProbeReport report) {
         if (mountedRowsHost == null) return;
         for (int i = 0; i < mountedRowsHost.getChildCount(); i++) {
-            addLyricRowFact(report, mountedRowsHost.getChildAt(i));
+            LyricRowProbe.record(report, mountedRowsHost.getChildAt(i));
         }
-    }
-
-    /** A mounted row's text content: its own bounds minus its line-spacing padding, which is how
-     *  the editor's own hit test and per-row outlines measure a row. */
-    private static void addLyricRowFact(LayoutProbeReport report, View row) {
-        int[] bounds = LyricsLayoutEditController.screenRectOf(row);
-        if (bounds == null) return;
-        int left = bounds[0] + row.getPaddingLeft();
-        int top = bounds[1] + row.getPaddingTop();
-        int right = bounds[2] - row.getPaddingRight();
-        int bottom = bounds[3] - row.getPaddingBottom();
-        if (right <= left || bottom <= top) {
-            // No padding, or it consumed the whole row: the full bounds are the honest answer.
-            report.lyricRow(bounds);
-            return;
-        }
-        report.lyricRow(new int[]{left, top, right, bottom});
     }
 
     /** The shell's own screen rect, which is the display's content area rather than the whole
@@ -1010,6 +1002,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             rows.put(new org.json.JSONArray().put(row[0]).put(row[1]).put(row[2]).put(row[3]));
         }
         json.put("lyric_rows", rows);
+        org.json.JSONArray textRows = new org.json.JSONArray();
+        for (java.util.List<int[]> row : report.lyricText()) {
+            org.json.JSONArray text = new org.json.JSONArray();
+            for (int[] rect : row) text.put(new org.json.JSONArray()
+                    .put(rect[0]).put(rect[1]).put(rect[2]).put(rect[3]));
+            textRows.put(text);
+        }
+        json.put("lyric_text", textRows);
         org.json.JSONArray violations = new org.json.JSONArray();
         for (String violation : report.violations()) violations.put(violation);
         json.put("violations", violations);
@@ -1219,8 +1219,83 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
+    /** Reparents presentation views without replacing the lyrics session or editor. */
+    private boolean applyLandscapeLayoutPreference() {
+        // PiP keeps its fixed window layout and its existing album-art policy.
+        if (pipLayout != PIP_LAYOUT_NONE) return false;
+        android.content.res.Configuration screen = getResources().getConfiguration();
+        boolean next = twoColumnEngaged(screen.screenWidthDp, screen.screenHeightDp,
+                Boolean.TRUE.equals(config.get(Settings.ADAPTIVE_LANDSCAPE_LAYOUT)));
+        if (next == twoColumn) return false;
+        LinearLayout previous = rowContainer();
+        java.util.List<View> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < previous.getChildCount(); i++) rows.add(previous.getChildAt(i));
+        twoColumn = next;
+        contentColumn.setOrientation(next ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        contentColumn.setGravity(next ? Gravity.CENTER_VERTICAL : Gravity.CENTER_HORIZONTAL);
+        if (next) attachLandscapeColumns();
+        for (View row : rows) movePresentationView(row, rowContainer());
+        if (!next) {
+            contentColumn.removeView(landscapeLeftColumn);
+            contentColumn.removeView(landscapeRightColumn);
+        }
+        trackInfoController.setTwoColumn(next);
+        if (next) {
+            movePresentationView(trackInfoController.columnView(), landscapeLeftColumn);
+            landscapeLeftColumn.setVisibility(trackInfoController.columnView().getVisibility());
+        }
+        FrameLayout chipHost = next ? this : lyricsFrame;
+        movePresentationView(jumpToCurrentController.view(), chipHost);
+        movePresentationView(skipGapController.view(), chipHost);
+        applyContentColumnPadding();
+        applyChromeHeaderPadding();
+        applyLyricsScrollPadding();
+        chromeLayoutApplied = false;
+        contentColumn.requestLayout();
+        return true;
+    }
+
+    private static void movePresentationView(View view, ViewGroup target) {
+        if (view == null || view.getParent() == target) return;
+        ViewGroup.LayoutParams params = view.getLayoutParams();
+        if (view.getParent() instanceof ViewGroup) ((ViewGroup) view.getParent()).removeView(view);
+        if (params == null) target.addView(view);
+        else target.addView(view, params);
+    }
+
+    private void attachLandscapeColumns() {
+        if (landscapeLeftColumn == null) {
+            landscapeLeftColumn = new LinearLayout(activity);
+            landscapeLeftColumn.setOrientation(LinearLayout.VERTICAL);
+            landscapeLeftColumn.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            landscapeLeftColumn.setClipChildren(false);
+            landscapeLeftColumn.setClipToPadding(false);
+            LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.MATCH_PARENT, 0.8f);
+            // Equal screen-edge gutters: 40dp above the art matches the 24dp column
+            // gutter + 16dp landscape content padding below the song info. This screen
+            // is fully ours, so insets stay out of it — the chrome floats above.
+            leftLp.setMargins(0, dp(40), dp(20), dp(24));
+            leftLp.gravity = Gravity.CENTER_VERTICAL;
+            contentColumn.addView(landscapeLeftColumn, leftLp);
+            // The cover and song info themselves are the readout's column placement (see
+            // TrackInfoReadoutController#columnView): it is added below, once the readout is
+            // attached, so all four placements are built by one component.
+            landscapeRightColumn = new LinearLayout(activity);
+            landscapeRightColumn.setOrientation(LinearLayout.VERTICAL);
+            landscapeRightColumn.setGravity(Gravity.CENTER_HORIZONTAL);
+            landscapeRightColumn.setClipChildren(false);
+            landscapeRightColumn.setClipToPadding(false);
+            contentColumn.addView(landscapeRightColumn, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.MATCH_PARENT, 1.15f));
+        } else {
+            contentColumn.addView(landscapeLeftColumn);
+            contentColumn.addView(landscapeRightColumn);
+        }
+    }
+
     private LinearLayout rowContainer() {
-        return landscapeRightColumn != null ? landscapeRightColumn : contentColumn;
+        return twoColumn && landscapeRightColumn != null ? landscapeRightColumn : contentColumn;
     }
 
     private int chromeButtonDp() {
@@ -1497,8 +1572,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             }
         });
         this.config = SpotifyPlusConfig.from(activity);
-        // Construction-time layout decision: rotation remounts the shell, and the adaptive
-        // toggle takes effect on the next open (same contract as PR9's landscape layout).
+        // Seed the layout; preference refreshes switch fullscreen columns in place.
         // A PiP landscape window gets the two-column art column only when the album-art
         // toggle is also on; off keeps every PiP shape lyrics-only. Fullscreen is unaffected.
         android.content.res.Configuration screen = activity.getResources().getConfiguration();
@@ -1578,31 +1652,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         applyContentColumnPadding();
         addView(contentColumn, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        if (twoColumn) {
-            landscapeLeftColumn = new LinearLayout(activity);
-            landscapeLeftColumn.setOrientation(LinearLayout.VERTICAL);
-            landscapeLeftColumn.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-            landscapeLeftColumn.setClipChildren(false);
-            landscapeLeftColumn.setClipToPadding(false);
-            LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.MATCH_PARENT, 0.8f);
-            // Equal screen-edge gutters: 40dp above the art matches the 24dp column
-            // gutter + 16dp landscape content padding below the song info. This screen
-            // is fully ours, so insets stay out of it — the chrome floats above.
-            leftLp.setMargins(0, dp(40), dp(20), dp(24));
-            leftLp.gravity = Gravity.CENTER_VERTICAL;
-            contentColumn.addView(landscapeLeftColumn, leftLp);
-            // The cover and song info themselves are the readout's column placement (see
-            // TrackInfoReadoutController#columnView): it is added below, once the readout is
-            // attached, so all four placements are built by one component.
-            landscapeRightColumn = new LinearLayout(activity);
-            landscapeRightColumn.setOrientation(LinearLayout.VERTICAL);
-            landscapeRightColumn.setGravity(Gravity.CENTER_HORIZONTAL);
-            landscapeRightColumn.setClipChildren(false);
-            landscapeRightColumn.setClipToPadding(false);
-            contentColumn.addView(landscapeRightColumn, new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.MATCH_PARENT, 1.15f));
-        }
+        if (twoColumn) attachLandscapeColumns();
 
         int chromeButton = chromeButtonDp();
         likedMode = config.get(Settings.LIKED_SONGS_BUTTON);
@@ -2085,6 +2135,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         followState.resetActive();
         lastLyricPositionMs = -1;
         resetScrollForNextDocument = true;
+        soundAiFeedback.reset();
+        meaningAiFeedback.reset();
         document = null;
         String id = trackIdFromUri(uri);
         ambientController.updateForTrack(track, () -> running);
@@ -2327,8 +2379,20 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         LyricsRenderConfig next = LyricsRenderConfig.read(activity, config, pipTextBoost());
         LyricsRenderConfig.Diff diff = renderConfig == null ? null : renderConfig.diff(next);
+        com.eza.spicyex.lyrics.language.ChineseCharacterForm nextCharacterForm =
+                com.eza.spicyex.lyrics.language.ChineseCharacterForm.fromSetting(
+                        config.get(Settings.CHINESE_CHARACTER_FORM));
+        boolean characterFormChanged = document != null && document.chineseCharacterForm != nextCharacterForm;
+        if (document != null && characterFormChanged) {
+            document.chineseCharacterForm = nextCharacterForm;
+            LyricTimeline.applySyncedRows(document);
+        }
         if (diff == null || !diff.hasChanges) {
             renderConfig = next;
+            if (characterFormChanged) rebuildWithReflow(() -> {
+                clearRenderedLineViews();
+                renderWindowForActive(followState.activeIndex() >= 0 ? followState.activeIndex() : currentWindowAnchor());
+            });
             return;
         }
 
@@ -2412,6 +2476,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean loadRomanization = showRomanization();
         LyricsDocumentProcessor.applyProcessedCachePreservingAi(activity.getApplicationContext(), doc,
                 loadOptions, GOOGLE_PROCESSING_VERSION);
+        doc.chineseCharacterForm = com.eza.spicyex.lyrics.language.ChineseCharacterForm.fromSetting(
+                config.get(Settings.CHINESE_CHARACTER_FORM));
         // The session's Sound artifact already carries span readings and the composer applies them.
         // Only derive here for a document published before the Sound lane produced anything.
         if (LyricsDocumentProcessor.needsSurfaceLocalRomanization(doc)) {
@@ -2434,6 +2500,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     private void commitAndRenderDocument(LyricsSurfaceDocumentGate.Candidate candidate,
                                          String trackUri, LyricsDocument doc, String currentId) {
+        LyricTimeline.setChineseCharacterForm(doc,
+                com.eza.spicyex.lyrics.language.ChineseCharacterForm.fromSetting(
+                        config.get(Settings.CHINESE_CHARACTER_FORM)));
         String id = trackIdFromUri(trackUri);
         // A source swap for the track already on screen waits while the user holds follow;
         // track changes always render immediately and drop any stash.
@@ -2457,7 +2526,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 LyricsDocumentProcessor.mergeDerivedPublication(mounted, doc);
         if (merge != LyricsDocumentProcessor.DerivedMergeResult.DIFFERENT_BASE) {
             loadingTrackId = "";
-            if (merge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED) {
+            boolean projectionChanged = LyricTimeline.setChineseCharacterForm(mounted, doc.chineseCharacterForm);
+            projectionChanged |= LyricTimeline.refreshChineseCharacterProjection(mounted);
+            if (projectionChanged) {
+                LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
+                rebuildWithReflow(() -> {
+                    clearRenderedLineViews();
+                    renderWindowForActive(followState.activeIndex() >= 0
+                            ? followState.activeIndex() : currentWindowAnchor());
+                });
+            } else if (merge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED) {
                 LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
                 refreshSecondaryRows("");
             }
@@ -5586,9 +5664,14 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             LyricsDocumentProcessor.resetSoundLayer(activity.getApplicationContext(), document);
             updateToggleVisuals();
         }
+        String language = SoundModeCyclePolicy.readingLanguage(activeLine(), document);
         LyricsTransliterationSession.CycleResult result =
-                transliterationSession.cycle(activeLineHasJapanese(), activeLineHasChinese(),
-                        activeLineHasKorean(), activeLineHasCyrillic());
+                transliterationSession.cycle("ja".equals(language), "zh".equals(language),
+                        "ko".equals(language), "cy".equals(language));
+        XpLog.log(TAG + " sound cycle language=" + language
+                + " chineseConfig=" + renderConfig.chineseModeConfig
+                + " chineseMode=" + transliterationSession.chineseMode()
+                + " visible=" + result.showRomanization);
         prefs.edit()
                 .putBoolean(Settings.NATIVE_SPICY_ROMANIZATION.key, result.showRomanization)
                 .putString(Settings.LAST_JAPANESE_CYCLE_MODE.key, transliterationSession.japaneseReadingMode())
@@ -5669,37 +5752,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
-    private boolean activeLineHasJapanese() {
-        AppliedLine line = activeLine();
-        return line == null ? documentHasJapanese()
-                : "ja".equals(com.eza.spicyex.lyrics.language.ReadingLanguagePolicy.layoutLanguage(line));
-    }
-
-    private boolean activeLineHasChinese() {
-        AppliedLine line = activeLine();
-        return line == null ? documentHasChinese()
-                : "zh".equals(com.eza.spicyex.lyrics.language.ReadingLanguagePolicy.layoutLanguage(line));
-    }
-
-    private boolean activeLineHasKorean() {
-        AppliedLine line = activeLine();
-        if (line != null && hasRomanizableScript(line.text)) return SpicyTextDetection.itemKoreanTest(line.text);
-        return documentHasKorean();
-    }
-
-    private boolean activeLineHasCyrillic() {
-        AppliedLine line = activeLine();
-        if (line != null && hasRomanizableScript(line.text)) return SpicyTextDetection.itemCyrillicTest(line.text);
-        return documentHasCyrillic();
-    }
-
-    private boolean hasRomanizableScript(String text) {
-        return SpicyTextDetection.hasKana(text)
-                || SpicyTextDetection.itemChineseTest(text)
-                || SpicyTextDetection.itemKoreanTest(text)
-                || SpicyTextDetection.itemCyrillicTest(text);
-    }
-
     private AppliedLine activeLine() {
         if (document == null || document.appliedLines == null) return null;
         int index = followState.activeIndex();
@@ -5774,34 +5826,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             romanGlyph.setGlyph("A");
             return;
         }
-        String source = "";
-        if (document != null && followState.activeIndex() >= 0
-                && followState.activeIndex() < document.appliedLines.size()) {
-            AppliedLine line = document.appliedLines.get(followState.activeIndex());
-            if (line != null && !line.dotLine && !isBlank(line.text)) source = line.text;
+        String language = SoundModeCyclePolicy.readingLanguage(activeLine(), document);
+        switch (language) {
+            case "ja": romanGlyph.setGlyph("あ"); break;
+            case "zh":
+                romanGlyph.setGlyph(SpotifyPlusConfig.CHINESE_MODE_JYUTPING.equals(
+                        LyricsShellSettings.normalizeChineseMode(chineseMode())) ? "粤" : "拼");
+                break;
+            case "ko": romanGlyph.setGlyph("한"); break;
+            case "cy": romanGlyph.setGlyph("Я"); break;
+            case "el": romanGlyph.setGlyph("Ω"); break;
+            default: romanGlyph.setGlyph("A"); break;
         }
-        if (isBlank(source) && document != null) {
-            source = LyricsDocumentProcessor.collectText(document);
-        }
-        romanGlyph.setGlyph(romanizationGlyphFor(source));
-    }
-
-    private String romanizationGlyphFor(String text) {
-        String language = document == null ? "" : document.language;
-        List<SpicyTextDetection.Script> scripts =
-                SpicyTextDetection.detectPresentScripts(text, language, "");
-        if (!scripts.isEmpty()) {
-            switch (scripts.get(0)) {
-                case JAPANESE: return "あ";
-                case CHINESE:
-                    return SpotifyPlusConfig.CHINESE_MODE_JYUTPING.equals(
-                            LyricsShellSettings.normalizeChineseMode(chineseMode())) ? "粤" : "拼";
-                case KOREAN: return "한";
-                case CYRILLIC: return "Я";
-                case GREEK: return "Ω";
-            }
-        }
-        return "A";
     }
 
     private void onLikeTapped() {

@@ -89,8 +89,6 @@ public final class SettingRowFactory {
 
     private String switchSummary(Settings.Setting<?> setting, boolean unavailable) {
         if (unavailable) return host.unavailableSummary(setting);
-        if (setting == Settings.SYNC_UPGRADE) return host.strings().get("settings_sync_upgrade_summary",
-                "This option uses timing from enabled QQ Music or NetEase sources when the lyrics match. The lyric text does not change.");
         return setting == Settings.AUTO_ENABLED
                 ? host.strings().get("settings_auto_root_requirement",
                         "Requires root and LSPosed/Vector. Scope Spotify and Android Auto.")

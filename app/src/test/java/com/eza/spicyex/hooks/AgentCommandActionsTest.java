@@ -29,6 +29,21 @@ public class AgentCommandActionsTest {
                     switch (method.getName()) {
                         case "catalogTrackUri": return currentUri;
                         case "requestAiLyricsLayer": return AiRequestStartResult.NOT_CONFIGURED;
+                        case "replayPaidLyricsLayer":
+                            ((LyricsHost.CatalogActionCallback) args[1]).onComplete(true, "reused");
+                            return null;
+                        case "paidLyricsStatus":
+                            ((LyricsHost.CatalogActionCallback) args[0]).onComplete(true, "identity-only");
+                            return null;
+                        case "paidLyricsEntries":
+                            ((LyricsHost.CatalogActionCallback) args[0]).onComplete(true, "[]");
+                            return null;
+                        case "forgetPaidLyricsEntry":
+                            ((LyricsHost.CatalogActionCallback) args[1]).onComplete(true, "removed");
+                            return null;
+                        case "replaySavedMeaning":
+                            ((LyricsHost.CatalogActionCallback) args[1]).onComplete(true, "reused");
+                            return null;
                         case "deleteCatalogTrack":
                             ((LyricsHost.CatalogActionCallback) args[0]).onComplete(false, "storage refused");
                             return null;
@@ -67,6 +82,65 @@ public class AgentCommandActionsTest {
         drain();
         assertEquals("SPICY_AGENT error layer not_configured #paid\n", reply());
         assertFalse(calls.containsKey("refreshLyricsLayer"));
+    }
+
+    @Test public void cacheOnlyReplayNeverInvokesRefreshOrPaidRequest() throws Exception {
+        channel.dispatch("layer replay MEANING #replay");
+        assertFalse(calls.containsKey("replayPaidLyricsLayer"));
+        drain();
+        assertEquals(LayerKind.MEANING, calls.get("replayPaidLyricsLayer")[0]);
+        assertFalse(calls.containsKey("refreshLyricsLayer"));
+        assertFalse(calls.containsKey("requestAiLyricsLayer"));
+        assertEquals("SPICY_AGENT ok layer reused #replay\n", reply());
+    }
+
+    @Test public void paidStatusUsesTheReadOnlyStorageOwner() throws Exception {
+        channel.dispatch("paid status #status");
+        drain();
+        assertTrue(calls.containsKey("paidLyricsStatus"));
+        assertFalse(calls.containsKey("requestAiLyricsLayer"));
+        assertEquals("SPICY_AGENT ok paid identity-only #status\n", reply());
+    }
+
+    @Test public void offscreenReplayUsesOnlyTheSavedSourceOwner() throws Exception {
+        channel.dispatch("paid replay retained-candidate #saved");
+        drain();
+        assertEquals("retained-candidate", calls.get("replaySavedMeaning")[0]);
+        assertFalse(calls.containsKey("requestAiLyricsLayer"));
+        assertFalse(calls.containsKey("selectCatalogCandidate"));
+        assertFalse(calls.containsKey("refreshCatalogSource"));
+        assertEquals("SPICY_AGENT ok paid reused #saved\n", reply());
+    }
+
+    @Test public void exactSavedEntryDeletionDoesNotStartAnotherRequest() throws Exception {
+        String key = "paid-v1|" + String.join("", java.util.Collections.nCopies(64, "a"));
+        channel.dispatch("paid forget " + key + " confirm #forget");
+        assertFalse(calls.containsKey("forgetPaidLyricsEntry"));
+        drain();
+        assertEquals(key, calls.get("forgetPaidLyricsEntry")[0]);
+        assertFalse(calls.containsKey("clearLyricsCache"));
+        assertFalse(calls.containsKey("requestAiLyricsLayer"));
+        assertFalse(calls.containsKey("refreshLyricsLayer"));
+        assertEquals("SPICY_AGENT ok paid removed #forget\n", reply());
+    }
+
+    @Test public void savedEntryListingUsesOnlyTheStorageOwner() throws Exception {
+        channel.dispatch("paid entries #entries"); drain();
+        assertTrue(calls.containsKey("paidLyricsEntries"));
+        assertFalse(calls.containsKey("requestAiLyricsLayer"));
+        assertEquals("SPICY_AGENT ok paid [] #entries\n", reply());
+    }
+
+    @Test public void savedEntryDeletionRejectsMissingConfirmationAndBroadKeys() throws Exception {
+        String key = "paid-v1|" + String.join("", java.util.Collections.nCopies(64, "a"));
+        for (String args : new String[]{key, "* confirm", "paid-v1|a confirm", key + " confirm extra"}) {
+            channel.dispatch("paid forget " + args + " #bad");
+        }
+        drain();
+        assertFalse(calls.containsKey("forgetPaidLyricsEntry"));
+        assertFalse(calls.containsKey("clearLyricsCache"));
+        assertEquals(4, reply().split("\n").length);
+        for (String line : reply().split("\n")) assertTrue(line.startsWith("SPICY_AGENT error"));
     }
 
     @Test public void deletionRequiresConfirmationEvenForRawCommands() throws Exception {

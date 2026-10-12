@@ -104,7 +104,7 @@
     <string name="settings_label_lyrics_track_info_text_overflow">トラック情報オーバーフロー</string>
     <string name="settings_option_scroll">スクロール</string>
     <string name="settings_label_lyrics_track_info_art_size">トラック情報アートサイズ</string>
-    <string name="settings_label_lyrics_adaptive_landscape_layout">適応型横向きレイアウト</string>
+    <string name="settings_label_lyrics_adaptive_landscape_layout">横長の画面では2カラム</string>
     <string name="settings_label_lyrics_panel_media_controls">パネルメディアコントロール</string>
     <string name="settings_label_lyric_animation_style">アニメーションスタイル</string>
     <string name="settings_label_lyric_apple_fade_passed_lines">過去の行をフェード</string>
@@ -419,7 +419,10 @@
     <string name="share_chooser">歌詞を共有</string>
     <string name="settings_label_lyrics_show_fullscreen_back_button">戻るボタンを表示</string>
     <string name="settings_layout_editor_options_button">オプション</string>
-    <string name="settings_layout_editor_close">閉じる</string>
+    <string name="settings_layout_editor_layout">レイアウト</string>
+    <string name="settings_layout_editor_hide_options">オプションを隠す</string>
+    <string name="settings_layout_editor_show_options">オプションを表示</string>
+    <string name="settings_layout_editor_show_artwork_info">アートワークと曲情報を表示</string>
     <string name="settings_layout_editor_element_artwork">アートワーク</string>
     <string name="settings_layout_editor_element_track_text">トラック情報</string>
     <string name="settings_layout_editor_element_focus">フォーカス</string>
@@ -468,8 +471,6 @@
     <string name="settings_spicy_key_catalog">個人用キーを取得</string>
     <string name="settings_spicy_key_help">カタログから Spicy EX を追加してください。個人用クライアントキーを貼り付けてください。キーを保存してください。「歌詞ソース」で SpicyLyrics.org を有効にしてください。</string>
     <string name="settings_spicy_key_rejected">キーを保存できませんでした。sl_pk_ で始まるクライアントキーを使用してください。</string>
-    <string name="settings_label_lyrics_sync_upgrade">歌詞の同期を改善</string>
     <string name="settings_source_enabled_title">有効なソース</string>
-    <string name="settings_sync_upgrade_summary">歌詞が一致する場合、有効な QQ Music または NetEase のタイミングを使用します。歌詞のテキストは変更しません。</string>
     <string name="source_picker_spicy_key_required">設定で個人用クライアントキーを追加してください</string>
 </resources>

@@ -203,7 +203,8 @@ public final class SpicyRomanizer {
                 changed = true;
             } else if (script == SpicyTextDetection.Script.CHINESE && SpicyTextDetection.itemChineseTest(result)) {
                 if (opts.chineseMode == null || opts.chineseMode.isEmpty()) continue;
-                result = SpicyJapaneseChineseProcessor.romanizeChineseLine(result, opts.chineseMode, opts.chineseTones);
+                result = SpicyJapaneseChineseProcessor.romanizeChineseLine(result, opts.chineseMode,
+                        opts.chineseTones, opts.chineseOutputStyle);
                 changed = true;
             } else if (script == SpicyTextDetection.Script.CYRILLIC && SpicyTextDetection.itemCyrillicTest(result)) {
                 if ("Off".equals(opts.cyrillicMode)) continue;

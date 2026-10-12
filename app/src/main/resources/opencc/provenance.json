@@ -1,0 +1,112 @@
+{
+  "package": "opencc-js",
+  "version": "1.4.1",
+  "dataPackage": "opencc-data",
+  "dataVersion": "1.4.1",
+  "source": "https://github.com/nk2028/opencc-js",
+  "dictionariesLicense": "Apache-2.0",
+  "engineReferenceLicense": "MIT",
+  "importCommand": "node scripts/import-opencc-dictionaries.mjs",
+  "configurations": {
+    "simplified": {
+      "name": "t2s",
+      "normalization": [
+        [
+          "CJK_Compatibility_Ideographs"
+        ]
+      ],
+      "conversion": [
+        [
+          "TSPhrases",
+          "TSCharacters"
+        ]
+      ]
+    },
+    "traditional": {
+      "name": "s2tw",
+      "normalization": [
+        [
+          "CJK_Compatibility_Ideographs"
+        ]
+      ],
+      "segmentation": [
+        "STPhrases",
+        "STPhrases_GeneratedFromRegionalPhrases"
+      ],
+      "conversion": [
+        [
+          "STPhrases",
+          "STPhrases_GeneratedFromRegionalPhrases",
+          "STCharacters"
+        ],
+        [
+          "TWVariantsPhrases",
+          "TWVariants"
+        ]
+      ]
+    }
+  },
+  "sourceHashes": {
+    "dist/esm-lib/core.js": "5675706adcebf6a524dc016548b8e61a9b086b4ae4caf8ec4e84d6753024b168",
+    "dist/esm-lib/preset/cn2t.js": "b5d78faffcc3c9152cf79a1996f64430dd417918d52494f4d7386906fb6c8d19",
+    "dist/esm-lib/preset/t2cn.js": "f31d0644943a8967420cfe7c946fc04dc3d20e5d0c0669b5bcc4dc999dfe8090"
+  },
+  "dictionaries": {
+    "CJK_Compatibility_Ideographs": {
+      "entries": 1002,
+      "source": "dist/esm-lib/dict/CJK_Compatibility_Ideographs.js",
+      "sourceSha256": "b770f457ac89a58bf621aba22baa0a5da2ae46bfc57869aa1e8a8880664683c9",
+      "bundledSha256": "798233dbfc2441e4598bc04a8750820ce67611b08dc07e9cb34c3661aedd8bf4",
+      "bundledBytes": 8784
+    },
+    "STCharacters": {
+      "entries": 3881,
+      "source": "dist/esm-lib/dict/STCharacters.js",
+      "sourceSha256": "6252e30c5e5d871d77e7f7acfaa5d3697f7fb9ac844752439ceb53e9eeaecbc7",
+      "bundledSha256": "4470a036e0dfa6a3dc22a5b7b7aa3bed3dad67cff65773758757a5ed37a545f2",
+      "bundledBytes": 32657
+    },
+    "STPhrases": {
+      "entries": 49139,
+      "source": "dist/esm-lib/dict/STPhrases.js",
+      "sourceSha256": "9237902250b553ed513cd3b75f2865545031c43351e8ae90975690e8b0f17e5c",
+      "bundledSha256": "24a9ab059ebfd1cab5c40131c1cfd56e1437495504fa2134e8097d4adb42ac49",
+      "bundledBytes": 1003647
+    },
+    "STPhrases_GeneratedFromRegionalPhrases": {
+      "entries": 508,
+      "source": "dist/esm-lib/dict/STPhrases_GeneratedFromRegionalPhrases.js",
+      "sourceSha256": "0d8adf510cb07a36f464c85a5298d5460027f4831e43a36845d03370b26d91c6",
+      "bundledSha256": "54260c79a338eeb701378f5e58e4a2d1f92b7e84ebc5f545769e5dc890dc4de6",
+      "bundledBytes": 13463
+    },
+    "TWVariants": {
+      "entries": 38,
+      "source": "dist/esm-lib/dict/TWVariants.js",
+      "sourceSha256": "60272259c1e1f1d43ac955bfd3603aaa3a6f36b64d94e2f269db4dce03a3591e",
+      "bundledSha256": "715744ef5b4f780be07700d15613cb68509412e1d1cb4aea098c147ab166ecdd",
+      "bundledBytes": 418
+    },
+    "TWVariantsPhrases": {
+      "entries": 4,
+      "source": "dist/esm-lib/dict/TWVariantsPhrases.js",
+      "sourceSha256": "ec073e4083d8d876761d9160350cb5314a8678ec492cc5d54e5adfdb4e94af3c",
+      "bundledSha256": "1eb544791d95fba32777a563b79c031cbfa602f70ce9d5630663f932a51f635b",
+      "bundledBytes": 218
+    },
+    "TSCharacters": {
+      "entries": 3512,
+      "source": "dist/esm-lib/dict/TSCharacters.js",
+      "sourceSha256": "85aee197470c6fa5fce207b4d1fe17b178eb8075b622133cd0eaa3c7d75fe16c",
+      "bundledSha256": "e5f90d6cd2b27f260b21ffdf183188926cb4096112f6721ff270ee2654f78190",
+      "bundledBytes": 29083
+    },
+    "TSPhrases": {
+      "entries": 476,
+      "source": "dist/esm-lib/dict/TSPhrases.js",
+      "sourceSha256": "6975968282cb064f757b6416090fd08e5825a6c606a9b1f0ee9f8a7dfbe640dc",
+      "bundledSha256": "7e645166fb3296928ff43292db4ae862a6a16f1064e39b8a755387d99d588c76",
+      "bundledBytes": 8543
+    }
+  }
+}

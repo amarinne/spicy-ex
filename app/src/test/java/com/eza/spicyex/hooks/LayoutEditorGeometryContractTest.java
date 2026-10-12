@@ -38,7 +38,7 @@ public class LayoutEditorGeometryContractTest {
 
         String shell = read("src/main/java/com/eza/spicyex/hooks/NativeSpicyShellViewImpl.java");
         assertFalse(shell.contains("landscapeEditorActive"));
-        assertTrue(shell.contains(".landscape(isLandscape() || twoColumn)"));
+        assertTrue(shell.contains(".landscape(isLandscape())"));
         assertTrue(shell.contains("if (!isLandscape() && !twoColumn)"));
         assertFalse(shell.contains("setEditorTopClearance"));
         // The two-column column (cover + song info) is the readout's own placement now: the shell
@@ -121,7 +121,7 @@ public class LayoutEditorGeometryContractTest {
         // four-way chip row whose Top/Bottom/Header values have nothing to act on: it stays, as one
         // On/Off row over the same setting, and Off is the only value that means anything there.
         assertFalse(gatedOnTwoColumn(editor, "beginGroup(strings.setting(Settings.TRACK_INFO_POSITION))"));
-        assertTrue(editor.contains("addOption(toggleRow(strings.setting(Settings.TRACK_INFO_POSITION),"));
+        assertTrue(editor.contains("addOption(toggleRow(s(\"show_artwork_info\", \"Show artwork & song info\"),"));
         assertTrue(editor.contains("on ? \"Top\" : \"Off\""));
         // The other readout-only controls still stand down in two-column: text alignment (a
         // readout row beside its art) and the background band (the column has no dock).
@@ -154,9 +154,9 @@ public class LayoutEditorGeometryContractTest {
         assertTrue(editor.contains("panelHeader.setOnTouchListener"));
         assertTrue(editor.contains("if (moved[0]) panelMovedByUser = true;"));
         assertTrue(editor.contains("if (panelMovedByUser) {"));
-        // Header: the title on the left, a 44dp close button on the right that hides the panel.
+        // Header: the title on the left, a 44dp Hide options button on the right that hides the panel.
         assertTrue(editor.contains("private static final int PANEL_CLOSE_BUTTON_DP = 44;"));
-        assertTrue(editor.contains("s(\"close\", \"Close\"), () -> hidePanelSheet(true))"));
+        assertTrue(editor.contains("s(\"hide_options\", \"Hide options\"), this::hideOptions)"));
         // Fade and scale in and out; a window appears, it does not slide off an edge.
         assertTrue(editor.contains("private static final int PANEL_FADE_MS = 180;"));
         assertTrue(editor.contains("private static final float PANEL_HIDDEN_SCALE = 0.96f;"));

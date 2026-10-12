@@ -117,6 +117,8 @@ final class NativeLyricsNetworkHook {
                                     new String((byte[]) result, java.nio.charset.StandardCharsets.UTF_8));
                         }
                     });
+            XpHooks.hookAllMethods(body, "close", "lyrics:net:ResponseBody#close",
+                    (XpHooks.After) param -> forgetPending(param.thisObject));
             XpLog.log(NativeSpicyLyricsHook.TAG + " native lyrics response body hooks installed");
         } catch (Throwable t) {
             XpLog.log(TAG + " response body hook failed: " + t);
@@ -135,6 +137,11 @@ final class NativeLyricsNetworkHook {
             if (source() != null) source().captureColorLyricsResponse(trackId, text);
         } catch (Throwable ignored) {
         }
+    }
+
+    /** Releases a paired body when the host closes it without reading the payload. */
+    static void forgetPending(Object body) {
+        if (body != null) PENDING.remove(body);
     }
 
     private static boolean isBlank(String value) {

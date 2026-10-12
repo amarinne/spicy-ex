@@ -355,10 +355,6 @@ public final class GoogleEnhancer {
         return cancelled;
     }
 
-    private static String executeRequestBody(OkHttpClient http, Request request) {
-        return executeRequest(request, http).body;
-    }
-
     /** Requests on the wire, by URL: an identical request joins the one in flight. */
     private static final Map<String, java.util.concurrent.CompletableFuture<HttpResult>> IN_FLIGHT =
             new java.util.concurrent.ConcurrentHashMap<>();

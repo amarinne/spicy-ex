@@ -351,6 +351,10 @@ public final class DiagnosticReportingDialog {
         reportId.setTextIsSelectable(true);
         reportId.setTypeface(Typeface.MONOSPACE);
         box.addView(reportId, matchWrapWithBottom(context, 12));
+        box.addView(bodyText(context, text(strings, R.string.diagnostic_follow_up_notice,
+                "This report system does not support replies from the developer or maintainer. "
+                        + "For follow-up, contact them directly through GitHub or the Telegram group.")),
+                matchWrapWithBottom(context, 12));
         TextView policy = optionRow(context, text(strings, R.string.diagnostic_data_policy,
                 "Diagnostic data policy ↗"));
         policy.setOnClickListener(v -> openPolicy(context, strings));

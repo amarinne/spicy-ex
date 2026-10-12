@@ -108,6 +108,63 @@ public class AiLayerRunnerTest {
     }
 
     @Test
+    public void completeButTruncatedPaidRecordCannotDisplayOrTriggerRepurchase() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        AiRunOutcome bought = AiLayerRunner.run(args(rows(2), new FakeAiProvider(), store));
+        assertEquals(AiRunOutcome.Kind.COMPLETED, bought.kind);
+        String saved = AiPaidRecordCodec.encode(store.peek(config()));
+        int writes = store.commits, reservations = store.reservations;
+        FakeAiProvider forbidden = new FakeAiProvider();
+
+        // A damaged ledger can lose a chunk and its items together, leaving a consistent subset.
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(3), forbidden, store));
+
+        assertEquals(AiRunOutcome.Kind.FAILED, outcome.kind);
+        assertEquals("storage_unavailable", outcome.failureToken);
+        assertFalse(outcome.hasOutput());
+        assertTrue(forbidden.calls.isEmpty());
+        assertEquals(writes, store.commits);
+        assertEquals(reservations, store.reservations);
+        assertEquals(saved, AiPaidRecordCodec.encode(store.peek(config())));
+    }
+
+    @Test
+    public void changedProbeKeepsPaidBoundariesAndResumesOnlyUnfinishedRows() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        AiModelDescriptor measured = new AiModelDescriptor(FakeAiProvider.DEFAULT_MODEL.name,
+                "1", 32_768, 8_192, Collections.singletonList("generateContent"), 6_000);
+        AiProviderConfig providerConfig = new AiProviderConfig(LayerKind.MEANING, null, "1",
+                measured, "en", AiContract.PROMPT_VERSION, false);
+        AiRunConfig oldPlanConfig = new AiRunConfig(LayerKind.MEANING, "digest-1", "config-1",
+                "fake", AiLyricContext.EMPTY, providerConfig, "", null, null);
+        FakeAiProvider first = new FakeAiProvider(
+                (request, provider, signal) -> AiProviderResult.ok(FakeAiProvider.echo(request),
+                        AiUsage.of(10, 10), AiFinishReason.STOP, 1),
+                FakeAiProvider.failure(AiProviderFailure.deliveryUnknown(
+                        AiProviderFailure.Cause.NETWORK, 0)));
+        AiLayerRunner.Args initial = args(rows(100), first, store);
+        initial.config = oldPlanConfig;
+        assertEquals(AiRunOutcome.Kind.FAILED, AiLayerRunner.run(initial).kind);
+        assertEquals(64, store.peek(config()).items().size());
+        String saved = AiPaidRecordCodec.encode(store.peek(config()));
+        int writes = store.commits, reservations = store.reservations;
+
+        FakeAiProvider forbidden = new FakeAiProvider();
+        AiLayerRunner.Args retry = args(rows(100), forbidden, store);
+        retry.explicitRetry = true;
+        AiRunOutcome outcome = AiLayerRunner.run(retry);
+
+        assertEquals(AiRunOutcome.Kind.COMPLETED, outcome.kind);
+        assertTrue(outcome.hasOutput());
+        assertEquals(100, outcome.record.items().size());
+        assertEquals(1, forbidden.calls.size());
+        assertEquals(36, forbidden.calls.get(0).request.items.size());
+        assertEquals(10, outcome.record.chunk("C0").inputTokens);
+        assertEquals(64, outcome.record.chunk("C0").ids.size());
+
+    }
+
+    @Test
     public void aDocumentWithNothingToSendCostsNothingAndStoresNothing() {
         FakeAiRecordStore store = new FakeAiRecordStore();
         FakeAiProvider provider = new FakeAiProvider();
@@ -414,7 +471,9 @@ public class AiLayerRunnerTest {
         AiLayerRunner.run(args(chunkedRows(), failing, store));
 
         FakeAiProvider retry = new FakeAiProvider();
-        AiRunOutcome outcome = AiLayerRunner.run(args(chunkedRows(), retry, store));
+        AiLayerRunner.Args retryArgs = args(chunkedRows(), retry, store);
+        retryArgs.explicitRetry = true;
+        AiRunOutcome outcome = AiLayerRunner.run(retryArgs);
 
         assertEquals(AiRunOutcome.Kind.COMPLETED, outcome.kind);
         assertEquals("the completed chunk must not be bought again", 2, retry.calls.size());

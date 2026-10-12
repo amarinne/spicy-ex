@@ -31,6 +31,7 @@ import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.ai.AiSignal;
 import com.eza.spicyex.lyrics.ai.AiSoundOverlay;
 import com.eza.spicyex.lyrics.ai.AiSoundRun;
+import com.eza.spicyex.lyrics.ai.AiRows;
 import com.eza.spicyex.lyrics.ai.AiText;
 import com.eza.spicyex.lyrics.reading.ReadingPlanFactory;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
@@ -151,7 +152,9 @@ public final class LyricsSoundLane {
                 if (SoundWithholdPolicy.withholdRow(opts, line.text, line.detection,
                         workerSnapshot.language)) continue;
                 if (LyricsLocalRomanizer.shouldLocalRomanize(
-                        showRomanization, opts.chineseMode, workerSnapshot, line, fullText)) {
+                        showRomanization, opts.chineseMode
+                                + (opts.chineseOutputStyle == com.eza.spicyex.lyrics.language.ChineseOutputStyle.EZA ? "-eza" : ""),
+                        workerSnapshot, line, fullText)) {
                     localWork.add(i);
                 }
             }
@@ -177,7 +180,7 @@ public final class LyricsSoundLane {
             boolean aiConfigured = settings.soundLayerEnabled() && settings.isConfigured();
             if (aiConfigured) {
                 startAiGapFill(run, id, generation, snapshot, displayedSound, displayedSound, settings,
-                        explicitAiRequest || settings.pronunciationAutomatic(), currentGuard, callback,
+                        explicitAiRequest, explicitAiRequest || settings.pronunciationAutomatic(), currentGuard, callback,
                         requiredRowIds, opts);
                 return true;
             }
@@ -449,7 +452,7 @@ public final class LyricsSoundLane {
                             "Reading baseline ready"));
         }
         startAiGapFill(run, id, generation, snapshot, local, local, settings,
-                explicitAiRequest || settings.pronunciationAutomatic(), currentGuard, callback,
+                explicitAiRequest, explicitAiRequest || settings.pronunciationAutomatic(), currentGuard, callback,
                 requiredRowIds, opts);
     }
 
@@ -463,11 +466,19 @@ public final class LyricsSoundLane {
     private void startAiGapFill(final DerivedLayerRun run, final String id, final int generation,
                                 final LyricsDocument snapshot, final SoundArtifact baseline,
                                 final SoundArtifact fallback,
-                                final AiSettings settings, final boolean allowProviderRequest,
+                                final AiSettings settings, final boolean explicitAiRequest, final boolean allowProviderRequest,
                                 final LyricsSecondaryProcessor.CurrentGuard currentGuard,
                                 final LyricsSecondaryProcessor.Callback callback,
                                 final Set<String> requiredRowIds, final RomanizationOptions opts) {
         final String orthography = AiContract.ORTHOGRAPHY_LATIN;
+        // Use the same coverage policy before creating a paid-attempt state or scheduling AI.
+        if (!AiRows.hasWork(AiRows.forSound(run.base, snapshot, baseline, orthography,
+                settings.soundUsesBaseline(), opts))) {
+            post(run, id, generation, snapshot, currentGuard,
+                    () -> callback.complete(LayerKind.SOUND, fallback, LayerFailure.NONE,
+                            "Reading complete", 0));
+            return;
+        }
         final AiSignal signal = new AiSignal();
         aiSignal = signal;
         if (allowProviderRequest) {
@@ -486,7 +497,7 @@ public final class LyricsSoundLane {
                     if (!run.accepts(currentGuard, id, generation, snapshot)) return;
                     result = AiSoundRun.run(context, settings, run.base, snapshot, baseline,
                             orthography, settings.soundUsesBaseline(), allowProviderRequest, signal,
-                            monitor, opts);
+                            monitor, opts, explicitAiRequest);
                     if (result != null && result.outcome != null
                             && result.outcome.kind == AiRunOutcome.Kind.FAILED) {
                         aiFailure = result.outcome.failure;
@@ -518,7 +529,7 @@ public final class LyricsSoundLane {
                     XpLog.log(TAG + " ai reading failed: "
                             + AiRuntimeFailureLog.describe(failure));
                     result = null;
-                    aiFailure = new LayerFailure(LayerFailure.Reason.UNAVAILABLE,
+                    aiFailure = LayerFailure.ai(LayerFailure.Reason.UNAVAILABLE,
                             "runtime_unavailable", 0);
                     AiRequestLiveState.fail(LayerKind.SOUND, run.canonicalDigest(), run.tag,
                             "runtime_unavailable", 0, failure.getClass().getSimpleName());

@@ -44,8 +44,8 @@ public final class LegacyDocumentComposer {
         projected.translationAiPending = projected.translationPending
                 && session.meaning.authority == LayerAuthority.AI;
         projected.processingPending = projected.romanizationPending || projected.translationPending;
-        projected.readingAiFailureToken = session.sound.failure.detail;
-        projected.translationAiFailureToken = session.meaning.failure.detail;
+        projected.readingAiFailureToken = session.sound.failure.aiFailureToken;
+        projected.translationAiFailureToken = session.meaning.failure.aiFailureToken;
         return projected;
     }
 

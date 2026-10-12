@@ -36,6 +36,7 @@
     <string name="diagnostic_discard">Discard</string>
     <string name="diagnostic_uploaded">Report uploaded</string>
     <string name="diagnostic_report_id">Report ID</string>
+    <string name="diagnostic_follow_up_notice">This report system does not support replies from the developer or maintainer. For follow-up, contact them directly through GitHub or the Telegram group.</string>
     <string name="diagnostic_clip_label">Spicy EX report ID</string>
     <string name="diagnostic_retention_status">Retention</string>
     <string name="diagnostic_retention_indefinite">Indefinite; maintainer deletion or redaction only</string>

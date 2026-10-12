@@ -222,6 +222,40 @@ public class LayoutProbeReportTest {
 
     // R7 ---------------------------------------------------------------------
 
+    @Test public void fullWidthRowBesideChromeDoesNotClaimItsShortTextIsCovered() {
+        LayoutProbeReport report = new LayoutProbeReport().number("chrome_alpha", 1f)
+                .rect("dock", 1588, 136, 1720, 736);
+        report.lyricRow(new int[]{60, 151, 1708, 370},
+                Arrays.asList(new int[]{60, 151, 800, 370}));
+        assertViolations(report);
+    }
+
+    @Test public void wrappedLineGapsAndEmptyOrHiddenTextDoNotCountAsCoverage() {
+        LayoutProbeReport report = new LayoutProbeReport().number("chrome_alpha", 1f)
+                .rect("dock", 700, 500, 800, 650);
+        report.lyricRow(new int[]{40, 300, 1040, 700}, Arrays.asList(
+                new int[]{40, 300, 1000, 450}, new int[]{40, 500, 300, 650}));
+        report.lyricRow(new int[]{40, 500, 1040, 650}, java.util.Collections.emptyList());
+        assertViolations(report);
+    }
+
+    @Test public void multipleTextFragmentsUnderChromeCountTheirRowOnlyOnce() {
+        LayoutProbeReport report = new LayoutProbeReport().number("chrome_alpha", 1f)
+                .rect("dock", 700, 500, 800, 650);
+        report.lyricRow(new int[]{40, 300, 1040, 700}, Arrays.asList(
+                new int[]{650, 500, 740, 650}, new int[]{750, 500, 900, 650}));
+        assertViolations(report, "R7 lyrics_under_chrome 1");
+    }
+
+    @Test public void laterCallerMutationCannotChangeRecordedTextBounds() {
+        int[] text = {650, 500, 900, 650};
+        LayoutProbeReport report = new LayoutProbeReport().number("chrome_alpha", 1f)
+                .rect("dock", 700, 500, 800, 650);
+        report.lyricRow(new int[]{40, 300, 1040, 700}, Arrays.asList(text));
+        text[2] = 660;
+        assertViolations(report, "R7 lyrics_under_chrome 1");
+    }
+
     @Test
     public void opaqueChromeOverLyricTextFires() {
         LayoutProbeReport report = clean();

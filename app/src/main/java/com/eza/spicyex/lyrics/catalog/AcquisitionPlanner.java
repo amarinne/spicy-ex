@@ -20,7 +20,6 @@ import java.util.Collections;
  *   <li>A complete anchor stops lower-priority acquisition.</li>
  *   <li>Ask one due source, then re-plan after its terminal outcome. Cached lower-priority
  *       lyrics stay visible while earlier primary sources are checked.</li>
- *   <li>Only the sync-upgrade option opens donor probes; missing verses do not imply aligned timing.</li>
  *   <li>Explicit picker checks bypass this planner entirely: the owner asked for that source.</li>
  * </ul>
  */
@@ -87,8 +86,6 @@ public final class AcquisitionPlanner {
         List<SourceId> order = autoSources(p);
         int seatIndex = seat == null ? order.size() : order.indexOf(seat.sourceId);
         if (seatIndex < 0) seatIndex = order.size();
-        boolean supplement = seat != null && CatalogPolicy.primary(seat.sourceId)
-                && p.syncUpgradeEnabled;
         long nextDue = 0L;
         for (int pass = 0; pass < 2; pass++) {
             for (int index = 0; index < order.size(); index++) {
@@ -97,11 +94,9 @@ public final class AcquisitionPlanner {
                 // A cached fallback can render while an earlier source is checked. It does not
                 // suppress that source. A complete anchor never triggers unrelated backup probes.
                 boolean earlier = index < seatIndex;
-                boolean donor = supplement && CatalogPolicy.syncDonor(source)
-                        && source != seat.sourceId;
                 boolean orgRefresh = source == SourceId.SPICY_ORG && orgSeat;
                 if (pinned && !orgRefresh) continue;
-                if (seat != null && !earlier && !donor && !orgRefresh) continue;
+                if (seat != null && !earlier && !orgRefresh) continue;
                 if (source == SourceId.SPOTIFY_NATIVE && !includeLocal) continue;
                 ProviderRecord record = state.provider(source);
                 long at = record.status == CatalogSource.ProviderStatus.AVAILABLE
@@ -115,8 +110,7 @@ public final class AcquisitionPlanner {
                             : Math.max(refreshAt, at);
                 }
                 if (at <= nowMs) {
-                    String reason = orgRefresh ? "org-refresh" : seat == null ? "no-seat" : earlier ? "primary-probe"
-                            : "sync-upgrade-probe";
+                    String reason = orgRefresh ? "org-refresh" : seat == null ? "no-seat" : "primary-probe";
                     // Re-plan after this provider's terminal outcome. Never speculate with a
                     // parallel fallback request while a prior route is still pending.
                     return new Plan(Action.FETCH, new AcquisitionScope(
@@ -148,7 +142,7 @@ public final class AcquisitionPlanner {
      *
      * <p>This explicit preference walk bypasses stored retry horizons and stops at the first
      * usable response. Automatic acquisition instead asks one due source per plan and re-plans
-     * after each outcome. Sync donors are requested only through the supplemental gate.
+     * after each outcome.
      */
     public static Plan refreshAllInOrder(CatalogPolicy policy) {
         CatalogPolicy p = policy == null ? new CatalogPolicy(null, false) : policy;

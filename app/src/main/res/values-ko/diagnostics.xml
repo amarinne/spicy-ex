@@ -37,6 +37,7 @@
     <string name="diagnostic_discard">삭제</string>
     <string name="diagnostic_uploaded">보고서가 업로드되었습니다</string>
     <string name="diagnostic_report_id">보고서 ID</string>
+    <string name="diagnostic_follow_up_notice">이 보고서 시스템에서는 개발자나 유지 관리자가 답변할 수 없습니다. 후속 연락이 필요하면 GitHub 또는 Telegram 그룹으로 직접 문의해 주세요.</string>
     <string name="diagnostic_clip_label">Spicy EX 보고서 ID</string>
     <string name="diagnostic_retention_status">보관 기간</string>
     <string name="diagnostic_retention_indefinite">무기한; 유지보수자가 삭제하거나 수정할 때까지</string>

@@ -1089,11 +1089,8 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         return null;
     }
 
-    /** Explains why a row is unavailable. */
+    /** Explains why a row is unavailable; current pack gating is visibility-only. */
     @Override public String unavailableSummary(Settings.Setting<?> setting) {
-        if (setting == Settings.TRANSLITERATION_ENABLED && !LanguageModelPack.isReady()) {
-            return uiStrings.setting(Settings.DOWNLOAD_LANGUAGE_MODELS);
-        }
         return null;
     }
 

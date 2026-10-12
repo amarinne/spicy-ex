@@ -23,7 +23,6 @@ public final class CatalogPolicy {
     public final boolean sourceOrderMode;
     public final boolean karaokeOriginalLyrics;
     public final long spicyOrgKeyEpoch;
-    public final boolean syncUpgradeEnabled;
     public final boolean spicyOrgTerminated;
     public final long spicyOrgAccessRevision;
 
@@ -33,27 +32,14 @@ public final class CatalogPolicy {
 
     public CatalogPolicy(List<SourceId> enabledOrder, boolean sourceOrderMode,
                          boolean karaokeOriginalLyrics) {
-        this(enabledOrder, sourceOrderMode, karaokeOriginalLyrics, false);
-    }
-
-    public CatalogPolicy(List<SourceId> enabledOrder, boolean sourceOrderMode,
-                         boolean karaokeOriginalLyrics, boolean syncUpgradeEnabled) {
-        this(enabledOrder, sourceOrderMode, karaokeOriginalLyrics, syncUpgradeEnabled, 0L);
-    }
-
-    private CatalogPolicy(List<SourceId> enabledOrder, boolean sourceOrderMode,
-                          boolean karaokeOriginalLyrics, boolean syncUpgradeEnabled,
-                          long spicyOrgKeyEpoch) {
-        this(enabledOrder, sourceOrderMode, karaokeOriginalLyrics, syncUpgradeEnabled,
-                spicyOrgKeyEpoch, false, 0);
+        this(enabledOrder, sourceOrderMode, karaokeOriginalLyrics, 0L, false, 0L);
     }
 
     CatalogPolicy(List<SourceId> enabledOrder, boolean sourceOrderMode,
-                  boolean karaokeOriginalLyrics, boolean syncUpgradeEnabled,
-                  long spicyOrgKeyEpoch, boolean spicyOrgTerminated, long accessRevision) {
+                  boolean karaokeOriginalLyrics, long spicyOrgKeyEpoch,
+                  boolean spicyOrgTerminated, long accessRevision) {
         this.spicyOrgTerminated = spicyOrgTerminated;
         this.spicyOrgAccessRevision = accessRevision;
-        this.syncUpgradeEnabled = syncUpgradeEnabled;
         this.spicyOrgKeyEpoch = spicyOrgKeyEpoch;
         List<SourceId> order = new ArrayList<>();
         if (enabledOrder != null) {
@@ -79,7 +65,6 @@ public final class CatalogPolicy {
                 == LyricsSourcePreferences.RankingMode.SOURCE_ORDER,
                 context != null && SpotifyPlusConfig.from(context)
                         .get(Settings.KARAOKE_ORIGINAL_LYRICS),
-                context != null && SpotifyPlusConfig.from(context).get(Settings.SYNC_UPGRADE),
                 com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore.epoch(context),
                 com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.isTerminated(context),
                 com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.revision(context));
@@ -125,10 +110,6 @@ public final class CatalogPolicy {
     public static boolean primary(SourceId source) {
         return source == SourceId.SPICY_ORG || source == SourceId.APPLE
                 || source == SourceId.SPOTIFY_NATIVE;
-    }
-
-    public static boolean syncDonor(SourceId source) {
-        return source == SourceId.QQ || source == SourceId.NETEASE;
     }
 
     /** Settings-level source to catalog acquisition identity. */
@@ -182,7 +163,6 @@ public final class CatalogPolicy {
         CatalogPolicy o = (CatalogPolicy) other;
         return sourceOrderMode == o.sourceOrderMode
                 && karaokeOriginalLyrics == o.karaokeOriginalLyrics
-                && syncUpgradeEnabled == o.syncUpgradeEnabled
                 && spicyOrgKeyEpoch == o.spicyOrgKeyEpoch
                 && spicyOrgTerminated == o.spicyOrgTerminated
                 && spicyOrgAccessRevision == o.spicyOrgAccessRevision
@@ -190,13 +170,12 @@ public final class CatalogPolicy {
     }
 
     @Override public int hashCode() {
-        return Objects.hash(enabledOrder, sourceOrderMode, karaokeOriginalLyrics, syncUpgradeEnabled,
+        return Objects.hash(enabledOrder, sourceOrderMode, karaokeOriginalLyrics,
                 spicyOrgKeyEpoch, spicyOrgTerminated, spicyOrgAccessRevision);
     }
 
     @Override public String toString() {
         return (sourceOrderMode ? "source-order" : "auto") + enabledOrder
-                + (karaokeOriginalLyrics ? "+karaoke-original" : "+karaoke-verbatim")
-                + (syncUpgradeEnabled ? "+sync-upgrade" : "");
+                + (karaokeOriginalLyrics ? "+karaoke-original" : "+karaoke-verbatim");
     }
 }

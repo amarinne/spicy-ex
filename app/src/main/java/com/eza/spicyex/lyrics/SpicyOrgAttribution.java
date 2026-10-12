@@ -33,11 +33,7 @@ public final class SpicyOrgAttribution {
     /** Display provenance without changing the canonical provider or catalog identity. */
     public static String sourceLabel(LyricsDocument document) {
         if (document == null) return "Unknown source";
-        String provider = providerLabel(document);
-        if (document.syncUpgradeProvenance == null) return provider;
-        String donor = safe(document.syncUpgradeProvenance.donorProvider);
-        if (donor.isEmpty()) donor = safe(document.syncUpgradeProvenance.donorSource);
-        return donor.isEmpty() ? provider : provider + " + " + donor;
+        return providerLabel(document);
     }
 
     private static String providerLabel(LyricsDocument document) {
@@ -61,8 +57,7 @@ public final class SpicyOrgAttribution {
     public static List<Credit> credits(LyricsDocument document, boolean includeProvider) {
         if (document == null) return Collections.emptyList();
         List<Credit> credits = new ArrayList<>();
-        if (includeProvider && (SpicyOrgPolicy.isRestricted(document)
-                || document.syncUpgradeProvenance != null)) {
+        if (includeProvider && SpicyOrgPolicy.isRestricted(document)) {
             credits.add(new Credit((SpicyOrgPolicy.isRestricted(document) ? "Lyrics from " : "")
                     + sourceLabel(document), ""));
         }

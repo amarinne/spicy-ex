@@ -9,6 +9,7 @@ import com.eza.spicyex.SpotifyPlusConfig;
  */
 public final class RomanizationOptions {
     public final String chineseMode;       // pinyin / jyutping (effective)
+    public final ChineseOutputStyle chineseOutputStyle;
     public final String koreanMode;        // KoreanDisplayMode value
     public final boolean chineseTones;     // pinyin tone marks + jyutping tone numbers
     public final String cyrillicMode;      // "Russian" / "Ukrainian"
@@ -16,7 +17,20 @@ public final class RomanizationOptions {
 
     public RomanizationOptions(String chineseMode, String koreanMode, boolean chineseTones,
                                String cyrillicMode, boolean cyrillicKeepSigns) {
-        this.chineseMode = chineseMode;
+        this.chineseOutputStyle = ChineseOutputStyle.fromSetting(chineseMode);
+        this.chineseMode = canonicalChineseMode(chineseMode);
+        this.koreanMode = "Off".equals(koreanMode) ? "Off" : KoreanDisplayMode.valueOfSetting(koreanMode);
+        this.chineseTones = chineseTones;
+        this.cyrillicMode = cyrillicMode;
+        this.cyrillicKeepSigns = cyrillicKeepSigns;
+    }
+
+    public RomanizationOptions(String chineseMode, String koreanMode, boolean chineseTones,
+                               String cyrillicMode, boolean cyrillicKeepSigns,
+                               ChineseOutputStyle chineseOutputStyle) {
+        this.chineseOutputStyle = chineseOutputStyle == null
+                ? ChineseOutputStyle.fromSetting(chineseMode) : chineseOutputStyle;
+        this.chineseMode = canonicalChineseMode(chineseMode);
         this.koreanMode = "Off".equals(koreanMode) ? "Off" : KoreanDisplayMode.valueOfSetting(koreanMode);
         this.chineseTones = chineseTones;
         this.cyrillicMode = cyrillicMode;
@@ -31,6 +45,10 @@ public final class RomanizationOptions {
     public String cacheKey() {
         return "cn=" + n(chineseMode)
                 + "|kr=" + n(koreanMode)
+                + "|cnStyle=" + chineseOutputStyle.value
+                + (chineseOutputStyle == ChineseOutputStyle.EZA ? "@" + ChineseOutputStyle.REVISION : "")
+                + (KoreanDisplayMode.VN_PRONUNCIATION.value.equals(koreanMode)
+                    ? "|krStyle=eza@" + ChineseOutputStyle.REVISION : "")
                 + "|tn=" + (chineseTones ? 1 : 0)
                 + "|cy=" + n(cyrillicMode)
                 + "|cs=" + (cyrillicKeepSigns ? 1 : 0);
@@ -38,5 +56,13 @@ public final class RomanizationOptions {
 
     private static String n(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String canonicalChineseMode(String mode) {
+        if (mode == null) return "";
+        if ("jyutping".equalsIgnoreCase(mode) || "cantonese".equalsIgnoreCase(mode)
+                || mode.toLowerCase(java.util.Locale.ROOT).startsWith("jyutping-")) return "jyutping";
+        if (mode.toLowerCase(java.util.Locale.ROOT).startsWith("pinyin-")) return "pinyin";
+        return mode;
     }
 }

@@ -39,6 +39,12 @@ public interface AiRecordStore {
     /** @return the stored record for this exact question, or null when there is none to trust */
     AiPaidRecord read(AiRunConfig config);
 
+    /** Complete compatible output, independent of a newly rebuilt Google draft. */
+    default AiPaidRecord readReplay(AiRunConfig config, AiReplayIdentity replay) { return null; }
+
+    /** Records a source-to-paid-output association without copying or purchasing output. */
+    default void bind(AiPaidRecord record, AiSourceBinding source, AiReplayIdentity replay) { }
+
     /** Reserves the maximum encoded record size before the next provider call. */
     Reservation reserve(AiRunConfig config, long maxRecordBytes);
 

@@ -7,7 +7,7 @@ import com.eza.spicyex.lyrics.catalog.CatalogSource.*;
 import org.junit.Test;
 import java.util.*;
 
-/** Provider outcomes drive sequential fallback; content completeness gates donor acquisition. */
+/** Provider outcomes drive sequential fallback; a usable source stops lower-priority acquisition. */
 public class AcquisitionPlannerTest {
     private static final String TRACK = "track1";
     private static final long NOW = System.currentTimeMillis();
@@ -76,26 +76,18 @@ public class AcquisitionPlannerTest {
         assertEquals(NOW + AcquisitionPlanner.TRANSIENT_BASE_RETRY_MS, after.retryAtMs);
     }
 
-    @Test public void syncUpgradeOnlyProbesEligibleDonorsAndNeverReasksAvailableDonor() {
-        CatalogPolicy enabled = new CatalogPolicy(AUTO.enabledOrder, false, false, true);
-        CatalogCandidate org = candidate(SourceId.SPICY_ORG, TimingLevel.LINE, true);
-        assertFalse(plan(state(org), AUTO, true).fetches());
-        assertEquals(Collections.singletonList(SourceId.QQ), plan(state(org), enabled, true).scope.sources);
-        Plan next = plan(state(org, answered(SourceId.QQ, ProviderStatus.AVAILABLE, NOW, 0)), enabled, true);
-        assertEquals(Collections.singletonList(SourceId.NETEASE), next.scope.sources);
-        assertFalse(plan(state(org, answered(SourceId.QQ, ProviderStatus.AVAILABLE, NOW, 0),
-                answered(SourceId.NETEASE, ProviderStatus.AVAILABLE, NOW, 0)), enabled, true).fetches());
-    }
-
-    @Test public void partialPrimaryStaysSeatedDuringOptInTimingUpgrade() {
-        CatalogCandidate org = candidate(SourceId.SPICY_ORG, TimingLevel.WORD, false);
-        CatalogState stored = state(org);
-        assertFalse(plan(stored, AUTO, true).fetches());
-        CatalogPolicy upgrade = new CatalogPolicy(AUTO.enabledOrder, false, false, true);
-        Plan next = plan(stored, upgrade, true);
-        assertEquals(Collections.singletonList(SourceId.QQ), next.scope.sources);
-        assertEquals("sync-upgrade-probe", next.reason);
-        assertSame(org, CatalogDecisions.render(stored, upgrade).winner);
+    @Test public void completeAndPartialPrimaryNeverProbeLowerSourcesForWordTiming() {
+        for (boolean complete : new boolean[]{true, false}) {
+            for (SourceId source : new SourceId[]{SourceId.SPICY_ORG, SourceId.APPLE, SourceId.SPOTIFY_NATIVE}) {
+                CatalogCandidate seat = candidate(source, TimingLevel.LINE, complete);
+                CatalogState stored = state(seat,
+                        answered(SourceId.SPICY_ORG, ProviderStatus.NOT_FOUND, NOW, 1),
+                        answered(SourceId.APPLE, ProviderStatus.NOT_FOUND, NOW, 1));
+                Plan next = plan(stored, AUTO, true);
+                assertFalse(next.fetches());
+                assertSame(seat, CatalogDecisions.render(stored, AUTO).winner);
+            }
+        }
     }
 
     @Test public void manualPinSuppressesAutomaticAcquisition() {
@@ -207,9 +199,9 @@ public class AcquisitionPlannerTest {
         assertEquals(AUTO.enabledOrder, ordered.scope.sources);
     }
 
-    @Test public void policySnapshotAndScopeKeepUpgradeAndKaraokeIdentity() {
-        CatalogPolicy off = new CatalogPolicy(AUTO.enabledOrder, false, true, false);
-        CatalogPolicy on = new CatalogPolicy(AUTO.enabledOrder, false, true, true);
+    @Test public void policySnapshotAndScopeKeepKaraokeIdentity() {
+        CatalogPolicy off = new CatalogPolicy(AUTO.enabledOrder, false, false);
+        CatalogPolicy on = new CatalogPolicy(AUTO.enabledOrder, false, true);
         assertNotEquals(off, on);
         assertTrue(AcquisitionPlanner.refreshAll(on).scope.karaokeOriginalLyrics);
         assertTrue(AcquisitionPlanner.refreshAll(on).scope.key().contains("karaoke-original"));

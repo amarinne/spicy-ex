@@ -17,6 +17,8 @@ public final class AiChunkExecution {
     public final AiChunkFailure failure;
     /** Tokens accounted for this execution, reported or conservatively estimated. */
     public final long accountedTokens;
+    /** Set when a returned attempt was retained but cancellation stopped its unsent retry. */
+    public final String cancelReason;
     /**
      * Rows the model never satisfied and that fall back to the baseline layer, empty on the
      * normal path. Only present on an accepted execution; a chunk that kept some rows is
@@ -26,13 +28,14 @@ public final class AiChunkExecution {
 
     private AiChunkExecution(boolean ok, List<AiResponseItem> items, AiChunkRecord record,
                              AiChunkFailure failure, long accountedTokens,
-                             List<String> fallbackRowIds) {
+                             List<String> fallbackRowIds, String cancelReason) {
         this.ok = ok;
         this.items = Collections.unmodifiableList(new ArrayList<>(
                 items == null ? Collections.<AiResponseItem>emptyList() : items));
         this.record = record;
         this.failure = failure;
         this.accountedTokens = accountedTokens;
+        this.cancelReason = cancelReason;
         this.fallbackRowIds = Collections.unmodifiableList(new ArrayList<>(
                 fallbackRowIds == null ? Collections.<String>emptyList() : fallbackRowIds));
     }
@@ -44,11 +47,16 @@ public final class AiChunkExecution {
 
     static AiChunkExecution accepted(List<AiResponseItem> items, AiChunkRecord record,
                                      long accountedTokens, List<String> fallbackRowIds) {
-        return new AiChunkExecution(true, items, record, null, accountedTokens, fallbackRowIds);
+        return new AiChunkExecution(true, items, record, null, accountedTokens, fallbackRowIds, null);
     }
 
     static AiChunkExecution rejected(AiChunkFailure failure, AiChunkRecord record,
                                      long accountedTokens) {
-        return new AiChunkExecution(false, null, record, failure, accountedTokens, null);
+        return new AiChunkExecution(false, null, record, failure, accountedTokens, null, null);
+    }
+
+    static AiChunkExecution cancelled(AiChunkFailure failure, AiChunkRecord record,
+                                      long accountedTokens, String reason) {
+        return new AiChunkExecution(false, null, record, failure, accountedTokens, null, reason);
     }
 }

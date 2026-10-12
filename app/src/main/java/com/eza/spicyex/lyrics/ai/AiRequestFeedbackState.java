@@ -12,6 +12,12 @@ public final class AiRequestFeedbackState {
     private boolean optimisticPending;
     private boolean awaitingSettlement;
 
+    /** Retires feedback when the shell leaves the request's session. */
+    public void reset() {
+        optimisticPending = false;
+        awaitingSettlement = false;
+    }
+
     public void started() {
         optimisticPending = true;
         awaitingSettlement = true;

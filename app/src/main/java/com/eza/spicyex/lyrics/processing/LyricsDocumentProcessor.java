@@ -120,8 +120,6 @@ public final class LyricsDocumentProcessor {
     public static void applyProcessedCachePreservingAi(Context context, LyricsDocument doc,
                                                        RomanizationOptions opts,
                                                        int processingVersion) {
-        // The session already composed these layers over the anchor's canonical identity.
-        if (doc != null && doc.syncUpgradeProvenance != null) return;
         applyProcessedCache(context, doc, opts, processingVersion, true);
     }
 
@@ -291,6 +289,10 @@ public final class LyricsDocumentProcessor {
     private static boolean mergeLine(LyricsLine target, LyricsLine source) {
         if (target == null || source == null) return false;
         boolean changed = false;
+        if (source.detection != null && target.detection != source.detection) {
+            target.detection = source.detection;
+            changed = true;
+        }
         if (source.readingRenderPlan != null) {
             if (target.readingRenderPlan != source.readingRenderPlan) {
                 target.readingRenderPlan = source.readingRenderPlan;

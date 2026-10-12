@@ -425,7 +425,10 @@
     <string name="settings_label_lyrics_share_gesture_hint">공유 화면 제스처 힌트</string>
     <string name="settings_label_lyrics_show_fullscreen_back_button">뒤로 버튼 표시</string>
     <string name="settings_layout_editor_options_button">옵션</string>
-    <string name="settings_layout_editor_close">닫기</string>
+    <string name="settings_layout_editor_layout">레이아웃</string>
+    <string name="settings_layout_editor_hide_options">옵션 숨기기</string>
+    <string name="settings_layout_editor_show_options">옵션 표시</string>
+    <string name="settings_layout_editor_show_artwork_info">앨범 아트와 곡 정보 표시</string>
     <string name="settings_layout_editor_element_artwork">앨범 아트</string>
     <string name="settings_layout_editor_element_track_text">곡 정보</string>
     <string name="settings_layout_editor_element_focus">현재 가사 위치</string>
@@ -487,8 +490,6 @@
     <string name="settings_spicy_key_catalog">개인 키 받기</string>
     <string name="settings_spicy_key_help">카탈로그에서 Spicy EX를 추가하세요. 개인 클라이언트 키를 붙여 넣으세요. 키를 저장하세요. 가사 제공처에서 SpicyLyrics.org를 활성화하세요.</string>
     <string name="settings_spicy_key_rejected">키를 저장하지 못했습니다. sl_pk_로 시작하는 클라이언트 키를 사용하세요.</string>
-    <string name="settings_label_lyrics_sync_upgrade">가사 동기화 개선</string>
     <string name="settings_source_enabled_title">활성화된 제공처</string>
-    <string name="settings_sync_upgrade_summary">가사가 일치하면 활성화된 QQ Music 또는 NetEase의 타이밍을 사용합니다. 가사 텍스트는 변경하지 않습니다.</string>
     <string name="source_picker_spicy_key_required">설정에서 개인 클라이언트 키를 추가하세요</string>
 </resources>

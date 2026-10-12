@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class ReadingModels {
     private ReadingModels() {}
@@ -198,6 +199,7 @@ public final class ReadingModels {
         public final List<TimedReadingUnit> timedReadingUnits;
         public final String joinedDisplayText;
         public final String translation;
+        private transient volatile Map<String, String> logicalGroups;
         public RenderPlan(String lineId, List<CanonicalSpanMapping> sourceUnits,
                           List<ReadingUnit> readingUnits, List<TimedReadingUnit> timedReadingUnits,
                           String joinedDisplayText, String translation) {
@@ -207,6 +209,49 @@ public final class ReadingModels {
             this.timedReadingUnits = immutable(timedReadingUnits);
             this.joinedDisplayText = joinedDisplayText;
             this.translation = translation;
+        }
+
+        /** Logical owner shared by every source span in a renderer's joined span ID. */
+        public String logicalGroupForSpans(String spanIds) {
+            if (spanIds == null || spanIds.isEmpty() || timedReadingUnits == null) return null;
+            Map<String, String> groups = logicalGroups();
+            String group = groups.get(spanIds);
+            if (group != null) return group.isEmpty() ? null : group;
+            int end = spanIds.length();
+            // String.split("\\+") drops trailing empty IDs. Preserve that existing contract.
+            while (end > 0 && spanIds.charAt(end - 1) == '+') end--;
+            String shared = null;
+            for (int start = 0; start < end;) {
+                int separator = spanIds.indexOf('+', start);
+                int limit = separator < 0 || separator >= end ? end : separator;
+                String next = groups.get(spanIds.substring(start, limit));
+                if (next == null || next.isEmpty() || shared != null && !shared.equals(next)) {
+                    shared = null;
+                    break;
+                }
+                shared = next;
+                start = limit + 1;
+            }
+            groups.putIfAbsent(spanIds, shared == null ? "" : shared);
+            return shared;
+        }
+
+        private Map<String, String> logicalGroups() {
+            Map<String, String> groups = logicalGroups;
+            if (groups != null) return groups;
+            synchronized (this) {
+                groups = logicalGroups;
+                if (groups == null) {
+                    groups = new ConcurrentHashMap<>();
+                    for (TimedReadingUnit unit : timedReadingUnits) {
+                        if (unit == null || unit.spanId == null || unit.spanId.indexOf('+') >= 0) continue;
+                        // The old scan used the first matching unit, including a missing group.
+                        groups.putIfAbsent(unit.spanId, unit.logicalGroupId == null ? "" : unit.logicalGroupId);
+                    }
+                    logicalGroups = groups;
+                }
+            }
+            return groups;
         }
     }
 

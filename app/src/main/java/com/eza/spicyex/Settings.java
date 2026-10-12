@@ -201,10 +201,6 @@ public final class Settings {
             "Show original lyrics for karaoke versions", false
     );
 
-    public static final Setting<Boolean> SYNC_UPGRADE = boolSetting(
-            "lyrics_sync_upgrade", LYRICS_SOURCES, "Upgrade lyric sync", false
-    );
-
     /** Bounded JSON map of spotify track URI to source id; auto is represented by omission. */
     public static final Setting<String> LYRICS_SOURCE_OVERRIDES = internalSetting(
             "lyrics_source_overrides", "Per-track lyric sources", "{}"
@@ -505,9 +501,9 @@ public final class Settings {
     // genuinely wide (landscape with width/height >= 1.2, so near-square foldable screens stay
     // stacked), the fullscreen lyrics use a two-column layout with an artwork panel on the
     // left and the lyrics column on the right. The readout overlays stand down while it is
-    // engaged. Takes effect when the lyrics screen is (re)opened.
+    // engaged. Applies live, including while the layout editor is open.
     public static final Setting<Boolean> ADAPTIVE_LANDSCAPE_LAYOUT = boolSetting(
-            "lyrics_adaptive_landscape_layout", INTERNAL, "Adaptive landscape layout", true
+            "lyrics_adaptive_landscape_layout", INTERNAL, "Two-column on wide screens", true
     );
 
     // Media controls for artwork (two-column panel + readout art, same behavior): Off
@@ -684,7 +680,12 @@ public final class Settings {
     public static final Setting<String> CHINESE_MODE = enumSetting(
             "lyrics_chinese_mode", TRANSLITERATION, "Chinese reading",
             "pinyin",
-            "off", "pinyin", "jyutping", "cycle"
+            "off", "pinyin", "jyutping", "pinyin-eza", "jyutping-eza", "cycle"
+    );
+
+    public static final Setting<String> CHINESE_CHARACTER_FORM = enumSetting(
+            "lyrics_chinese_character_form", TRANSLITERATION, "Convert Chinese characters",
+            "original", "original", "simplified", "traditional"
     );
 
     public static final Setting<String> KOREAN_ROMANIZATION = enumSetting(
@@ -949,6 +950,7 @@ public final class Settings {
     public static final Setting<String> LAST_JAPANESE_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_japanese_cycle_mode", "Last Japanese cycle mode",
             SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
+            SpotifyPlusConfig.JP_READING_ROMAJI_ONLY,
             SpotifyPlusConfig.JP_READING_FURIGANA_ONLY,
             SpotifyPlusConfig.JP_READING_FURIGANA_ROMAJI
     );
@@ -956,11 +958,13 @@ public final class Settings {
     public static final Setting<String> LAST_CHINESE_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_chinese_cycle_mode", "Last Chinese cycle mode",
             SpotifyPlusConfig.CHINESE_MODE_PINYIN,
+            SpotifyPlusConfig.CHINESE_MODE_PINYIN,
             SpotifyPlusConfig.CHINESE_MODE_JYUTPING
     );
 
     public static final Setting<String> LAST_KOREAN_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_korean_cycle_mode", "Last Korean cycle mode",
+            KoreanDisplayMode.RR_STANDARD.value,
             KoreanDisplayMode.RR_STANDARD.value,
             KoreanDisplayMode.WORD_TRANSLIT.value,
             KoreanDisplayMode.RR_PRONUNCIATION.value,
@@ -969,6 +973,7 @@ public final class Settings {
 
     public static final Setting<String> LAST_CYRILLIC_CYCLE_MODE = internalEnumSetting(
             "lyrics_last_cyrillic_cycle_mode", "Last Cyrillic cycle mode",
+            "Russian",
             "Russian",
             "Ukrainian"
     );

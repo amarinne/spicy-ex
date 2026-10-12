@@ -9,7 +9,7 @@ import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
 public final class AutoLyricPresentation {
     public static final long MIN_INTERLUDE_MS = 5000;
     public static final long INTRO_PREROLL_MS = 500;
-    public static final long OUTRO_HOLD_MS = 700;
+    public static final long OUTRO_HOLD_MS = com.eza.spicyex.lyrics.ResponseCreditOutro.HOLD_MS;
     public static final long IMMEDIATE_VOCAL_MS = 1000;
     private AutoLyricPresentation() { }
 

@@ -223,7 +223,7 @@ public class LyricSessionContractTest {
         String row0 = session.base.rows.get(0).rowId;
         LayerState processing = readyMeaning(session, new MeaningEntry(row0, "one", "en"))
                 .processing(LayerAuthority.AI, MEANING_CONFIG, "credential-1", "run-ai");
-        LayerFailure failure = new LayerFailure(LayerFailure.Reason.TIMEOUT,
+        LayerFailure failure = LayerFailure.ai(LayerFailure.Reason.TIMEOUT,
                 "delivery_unknown", 503);
 
         LayerState settled = processing.settled(null, failure);

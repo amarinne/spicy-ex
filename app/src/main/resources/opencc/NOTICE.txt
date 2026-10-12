@@ -1,0 +1,7 @@
+Open Chinese Convert dictionaries
+Dictionary data from opencc-data 1.4.1 is licensed under Apache-2.0.
+Upstream: https://github.com/nk2028/opencc-data
+Spicy EX changes the serialization to UTF-8 tab-separated pairs.
+Conversion behavior is adapted from opencc-js 1.4.1 (MIT).
+Copyright (c) 2020-2021 The nk2028 Project.
+The accompanying license files and provenance apply to this bundle.

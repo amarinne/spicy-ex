@@ -681,7 +681,6 @@ public final class LyricsSyllableViewState {
                                                   float glow, float brightness) {
         if (view == null) return;
         view.setBrightnessMultiplier(brightness);
-        view.setSoftSweep(true);
         for (View parent = parentView(view); parent != null; parent = parentView(parent)) {
             if (parent instanceof GlowFlexbox) {
                 ((GlowFlexbox) parent).applySentenceGradient(view, gradient, glow);
@@ -689,8 +688,9 @@ public final class LyricsSyllableViewState {
             }
         }
         View parent = parentView(view);
-        applyContainerGradient(view, parent, parent == null ? 0 : parent.getWidth(),
-                gradient, glow, brightness);
+        view.setSentenceGradientPosition(gradient, glow,
+                parent == null ? view.getWidth() : parent.getWidth(),
+                parent == null ? 0f : offsetWithin(view, parent));
     }
 
     private static void applyTextGradient(SpicyAnimatedTextView view, float gradient, float glow, float brightness) {

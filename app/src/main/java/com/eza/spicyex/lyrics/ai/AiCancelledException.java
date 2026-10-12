@@ -11,4 +11,9 @@ public class AiCancelledException extends RuntimeException {
         super(AiText.nz(reason));
         this.reason = AiText.nz(reason);
     }
+
+    public AiCancelledException(String reason, Throwable cause) {
+        super(AiText.nz(reason), cause);
+        this.reason = AiText.nz(reason);
+    }
 }

@@ -5,9 +5,11 @@ import com.eza.spicyex.lyrics.language.RomanizationOptions;
 import com.eza.spicyex.lyrics.language.ScriptClassifier;
 import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+import com.eza.spicyex.lyrics.language.EzaChineseRomanizer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 
 import com.eza.spicyex.SpotifyPlusConfig;
 
@@ -67,6 +69,27 @@ public class ChineseRomanizerTest {
         line.text = "中国";
         line.romanizedText = "zhong guo";
         assertFalse(LyricsDisplayMode.isJapaneseLine(line));
+    }
+
+    @Test
+    public void ezaMandarinConvertsStructuredReadingsAndKeepsAuthoredTokens() {
+        assertEquals("tà", EzaChineseRomanizer.mandarin("da4", true));
+        assertEquals("thài", EzaChineseRomanizer.mandarin("tai4", true));
+        assertEquals("khơ", EzaChineseRomanizer.mandarin("ke4", false));
+        assertEquals("khuếi", EzaChineseRomanizer.mandarin("kui2", true));
+        assertEquals("BTS4 mp3 ma3", SpicyJapaneseChineseProcessor.romanizeChineseLine("BTS4 mp3 ma3", "pinyin-eza", true));
+        assertEquals("nyủ", EzaChineseRomanizer.mandarin("nü3", true));
+        assertEquals("mạ", EzaChineseRomanizer.mandarin("ma0", true));
+        assertEquals("mà", EzaChineseRomanizer.mandarin("ma4", true));
+    }
+
+    @Test
+    public void ezaStyleIsPartOfSoundIdentityButMeaningIsIndependent() {
+        RomanizationOptions canonical = new RomanizationOptions("pinyin", "Off", false, "Off", false);
+        RomanizationOptions eza = new RomanizationOptions("pinyin-eza", "Off", false, "Off", false);
+        assertNotEquals(canonical.cacheKey(), eza.cacheKey());
+        assertEquals("pinyin", eza.chineseMode);
+        assertEquals(com.eza.spicyex.lyrics.language.ChineseOutputStyle.EZA, eza.chineseOutputStyle);
     }
 
     @Test

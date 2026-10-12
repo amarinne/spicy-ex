@@ -70,6 +70,7 @@ public final class AiJson {
             if (peek() != ':') throw invalid();
             at++;
             skipWhitespace();
+            if (out.containsKey(key)) throw invalid();
             out.put(key, readValue(depth + 1));
             skipWhitespace();
             char next = peek();
@@ -165,8 +166,12 @@ public final class AiJson {
         try {
             return Double.valueOf(source.substring(start, at));
         } catch (NumberFormatException notANumber) {
-            throw invalid();
+            throw invalid(notANumber);
         }
+    }
+
+    private static AiProtocolException invalid(Throwable cause) {
+        return new AiProtocolException("invalid_json", cause);
     }
 
     private static boolean isDigit(char c) {

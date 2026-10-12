@@ -4,6 +4,9 @@ Spicy EX sends a diagnostic report only after you open **Report a problem**, rev
 data, accept this policy, and tap **Upload**. There are no background uploads, analytics, remote
 configuration, automatic GitHub issues, cookies, or embedded intake credentials.
 
+The report system does not support replies from the developer or maintainer. For follow-up, contact
+them directly through GitHub or the Telegram group.
+
 ## Included data
 
 - Your description and chosen category.

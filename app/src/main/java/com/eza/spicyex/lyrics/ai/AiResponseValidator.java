@@ -150,6 +150,8 @@ public final class AiResponseValidator {
         for (Map.Entry<String, List<AiRequestItem>> row : rows.entrySet()) {
             String rowId = row.getKey();
             List<AiRequestItem> parts = row.getValue();
+            parts.sort((left, right) -> Integer.compare(AiContract.segmentIndexOf(left.id),
+                    AiContract.segmentIndexOf(right.id)));
             boolean plainRow = parts.size() == 1
                     && AiContract.segmentIndexOf(parts.get(0).id) < 0;
             List<String> texts;
@@ -161,14 +163,17 @@ public final class AiResponseValidator {
                 failed.add(new RowFailure(rowId, missing.token));
                 continue;
             }
-            AiRequestItem representative = parts.get(0);
-
-            RowFailure shapeFailure = rowShapeFailure(representative, texts, layer, target);
+            RowFailure shapeFailure = rowShapeFailure(rowId, parts, texts, layer, target);
             if (shapeFailure != null) {
                 failed.add(shapeFailure);
                 continue;
             }
-            accepted.add(new AiResponseItem(rowId, String.join(" / ", texts)));
+            String joined = String.join(" / ", texts);
+            if (!plainRow && AiText.segmentCount(joined) != parts.size()) {
+                failed.add(new RowFailure(rowId, "delimiter_mismatch"));
+                continue;
+            }
+            accepted.add(new AiResponseItem(rowId, joined));
         }
         return new Partition(accepted, failed, "");
     }
@@ -178,25 +183,30 @@ public final class AiResponseValidator {
      * orthography check. Applied over the row's segment texts so a pre-split row is judged on its
      * joined meaning while a bad segment still names its row.
      */
-    private static RowFailure rowShapeFailure(AiRequestItem representative, List<String> texts,
-                                              LayerKind layer, String target) {
-        for (String text : texts) {
+    private static RowFailure rowShapeFailure(String rowId, List<AiRequestItem> parts,
+                                              List<String> texts, LayerKind layer, String target) {
+        for (int index = 0; index < texts.size(); index++) {
+            String text = texts.get(index);
+            AiRequestItem part = parts.get(index);
             if (AiText.utf8Bytes(text) > AiContract.MAX_TRANSLATED_ITEM_BYTES) {
-                return new RowFailure(representative.id, "translated_item_oversized");
+                return new RowFailure(rowId, "translated_item_oversized");
             }
             if (AiText.containsForbiddenText(text)) {
-                return new RowFailure(representative.id, "forbidden_text");
+                return new RowFailure(rowId, "forbidden_text");
             }
-            if (layer == LayerKind.MEANING && echoesVoiceHint(representative, text)) {
-                return new RowFailure(representative.id, "voice_hint_echo");
+            if (parts.size() > 1 && AiText.segmentCount(text) != 1) {
+                return new RowFailure(rowId, "delimiter_mismatch");
+            }
+            if (layer == LayerKind.MEANING && echoesVoiceHint(part, text)) {
+                return new RowFailure(rowId, "voice_hint_echo");
             }
             if (layer == LayerKind.SOUND && !soundOrthographyAccepts(text, target,
-                    representative.source)) {
-                return new RowFailure(representative.id, "target_orthography_mismatch");
+                    part.source)) {
+                return new RowFailure(rowId, "target_orthography_mismatch");
             }
         }
-        if (representative.lineClass == AiLineClass.ORDINARY && allBlank(texts)) {
-            return new RowFailure(representative.id, "empty_ordinary");
+        if (parts.get(0).lineClass == AiLineClass.ORDINARY && allBlank(texts)) {
+            return new RowFailure(rowId, "empty_ordinary");
         }
         return null;
     }
@@ -283,6 +293,11 @@ public final class AiResponseValidator {
             i += Character.charCount(cp);
             if (!Character.isLetter(cp)) continue;
             if (AiText.isLatin(cp)) continue;
+            // Kana long-vowel marks are letters with UnicodeScript.COMMON, not KATAKANA.
+            // They are allowed inside a reading but do not supply target-script evidence below.
+            if (AiContract.ORTHOGRAPHY_KANA.equals(target) && (cp == 0x30fc || cp == 0xff70)) {
+                continue;
+            }
             if (!AiText.isTargetScript(cp, target)) return false;
         }
 

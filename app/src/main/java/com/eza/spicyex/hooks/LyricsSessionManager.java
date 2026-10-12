@@ -134,9 +134,6 @@ final class LyricsSessionManager {
      * reads from the session, this is the base and the mutable document goes away.
      */
     private LyricsDocument canonicalSource;
-    private LyricsDocument timingProjection;
-    private String timingProjectionIdentity = "";
-    private boolean timingProjectionChanged;
     /** Candidate currently rendered; empty for a delivery the catalog could not store. */
     private String displayedCandidateId = "";
     /** Newest catalog view applied here; views read earlier on another IO thread are stale. */
@@ -324,9 +321,6 @@ final class LyricsSessionManager {
         loadingUri = "";
         document = null;
         canonicalSource = null;
-        timingProjection = null;
-        timingProjectionIdentity = "";
-        timingProjectionChanged = false;
         status = uri.isEmpty() ? "idle" : "loading";
         nextFetchAtMs = 0L;
         missingTrackSinceMs = 0L;
@@ -380,10 +374,6 @@ final class LyricsSessionManager {
         if (view == null || view.document == null) return;
         LyricsDocumentProcessor.finalizeParsedDocument(context, view.document,
                 NativeRuntime.GOOGLE_PROCESSING_VERSION);
-        if (view.timingProjection != null) {
-            LyricsDocumentProcessor.finalizeParsedDocument(context, view.timingProjection,
-                    NativeRuntime.GOOGLE_PROCESSING_VERSION);
-        }
     }
 
     private void acceptCatalogLoad(SpotifyTrack requestedTrack, String requestedUri,
@@ -445,14 +435,6 @@ final class LyricsSessionManager {
         }
         appliedViewSequence = view.sequence;
         loadedPolicy = view.policy;
-        String timingIdentity = view.timingProjection == null ? ""
-                : view.timingProjection.syncUpgradeProvenance.anchorCandidateId
-                        + "|" + view.timingProjection.syncUpgradeProvenance.donorCandidateId
-                        + "|" + view.timingProjection.syncUpgradeProvenance.algorithmVersion
-                        + "|" + view.timingProjection.spicyOrgFetchedAtMs;
-        timingProjectionChanged = !timingIdentity.equals(timingProjectionIdentity);
-        timingProjectionIdentity = timingIdentity;
-        timingProjection = view.timingProjection;
         return true;
     }
 
@@ -659,15 +641,13 @@ final class LyricsSessionManager {
                 document.songWriters = result.songWriters;
                 canonicalSource = LyricsDocument.copyOf(result);
             }
-            if (timingProjectionChanged || refreshedOrigin) {
-                timingProjectionChanged = false;
+            if (refreshedOrigin) {
                 syncDocumentLayerFlags();
                 notifyDocument(snapshot(), document);
                 return true;
             }
             return false;
         }
-        timingProjectionChanged = false;
         displayedCandidateId = candidateId;
         CanonicalBase incoming = CanonicalBase.fromDocument(requestedUri, result);
         CanonicalBaseAdoption.Outcome outcome = CanonicalBaseAdoption.evaluate(
@@ -675,12 +655,11 @@ final class LyricsSessionManager {
                 incoming.digest);
         if (outcome == CanonicalBaseAdoption.Outcome.UNCHANGED && document != null) {
             // Another candidate with identical canonical content: publish its provider metadata
-            // but keep the source revision and every digest-bound derived artifact.
-            document = result;
-            canonicalSource = LyricsDocument.copyOf(result);
+            // but keep the source revision, artifacts, and the input owned by active runs.
+            refreshEqualSource(result);
             status = "ready";
             syncDocumentLayerFlags();
-            notifyDocument(snapshot(), result);
+            notifyDocument(snapshot(), document);
             return true;
         }
         // withReplacedBase increments the source revision and drops artifacts tied to the old
@@ -703,6 +682,53 @@ final class LyricsSessionManager {
         notifyDocument(snapshot, result);
         startDetection(requestedTrack, result, requestedGeneration);
         return true;
+    }
+
+    /** Refreshes a source without retiring detection or lanes that own this same canonical input. */
+    private void refreshEqualSource(LyricsDocument result) {
+        canonicalSource = LyricsDocument.copyOf(result);
+        document.trackId = canonicalSource.trackId;
+        document.provider = canonicalSource.provider;
+        document.songWriters = canonicalSource.songWriters;
+        document.spicyOrgSource = canonicalSource.spicyOrgSource;
+        document.spicyOrgUploader = canonicalSource.spicyOrgUploader;
+        document.spicyOrgUploaderUrl = canonicalSource.spicyOrgUploaderUrl;
+        document.spicyOrgMaker = canonicalSource.spicyOrgMaker;
+        document.spicyOrgMakerUrl = canonicalSource.spicyOrgMakerUrl;
+        document.spicyOrgRawPayload = canonicalSource.spicyOrgRawPayload;
+        document.spicyOrgFetchedAtMs = canonicalSource.spicyOrgFetchedAtMs;
+        document.type = canonicalSource.type;
+        document.language = canonicalSource.language;
+        document.fetchSource = canonicalSource.fetchSource;
+        document.selectedSource = canonicalSource.selectedSource;
+        document.selectionMode = canonicalSource.selectionMode;
+        document.selectionOverride = canonicalSource.selectionOverride;
+        document.catalogCandidateId = canonicalSource.catalogCandidateId;
+        document.catalogDelivery = canonicalSource.catalogDelivery;
+        document.spicyPackedPayload = canonicalSource.spicyPackedPayload;
+        document.spicyEnvelopeNoticePresent = canonicalSource.spicyEnvelopeNoticePresent;
+        document.spicyQueryStatus = canonicalSource.spicyQueryStatus;
+        document.spicyFormat = canonicalSource.spicyFormat;
+        document.spicyPoisoned = canonicalSource.spicyPoisoned;
+        document.spicyQualityReason = canonicalSource.spicyQualityReason;
+        document.durationMs = canonicalSource.durationMs;
+        document.startTimeMs = canonicalSource.startTimeMs;
+        document.generation = canonicalSource.generation;
+        document.processingVersion = canonicalSource.processingVersion;
+        document.detectedChinese = canonicalSource.detectedChinese;
+        document.detectedScripts.clear();
+        document.detectedScripts.addAll(canonicalSource.detectedScripts);
+        // Lanes already own worker copies. Future refreshes must read the new provider baseline.
+        document.lines.clear();
+        for (com.eza.spicyex.lyrics.LyricsLine line : canonicalSource.lines) {
+            document.lines.add(com.eza.spicyex.lyrics.LyricsLine.copyOf(line));
+        }
+        document.appliedLines.clear();
+        if (detectionArtifact != null && session != null
+                && session.base.digest.equals(detectionArtifact.canonicalDigest)) {
+            applyDetection(session.base, detectionArtifact, document);
+            applyDetection(session.base, detectionArtifact, canonicalSource);
+        }
     }
 
     /**
@@ -1122,9 +1148,6 @@ final class LyricsSessionManager {
                                      String settledReason) {
         document = null;
         canonicalSource = null;
-        timingProjection = null;
-        timingProjectionIdentity = "";
-        timingProjectionChanged = false;
         session = null;
         displayedCandidateId = "";
         detectionArtifact = null;
@@ -1245,6 +1268,160 @@ final class LyricsSessionManager {
         return startSharedProcessing(track, document, policy.generation(),
                 java.util.EnumSet.of(layer), java.util.EnumSet.of(layer)).contains(layer)
                 ? AiRequestStartResult.STARTED : AiRequestStartResult.NOTHING_TO_DO;
+    }
+
+    void paidStatus(LyricsHost.CatalogActionCallback callback) {
+        final String trackId = session == null ? "" : session.base.trackId;
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            try {
+                String report = AIPaidArtifactCache.linkageStatus(context, trackId);
+                handler.post(() -> callback.onComplete(true, report));
+            } catch (Throwable unavailable) {
+                handler.post(() -> callback.onComplete(false, "storage_unavailable"));
+            }
+        });
+    }
+
+    void paidEntries(LyricsHost.CatalogActionCallback callback) {
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            try {
+                String entries = AIPaidArtifactCache.entryList(context);
+                handler.post(() -> callback.onComplete(true, entries));
+            } catch (Throwable unavailable) {
+                handler.post(() -> callback.onComplete(false, "storage_unavailable"));
+            }
+        });
+    }
+
+    void forgetPaidEntry(String entryKey, LyricsHost.CatalogActionCallback callback) {
+        if (!AIPaidArtifactCache.isEntryKey(entryKey)) {
+            callback.onComplete(false, "invalid_entry_key");
+            return;
+        }
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            boolean removed = AIPaidArtifactCache.removeEntry(context, entryKey);
+            handler.post(() -> callback.onComplete(removed,
+                    removed ? "removed entry=" + entryKey : "missing_or_storage_unavailable"));
+        });
+    }
+
+    /** Offscreen verification through the same paid run boundary, without any acquisition. */
+    void replaySavedMeaning(String candidateId, LyricsHost.CatalogActionCallback callback) {
+        final String target = renderConfig().translationTarget;
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            try {
+                com.eza.spicyex.lyrics.catalog.CatalogCandidate candidate =
+                        com.eza.spicyex.lyrics.catalog.CatalogStore.candidateById(context, candidateId);
+                com.eza.spicyex.lyrics.session.CanonicalSourceCodec.Record source =
+                        com.eza.spicyex.lyrics.catalog.LyricsCatalog.decode(candidate);
+                if (source == null) {
+                    handler.post(() -> callback.onComplete(false, "source_unavailable"));
+                    return;
+                }
+                AiSettings settings = new AiSettings(context);
+                CanonicalBase base = CanonicalBase.fromDocument("spotify:track:" + candidate.trackId, source.document);
+                com.eza.spicyex.lyrics.ai.AiMeaningRun.Result saved = com.eza.spicyex.lyrics.ai.AiMeaningRun.run(
+                        context, settings, base, source.document, null,
+                        settings.meaningFlow() == AiSettings.MeaningFlow.GOOGLE_DRAFT,
+                        target, false, new com.eza.spicyex.lyrics.ai.AiSignal(), null);
+                handler.post(() -> callback.onComplete(saved.hasArtifact(), saved.hasArtifact()
+                        ? "reused candidate=" + candidateId + " route=" + candidate.sourceId.id
+                                + " upstream=" + candidate.upstreamSource() + " rows=" + saved.artifact.size()
+                        : "missing_or_incompatible"));
+            } catch (Throwable unavailable) {
+                handler.post(() -> callback.onComplete(false, "storage_unavailable"));
+            }
+        });
+    }
+
+    /** Reads paid output only. It never enters the lane scheduler or acquires a Google draft. */
+    void replayPaidLayer(LayerKind layer, LyricsHost.CatalogActionCallback callback) {
+        if (layer == null || session == null || document == null || track == null) {
+            callback.onComplete(false, "invalid_context");
+            return;
+        }
+        final LayerState previous = session.layer(layer);
+        if (previous.status == LayerStatus.PROCESSING) {
+            callback.onComplete(false, "already_in_flight");
+            return;
+        }
+        final CanonicalBase base = session.base;
+        final LyricsDocument currentDocument = document;
+        final LyricsDocument input = LyricsDocument.copyOf(canonicalSource == null ? document : canonicalSource);
+        final int generation = policy.generation();
+        final String uri = policy.trackUri();
+        final LyricsRenderConfig config = renderConfig();
+        final String aiSettingsId = new AiSettings(context).replayFingerprint();
+        final String settingsId = layer == LayerKind.MEANING
+                ? LyricsDocumentProcessor.meaningConfigId(context)
+                : LyricsDocumentProcessor.currentSoundConfigId(context, input);
+        final MeaningArtifact google = session.meaning.artifact instanceof MeaningArtifact
+                ? ((MeaningArtifact) session.meaning.artifact).googleBaseline() : null;
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            try {
+                AiSettings settings = new AiSettings(context);
+                DerivedLayerArtifact artifact;
+                if (layer == LayerKind.MEANING) {
+                    artifact = com.eza.spicyex.lyrics.ai.AiMeaningRun.run(context, settings, base, input,
+                            google, settings.meaningFlow() == AiSettings.MeaningFlow.GOOGLE_DRAFT,
+                            config.translationTarget, false, new com.eza.spicyex.lyrics.ai.AiSignal(), null).artifact;
+                } else {
+                    // Recover the local cache, never use the displayed AI overlay as gap coverage.
+                    LyricsDocumentProcessor.resetSoundLayer(context, input);
+                    com.eza.spicyex.lyrics.cache.ProcessedLyricsCache.applySound(context, input, base,
+                            LyricsDocumentProcessor.currentSoundConfigId(context, input));
+                    java.util.List<com.eza.spicyex.lyrics.session.SoundEntry> local = new ArrayList<>();
+                    for (com.eza.spicyex.lyrics.session.CanonicalRow row : base.rows) {
+                        if (row.index >= 0 && row.index < input.lines.size()) {
+                            local.add(com.eza.spicyex.lyrics.session.SoundEntry.fromLine(row, input.lines.get(row.index)));
+                        }
+                    }
+                    if (previous.artifact instanceof com.eza.spicyex.lyrics.session.SoundArtifact) {
+                        com.eza.spicyex.lyrics.session.SoundArtifact displayed =
+                                (com.eza.spicyex.lyrics.session.SoundArtifact) previous.artifact;
+                        for (String id : displayed.rowIds()) {
+                            if (com.eza.spicyex.lyrics.ai.AiSoundOverlay.hasDeterministicCoverage(displayed.sound(id))) {
+                                local.add(displayed.sound(id));
+                            }
+                        }
+                    }
+                    com.eza.spicyex.lyrics.session.SoundArtifact baseline =
+                            new com.eza.spicyex.lyrics.session.SoundArtifact(base.digest, settingsId,
+                                    new com.eza.spicyex.lyrics.session.LayerProvenance(LayerAuthority.DETERMINISTIC,
+                                            "local-romanizer", settingsId, System.currentTimeMillis()), local, false);
+                    com.eza.spicyex.lyrics.ai.AiSoundRun.Result saved = com.eza.spicyex.lyrics.ai.AiSoundRun.run(
+                            context, settings, base, input, baseline,
+                            com.eza.spicyex.lyrics.ai.AiContract.ORTHOGRAPHY_LATIN, settings.soundUsesBaseline(),
+                            false, new com.eza.spicyex.lyrics.ai.AiSignal(), null, romanizationOptions(config));
+                    if (saved.artifact == null) artifact = null;
+                    else {
+                        for (String id : saved.artifact.rowIds()) local.add(saved.artifact.sound(id));
+                        artifact = new com.eza.spicyex.lyrics.session.SoundArtifact(base.digest,
+                                saved.artifact.configId, saved.artifact.provenance, local, false);
+                    }
+                }
+                handler.post(() -> {
+                    String currentSettings = layer == LayerKind.MEANING
+                            ? LyricsDocumentProcessor.meaningConfigId(context)
+                            : LyricsDocumentProcessor.currentSoundConfigId(context, currentDocument);
+                    if (session == null || document != currentDocument || generation != policy.generation()
+                            || !uri.equals(policy.trackUri()) || !base.digest.equals(session.base.digest)
+                            || session.layer(layer) != previous || !settingsId.equals(currentSettings)
+                            || !aiSettingsId.equals(new AiSettings(context).replayFingerprint())) {
+                        callback.onComplete(false, "stale_context");
+                    } else if (artifact == null) {
+                        callback.onComplete(false, "missing_or_incompatible");
+                    } else {
+                        adoptLayerArtifact(layer, artifact, com.eza.spicyex.lyrics.session.LayerFailure.NONE,
+                                currentDocument, generation);
+                        notifyDocument(snapshot(), document);
+                        callback.onComplete(true, "reused layer=" + layer + " rows=" + artifact.size());
+                    }
+                });
+            } catch (Throwable unavailable) {
+                handler.post(() -> callback.onComplete(false, "storage_unavailable"));
+            }
+        });
     }
 
     /** Drops the accepted AI overlay and republishes the canonical baseline only. */
@@ -1598,7 +1775,7 @@ final class LyricsSessionManager {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.COMPOSED_PROJECTION_MISMATCH);
             composed = LyricsDocument.copyOf(value);
         }
-        return com.eza.spicyex.lyrics.blend.SyncUpgradeEngine.renderProjection(composed, timingProjection);
+        return composed;
     }
 
     private boolean orgAccessBlocked(LyricsDocument value) {

@@ -139,6 +139,10 @@ final class LyricsPipController {
                         param.setResult(null);
                         onModeChanged(activity, (boolean) param.args[0]);
                     }, boolean.class, Configuration.class);
+            // Spotify's playback subscriber can also close a non-video host directly.
+            // Suppress its override before cleanup; our exit paths release ownership first.
+            XpHooks.findBefore(PIP_HOST_ACTIVITY, loader, "finish",
+                    "pip:NowPlayingActivity#finish", this::beforeHostFinish);
         } catch (Throwable t) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " lyrics PiP: host hook unavailable " + t);
         }
@@ -169,6 +173,10 @@ final class LyricsPipController {
             foreignLaunches.remove(activity);
             if (hosts.remove(activity) != null) unmount(activity);
         });
+    }
+
+    void beforeHostFinish(XpHooks.XpParam param) {
+        if (hosts.containsKey(param.thisObject)) param.setResult(null);
     }
 
     /** An explicit button opens PiP; a normal close or back press keeps its old behavior. */

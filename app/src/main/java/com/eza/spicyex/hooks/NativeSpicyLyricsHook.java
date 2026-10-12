@@ -218,6 +218,27 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
         lyricsSessionManager.restoreLayer(layer);
     }
 
+    @Override public void replayPaidLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer,
+                                               LyricsHost.CatalogActionCallback callback) {
+        lyricsSessionManager.replayPaidLayer(layer, callback);
+    }
+
+    @Override public void paidLyricsStatus(LyricsHost.CatalogActionCallback callback) {
+        lyricsSessionManager.paidStatus(callback);
+    }
+
+    @Override public void paidLyricsEntries(LyricsHost.CatalogActionCallback callback) {
+        lyricsSessionManager.paidEntries(callback);
+    }
+
+    @Override public void forgetPaidLyricsEntry(String entryKey, LyricsHost.CatalogActionCallback callback) {
+        lyricsSessionManager.forgetPaidEntry(entryKey, callback);
+    }
+
+    @Override public void replaySavedMeaning(String candidateId, LyricsHost.CatalogActionCallback callback) {
+        lyricsSessionManager.replaySavedMeaning(candidateId, callback);
+    }
+
     @Override
     public void clearLyricsCache(CacheClearKind kind) {
         lyricsSessionManager.clearCache(kind);

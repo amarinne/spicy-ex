@@ -116,7 +116,8 @@ public final class CatalogPickerModel {
         Map<SourceId, CatalogCandidate> bestBySource = bestBySource(candidates);
         if (manual && selection != null) {
             CatalogCandidate pinned = candidateById(candidates, selection.candidateId);
-            if (pinned != null && pinned.sourceId != null) {
+            if (pinned != null && pinned.sourceId != null
+                    && (pinned.sourceId != SourceId.SPOTIFY_NATIVE || pinned.hasValidProviderTiming())) {
                 // The selected revision remains visible even when a newer variant from the same
                 // provider ranks higher. A manual pin identifies a candidate, not just a brand.
                 bestBySource.put(pinned.sourceId, pinned);

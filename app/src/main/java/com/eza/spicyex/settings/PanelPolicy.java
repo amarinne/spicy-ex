@@ -24,8 +24,9 @@ public final class PanelPolicy {
             return Boolean.TRUE.equals(snapshot.get(Settings.PIP_ENABLED));
         }
         if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) return !snapshot.languageModelReady();
-        if ((setting.section == Settings.TRANSLITERATION || setting.section == Settings.TRANSLATION)
-                && !snapshot.languageModelReady()) return false;
+        // OpenCC and the Chinese, Korean, and Cyrillic reading paths are bundled in the APK.
+        // Only Japanese reading depends on the downloaded dictionaries and tokenizer.
+        if (requiresLanguageModel(setting) && !snapshot.languageModelReady()) return false;
         if (setting == Settings.FORCE_DARK_BACKGROUND) {
             return snapshot.animatedBackgroundAvailable()
                     && LyricsBackgroundStyle.usesTexture(snapshot.get(Settings.BACKGROUND_STYLE));
@@ -51,9 +52,11 @@ public final class PanelPolicy {
         if (setting == Settings.TRANSLATION_TARGET || setting == Settings.TRANSLATION_BRIGHTNESS) {
             return Boolean.TRUE.equals(snapshot.get(Settings.TRANSLATION_ENABLED));
         }
+        if (setting == Settings.CHINESE_CHARACTER_FORM) return true;
         if (setting == Settings.ALIGNED_PER_WORD_ROMAJI
                 || setting == Settings.JAPANESE_READING_MODE
                 || setting == Settings.CHINESE_MODE
+                || setting == Settings.CHINESE_CHARACTER_FORM
                 || setting == Settings.KOREAN_ROMANIZATION
                 || setting == Settings.CHINESE_TONES
                 || setting == Settings.CYRILLIC_MODE
@@ -159,7 +162,14 @@ public final class PanelPolicy {
     }
 
     public static boolean unavailable(Settings.Setting<?> setting, PanelSnapshot snapshot) {
-        return setting == Settings.TRANSLITERATION_ENABLED && !snapshot.languageModelReady();
+        return false;
+    }
+
+    /** Settings whose runtime implementation cannot operate without the optional data pack. */
+    private static boolean requiresLanguageModel(Settings.Setting<?> setting) {
+        return setting == Settings.JAPANESE_READING_MODE
+                || setting == Settings.FURIGANA_BRIGHTNESS
+                || setting == Settings.FURIGANA_POSITION_PERCENT;
     }
 
     /** Why one option is dimmed; empty means selectable. Locale-resolved, never hardcoded. */
@@ -168,9 +178,6 @@ public final class PanelPolicy {
         if (setting != Settings.LIVE_CARD_SECONDARY_MODE) return "";
         boolean needsTransliteration = "Transliteration".equals(value) || "Both".equals(value);
         boolean needsTranslation = "Translation".equals(value) || "Both".equals(value);
-        if (needsTransliteration && !snapshot.languageModelReady()) {
-            return strings.get("settings_label_download_language_models", "Download language models");
-        }
         if (needsTransliteration && !Boolean.TRUE.equals(snapshot.get(Settings.TRANSLITERATION_ENABLED))) {
             return strings.get("settings_enable_transliteration", "Enable transliteration");
         }
@@ -204,6 +211,7 @@ public final class PanelPolicy {
                 || setting == Settings.TRANSLATION_TARGET
                 || setting == Settings.JAPANESE_READING_MODE
                 || setting == Settings.CHINESE_MODE
+                || setting == Settings.CHINESE_CHARACTER_FORM
                 || setting == Settings.KOREAN_ROMANIZATION
                 || setting == Settings.CYRILLIC_MODE;
     }

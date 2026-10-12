@@ -87,6 +87,21 @@ public interface LyricsHost {
     /** Restores the canonical/Google baseline without scheduling another AI request. */
     void restoreLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer);
 
+    /** Replays paid output through the session without provider or Google acquisition. */
+    void replayPaidLyricsLayer(com.eza.spicyex.lyrics.session.LayerKind layer, CatalogActionCallback callback);
+
+    /** Reports paid storage linkage without exposing text or credentials. */
+    void paidLyricsStatus(CatalogActionCallback callback);
+
+    /** Lists opaque saved-record keys without lyric text or credentials. */
+    void paidLyricsEntries(CatalogActionCallback callback);
+
+    /** Removes exactly one saved record without refreshing lyrics or scheduling requests. */
+    void forgetPaidLyricsEntry(String entryKey, CatalogActionCallback callback);
+
+    /** Checks saved Meaning against one retained source without changing playback or selection. */
+    void replaySavedMeaning(String candidateId, CatalogActionCallback callback);
+
     /** Clears durable data and invalidates the matching live-session authority. */
     void clearLyricsCache(CacheClearKind kind);
 

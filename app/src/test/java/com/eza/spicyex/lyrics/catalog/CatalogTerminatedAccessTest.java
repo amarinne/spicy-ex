@@ -11,7 +11,7 @@ public class CatalogTerminatedAccessTest {
 
     private CatalogPolicy policy(boolean terminated) {
         return new CatalogPolicy(Arrays.asList(SourceId.SPICY_ORG, SourceId.APPLE),
-                false, false, false, 0, terminated, terminated ? 1 : 0);
+                false, false, 0, terminated, terminated ? 1 : 0);
     }
 
     @Test public void terminationBlocksAutoAndBothManualPinFormsWithoutRemovingCandidates() {

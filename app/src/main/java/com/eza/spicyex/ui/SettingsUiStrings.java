@@ -244,7 +244,9 @@ public final class SettingsUiStrings {
             case "wordTranslit": return "Word-by-word transliteration";
             case "rrStandard": return "Standard Korean RR";
             case "rrPronunciation": return "Follow pronunciation (RR)";
-            case "vnPronunciation": return "Follow pronunciation (VN)";
+            case "vnPronunciation": return "Follow pronunciation (eza式)";
+            case "pinyin-eza": return "Mandarin eza式";
+            case "jyutping-eza": return "Cantonese eza式";
             case "furigana_romaji": return "Furigana + romaji";
             case "google_unofficial": return "Automatic (provider + Google)";
             case "provider": return "Lyrics provider only";

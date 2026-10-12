@@ -200,7 +200,8 @@ public final class LyricsMeaningLane {
     ) {
         if (snapshot == null || snapshot.lines.isEmpty()) return false;
         final AiSettings aiSettings = settingsSource.create(context);
-        final boolean aiAutomatic = aiSettings.translationAutomatic() && aiSettings.canRequest();
+        // Automatic mode may replay paid output after credential removal. Dispatch still requires canRequest().
+        final boolean aiAutomatic = aiSettings.translationAutomatic();
         final boolean wanted = snapshot.translationPending && provider.handles(backend);
         LyricsDocument workerSnapshot = LyricsDocument.copyOf(snapshot);
         if (workerSnapshot == null || workerSnapshot.lines.isEmpty()) return false;
@@ -374,7 +375,9 @@ public final class LyricsMeaningLane {
                     // Only Google draft refines. AI-only runs raw by contract; the preview flow
                     // never enters this path.
                     refineGoogle = settings.meaningFlow() == AiSettings.MeaningFlow.GOOGLE_DRAFT;
-                    if (refineGoogle) {
+                    result = AiMeaningRun.run(context, settings, run.base, workerSnapshot,
+                            null, refineGoogle, targetLang, false, signal, null, false);
+                    if (refineGoogle && !result.hasArtifact()) {
                         GoogleFallbackResult googleResult = googleFallback(run, id, workerSnapshot,
                                 googleWork, effectiveSourceLang, targetLang);
                         googleBaseline = googleResult.artifact;
@@ -390,9 +393,11 @@ public final class LyricsMeaningLane {
                             }
                         });
                     }
-                    result = AiMeaningRun.run(context, settings, run.base,
-                            workerSnapshot, googleBaseline, refineGoogle, targetLang,
-                            allowProviderRequest, signal, monitor);
+                    if (!result.hasArtifact()) {
+                        result = AiMeaningRun.run(context, settings, run.base,
+                                workerSnapshot, googleBaseline, refineGoogle, targetLang,
+                                allowProviderRequest, signal, monitor, explicitAiRequest);
+                    }
                     if (result != null && result.outcome != null
                             && result.outcome.kind == AiRunOutcome.Kind.FAILED) {
                         aiFailure = result.outcome.failure;
@@ -424,7 +429,7 @@ public final class LyricsMeaningLane {
                 } catch (Throwable failure) {
                     XpLog.log(TAG + " ai translation failed: "
                             + AiRuntimeFailureLog.describe(failure));
-                    aiFailure = new LayerFailure(LayerFailure.Reason.UNAVAILABLE,
+                    aiFailure = LayerFailure.ai(LayerFailure.Reason.UNAVAILABLE,
                             "runtime_unavailable", 0);
                     AiRequestLiveState.fail(LayerKind.MEANING, run.canonicalDigest(), run.tag,
                             "runtime_unavailable", 0, failure.getClass().getSimpleName());
@@ -440,16 +445,17 @@ public final class LyricsMeaningLane {
                 }
                 // Every AI Meaning mode uses the same document-level display selector. AI-only
                 // has no Google candidate; Google-draft may fall back only to a complete baseline.
-                if (googleBaseline == null && refineGoogle) {
+                Set<String> requiredRows = requiredRowIds(
+                        run.base, workerSnapshot, sourceLang, targetLang,
+                        ProviderTextDetectionStore.lookup(context));
+                if (googleBaseline == null && refineGoogle
+                        && MeaningDisplaySelector.select(run.base, requiredRows, aiArtifact, null) == null) {
                     GoogleFallbackResult googleResult = googleFallback(run, id, workerSnapshot,
                             googleWork, effectiveSourceLang, targetLang);
                     googleBaseline = googleResult.artifact;
                     postGoogleFailureIfNeeded(run, id, generation, snapshot, currentGuard,
                             callback, googleResult.failure);
                 }
-                Set<String> requiredRows = requiredRowIds(
-                        run.base, workerSnapshot, sourceLang, targetLang,
-                        ProviderTextDetectionStore.lookup(context));
                 MeaningArtifact artifact = refineGoogle
                         ? MeaningDisplaySelector.selectWithFallback(
                                 run.base, requiredRows, aiArtifact, googleBaseline)
@@ -618,7 +624,7 @@ public final class LyricsMeaningLane {
                         // baseline_unavailable: Google here is display, not request input.
                         result = AiMeaningRun.run(context, settingsSource.create(context), run.base,
                                 workerSnapshot, null, false, targetLang,
-                                allowProviderRequest, signal, monitor);
+                                allowProviderRequest, signal, monitor, explicitAiRequest);
                         if (result != null && result.outcome != null
                                 && result.outcome.kind == AiRunOutcome.Kind.FAILED) {
                             aiFailure = result.outcome.failure;
@@ -653,7 +659,7 @@ public final class LyricsMeaningLane {
                     } catch (Throwable failure) {
                         XpLog.log(TAG + " ai translation failed: "
                                 + AiRuntimeFailureLog.describe(failure));
-                        aiFailure = new LayerFailure(LayerFailure.Reason.UNAVAILABLE,
+                        aiFailure = LayerFailure.ai(LayerFailure.Reason.UNAVAILABLE,
                                 "runtime_unavailable", 0);
                         AiRequestLiveState.fail(LayerKind.MEANING, run.canonicalDigest(), run.tag,
                                 "runtime_unavailable", 0, failure.getClass().getSimpleName());
@@ -797,15 +803,6 @@ public final class LyricsMeaningLane {
     private List<Integer> translateBatchPass(
             String id, String sourceLang, String targetLang, LyricsDocument workerSnapshot,
             List<Integer> work, List<MeaningEntry> entries, Set<Integer> translatedIndices,
-            AtomicInteger changed, boolean collectRetry, String cancelTag, DerivedLayerRun run
-    ) {
-        return translateBatchPass(id, sourceLang, targetLang, workerSnapshot, work, entries,
-                translatedIndices, changed, collectRetry, cancelTag, run, null);
-    }
-
-    private List<Integer> translateBatchPass(
-            String id, String sourceLang, String targetLang, LyricsDocument workerSnapshot,
-            List<Integer> work, List<MeaningEntry> entries, Set<Integer> translatedIndices,
             AtomicInteger changed, boolean collectRetry, String cancelTag, DerivedLayerRun run,
             GoogleRunStats stats
     ) {
@@ -863,11 +860,6 @@ public final class LyricsMeaningLane {
     static boolean translationPassComplete(boolean requested, List<Integer> work, Set<Integer> translatedIndices) {
         return !requested || work == null || work.isEmpty()
                 || (translatedIndices != null && translatedIndices.containsAll(work));
-    }
-
-    private List<List<GoogleEnhancer.BatchLine>> translationBatches(LyricsDocument doc, List<Integer> work) {
-        return translationBatches(doc, work, TRANSLATION_BATCH_MAX_LINES,
-                TRANSLATION_BATCH_MAX_CHARS);
     }
 
     private List<List<GoogleEnhancer.BatchLine>> translationBatches(

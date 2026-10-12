@@ -9,7 +9,7 @@ package com.eza.spicyex.lyrics.session;
  */
 public final class LayerConfigIds {
     /** Bump when the Sound processor's output shape changes. Independent of the Meaning contract. */
-    public static final int SOUND_CONTRACT_VERSION = 1;
+    public static final int SOUND_CONTRACT_VERSION = 2;
     /** Bump when the Meaning backend's output shape changes. Independent of the Sound contract. */
     public static final int MEANING_CONTRACT_VERSION = 1;
 

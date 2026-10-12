@@ -7,9 +7,12 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Serializes a paid record for the durable store, and reads it back defensively.
@@ -49,12 +52,14 @@ final class AiPaidRecordCodec {
         }
         root.addProperty("schemaVersion", record.schemaVersion);
         root.addProperty("chunkPlanVersion", record.chunkPlanVersion);
+        if (record.planning != null) root.add("planning", record.planning.encode());
         root.addProperty("status", record.status.name());
         root.addProperty("inputTokens", record.inputTokens);
         root.addProperty("outputTokens", record.outputTokens);
         root.addProperty("usageEstimated", record.usageEstimated);
         root.addProperty("createdAtMs", record.createdAtMs);
         root.addProperty("lastAccessedAtMs", record.lastAccessedAtMs);
+        if (record.replay != null) root.add("replay", record.replay.encode());
 
         JsonObject items = new JsonObject();
         for (Map.Entry<String, String> entry : record.items().entrySet()) {
@@ -92,11 +97,16 @@ final class AiPaidRecordCodec {
             AiPaidRecord.Status status = statusOf(stringOf(root, "status"));
             if (status == null) return null;
             record.status = status;
+            if (root.has("planning")) {
+                record.planning = AiPlanningSnapshot.decode(root.get("planning"));
+                if (record.planning == null) return null;
+            }
             record.inputTokens = intOf(root, "inputTokens", 0);
             record.outputTokens = intOf(root, "outputTokens", 0);
             record.usageEstimated = boolOf(root, "usageEstimated");
             record.createdAtMs = longOf(root, "createdAtMs");
             record.lastAccessedAtMs = longOf(root, "lastAccessedAtMs");
+            if (root.has("replay")) record.replay = AiReplayIdentity.decode(root.getAsJsonObject("replay"));
 
             if (root.has("items") && root.get("items").isJsonObject()) {
                 for (Map.Entry<String, JsonElement> entry
@@ -114,12 +124,33 @@ final class AiPaidRecordCodec {
                     record.putChunk(entry.getKey(), chunk);
                 }
             }
+            if (record.isComplete() && !isCompletePayload(record)) return null;
             return record;
         } catch (RuntimeException malformed) {
-            // A stored record we cannot read is not a crash and not an empty answer: it is simply
-            // not a hit, and the caller will treat it as one more question to buy.
+            // An unreadable purchase stays stored. AiPaidRecords blocks admission instead of buying it again.
             return null;
         }
+    }
+
+    /**
+     * A COMPLETE marker is a reuse grant. Every stored chunk must be fully accepted, and its wire ids must cover
+     * exactly the row ids retained in the item map. Replanned parents repeat those ids, so coverage
+     * is a set rather than a count.
+     */
+    private static boolean isCompletePayload(AiPaidRecord record) {
+        if (record.chunks().isEmpty() || record.items().isEmpty()) return false;
+        Set<String> coveredRows = new LinkedHashSet<>();
+        for (Map.Entry<String, AiChunkRecord> entry : record.chunks().entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isEmpty()
+                    || entry.getValue() == null || !entry.getValue().isComplete()
+                    || entry.getValue().ids.isEmpty()) return false;
+            Set<String> chunkIds = new HashSet<>();
+            for (String id : entry.getValue().ids) {
+                if (id == null || id.isEmpty() || !chunkIds.add(id)) return false;
+                coveredRows.add(AiContract.rowIdOf(id));
+            }
+        }
+        return coveredRows.equals(record.items().keySet());
     }
 
     private static JsonObject encodeChunk(AiChunkRecord chunk, boolean retainRequestText) {
@@ -127,6 +158,11 @@ final class AiPaidRecordCodec {
         JsonArray ids = new JsonArray();
         for (String id : chunk.ids) ids.add(id);
         out.add("ids", ids);
+        if (!chunk.fallbackRowIds.isEmpty()) {
+            JsonArray fallback = new JsonArray();
+            for (String id : chunk.fallbackRowIds) fallback.add(id);
+            out.add("fallbackRowIds", fallback);
+        }
         if (retainRequestText && !chunk.requestJson.isEmpty()) out.addProperty("requestJson", chunk.requestJson);
         out.addProperty("status", chunk.status.name());
         out.addProperty("attempts", chunk.attempts);
@@ -155,6 +191,20 @@ final class AiPaidRecordCodec {
         AiChunkRecord.Status status = chunkStatusOf(stringOf(source, "status"));
         if (status == null) return null;
         chunk.status = status;
+        if (source.has("fallbackRowIds")) {
+            if (!source.get("fallbackRowIds").isJsonArray()
+                    || status != AiChunkRecord.Status.COMPLETED_FALLBACK) return null;
+            for (JsonElement id : source.getAsJsonArray("fallbackRowIds")) {
+                if (!id.isJsonPrimitive() || !id.getAsJsonPrimitive().isString()) return null;
+                String rowId = id.getAsString();
+                boolean requested = false;
+                for (String itemId : ids) {
+                    if (AiContract.rowIdOf(itemId).equals(rowId)) requested = true;
+                }
+                if (!requested || chunk.fallbackRowIds.contains(rowId)) return null;
+                chunk.fallbackRowIds.add(rowId);
+            }
+        }
         chunk.attempts = intOf(source, "attempts", 0);
         chunk.repairs = intOf(source, "repairs", 0);
         chunk.inputTokens = intOf(source, "inputTokens", 0);

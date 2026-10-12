@@ -8,6 +8,20 @@ import org.junit.Test;
 
 public class AiRequestFeedbackStateTest {
     @Test
+    public void retiringSessionClearsPendingAndDoesNotReportTheNextSongsFailure() {
+        AiRequestFeedbackState state = new AiRequestFeedbackState();
+        state.started();
+        state.reset();
+        assertFalse(state.isPending(false));
+        assertEquals(AiRequestFeedbackState.Outcome.NONE,
+                state.observe(false, false, "runtime_unavailable"));
+        state.started();
+        assertTrue(state.isPending(false));
+        assertEquals(AiRequestFeedbackState.Outcome.FAILED,
+                state.observe(false, false, "runtime_unavailable"));
+    }
+
+    @Test
     public void acceptedRequestShowsPendingBeforeSessionPublication() {
         AiRequestFeedbackState state = new AiRequestFeedbackState();
 

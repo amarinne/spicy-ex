@@ -56,6 +56,7 @@ final class LayoutProbeReport {
     private final Map<String, int[]> rects = new LinkedHashMap<>();
     private final Map<String, Object> facts = new LinkedHashMap<>();
     private final List<int[]> lyricRows = new ArrayList<>();
+    private final List<List<int[]>> lyricText = new ArrayList<>();
 
     /**
      * Records a screen rect. An absent, short, or empty rect is dropped rather than stored, so
@@ -94,12 +95,19 @@ final class LayoutProbeReport {
         return this;
     }
 
-    /** One mounted lyric row's text content, capped at {@link #MAX_LYRIC_ROWS} in total. */
+    /* Fixture callers already supply text bounds. Native callers also provide each visible fragment. */
     LayoutProbeReport lyricRow(int[] value) {
+        return lyricRow(value, value == null ? Collections.emptyList() : Collections.singletonList(value));
+    }
+
+    LayoutProbeReport lyricRow(int[] value, List<int[]> text) {
         if (value == null || value.length < 4) return this;
         if (value[2] <= value[0] || value[3] <= value[1]) return this;
         if (lyricRows.size() >= MAX_LYRIC_ROWS) return this;
         lyricRows.add(new int[]{value[0], value[1], value[2], value[3]});
+        List<int[]> copy = new ArrayList<>();
+        for (int[] rect : text) copy.add(rect.clone());
+        lyricText.add(copy);
         return this;
     }
 
@@ -113,6 +121,10 @@ final class LayoutProbeReport {
 
     List<int[]> lyricRows() {
         return Collections.unmodifiableList(lyricRows);
+    }
+
+    List<List<int[]>> lyricText() {
+        return Collections.unmodifiableList(lyricText);
     }
 
     int[] rect(String name) {
@@ -253,8 +265,10 @@ final class LayoutProbeReport {
         // The opaque card stage hides the lyrics and the chrome alike.
         if (isTrue("card_mode")) return;
         int covered = 0;
-        for (int[] row : lyricRows) {
-            if (intersects(row, dock)) covered++;
+        for (List<int[]> row : lyricText) {
+            for (int[] text : row) {
+                if (intersects(text, dock)) { covered++; break; }
+            }
         }
         if (covered > 0) out.add("R7 lyrics_under_chrome " + covered);
     }

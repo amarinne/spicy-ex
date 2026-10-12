@@ -29,4 +29,5 @@
     <string name="diagnostic_retention_notice">Вся информация, включая трек, улики текстов, и недавние запросы ИИ, хранятся пока не удалены вручную или изменены.</string>
     <string name="diagnostic_accept_retention">Я прочитал политику хранения и согласен отправить отчёт об ошибке.</string>
     <string name="diagnostic_data_policy">Политика информации Диагностики</string>
+    <string name="diagnostic_follow_up_notice">Эта система отчётов не поддерживает ответы разработчика или сопровождающего. Если нужен ответ, свяжитесь с ними напрямую через GitHub или группу Telegram.</string>
 </resources>

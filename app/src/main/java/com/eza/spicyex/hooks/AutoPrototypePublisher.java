@@ -14,6 +14,7 @@ import com.eza.spicyex.auto.AutoLyricPresentation;
 import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsDocument;
+import com.eza.spicyex.lyrics.language.ChineseCharacterForm;
 import java.util.concurrent.Executors;
 import java.util.ArrayList;
 import com.eza.spicyex.lyrics.SyllableSegment;
@@ -31,6 +32,7 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
     private LyricsSessionManager.SessionSubscription subscription;
     private LyricsSessionManager.PollingDemandLease lease;
     private LyricsDocument document;
+    private LyricsSessionManager.Snapshot lastSnapshot;
     private int generation = -1;
     private String trackUri = "";
     private volatile Bundle latest;
@@ -42,6 +44,8 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
             (preferences, key) -> {
                 if (com.eza.spicyex.Settings.AUTO_ENABLED.key.equals(key))
                     main.post(this::readEnabled);
+                if (com.eza.spicyex.Settings.CHINESE_CHARACTER_FORM.key.equals(key))
+                    main.post(this::refreshCharacterForm);
                 // The enabled heartbeat reads the secondary-text choice before publication.
             };
 
@@ -56,6 +60,24 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
         main.post(this::readEnabled);
     }
     private void readEnabled() { setEnabled(settings.get(com.eza.spicyex.Settings.AUTO_ENABLED)); }
+    private ChineseCharacterForm characterForm() {
+        return ChineseCharacterForm.fromSetting(settings.get(com.eza.spicyex.Settings.CHINESE_CHARACTER_FORM));
+    }
+    private void refreshCharacterForm() {
+        if (!enabled || document == null || lastSnapshot == null) return;
+        ChineseCharacterForm form = characterForm();
+        if (document.chineseCharacterForm == form) return;
+        document.chineseCharacterForm = form;
+        LyricTimeline.applySyncedRows(document);
+        publish(lastSnapshot);
+    }
+    static LyricsDocument projectDocument(LyricsDocument source, ChineseCharacterForm form) {
+        LyricsDocument copy = LyricsDocument.copyOf(source);
+        if (copy == null) return null;
+        copy.chineseCharacterForm = form;
+        LyricTimeline.applySyncedRows(copy);
+        return copy;
+    }
     private Bundle configuration(boolean on) {
         Bundle desired = new Bundle();
         desired.putBoolean("enabled", on);
@@ -101,7 +123,7 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
             heartbeat = null;
             if (subscription != null) subscription.close();
             if (lease != null) lease.close();
-            subscription = null; lease = null; document = null; latest = null; generation = -1; trackUri = "";
+            subscription = null; lease = null; document = null; lastSnapshot = null; latest = null; generation = -1; trackUri = "";
             long deadline = SystemClock.elapsedRealtime() + 4000;
             worker.execute(() -> disable(version, deadline));
         }
@@ -110,12 +132,14 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
         if (!enabled || s.generation < generation) return;
         if (!AutoPrototypePolicy.sameSession(generation, trackUri, s.generation, s.trackUri)) { generation = s.generation; document = null; }
         trackUri = s.trackUri;
+        lastSnapshot = s;
         publish(s);
     }
     @Override public void onDocumentChanged(LyricsSessionManager.Snapshot s, LyricsDocument d) {
         if (!enabled || !AutoPrototypePolicy.sameSession(generation, trackUri, s.generation, s.trackUri)) return;
-        document = com.eza.spicyex.auto.AutoResponseCredit.documentAllowed(d, System.currentTimeMillis()) ? d : null;
-        if (document != null) LyricTimeline.applySyncedRows(document);
+        document = com.eza.spicyex.auto.AutoResponseCredit.documentAllowed(d, System.currentTimeMillis())
+                ? projectDocument(d, characterForm()) : null;
+        lastSnapshot = s;
         publish(s);
     }
     private void publish(LyricsSessionManager.Snapshot s) {

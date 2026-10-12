@@ -76,6 +76,8 @@ public final class PanelStyle {
         // Reading rows reuse the translit chip's script glyphs (GlyphIconDrawable).
         ROW_LEADS.put("lyrics_japanese_reading_mode", "あ");
         ROW_LEADS.put("lyrics_chinese_mode", "拼");
+        // Han sample glyph: the selector labels carry the full 汉语 / 漢語 pair.
+        ROW_LEADS.put("lyrics_chinese_character_form", "汉");
         ROW_LEADS.put("lyrics_korean_romanization", "한");
         ROW_LEADS.put("lyrics_cyrillic_mode", "Я");
     }

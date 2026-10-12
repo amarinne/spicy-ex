@@ -366,28 +366,14 @@ public final class LyricsShellSettings {
 
     /** "Spotlight" animation style = zoom + glow the active line/word, no gradient fill. */
     public boolean spotlightAnimation() {
-        String fallback = config == null ? "" : config.get(Settings.ANIMATION_STYLE);
-        try {
-            SharedPreferences prefs = prefs();
-            if (prefs != null && prefs.contains(Settings.ANIMATION_STYLE.key)) {
-                return "Spotlight".equals(prefs.getString(Settings.ANIMATION_STYLE.key, fallback));
-            }
-        } catch (Throwable ignored) {
-        }
-        return "Spotlight".equals(fallback);
+        return "Spotlight".equals(config == null ? Settings.ANIMATION_STYLE.defaultValue
+                : config.get(Settings.ANIMATION_STYLE));
     }
 
     /** "Apple Music" animation style = the Apple-owned motion/blur/fade stack (R3). */
     public boolean appleAnimation() {
-        String fallback = config == null ? "" : config.get(Settings.ANIMATION_STYLE);
-        try {
-            SharedPreferences prefs = prefs();
-            if (prefs != null && prefs.contains(Settings.ANIMATION_STYLE.key)) {
-                return "Apple Music".equals(prefs.getString(Settings.ANIMATION_STYLE.key, fallback));
-            }
-        } catch (Throwable ignored) {
-        }
-        return "Apple Music".equals(fallback);
+        return "Apple Music".equals(config == null ? Settings.ANIMATION_STYLE.defaultValue
+                : config.get(Settings.ANIMATION_STYLE));
     }
 
     public boolean lineSyncFillTopDown() {
@@ -403,15 +389,8 @@ public final class LyricsShellSettings {
     }
 
     public String lineSyncFillMode() {
-        String fallback = normalizeLineSyncFillMode(config == null ? "" : config.get(Settings.LINE_SYNC_FILL));
-        try {
-            SharedPreferences prefs = prefs();
-            if (prefs != null && prefs.contains(Settings.LINE_SYNC_FILL.key)) {
-                return normalizeLineSyncFillMode(prefs.getString(Settings.LINE_SYNC_FILL.key, fallback));
-            }
-        } catch (Throwable ignored) {
-        }
-        return fallback;
+        return normalizeLineSyncFillMode(config == null ? Settings.LINE_SYNC_FILL.defaultValue
+                : config.get(Settings.LINE_SYNC_FILL));
     }
 
     public float lineBlurQualityMultiplier() {
@@ -423,6 +402,12 @@ public final class LyricsShellSettings {
     }
 
     public static String normalizeChineseMode(String mode) {
+        if (mode != null && (mode.toLowerCase(java.util.Locale.ROOT).endsWith("-eza")
+                || mode.toLowerCase(java.util.Locale.ROOT).endsWith("_eza"))) {
+            String base = mode.substring(0, mode.length() - 4);
+            if ("jyutping".equalsIgnoreCase(base) || "cantonese".equalsIgnoreCase(base)) return SpotifyPlusConfig.CHINESE_MODE_JYUTPING + "-eza";
+            return SpotifyPlusConfig.CHINESE_MODE_PINYIN + "-eza";
+        }
         if ("jyutping".equalsIgnoreCase(mode) || "cantonese".equalsIgnoreCase(mode)) return SpotifyPlusConfig.CHINESE_MODE_JYUTPING;
         return SpotifyPlusConfig.CHINESE_MODE_PINYIN;
     }

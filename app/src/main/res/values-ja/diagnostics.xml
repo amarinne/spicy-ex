@@ -37,6 +37,7 @@
     <string name="diagnostic_discard">破棄</string>
     <string name="diagnostic_uploaded">レポートがアップロードされました</string>
     <string name="diagnostic_report_id">レポートID</string>
+    <string name="diagnostic_follow_up_notice">このレポートシステムでは、開発者やメンテナーから返信できません。対応が必要な場合は、GitHub または Telegram グループから直接ご連絡ください。</string>
     <string name="diagnostic_clip_label">Spicy EX レポートID</string>
     <string name="diagnostic_retention_status">保持期間</string>
     <string name="diagnostic_retention_indefinite">無期限; メンテナーが削除または編集するまで</string>

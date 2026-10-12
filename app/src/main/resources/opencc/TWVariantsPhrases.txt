@@ -1,0 +1,5 @@
+# Re-serialized from opencc-js 1.4.1 / opencc-data (Apache-2.0). See provenance.json and LICENSE-OPENCC-DATA.txt.
+喫茶小舖	喫茶小舖
+牛驥同一皁	牛驥同一皁
+牛驥同皁	牛驥同皁
+純喫茶	純喫茶

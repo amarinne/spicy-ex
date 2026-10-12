@@ -107,6 +107,8 @@ public final class AIPaidArtifactCache {
     /** Immutable deletion fence captured with a run's first record read, before any reservation. */
     public static final class Read {
         public final String payload;
+        /** False when an existing wrapper was unreadable; this must not authorize repurchase. */
+        public final boolean admissionSafe;
         final String entryKey;
         final String layer;
         final long allGeneration;
@@ -115,7 +117,13 @@ public final class AIPaidArtifactCache {
 
         public Read(String payload, String entryKey, String layer, long allGeneration,
              long layerGeneration, long entryGeneration) {
+            this(payload, entryKey, layer, allGeneration, layerGeneration, entryGeneration, true);
+        }
+
+        Read(String payload, String entryKey, String layer, long allGeneration,
+             long layerGeneration, long entryGeneration, boolean admissionSafe) {
             this.payload = payload;
+            this.admissionSafe = admissionSafe;
             this.entryKey = entryKey;
             this.layer = layer;
             this.allGeneration = allGeneration;
@@ -234,10 +242,21 @@ public final class AIPaidArtifactCache {
     /** Explicit single-record removal. Build epochs never call this. */
     public static boolean remove(Context context, PaidArtifactIdentity identity) {
         if (context == null || identity == null || !identity.isComplete()) return false;
+        return removeEntry(context, entryKey(identity));
+    }
+
+    /** Accepts only an exact supported storage key, never a layer, prefix, or wildcard. */
+    public static boolean isEntryKey(String key) {
+        return key != null && key.matches("paid-v1\\|[0-9a-f]{64}");
+    }
+
+    /** Explicit recovery of one saved record, including a record with an unreadable payload. */
+    public static boolean removeEntry(Context context, String key) {
+        if (context == null || !isEntryKey(key)) return false;
         try {
             synchronized (LOCK) {
                 AIPaidArtifactDatabase db = database(context);
-                return db.ensureV515Migration() && db.remove(entryKey(identity));
+                return db.ensureV515Migration() && db.remove(key);
             }
         } catch (Throwable failure) {
             Diagnostics.warn("AIPaidArtifactCache", "remove", failure);
@@ -317,8 +336,46 @@ public final class AIPaidArtifactCache {
         }
     }
 
-    private static String entryKey(PaidArtifactIdentity identity) {
+    public static String entryKey(PaidArtifactIdentity identity) {
         return "paid-v" + SCHEMA_VERSION + "|" + Digests.sha256(identity.storageKey());
+    }
+
+    public static String replay(Context context, String layer, String configId,
+                                String digest, boolean baseline) {
+        if (context == null) return null;
+        synchronized (LOCK) {
+            AIPaidArtifactDatabase db = database(context);
+            if (!db.ensureV515Migration()) throw new IllegalStateException("migration-failed");
+            return db.replay(layer, configId, digest, baseline);
+        }
+    }
+
+    /** Identity-only diagnostic report; no lyric text, output, or credentials. */
+    public static String linkageStatus(Context context, String trackId) {
+        synchronized (LOCK) {
+            AIPaidArtifactDatabase db = database(context);
+            if (!db.ensureV515Migration()) throw new IllegalStateException("migration-failed");
+            return db.linkageStatus(Digests.nz(trackId)).toString();
+        }
+    }
+
+    /** Opaque saved-record keys and storage metadata, without input or generated text. */
+    public static String entryList(Context context) {
+        synchronized (LOCK) {
+            AIPaidArtifactDatabase db = database(context);
+            if (!db.ensureV515Migration()) throw new IllegalStateException("migration-failed");
+            return db.entryList().toString();
+        }
+    }
+
+    public static void bind(Context context, PaidArtifactIdentity identity,
+                            com.eza.spicyex.lyrics.ai.AiSourceBinding source, String configId, String digest) {
+        if (context == null || source == null || source.trackId.isEmpty()) return;
+        synchronized (LOCK) {
+            AIPaidArtifactDatabase db = database(context);
+            if (db.ensureV515Migration()) db.bind(entryKey(identity), source,
+                    identity.layerKind.name(), configId, digest);
+        }
     }
 
     /** Exposed for tests: wrapper header validated before a payload is served. */
@@ -333,7 +390,7 @@ public final class AIPaidArtifactCache {
         return record;
     }
 
-    static boolean matches(JsonObject record, PaidArtifactIdentity identity) {
+    public static boolean matches(JsonObject record, PaidArtifactIdentity identity) {
         if (record == null || identity == null) return false;
         JsonObject expected = header(identity);
         for (Map.Entry<String, JsonElement> field : expected.entrySet()) {

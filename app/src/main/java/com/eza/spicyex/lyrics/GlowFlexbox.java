@@ -179,6 +179,9 @@ public class GlowFlexbox extends FlexboxLayout {
     // as a draw-time canvas transform, so it never fights the per-word scale/lift properties the
     // syllable animation writes onto the child views.
     private final java.util.IdentityHashMap<View, Integer> childLine = new java.util.IdentityHashMap<>();
+    private final java.util.IdentityHashMap<View, Integer> sentenceAtomLine = new java.util.IdentityHashMap<>();
+    private float[] sentenceLineLeft = new float[0];
+    private float[] sentenceLineRight = new float[0];
     private float[] lineTop = new float[0];
     private float[] lineBottom = new float[0];
     private float[] lineLeft = new float[0];
@@ -193,11 +196,48 @@ public class GlowFlexbox extends FlexboxLayout {
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
         super.onLayout(changed, l, t, r, b);
         rebuildVisualLines();
-        rebuildWordTransforms();
+        rebuildSentenceLines();
+    }
+
+    private void rebuildSentenceLines() {
+        sentenceAtomLine.clear();
+        java.util.ArrayList<View> atoms = new java.util.ArrayList<>();
+        java.util.ArrayList<float[]> rectangles = new java.util.ArrayList<>();
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            if (child.getVisibility() == GONE) continue;
+            if (child instanceof TimedWordMotionLayout) {
+                ViewGroup group = (ViewGroup) child;
+                for (int j = 0; j < group.getChildCount(); j++) {
+                    View atom = group.getChildAt(j);
+                    if (atom.getVisibility() == GONE) continue;
+                    atoms.add(atom);
+                    rectangles.add(new float[]{child.getLeft() + atom.getLeft(),
+                            child.getTop() + atom.getTop(), child.getLeft() + atom.getRight(),
+                            child.getTop() + atom.getBottom()});
+                }
+            } else {
+                atoms.add(child);
+                rectangles.add(new float[]{child.getLeft(), child.getTop(),
+                        child.getRight(), child.getBottom()});
+            }
+        }
+        int[] lines = SentenceFill.visualLineIndices(rectangles.toArray(new float[0][]));
+        int count = 0;
+        for (int line : lines) count = Math.max(count, line + 1);
+        sentenceLineLeft = new float[count];
+        sentenceLineRight = new float[count];
+        java.util.Arrays.fill(sentenceLineLeft, Float.MAX_VALUE);
+        java.util.Arrays.fill(sentenceLineRight, -Float.MAX_VALUE);
+        for (int i = 0; i < atoms.size(); i++) {
+            int line = lines[i];
+            sentenceAtomLine.put(atoms.get(i), line);
+            sentenceLineLeft[line] = Math.min(sentenceLineLeft[line], rectangles.get(i)[0]);
+            sentenceLineRight[line] = Math.max(sentenceLineRight[line], rectangles.get(i)[2]);
+        }
     }
 
     private void rebuildVisualLines() {
-        wordTransform.clear();
         childLine.clear();
         java.util.ArrayList<float[]> lines = new java.util.ArrayList<>();
         float[] current = null;
@@ -241,6 +281,11 @@ public class GlowFlexbox extends FlexboxLayout {
         return lineTop.length;
     }
 
+    /** Sentence rows include visual rows nested inside an atomic timing group. */
+    public int sentenceVisualLineCount() {
+        return sentenceLineLeft.length;
+    }
+
     /** Visual line holding {@code descendant} (any view inside one of this box's children), or -1. */
     public int visualLineOf(View descendant) {
         View view = descendant;
@@ -254,14 +299,20 @@ public class GlowFlexbox extends FlexboxLayout {
 
     /** Shares one soft sweep across each wrapped visual line in reading order. */
     public void applySentenceGradient(SpicyAnimatedTextView view, float gradient, float glow) {
-        int line = visualLineOf(view);
-        if (line < 0) {
-            view.setGradientPosition(gradient, glow);
+        Integer line = null;
+        for (View atom = view; atom != this && atom != null;) {
+            line = sentenceAtomLine.get(atom);
+            if (line != null) break;
+            Object parent = atom.getParent();
+            atom = parent instanceof View ? (View) parent : null;
+        }
+        if (line == null) {
+            view.setSentenceGradientPosition(gradient, glow, view.getWidth(), 0f);
             return;
         }
         float total = 0f, preceding = 0f;
-        for (int i = 0; i < lineLeft.length; i++) {
-            float width = Math.max(1f, lineRight[i] - lineLeft[i]);
+        for (int i = 0; i < sentenceLineLeft.length; i++) {
+            float width = Math.max(1f, sentenceLineRight[i] - sentenceLineLeft[i]);
             total += width;
             if (i < line) preceding += width;
         }
@@ -270,9 +321,9 @@ public class GlowFlexbox extends FlexboxLayout {
             offset += child.getLeft();
             child = (View) child.getParent();
         }
-        float width = Math.max(1f, lineRight[line] - lineLeft[line]);
-        view.setContainerGradientPosition(SentenceFill.lineGradient(gradient, total, preceding, width),
-                glow, Math.max(1, (int) Math.ceil(width)), offset - lineLeft[line]);
+        float width = Math.max(1f, sentenceLineRight[line] - sentenceLineLeft[line]);
+        view.setSentenceGradientPosition(SentenceFill.lineGradient(gradient, total, preceding, width),
+                glow, Math.max(1, (int) Math.ceil(width)), offset - sentenceLineLeft[line]);
     }
 
     /**
@@ -326,7 +377,6 @@ public class GlowFlexbox extends FlexboxLayout {
     // two held ones slide back and forth as the stress moved along. Draw-time only.
     private static final float WORD_EMPHASIS_MAX = 0.07f;
     private final java.util.IdentityHashMap<View, Float> wordEmphasis = new java.util.IdentityHashMap<>();
-    private final java.util.IdentityHashMap<View, float[]> wordTransform = new java.util.IdentityHashMap<>();
     private boolean wordEmphasisActive;
 
     /**
@@ -362,7 +412,6 @@ public class GlowFlexbox extends FlexboxLayout {
         }
         if (!changed) return;
         wordEmphasisActive = any;
-        rebuildWordTransforms();
         invalidate();
     }
 
@@ -378,23 +427,15 @@ public class GlowFlexbox extends FlexboxLayout {
         return members >= 3 && lineWidth > 0f && child.getWidth() <= lineWidth * 0.4f;
     }
 
-    /** Per child [translateX, scale]: the held word scales in place; nothing else moves. */
-    private void rebuildWordTransforms() {
-        wordTransform.clear();
-        if (!wordEmphasisActive) return;
-        for (java.util.Map.Entry<View, Float> entry : wordEmphasis.entrySet()) {
-            wordTransform.put(entry.getKey(), new float[]{0f, 1f + WORD_EMPHASIS_MAX * entry.getValue()});
-        }
-    }
-
     /** Applies {@code child}'s word emphasis: moved along its line and scaled about its baseline. */
     private void applyWordTransform(Canvas canvas, View child) {
         if (!wordEmphasisActive) return;
-        float[] t = wordTransform.get(child);
-        if (t == null) return;
+        Float emphasis = wordEmphasis.get(child);
+        if (emphasis == null) return;
         // About its own centre and baseline: grows up and out evenly, never sinking below its
         // neighbours or shoving them.
-        canvas.scale(t[1], t[1], (child.getLeft() + child.getRight()) / 2f, child.getBottom());
+        float scale = 1f + WORD_EMPHASIS_MAX * emphasis;
+        canvas.scale(scale, scale, (child.getLeft() + child.getRight()) / 2f, child.getBottom());
     }
 
     private float fitLineZoom(int line, boolean opposite, float marginPx) {

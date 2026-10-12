@@ -57,9 +57,14 @@ public final class AiRunConfig {
      * behind.
      */
     public boolean matches(AiPaidRecord record) {
+        return matchesConfiguration(record) && record.docDigest.equals(docDigest);
+    }
+
+    public boolean matchesConfiguration(AiPaidRecord record) {
         return record != null
                 && record.layer == layer
-                && record.docDigest.equals(docDigest)
+                && record.providerId.equals(providerId)
+                && record.modelName.equals(modelName)
                 && record.configId.equals(configId)
                 && record.schemaVersion == AiContract.schemaFor(layer)
                 && record.chunkPlanVersion == AiContract.CHUNK_PLAN_VERSION;

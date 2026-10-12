@@ -255,7 +255,7 @@
     <string name="settings_label_lyrics_track_info_text_size_custom">Свой размер</string>
     <string name="settings_option_scroll">Прокрутка</string>
     <string name="settings_label_lyrics_track_info_art_size">Размер обложки в информации о треке</string>
-    <string name="settings_label_lyrics_adaptive_landscape_layout">Адаптивный интерфейс в горизонтальном режиме</string>
+    <string name="settings_label_lyrics_adaptive_landscape_layout">Две колонки на широких экранах</string>
     <string name="settings_label_lyrics_panel_media_controls">Панель управления медиа</string>
     <string name="settings_label_lyric_apple_fade_passed_lines">Fade passed lines</string>
     <string name="settings_label_lyric_apple_compact_text">Пропорции текста Apple Music</string>
@@ -274,8 +274,6 @@
     <string name="settings_spicy_key_catalog">Получить личный ключ</string>
     <string name="settings_spicy_key_help">Добавьте Spicy EX из каталога. Вставьте личный клиентский ключ. Сохраните ключ. Включите SpicyLyrics.org в разделе выбора источника текста.</string>
     <string name="settings_spicy_key_rejected">Ключ не сохранён. Используйте клиентский ключ, который начинается с sl_pk_.</string>
-    <string name="settings_label_lyrics_sync_upgrade">Улучшать синхронизацию текста</string>
     <string name="settings_source_enabled_title">Включённые источники</string>
-    <string name="settings_sync_upgrade_summary">Если текст совпадает, этот параметр использует временные метки из включённых QQ Music или NetEase. Текст песни не меняется.</string>
     <string name="source_picker_spicy_key_required">Добавьте личный клиентский ключ в настройках</string>
 </resources>

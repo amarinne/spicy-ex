@@ -1,6 +1,7 @@
 package com.eza.spicyex.lyrics;
 
 import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+import com.eza.spicyex.lyrics.language.ChineseCharacterForm;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,8 +22,6 @@ public class LyricsDocument {
     public String spicyOrgMakerUrl = "";
     public String spicyOrgRawPayload = "";
     public long spicyOrgFetchedAtMs;
-    /** In-memory derived timing only. Provider candidates never persist this projection. */
-    public com.eza.spicyex.lyrics.blend.SyncUpgradeProvenance syncUpgradeProvenance;
     public String songWriters = ""; // "Written by" credits from the lyrics response, if any
     public String type = "Unknown";
     public String language = "";
@@ -76,6 +75,8 @@ public class LyricsDocument {
     public String readingAiFailureToken = "";
     public String translationAiFailureToken = "";
     public boolean detectedChinese;
+    /** Display-only Chinese script projection; source lines remain canonical. */
+    public ChineseCharacterForm chineseCharacterForm = ChineseCharacterForm.ORIGINAL;
     public final List<SpicyTextDetection.Script> detectedScripts = new ArrayList<>();
     public final List<LyricsLine> lines = new ArrayList<>();
     public final List<AppliedLine> appliedLines = new ArrayList<>();
@@ -94,7 +95,6 @@ public class LyricsDocument {
         copy.spicyOrgMakerUrl = safe(source.spicyOrgMakerUrl);
         copy.spicyOrgRawPayload = safe(source.spicyOrgRawPayload);
         copy.spicyOrgFetchedAtMs = source.spicyOrgFetchedAtMs;
-        copy.syncUpgradeProvenance = source.syncUpgradeProvenance;
         copy.type = safe(source.type);
         copy.language = safe(source.language);
         copy.fetchSource = safe(source.fetchSource);
@@ -129,6 +129,7 @@ public class LyricsDocument {
         copy.readingAiFailureToken = safe(source.readingAiFailureToken);
         copy.translationAiFailureToken = safe(source.translationAiFailureToken);
         copy.detectedChinese = source.detectedChinese;
+        copy.chineseCharacterForm = source.chineseCharacterForm;
         copy.detectedScripts.addAll(source.detectedScripts);
         for (LyricsLine line : source.lines) copy.lines.add(LyricsLine.copyOf(line));
         return copy;

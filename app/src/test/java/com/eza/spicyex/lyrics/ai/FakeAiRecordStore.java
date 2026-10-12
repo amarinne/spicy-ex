@@ -37,6 +37,14 @@ public final class FakeAiRecordStore implements AiRecordStore {
         return true;
     }
 
+    @Override public AiPaidRecord readReplay(AiRunConfig config, AiReplayIdentity replay) {
+        for (String payload : payloads.values()) {
+            AiPaidRecord record = AiPaidRecordCodec.decode(payload);
+            if (config.matchesConfiguration(record) && replay.project(record) != null) return record;
+        }
+        return null;
+    }
+
     @Override public Reservation reserve(AiRunConfig config, long maxRecordBytes) {
         reservations++;
         if (rejectedReservationStatus != null

@@ -92,7 +92,7 @@ public class AiChunkRuntimeTest {
         assertTrue("the second attempt carries the repair instruction",
                 provider.calls.get(1).config.repair);
         assertTrue(provider.calls.get(1).config.systemPrompt()
-                .startsWith(AiContract.REPAIR_PROMPT));
+                .contains(AiContract.REPAIR_PROMPT));
     }
 
     @Test

@@ -9,10 +9,10 @@ import android.os.SystemClock;
 import android.view.Choreographer;
 
 import com.eza.spicyex.SpotifyPlusConfig;
+import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.ArtworkLyricsOverlayView;
-import com.eza.spicyex.lyrics.BackgroundLine;
 import com.eza.spicyex.lyrics.LiveLyricCardView;
 import com.eza.spicyex.lyrics.LyricTimeline;
 import com.eza.spicyex.lyrics.LyricsDocument;
@@ -20,8 +20,10 @@ import com.eza.spicyex.lyrics.processing.LyricsDocumentProcessor;
 import com.eza.spicyex.lyrics.providers.LyricsFetchErrors;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.language.LyricsLocalRomanizer;
+import com.eza.spicyex.lyrics.language.ChineseCharacterForm;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
 import com.eza.spicyex.lyrics.LyricsRenderMode;
+import com.eza.spicyex.lyrics.LyricsRowViewFactory;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsShellLifecycle;
 import com.eza.spicyex.lyrics.language.RomanizationOptions;
@@ -68,6 +70,7 @@ final class NowPlayingLyricController {
     // Inherited from the same shared Spotify-side prefs the fullscreen screen reads — no separate
     // per-component config. Refreshed on each fetch so panel/chip toggles take effect on next track.
     private LyricsRenderConfig renderConfig;
+    private ChineseCharacterForm characterForm = ChineseCharacterForm.ORIGINAL;
 
     private LyricsDocument cardDocument;
     private LyricsDocument artworkDocument;
@@ -183,6 +186,9 @@ final class NowPlayingLyricController {
 
     private boolean refreshConfig() {
         LyricsRenderConfig next = LyricsRenderConfig.read(activity, config);
+        ChineseCharacterForm nextCharacterForm = currentCharacterForm();
+        boolean characterFormChanged = characterForm != nextCharacterForm;
+        characterForm = nextCharacterForm;
         // F11: one shared definition of "what changed". The hand-rolled comparison drifted
         // and missed live-card size, Apple, blur, and bounce-scope fields, leaving mounted
         // content stale until an unrelated change.
@@ -192,7 +198,21 @@ final class NowPlayingLyricController {
             card.applyConfig(renderConfig);
             artworkOverlay.applyConfig(renderConfig);
         }
-        return changed;
+        if (characterFormChanged) {
+            if (applyCharacterForm(cardDocument, characterForm)) card.invalidateMountedContent();
+            if (applyCharacterForm(artworkDocument, characterForm)) artworkOverlay.invalidateMountedContent();
+            lastIdx = Integer.MIN_VALUE;
+            clearMiniProjection();
+        }
+        return changed || characterFormChanged;
+    }
+
+    private ChineseCharacterForm currentCharacterForm() {
+        return ChineseCharacterForm.fromSetting(config.get(Settings.CHINESE_CHARACTER_FORM));
+    }
+
+    static boolean applyCharacterForm(LyricsDocument document, ChineseCharacterForm form) {
+        return LyricTimeline.setChineseCharacterForm(document, form);
     }
 
     void start() {
@@ -307,6 +327,10 @@ final class NowPlayingLyricController {
         long pos = renderConfig.adjustedPositionMs(
                 hook.readBestMeasuredProgressMs(track, hook.isPlayerActuallyPlaying()));
         if (artworkDocument != null) artworkOverlay.renderFrame(pos, deltaSeconds);
+        if (card.renderCreditOutro(cardDocument, pos)) {
+            lastIdx = Integer.MIN_VALUE;
+            return;
+        }
 
         // Unsynced lyrics: no line tracks playback, so the live card can't karaoke-follow —
         // show the interlude indicator (set once) and leave reading to the fullscreen screen.
@@ -341,18 +365,16 @@ final class NowPlayingLyricController {
      * karaoke fill is therefore driven by the projected line's own start/end window.
      */
     private AppliedLine projectMiniLine(AppliedLine lead, long positionMs) {
-        if (lead == null || lead.sourceLine == null || lead.sourceLine.backgroundLines == null) return lead;
+        if (lead == null || lead.sourceLine == null) return lead;
         StringBuilder text = new StringBuilder(lead.text == null ? "" : lead.text);
-        StringBuilder romanized = new StringBuilder(lead.romanizedText == null ? "" : lead.romanizedText);
+        StringBuilder romanized = new StringBuilder(LyricsRowViewFactory.displayReading(lead));
         StringBuilder translated = new StringBuilder(lead.translatedText == null ? "" : lead.translatedText);
         StringBuilder key = new StringBuilder();
-        for (BackgroundLine background : lead.sourceLine.backgroundLines) {
-            if (background == null || positionMs < background.startMs || positionMs >= background.endMs
-                    || isBlank(background.text)) continue;
+        for (AppliedLine background : activeBackgroundRows(cardDocument, lead, positionMs)) {
             if (key.length() > 0) key.append('');
             key.append(background.startMs).append(':').append(background.endMs).append(':').append(background.text);
             appendMiniPart(text, background.text);
-            appendMiniPart(romanized, background.romanizedText);
+            appendMiniPart(romanized, LyricsRowViewFactory.displayReading(background));
             appendMiniPart(translated, background.translatedText);
         }
         String backgroundKey = key.toString();
@@ -372,6 +394,16 @@ final class NowPlayingLyricController {
         miniProjectedBackgroundKey = backgroundKey;
         miniProjectedLine = projected;
         return projected;
+    }
+
+    static List<AppliedLine> activeBackgroundRows(LyricsDocument document, AppliedLine lead, long positionMs) {
+        java.util.ArrayList<AppliedLine> rows = new java.util.ArrayList<>();
+        if (document == null || lead == null || lead.sourceLine == null) return rows;
+        for (AppliedLine row : document.appliedLines) {
+            if (row != null && row.bgLine && row.sourceLine == lead.sourceLine
+                    && LyricTimeline.isRowActiveAt(row, positionMs) && !isBlank(row.text)) rows.add(row);
+        }
+        return rows;
     }
 
     private static void appendMiniPart(StringBuilder target, String value) {
@@ -592,6 +624,7 @@ final class NowPlayingLyricController {
         final boolean replayRequired = authoritativeReplayRequired;
         LyricsRenderConfig fetchConfig = renderConfig;
         RomanizationOptions fetchOptions = romanizationOptions();
+        ChineseCharacterForm fetchCharacterForm = currentCharacterForm();
         NativeRuntime.LYRICS_IO.execute(() -> {
             try {
                 if (isProjectionStale(id, generation, revision)) return;
@@ -599,6 +632,7 @@ final class NowPlayingLyricController {
                 // documents. Both are read on the main thread while this runs.
                 LyricsDocument nextCardDocument = LyricsDocument.copyOf(doc);
                 if (nextCardDocument == null) return;
+                nextCardDocument.chineseCharacterForm = fetchCharacterForm;
                 LyricsDocumentProcessor.applyProcessedCachePreservingAi(
                         activity.getApplicationContext(), nextCardDocument,
                         fetchOptions, NativeRuntime.GOOGLE_PROCESSING_VERSION);
@@ -624,6 +658,9 @@ final class NowPlayingLyricController {
                 // its own invalidation as stale.
                 handler.post(() -> {
                     if (isProjectionStale(id, generation, revision)) return;
+                    ChineseCharacterForm currentForm = currentCharacterForm();
+                    applyCharacterForm(nextCardDocument, currentForm);
+                    applyCharacterForm(nextArtworkDocument, currentForm);
                     if (tryMergeMountedProjection(id, nextCardDocument, replayRequired)) return;
                     LyricPipelineMetrics.increment(
                             LyricPipelineMetrics.Counter.DOCUMENT_REBUILD);
@@ -656,6 +693,11 @@ final class NowPlayingLyricController {
         // track as the lanes settle, and the artwork overlay keeps its document identity.
         LyricsDocument mountedCard = cardDocument;
         LyricsDocument mountedArtwork = artworkDocument;
+        if ((mountedCard != null && mountedCard.chineseCharacterForm != nextCardDocument.chineseCharacterForm)
+                || (mountedArtwork != null
+                && mountedArtwork.chineseCharacterForm != nextCardDocument.chineseCharacterForm)) {
+            return false;
+        }
         LyricsDocumentProcessor.DerivedMergeResult cardMerge =
                 NowPlayingSessionGuard.mayMergeMountedProjection(
                         replayRequired,
@@ -672,9 +714,11 @@ final class NowPlayingLyricController {
         boolean artworkChanged =
                 LyricsDocumentProcessor.mergeDerivedPublication(mountedArtwork, nextCardDocument)
                         == LyricsDocumentProcessor.DerivedMergeResult.CHANGED;
-        boolean cardRowsChanged = LyricTimeline.refreshAppliedDerivedText(mountedCard);
+        boolean cardProjectionChanged = LyricTimeline.refreshChineseCharacterProjection(mountedCard);
+        boolean artworkProjectionChanged = LyricTimeline.refreshChineseCharacterProjection(mountedArtwork);
+        boolean cardRowsChanged = LyricTimeline.refreshAppliedDerivedText(mountedCard) || cardProjectionChanged;
         boolean artworkRowsChanged =
-                LyricTimeline.refreshAppliedDerivedText(mountedArtwork);
+                LyricTimeline.refreshAppliedDerivedText(mountedArtwork) || artworkProjectionChanged;
         if (cardChanged || artworkChanged || cardRowsChanged || artworkRowsChanged) {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
             if (cardChanged || cardRowsChanged) card.invalidateMountedContent();

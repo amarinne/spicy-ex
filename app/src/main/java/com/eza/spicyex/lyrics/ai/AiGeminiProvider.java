@@ -193,9 +193,7 @@ public final class AiGeminiProvider implements AiProvider {
      */
     private static String bodyOf(AiProviderRequest request, AiProviderConfig config) {
         JsonObject systemPart = new JsonObject();
-        systemPart.addProperty("text", AiContract.buildSystemPrompt(config.layer,
-                config.targetLang, config.repair, config.iteration,
-                config.baselineRefinement));
+        systemPart.addProperty("text", config.systemPrompt());
         JsonArray systemParts = new JsonArray();
         systemParts.add(systemPart);
         JsonObject systemInstruction = new JsonObject();

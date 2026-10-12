@@ -509,6 +509,7 @@ public final class CatalogStore {
         row.put("candidate_id", candidate.candidateId);
         row.put("track_id", candidate.trackId);
         row.put("source_id", candidate.sourceId == null ? "" : candidate.sourceId.id);
+        row.put("upstream_source", candidate.upstreamSource());
         row.put("provider_item_id", candidate.providerItemId);
         row.put("match_method", candidate.matchMethod.name());
         row.put("match_confidence", candidate.matchConfidence);
@@ -644,6 +645,37 @@ public final class CatalogStore {
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
             // Accepted payloads are never dropped by a schema change.
             for (String sql : CatalogSchema.migrationSql(oldVersion, newVersion)) db.execSQL(sql);
+            if (oldVersion < 3 && newVersion >= 3) {
+                try (Cursor cursor = db.query(CatalogSchema.TABLE_CANDIDATES, CANDIDATE_COLUMNS,
+                        null, null, null, null, null)) {
+                    while (cursor.moveToNext()) {
+                        CatalogCandidate candidate = candidate(cursor);
+                        if (candidate == null) continue;
+                        ContentValues values = new ContentValues();
+                        values.put("upstream_source", candidate.upstreamSource());
+                        if (candidate.sourceId == SourceId.SPICY_ORG) {
+                            com.eza.spicyex.lyrics.session.CanonicalSourceCodec.Record decoded =
+                                    com.eza.spicyex.lyrics.session.CanonicalSourceCodec.decode(candidate.normalizedDocument);
+                            if (decoded != null) {
+                                String digest = com.eza.spicyex.lyrics.session.CanonicalBase
+                                        .fromDocument("spotify:track:" + candidate.trackId, decoded.document).digest;
+                                values.put("canonical_digest", digest);
+                                com.google.gson.JsonObject normalized = com.google.gson.JsonParser
+                                        .parseString(candidate.normalizedDocument).getAsJsonObject();
+                                normalized.addProperty("canonicalDigest", digest);
+                                values.put("normalized_document", normalized.toString());
+                                ContentValues selection = new ContentValues();
+                                selection.put("last_accepted_digest", digest);
+                                db.update(CatalogSchema.TABLE_SELECTION, selection, "candidate_id = ?",
+                                        new String[]{candidate.candidateId});
+                            }
+                        }
+                        // Historical IDs and pins stay addressable; fresh org acquisitions use the new digest.
+                        db.update(CatalogSchema.TABLE_CANDIDATES, values, "candidate_id = ?",
+                                new String[]{candidate.candidateId});
+                    }
+                }
+            }
         }
     }
 }

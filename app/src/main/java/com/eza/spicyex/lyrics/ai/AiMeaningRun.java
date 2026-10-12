@@ -21,9 +21,9 @@ import java.util.Map;
  * means the expensive half — identity, reuse, resume, accounting — stays testable without a
  * {@code Context}, an executor, or a network.
  *
- * <p>Only a complete answer becomes an artifact. Partial work is stored by the runner so it can be
- * resumed, but a document showing half AI translations beside half Google ones reads as a rendering
- * bug rather than as progress, so display waits for the whole thing.
+ * <p>Terminal partial output preserves accepted rows. The lane selects an artifact only when it
+ * covers the required translation rows. Interrupted work remains stored until it can finish or
+ * prove exact fallback rows.
  */
 public final class AiMeaningRun {
 
@@ -58,14 +58,18 @@ public final class AiMeaningRun {
                              boolean refineGoogle, String targetLang,
                              boolean allowProviderRequest, AiSignal signal,
                              AiRunMonitor monitor) {
+        return run(context, settings, base, document, googleBaseline, refineGoogle, targetLang,
+                allowProviderRequest, signal, monitor, false);
+    }
+
+    public static Result run(Context context, AiSettings settings, CanonicalBase base,
+                             LyricsDocument document, MeaningArtifact googleBaseline,
+                             boolean refineGoogle, String targetLang, boolean allowProviderRequest,
+                             AiSignal signal, AiRunMonitor monitor, boolean explicitRetry) {
         if (settings == null || base == null || base.rows.isEmpty()) {
             return new Result(null, AiRunOutcome.nothingToDo());
         }
 
-        if (refineGoogle && (googleBaseline == null || googleBaseline.isEmpty())) {
-            return new Result(null, AiRunOutcome.failed(null,
-                    AiChunkFailure.of(AiFailureReason.BASELINE_UNAVAILABLE), true));
-        }
         List<AiLine> rows = AiRows.forMeaning(base, document, googleBaseline, refineGoogle);
         if (!AiRows.hasWork(rows)) return new Result(null, AiRunOutcome.nothingToDo());
 
@@ -81,17 +85,33 @@ public final class AiMeaningRun {
                 settings.providerId(), lyricContext, providerConfig, instructions, null, null);
 
         AiRecordStore records = AiRecordStores.forRun(context, document);
+        AiReplayIdentity replay = AiReplayIdentity.of(rows, refineGoogle);
+        AiSourceBinding binding = new AiSourceBinding(base, document);
+        AiPaidRecord compatible = records.readReplay(config, replay);
+        if (config.matchesConfiguration(compatible)) {
+            AiPaidRecord projected = replay.project(compatible);
+            if (projected != null && projected.hasCompleteItemsForRows(rows)) {
+                records.bind(compatible, binding, replay);
+                MeaningArtifact artifact = artifactOf(base, config, projected);
+                if (refineGoogle && artifact != null && googleBaseline != null) {
+                    artifact = artifact.withGoogleBaseline(googleBaseline);
+                }
+                return new Result(artifact, AiRunOutcome.reused(projected));
+            }
+        }
         AiPaidRecord cached = records.read(config);
-        if (cached != null && cached.isComplete()) {
+        if (cached != null && cached.isCompleteForRows(rows)) {
+            records.bind(cached, binding, replay);
             MeaningArtifact artifact = artifactOf(base, config, cached);
             if (refineGoogle && artifact != null) {
                 artifact = artifact.withGoogleBaseline(googleBaseline);
             }
             return new Result(artifact, AiRunOutcome.reused(cached));
         }
-        // A stored answer may be read without a live credential. A new paid request may not.
-        if (!settings.canRequest()) return new Result(null, AiRunOutcome.nothingToDo());
-
+        if (refineGoogle && (googleBaseline == null || googleBaseline.isEmpty())) {
+            return new Result(null, allowProviderRequest ? AiRunOutcome.failed(null,
+                    AiChunkFailure.of(AiFailureReason.BASELINE_UNAVAILABLE), true) : AiRunOutcome.nothingToDo());
+        }
         AiLayerRunner.Args args = new AiLayerRunner.Args();
         args.config = config;
         args.provider = settings.provider();
@@ -99,7 +119,10 @@ public final class AiMeaningRun {
         args.rows = rows;
         args.signal = signal;
         args.monitor = monitor;
-        args.allowProviderRequest = allowProviderRequest;
+        args.allowProviderRequest = allowProviderRequest && settings.canRequest();
+        args.explicitRetry = explicitRetry;
+        args.replay = replay;
+        args.binding = binding;
         args.useBaseline = refineGoogle;
 
         AiRunOutcome outcome = AiLayerRunner.run(args);

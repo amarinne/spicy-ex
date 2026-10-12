@@ -24,4 +24,15 @@ public class JyutpingRomanizerTest {
         assertEquals("hoeng1 gong2", SpicyJapaneseChineseProcessor.romanizeChineseLine("香港", "jyutping", true));
         assertEquals("hoeng gong", SpicyJapaneseChineseProcessor.romanizeChineseLine("香港", "jyutping", false));
     }
+
+    @Test
+    public void ezaJyutpingConvertsReadingsBeforePassthroughDigits() {
+        assertEquals("tọc", EzaChineseRomanizer.cantonese("dok6", true));
+        assertEquals("quã", EzaChineseRomanizer.cantonese("gwaa1", true));
+        assertEquals("khwĩc", EzaChineseRomanizer.cantonese("kwik1", true));
+        assertEquals("BTS4 nei hou mp3", SpicyJapaneseChineseProcessor.romanizeChineseLine(
+                "BTS4 你好 mp3", "jyutping-eza", false));
+        assertEquals("m̀", EzaChineseRomanizer.cantonese("m4", true));
+        assertEquals("n̉g", EzaChineseRomanizer.cantonese("ng5", true));
+    }
 }

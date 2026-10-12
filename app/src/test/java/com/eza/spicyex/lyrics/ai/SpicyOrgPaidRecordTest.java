@@ -73,7 +73,9 @@ public class SpicyOrgPaidRecordTest {
         assertFalse(AiPaidRecordCodec.encode(disk.peek(config())).contains(SOURCE));
         int oldTokens = disk.peek(config()).inputTokens;
         FakeAiProvider recovered = new FakeAiProvider();
-        AiRunOutcome resumed = AiLayerRunner.run(args(org, recovered));
+        AiLayerRunner.Args retry = args(org, recovered);
+        retry.explicitRetry = true;
+        AiRunOutcome resumed = AiLayerRunner.run(retry);
         assertEquals(AiRunOutcome.Kind.COMPLETED, resumed.kind);
         assertTrue(resumed.durable);
         assertEquals(1, recovered.calls.size());

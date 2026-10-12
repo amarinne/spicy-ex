@@ -2,10 +2,6 @@ package com.eza.spicyex.lyrics;
 
 import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
 
-import java.util.List;
-
-import com.eza.spicyex.lyrics.reading.ReadingModels.TimedReadingUnit;
-
 /** Groups provider timing fragments into one visual word without changing their timing ownership. */
 final class TimedWordGrouping {
     private TimedWordGrouping() {}
@@ -34,7 +30,10 @@ final class TimedWordGrouping {
     }
 
     static long endMs(AppliedLine line, int groupStart) {
-        int end = groupEnd(line, groupStart);
+        return endMs(line, groupStart, groupEnd(line, groupStart));
+    }
+
+    static long endMs(AppliedLine line, int groupStart, int end) {
         if (line == null || line.words == null || end < 0 || end >= line.words.size()
                 || line.words.get(end) == null) return startMs(line, groupStart) + 1L;
         return Math.max(startMs(line, groupStart) + 1L, line.words.get(end).endMs);
@@ -115,21 +114,6 @@ final class TimedWordGrouping {
         if (line == null || line.readingRenderPlan == null
                 || line.readingRenderPlan.timedReadingUnits == null || segment == null
                 || segment.spanId == null || segment.spanId.isEmpty()) return null;
-        String group = null;
-        for (String id : segment.spanId.split("\\+")) {
-            TimedReadingUnit match = null;
-            for (TimedReadingUnit unit : line.readingRenderPlan.timedReadingUnits) {
-                if (unit != null && id.equals(unit.spanId)) {
-                    match = unit;
-                    break;
-                }
-            }
-            if (match == null || match.logicalGroupId == null || match.logicalGroupId.isEmpty()) {
-                return null;
-            }
-            if (group == null) group = match.logicalGroupId;
-            else if (!group.equals(match.logicalGroupId)) return null;
-        }
-        return group;
+        return line.readingRenderPlan.logicalGroupForSpans(segment.spanId);
     }
 }

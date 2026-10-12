@@ -16,6 +16,27 @@ import org.junit.Test;
  */
 public final class AiSettingsMeaningFlowTest {
 
+    @Test public void replayPublicationFingerprintTracksModelSteeringEndpointAndBaselineMode() {
+        com.eza.spicyex.SettingsStore store = new com.eza.spicyex.SettingsStore(
+                new com.eza.spicyex.testsupport.FakeAndroidContext());
+        store.put(com.eza.spicyex.Settings.AI_PROVIDER, AiSettings.PROVIDER_CUSTOM);
+        store.put(com.eza.spicyex.Settings.AI_ENDPOINT, "https://first.invalid/v1");
+        AiSettings settings = new AiSettings(store, null);
+        settings.setModelName("first-model");
+        String original = settings.replayFingerprint();
+        settings.setModelName("other-model"); assertNotEquals(original, settings.replayFingerprint());
+        settings.setModelName("first-model"); assertEquals(original, settings.replayFingerprint());
+        store.put(com.eza.spicyex.Settings.AI_ENDPOINT, "https://other.invalid/v1");
+        assertNotEquals(original, settings.replayFingerprint());
+        store.put(com.eza.spicyex.Settings.AI_ENDPOINT, "https://first.invalid/v1");
+        settings.setInstructions(com.eza.spicyex.lyrics.session.LayerKind.MEANING, "Keep punctuation.");
+        assertNotEquals(original, settings.replayFingerprint());
+        settings.setInstructions(com.eza.spicyex.lyrics.session.LayerKind.MEANING, "");
+        assertEquals(original, settings.replayFingerprint());
+        store.put(com.eza.spicyex.Settings.AI_PRONUNCIATION_SOURCE, "AI only");
+        assertNotEquals(original, settings.replayFingerprint());
+    }
+
     @Test
     public void everyStoredValueMapsToItsFlow() {
         assertEquals(AiSettings.MeaningFlow.GOOGLE_PREVIEW,

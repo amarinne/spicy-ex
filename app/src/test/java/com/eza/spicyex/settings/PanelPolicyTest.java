@@ -30,10 +30,10 @@ public class PanelPolicyTest {
     }
 
     @Test
-    public void onlyAMissingLanguageModelMakesARowUnavailable() {
+    public void missingLanguageModelDoesNotLockBundledControls() {
         assertFalse(PanelPolicy.unavailable(Settings.TRANSLATION_ENABLED, PanelSnapshot.builder().build()));
         assertFalse(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED, full()));
-        assertTrue(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED,
+        assertFalse(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED,
                 PanelSnapshot.builder().allCapabilities().languageModelReady(false).build()));
     }
 
@@ -118,8 +118,14 @@ public class PanelPolicyTest {
         PanelSnapshot missing = PanelSnapshot.builder().allCapabilities()
                 .languageModelReady(false).build();
         assertTrue(PanelPolicy.shouldRender(Settings.DOWNLOAD_LANGUAGE_MODELS, missing));
-        assertFalse(PanelPolicy.shouldRender(Settings.TRANSLITERATION_ENABLED, missing));
-        assertFalse(PanelPolicy.shouldRender(Settings.TRANSLATION_ENABLED, missing));
+        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLITERATION_ENABLED, missing));
+        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_ENABLED, missing));
+        assertTrue(PanelPolicy.shouldRender(Settings.CHINESE_CHARACTER_FORM, missing));
+        PanelSnapshot translationOn = PanelSnapshot.builder()
+                .languageModelReady(false)
+                .put(Settings.TRANSLATION_ENABLED, true).build();
+        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_TARGET, translationOn));
+        assertTrue(PanelPolicy.shouldRender(Settings.TRANSLATION_BRIGHTNESS, translationOn));
 
         PanelSnapshot ready = PanelSnapshot.builder().allCapabilities()
                 .languageModelReady(true).build();
@@ -129,16 +135,31 @@ public class PanelPolicyTest {
     }
 
     @Test
-    public void transliterationToggleNeedsDownloadedLanguageModel() {
+    public void bundledChineseCharacterFormDoesNotNeedTransliterationMasterSwitch() {
+        PanelSnapshot packReady = PanelSnapshot.builder().allCapabilities()
+                .put(Settings.TRANSLITERATION_ENABLED, false).build();
+        assertTrue(PanelPolicy.shouldRender(Settings.CHINESE_CHARACTER_FORM, packReady));
+
+        PanelSnapshot noPack = PanelSnapshot.builder()
+                .put(Settings.TRANSLITERATION_ENABLED, false).build();
+        assertTrue(PanelPolicy.shouldRender(Settings.CHINESE_CHARACTER_FORM, noPack));
+    }
+
+    @Test
+    public void japaneseReadingNeedsDownloadedLanguageModel() {
         PanelSnapshot hasModel = PanelSnapshot.builder().allCapabilities()
                 .languageModelReady(true)
                 .put(Settings.TRANSLITERATION_ENABLED, true).build();
         assertFalse(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED, hasModel));
+        assertTrue(PanelPolicy.shouldRender(Settings.JAPANESE_READING_MODE, hasModel));
 
         PanelSnapshot missingModel = PanelSnapshot.builder().allCapabilities()
                 .languageModelReady(false)
                 .put(Settings.TRANSLITERATION_ENABLED, true).build();
-        assertTrue(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED, missingModel));
+        assertFalse(PanelPolicy.unavailable(Settings.TRANSLITERATION_ENABLED, missingModel));
+        assertFalse(PanelPolicy.shouldRender(Settings.JAPANESE_READING_MODE, missingModel));
+        assertFalse(PanelPolicy.shouldRender(Settings.FURIGANA_BRIGHTNESS, missingModel));
+        assertFalse(PanelPolicy.shouldRender(Settings.FURIGANA_POSITION_PERCENT, missingModel));
     }
 
     @Test
@@ -157,6 +178,12 @@ public class PanelPolicyTest {
         PanelSnapshot lite = PanelSnapshot.builder()
                 .put(Settings.TRANSLITERATION_ENABLED, true).build();
         assertFalse(PanelPolicy.shouldRender(Settings.JAPANESE_READING_MODE, lite));
+        assertTrue(PanelPolicy.shouldRender(Settings.CHINESE_MODE, lite));
+        assertTrue(PanelPolicy.shouldRender(Settings.KOREAN_ROMANIZATION, lite));
+        assertTrue(PanelPolicy.shouldRender(Settings.CYRILLIC_MODE, lite));
+        assertTrue(PanelPolicy.shouldRender(Settings.CYRILLIC_KEEP_SIGNS, lite));
+        assertTrue(PanelPolicy.shouldRender(Settings.CHINESE_TONES, lite));
+        assertTrue(PanelPolicy.shouldRender(Settings.ALIGNED_PER_WORD_ROMAJI, lite));
     }
 
     // --- Background / animation / custom sizes ---
@@ -304,10 +331,14 @@ public class PanelPolicyTest {
                 (Settings.StringSetting) Settings.LIVE_CARD_SECONDARY_MODE,
                 "Both", fullOff, strings()));
         PanelSnapshot missingModel = PanelSnapshot.builder().allCapabilities()
-                .languageModelReady(false).build();
-        assertEquals("Download language models", PanelPolicy.optionUnavailableReason(
+                .languageModelReady(false)
+                .put(Settings.TRANSLITERATION_ENABLED, true).build();
+        assertEquals("Enable translation", PanelPolicy.optionUnavailableReason(
                 (Settings.StringSetting) Settings.LIVE_CARD_SECONDARY_MODE,
                 "Both", missingModel, strings()));
+        assertEquals("", PanelPolicy.optionUnavailableReason(
+                (Settings.StringSetting) Settings.LIVE_CARD_SECONDARY_MODE,
+                "Transliteration", missingModel, strings()));
         PanelSnapshot fullOn = PanelSnapshot.builder().allCapabilities()
                 .put(Settings.TRANSLITERATION_ENABLED, true)
                 .put(Settings.TRANSLATION_ENABLED, true).build();

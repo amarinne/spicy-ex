@@ -13,11 +13,22 @@ public final class LayerFailure {
     /** Exception simple name or a short non-sensitive tag. */
     public final String detail;
     public final int httpStatus;
+    /** Exact AI token, empty when the failure belongs to another processor. */
+    public final String aiFailureToken;
 
     public LayerFailure(Reason reason, String detail, int httpStatus) {
+        this(reason, detail, httpStatus, false);
+    }
+
+    private LayerFailure(Reason reason, String detail, int httpStatus, boolean fromAi) {
         this.reason = reason == null ? Reason.NONE : reason;
         this.detail = Digests.nz(detail);
         this.httpStatus = httpStatus;
+        this.aiFailureToken = fromAi && isFailure() ? this.detail : "";
+    }
+
+    public static LayerFailure ai(Reason reason, String token, int httpStatus) {
+        return new LayerFailure(reason, token, httpStatus, true);
     }
 
     public static LayerFailure of(Reason reason) {

@@ -16,4 +16,8 @@ public class AiProtocolException extends RuntimeException {
     public AiProtocolException(String code, String id) {
         super(code + ":" + AiText.nz(id));
     }
+
+    public AiProtocolException(String code, Throwable cause) {
+        super(code, cause);
+    }
 }

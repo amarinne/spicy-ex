@@ -146,8 +146,20 @@ public class AiPaidDeletionRunTest {
         Storage storage = new Storage();
         AiRunConfig sound = config(LayerKind.SOUND);
         AiRunConfig meaning = config(LayerKind.MEANING);
+        AiLayerRunner.Args retained = args(sound, null, new FakeAiProvider(), null);
+        retained.rows = new java.util.ArrayList<>();
+        for (int i = 0; i < 129; i++) retained.rows.add(AiLine.of("r" + i, "hello", null, false));
+        AiChunkPlanner.Input input = new AiChunkPlanner.Input();
+        input.rows = retained.rows;
+        input.layer = sound.layer;
+        input.target = sound.targetLang;
+        input.model = sound.provider.model;
+        AiPlannedChunk paid = AiChunkPlanner.plan(input).chunks.get(0);
         AiPaidRecord partial = AiPaidRecord.begin(sound, 1);
-        partial.putItem("r0", "paid reading");
+        AiChunkRecord paidChunk = AiChunkRecord.forChunk(paid);
+        paidChunk.status = AiChunkRecord.Status.COMPLETE;
+        partial.putChunk(paid.id, paidChunk);
+        for (String id : paid.itemIds()) partial.putItem(id, "paid reading");
         storage.seed(sound, partial);
         AiPaidRecords soundRun = new AiPaidRecords(storage);
         assertNotNull(soundRun.read(sound));
@@ -157,7 +169,9 @@ public class AiPaidDeletionRunTest {
         AiSignal signal = new AiSignal();
         signal.abort("user");
 
-        AiRunOutcome stopped = AiLayerRunner.run(args(sound, soundRun, new FakeAiProvider(), signal));
+        retained.store = soundRun;
+        retained.signal = signal;
+        AiRunOutcome stopped = AiLayerRunner.run(retained);
         assertTrue(stopped.durable);
         assertNotNull(storage.lastReservation);
         AiPaidRecord reloaded = new AiPaidRecords(storage).read(sound);
@@ -175,6 +189,28 @@ public class AiPaidDeletionRunTest {
         AiRunConfig config = config(LayerKind.SOUND);
         assertFalse(new AiPaidRecords(storage).commit(config, AiPaidRecord.begin(config, 1)));
         assertNull(storage.peek(config));
+    }
+
+    @Test public void corruptOrForeignPaidPayloadBlocksRepurchaseAndKeepsTheOriginal() {
+        AiPaidRecord incompleteComplete = new AiPaidRecord(LayerKind.SOUND, "digest-1",
+                "config-1", "fake", FakeAiProvider.DEFAULT_MODEL.name, "en", null, null,
+                AiContract.SOUND_SCHEMA, AiContract.CHUNK_PLAN_VERSION);
+        incompleteComplete.status = AiPaidRecord.Status.COMPLETE;
+        incompleteComplete.putItem("r0", "paid output");
+        for (String payload : new String[]{"malformed", "{\"v\":99}",
+                AiPaidRecordCodec.encode(incompleteComplete),
+                AiPaidRecordCodec.encode(new AiPaidRecord(LayerKind.MEANING, "digest", "config",
+                        "foreign-provider", "foreign-model", "en", null, null, 1, 1))}) {
+            Storage storage = new Storage();
+            AiRunConfig config = config(LayerKind.SOUND);
+            storage.payloads.put(config.recordIdentity().storageKey(), payload);
+            FakeAiProvider forbidden = new FakeAiProvider();
+            AiRunOutcome outcome = AiLayerRunner.run(args(config, new AiPaidRecords(storage), forbidden, null));
+            assertEquals("storage_unavailable", outcome.failureToken);
+            assertTrue(forbidden.calls.isEmpty());
+            assertEquals(0, storage.reservations);
+            assertEquals(payload, storage.payloads.get(config.recordIdentity().storageKey()));
+        }
     }
 
     private static final class Storage implements AiPaidRecords.Storage {

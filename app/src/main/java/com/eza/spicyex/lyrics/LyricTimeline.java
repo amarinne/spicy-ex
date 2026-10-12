@@ -3,6 +3,10 @@ package com.eza.spicyex.lyrics;
 import java.util.List;
 
 import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
+import com.eza.spicyex.lyrics.language.ChineseCharacterConverter;
+import com.eza.spicyex.lyrics.language.ChineseCharacterForm;
+import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
+import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 
 /**
  * Pure timing normalization and renderer row planning, extracted from the native Spicy hook so
@@ -116,7 +120,10 @@ public final class LyricTimeline {
         } else {
             for (LyricsLine line : doc.lines) {
                 if (line == null) continue;
-                doc.appliedLines.add(createAppliedVocalRow(line, line.startMs, line.endMs));
+                doc.appliedLines.add(createAppliedVocalRow(doc, line, line.startMs, line.endMs));
+                for (BackgroundLine bg : line.backgroundLines) {
+                    if (bg != null) doc.appliedLines.add(createAppliedBackgroundRow(doc, line, bg));
+                }
             }
         }
     }
@@ -150,10 +157,10 @@ public final class LyricTimeline {
             // carries to the next line instead of dropping to "no active row" between lines.
             // The karaoke fill still uses the source line's own end (fillEndMs()).
             long appliedEndMs = resolveAppliedEndMs(line.endMs, nextStartMs, holdGaps);
-            doc.appliedLines.add(createAppliedVocalRow(line, line.startMs, appliedEndMs));
+            doc.appliedLines.add(createAppliedVocalRow(doc, line, line.startMs, appliedEndMs));
             for (BackgroundLine bg : line.backgroundLines) {
                 if (bg == null) continue;
-                doc.appliedLines.add(createAppliedBackgroundRow(line, bg));
+                doc.appliedLines.add(createAppliedBackgroundRow(doc, line, bg));
             }
             if (!holdGaps && nextIndex >= 0
                     && !hasExplicitInterludeBetween(doc.lines, i + 1, nextIndex - 1)) {
@@ -303,7 +310,32 @@ public final class LyricTimeline {
         return changed;
     }
 
-    static AppliedLine createAppliedVocalRow(LyricsLine source, long startMs, long endMs) {
+    /** Replan display glyphs when a same-source publication changes Chinese language evidence. */
+    public static boolean refreshChineseCharacterProjection(LyricsDocument doc) {
+        if (doc == null) return false;
+        for (AppliedLine row : doc.appliedLines) {
+            if (row == null || row.dotLine || row.bgLine || row.sourceLine == null) continue;
+            AppliedLine desired = new AppliedLine();
+            desired.sourceLine = row.sourceLine;
+            desired.text = LyricsDocument.safe(row.sourceLine.text);
+            projectChineseCharacters(doc, desired, desired.text);
+            if (!desired.text.equals(row.text)) {
+                applySyncedRows(doc);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Reconcile a prepared surface snapshot with the latest saved form before mounting it. */
+    public static boolean setChineseCharacterForm(LyricsDocument doc, ChineseCharacterForm form) {
+        if (doc == null || doc.chineseCharacterForm == form) return false;
+        doc.chineseCharacterForm = form;
+        applySyncedRows(doc);
+        return true;
+    }
+
+    static AppliedLine createAppliedVocalRow(LyricsDocument doc, LyricsLine source, long startMs, long endMs) {
         AppliedLine row = new AppliedLine();
         row.sourceLine = source;
         row.text = LyricsDocument.safe(source.text);
@@ -317,12 +349,78 @@ public final class LyricTimeline {
         row.oppositeAligned = source.oppositeAligned;
         row.bgLine = false;
         if (source.syllables != null) {
-            for (SyllableSegment seg : source.syllables) row.words.add(copySegment(seg, false));
+            for (SyllableSegment seg : source.syllables) {
+                SyllableSegment copied = copySegment(seg, false);
+                row.words.add(copied);
+            }
         }
+        projectChineseCharacters(doc, row, source.text);
         return row;
     }
 
+    /** Compatibility helper used by pure timeline tests and legacy callers. */
+    static AppliedLine createAppliedVocalRow(LyricsLine source, long startMs, long endMs) {
+        return createAppliedVocalRow(null, source, startMs, endMs);
+    }
+
+    /** Convert once with full phrase context, then retain each copied timed span's ownership. */
+    private static void projectChineseCharacters(LyricsDocument doc, AppliedLine row, String sourceText) {
+        if (doc == null || doc.chineseCharacterForm == ChineseCharacterForm.ORIGINAL) return;
+        String hint = LyricsDocument.safe(doc.language);
+        if (doc.detectedChinese && ReadingLanguagePolicy.language(sourceText, null, hint).isEmpty()) hint = "zh";
+        if (!"zh".equals(ReadingLanguagePolicy.language(sourceText,
+                ReadingLanguagePolicy.detectionFor(row), hint))) return;
+        String canonical = LyricsDocument.safe(sourceText);
+        ChineseCharacterConverter.Projection projection =
+                ChineseCharacterConverter.project(canonical, doc.chineseCharacterForm);
+        row.text = projection.text;
+        int cursor = 0;
+        int lengthCp = canonical.codePointCount(0, canonical.length());
+        for (SyllableSegment word : row.words) {
+            int startCp = word.canonicalStartCp;
+            int endCp = word.canonicalEndCp;
+            if (startCp < 0 || endCp <= startCp || endCp > lengthCp) {
+                startCp = Integer.MAX_VALUE;
+                endCp = -1;
+                // A render plan may own ranges before the provider spans have been stamped.
+                if (!row.bgLine && row.readingRenderPlan != null) {
+                    for (String id : LyricsDocument.safe(word.spanId).split("\\+")) {
+                        for (CanonicalSpanMapping mapping : row.readingRenderPlan.sourceUnits) {
+                            if (mapping == null || mapping.canonicalRange == null || !id.equals(mapping.spanId)) continue;
+                            startCp = Math.min(startCp, mapping.canonicalRange.startCp);
+                            endCp = Math.max(endCp, mapping.canonicalRange.endCp);
+                        }
+                    }
+                }
+                if (startCp < 0 || endCp <= startCp || endCp > lengthCp) {
+                    String token = LyricsDocument.safe(word.text);
+                    int found = token.isEmpty() ? -1 : canonical.indexOf(token, cursor);
+                    if (found < 0) {
+                        token = token.trim();
+                        found = token.isEmpty() ? -1 : canonical.indexOf(token, cursor);
+                    }
+                    if (found < 0) {
+                        // Malformed provider spans have no canonical range to project.
+                        word.text = ChineseCharacterConverter.convert(word.text, doc.chineseCharacterForm);
+                        continue;
+                    }
+                    startCp = canonical.codePointCount(0, found);
+                    endCp = startCp + token.codePointCount(0, token.length());
+                }
+            }
+            word.text = projection.slice(startCp, endCp);
+            cursor = canonical.offsetByCodePoints(0, endCp);
+            // Applied spans address the display row. Original source spans remain canonical.
+            word.canonicalStartCp = projection.mapBoundary(startCp);
+            word.canonicalEndCp = projection.mapBoundary(endCp);
+        }
+    }
+
     static AppliedLine createAppliedBackgroundRow(LyricsLine source, BackgroundLine bg) {
+        return createAppliedBackgroundRow(null, source, bg);
+    }
+
+    private static AppliedLine createAppliedBackgroundRow(LyricsDocument doc, LyricsLine source, BackgroundLine bg) {
         AppliedLine row = new AppliedLine();
         row.sourceLine = source;
         row.text = LyricsDocument.safe(bg.text);
@@ -334,6 +432,7 @@ public final class LyricTimeline {
         row.oppositeAligned = source.oppositeAligned;
         row.bgLine = true;
         for (SyllableSegment seg : bg.syllables) row.words.add(copySegment(seg, true));
+        projectChineseCharacters(doc, row, bg.text);
         return row;
     }
 

@@ -13,6 +13,23 @@ import java.util.Locale;
  * because that is information inside Spotify's payload, not a second route.
  */
 public final class CatalogSource {
+    /** Machine upstream identity; route identity continues to own access and retention. */
+    public static String upstream(com.eza.spicyex.lyrics.LyricsDocument document) {
+        if (document == null) return "unknown";
+        return upstream(inferSourceId(document.fetchSource, document.provider), document.spicyOrgSource);
+    }
+
+    public static String upstream(SourceId route, String orgSource) {
+        if (route == SourceId.SPICY_ORG) {
+            switch (orgSource == null ? "" : orgSource) {
+                case "spicy_lyrics": case "apple_music": case "spotify": return orgSource;
+                default: return "unknown";
+            }
+        }
+        if (route == SourceId.APPLE) return "apple_music";
+        if (route == SourceId.SPOTIFY_NATIVE) return "spotify";
+        return route == null ? "unknown" : route.id;
+    }
     private CatalogSource() {
     }
 

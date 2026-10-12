@@ -205,6 +205,27 @@ public final class AiSettings {
         return isEnabled() && !modelName().isEmpty();
     }
 
+    /** Publication fence only; it does not change historical paid identities. */
+    public String replayFingerprint() {
+        com.google.gson.JsonObject identity = new com.google.gson.JsonObject();
+        identity.addProperty("enabled", isEnabled());
+        identity.addProperty("provider", providerChoice());
+        identity.addProperty("endpoint", endpoint());
+        identity.addProperty("model", modelName());
+        identity.addProperty("meaningFlow", meaningFlow().name());
+        identity.addProperty("soundBaseline", soundUsesBaseline());
+        for (LayerKind layer : new LayerKind[]{LayerKind.MEANING, LayerKind.SOUND}) {
+            identity.addProperty(layer.name() + "Enabled", layer == LayerKind.MEANING
+                    ? meaningLayerEnabled() : soundLayerEnabled());
+            identity.addProperty(layer.name() + "Instructions", instructions(layer));
+            AiProviderConfig config = providerConfig(layer,
+                    layer == LayerKind.MEANING ? "en" : AiContract.ORTHOGRAPHY_LATIN,
+                    meaningFlow() == MeaningFlow.GOOGLE_DRAFT);
+            identity.addProperty(layer.name() + "Version", config == null ? "" : config.providerVersion);
+        }
+        return com.eza.spicyex.lyrics.session.Digests.sha256(identity.toString());
+    }
+
     public boolean translationAutomatic() {
         return "Always use AI".equals(store == null ? "" : store.get(Settings.AI_TRANSLATION_MODE));
     }
@@ -310,19 +331,57 @@ public final class AiSettings {
                 java.util.Collections.singletonList("generateContent"), allowance);
     }
 
-    /**
-     * Persists one probe outcome for the selected provider scope.
-     *
-     * <p>The record is keyed to the endpoint host and model it measured, so a later selection of a
-     * different model reads as unmeasured rather than inheriting another model's budget. Called by
-     * both probe paths: the explicit test and the one-time readiness check.
-     */
-    public void recordProbeOutcome(AiModelProbe.Result result) {
-        if (store == null || result == null) return;
+    /** One immutable settings probe, including the key selected before its worker starts. */
+    public static final class ProbeSnapshot {
+        public final AiProvider provider;
+        public final AiProviderConfig config;
+        final String identity;
+        final String endpoint;
+        final String model;
+        final Settings.Setting<String> probeSetting;
+
+        private ProbeSnapshot(AiProvider provider, AiProviderConfig config, String identity,
+                              String endpoint, Settings.Setting<String> probeSetting) {
+            this.provider = provider;
+            this.config = config;
+            this.identity = identity;
+            this.endpoint = endpoint;
+            this.model = config.model.name;
+            this.probeSetting = probeSetting;
+        }
+    }
+
+    /** Capture on the settings thread, before another edit can change the request identity. */
+    public ProbeSnapshot snapshotProbe() {
+        return snapshotProbe(AiTransports.live());
+    }
+
+    ProbeSnapshot snapshotProbe(AiGeminiProvider.Transport transport) {
+        if (!isEnabled()) return null;
+        String choice = providerChoice();
+        String endpoint = endpoint();
+        boolean openAiWire = usesOpenAiWire();
+        AiProviderConfig config = providerConfig(LayerKind.MEANING, "en");
+        if (config == null || (openAiWire && endpoint.isEmpty())) return null;
+        final String secret = credentials == null ? ""
+                : credentials.load(credentialScopeFor(choice));
+        if (secret.isEmpty()) return null;
+        AiGeminiProvider.CredentialSource source = () -> secret;
+        AiProvider provider = openAiWire
+                ? new AiOpenAiProvider(endpoint, source, transport)
+                : new AiGeminiProvider(source, transport);
+        return new ProbeSnapshot(provider, config,
+                choice + '\n' + endpoint + '\n' + config.model.name, endpoint, probeSetting());
+    }
+
+    /** Persist only the accepted attempt's endpoint, model, and provider scope. */
+    void recordProbeOutcome(ProbeSnapshot snapshot, AiModelProbe.Result result) {
+        if (store == null || snapshot == null || result == null) return;
         Integer tokens = result.trace == null || result.trace.usage.output == null
                 ? null : result.trace.usage.output;
-        store.put(probeSetting(), AiProbeMeasurement.encode(AiEndpoint.hostOf(endpoint()),
-                modelName(), tokens, result.ok ? "" : result.failure));
+        store.put(snapshot.probeSetting, AiProbeMeasurement.encode(
+                AiEndpoint.hostOf(snapshot.endpoint), snapshot.model, tokens,
+                result.ok ? "" : result.failure));
     }
 
     /** The stored probe record for the current identity, or null when none matches. */
@@ -360,6 +419,44 @@ public final class AiSettings {
         return usesOpenAiWire()
                 ? new AiOpenAiProvider(endpoint(), source)
                 : new AiGeminiProvider(source);
+    }
+
+    /** Model discovery needs a key and endpoint, but does not need a model selected yet. */
+    public static final class DiscoverySnapshot {
+        public final AiProvider provider;
+        public final String providerChoice;
+        private final String endpoint;
+        private final String credentialDigest;
+
+        private DiscoverySnapshot(AiProvider provider, String choice, String endpoint, String secret) {
+            this.provider = provider;
+            this.providerChoice = choice;
+            this.endpoint = endpoint;
+            this.credentialDigest = com.eza.spicyex.lyrics.session.Digests.sha256(secret);
+        }
+
+        public boolean matches(AiSettings settings) {
+            return settings != null && providerChoice.equals(settings.providerChoice())
+                    && endpoint.equals(settings.endpoint()) && settings.credentials != null
+                    && credentialDigest.equals(com.eza.spicyex.lyrics.session.Digests.sha256(
+                            settings.credentials.load(credentialScopeFor(providerChoice))));
+        }
+    }
+
+    public DiscoverySnapshot snapshotDiscovery() {
+        return snapshotDiscovery(AiTransports.live());
+    }
+
+    DiscoverySnapshot snapshotDiscovery(AiGeminiProvider.Transport transport) {
+        String choice = providerChoice();
+        String endpoint = endpoint();
+        boolean openAiWire = usesOpenAiWire();
+        String secret = credentials == null ? "" : credentials.load(credentialScopeFor(choice));
+        if (secret.isEmpty() || openAiWire && endpoint.isEmpty()) return null;
+        AiGeminiProvider.CredentialSource key = () -> secret;
+        AiProvider captured = openAiWire ? new AiOpenAiProvider(endpoint, key, transport)
+                : new AiGeminiProvider(key, transport);
+        return new DiscoverySnapshot(captured, choice, endpoint, secret);
     }
 
     private Settings.Setting<String> modelSetting() {

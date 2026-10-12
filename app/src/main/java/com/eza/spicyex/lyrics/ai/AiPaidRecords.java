@@ -23,9 +23,11 @@ public final class AiPaidRecords implements AiRecordStore {
     private AIPaidArtifactCache.Reservation activeReservation;
     private AIPaidArtifactCache.Read runRead;
     private boolean readStarted;
+    private boolean storageReadFailed;
+    private final Context context;
 
     public AiPaidRecords(Context context) {
-        this(new Storage() {
+        this(context, new Storage() {
             public AIPaidArtifactCache.Read read(PaidArtifactIdentity identity) {
                 return AIPaidArtifactCache.read(context, identity);
             }
@@ -52,11 +54,40 @@ public final class AiPaidRecords implements AiRecordStore {
     }
 
     AiPaidRecords(Storage storage) {
+        this(null, storage);
+    }
+
+    private AiPaidRecords(Context context, Storage storage) {
+        this.context = context;
         this.storage = storage;
+    }
+
+    @Override public AiPaidRecord readReplay(AiRunConfig config, AiReplayIdentity replay) {
+        try {
+            return AiPaidRecordCodec.decode(AIPaidArtifactCache.replay(context, config.layer.name(),
+                    config.configId, replay.digest, replay.baseline));
+        } catch (Throwable failure) {
+            storageReadFailed = true;
+            Diagnostics.warn("AiPaidRecords", "replay_read", failure);
+            return null;
+        }
+    }
+
+    @Override public void bind(AiPaidRecord record, AiSourceBinding source, AiReplayIdentity replay) {
+        if (record == null || !record.isComplete()) return;
+        try {
+            AIPaidArtifactCache.bind(context, AiIdentity.recordIdentity(record.layer, record.docDigest,
+                    record.providerId, record.modelName, record.configId), source, record.configId, replay.digest);
+        } catch (Throwable failure) {
+            Diagnostics.warn("AiPaidRecords", "bind", failure);
+        }
     }
 
     @Override
     public Reservation reserve(AiRunConfig config, long maxRecordBytes) {
+        if (storageReadFailed || !readStarted || runRead == null || !runRead.admissionSafe) {
+            return Reservation.rejected(Reservation.Status.UNAVAILABLE, "storage-read-unavailable");
+        }
         if (config == null) {
             return Reservation.rejected(Reservation.Status.UNAVAILABLE, "storage-unavailable");
         }
@@ -86,14 +117,24 @@ public final class AiPaidRecords implements AiRecordStore {
         if (identity == null || !identity.isComplete()) return null;
         if (!readStarted) {
             readStarted = true;
-            runRead = storage.read(identity);
+            try {
+                runRead = storage.read(identity);
+            } catch (Throwable failure) {
+                storageReadFailed = true;
+                Diagnostics.warn("AiPaidRecords", "read", failure);
+            }
         }
         AiPaidRecord record = AiPaidRecordCodec.decode(runRead == null ? null : runRead.payload);
-        if (record == null) return null;
+        if (record == null) {
+            if (runRead != null && runRead.payload != null) Diagnostics.event("AiPaidRecords", "paid_payload_unreadable");
+            storageReadFailed |= runRead == null || !runRead.admissionSafe || runRead.payload != null;
+            return null;
+        }
         if (!config.matches(record)) {
             // Filed under this key but describing a different question. Treat it as absent rather
             // than serving a paid answer to something it does not answer.
             Diagnostics.event("AiPaidRecords", "record_key_mismatch");
+            storageReadFailed = true;
             return null;
         }
         record.lastAccessedAtMs = System.currentTimeMillis();

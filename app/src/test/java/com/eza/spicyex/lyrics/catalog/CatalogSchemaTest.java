@@ -21,7 +21,7 @@ public class CatalogSchemaTest {
         assertTrue(joined.contains("CREATE TABLE meta"));
         assertTrue(joined.contains("idx_candidates_track"));
         assertTrue(joined.contains("idx_artifacts_digest"));
-        assertEquals(2, CatalogSchema.VERSION);
+        assertEquals(3, CatalogSchema.VERSION);
     }
 
     @Test
@@ -60,7 +60,7 @@ public class CatalogSchemaTest {
 
     @Test
     public void freshDatabaseTakesTheFullPlan() {
-        assertEquals(CatalogSchema.createAll(), CatalogSchema.migrationSql(0, 2));
+        assertEquals(CatalogSchema.createAll(), CatalogSchema.migrationSql(0, 3));
     }
 
     @Test

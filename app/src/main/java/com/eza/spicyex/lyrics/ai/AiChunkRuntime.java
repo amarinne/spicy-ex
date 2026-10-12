@@ -78,19 +78,35 @@ public final class AiChunkRuntime {
         }
         AiChunkRecord record = args.previous == null
                 ? AiChunkRecord.forChunk(args.chunk) : args.previous.copy();
+        record.fallbackRowIds.clear();
         long accountedTokens = 0L;
         /** The cap this chunk asks for: the ceiling, because a cap is not a charge. */
         int outputBudget = initialOutputBudget(args.chunk, args.config.callOutputTokens());
+        int initialAttempts = record.attempts;
+        AiChunkFailure repairFailure = null;
 
         while (record.attempts < AiContract.MAX_ATTEMPTS) {
             int maxOutputTokens = outputBudget;
-            long reservation = (long) args.chunk.estimatedInputTokens + maxOutputTokens;
-            if (args.signal != null) args.signal.throwIfAborted();
+            try {
+                if (args.signal != null) args.signal.throwIfAborted();
+            } catch (AiCancelledException cancelled) {
+                if (record.attempts == initialAttempts) throw cancelled;
+                // The prior result arrived. Only its unsent repair or rate-limit retry was cancelled.
+                record.status = AiChunkRecord.Status.FAILED;
+                record.failure = repairFailure;
+                return AiChunkExecution.cancelled(record.failure, record, accountedTokens,
+                        cancelled.reason);
+            }
             record.attempts++;
 
-            AiProviderConfig callConfig = args.config.forCall(record.repairs > 0, maxOutputTokens);
             AiProviderRequest request = new AiProviderRequest(args.chunk.context,
                     args.config.targetLang, args.chunk.instructions, args.chunk.items);
+            AiProviderConfig callConfig = callConfig(args, request, record.repairs > 0,
+                    maxOutputTokens);
+            int estimatedCallInput = Math.max(args.chunk.estimatedInputTokens,
+                    AiChunkPlanner.ceilHalf(AiText.utf8Bytes(callConfig.systemPrompt())
+                            + AiText.utf8Bytes(request.toJson())));
+            long reservation = (long) estimatedCallInput + maxOutputTokens;
 
             AiProviderResult result;
             try {
@@ -98,7 +114,7 @@ public final class AiChunkRuntime {
             } catch (Throwable dispatched) {
                 // The call left; whether it was served and billed is not knowable from here.
                 accountedTokens += reservation;
-                estimateUsage(record, args.chunk, maxOutputTokens);
+                estimateUsage(record, estimatedCallInput, maxOutputTokens);
                 return fail(record, AiChunkFailure.of(AiFailureReason.DELIVERY_UNKNOWN),
                         accountedTokens);
             }
@@ -110,14 +126,15 @@ public final class AiChunkRuntime {
                 if (failure.kind == AiProviderFailure.Kind.PROTOCOL
                         && record.attempts < AiContract.MAX_ATTEMPTS) {
                     accountedTokens += reservation;
-                    estimateUsage(record, args.chunk, maxOutputTokens);
+                    estimateUsage(record, estimatedCallInput, maxOutputTokens);
                     record.repairs++;
+                    repairFailure = mapFailure(failure);
                     continue;
                 }
                 if (failure.kind == AiProviderFailure.Kind.RATE_LIMITED
                         && record.attempts < AiContract.MAX_ATTEMPTS) {
                     accountedTokens += reservation;
-                    estimateUsage(record, args.chunk, maxOutputTokens);
+                    estimateUsage(record, estimatedCallInput, maxOutputTokens);
                     try {
                         wait.await(retryAfterMs(failure), args.signal);
                     } catch (RuntimeException cancelled) {
@@ -125,15 +142,16 @@ public final class AiChunkRuntime {
                         return fail(record, AiChunkFailure.of(AiFailureReason.RATE_LIMITED),
                                 accountedTokens);
                     }
+                    repairFailure = mapFailure(failure);
                     continue;
                 }
                 accountedTokens += reservation;
-                estimateUsage(record, args.chunk, maxOutputTokens);
+                estimateUsage(record, estimatedCallInput, maxOutputTokens);
                 return fail(record, mapFailure(failure), accountedTokens);
             }
 
             int input = result.usage.input == null
-                    ? args.chunk.estimatedInputTokens : result.usage.input;
+                    ? estimatedCallInput : result.usage.input;
             int output = result.usage.output == null ? maxOutputTokens : result.usage.output;
             accountedTokens += (long) input + output;
             record.inputTokens += input;
@@ -195,11 +213,14 @@ public final class AiChunkRuntime {
                 }
                 record.status = AiChunkRecord.Status.COMPLETED_FALLBACK;
                 record.failure = null;
+                record.fallbackRowIds.addAll(rowIdsOf(stillFailed));
                 return AiChunkExecution.accepted(acceptedRows, record, accountedTokens,
                         rowIdsOf(stillFailed));
             } catch (AiProtocolException invalid) {
                 if (record.attempts < AiContract.MAX_ATTEMPTS) {
                     record.repairs++;
+                    repairFailure = new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
+                            invalid.getMessage());
                     continue;
                 }
                 return fail(record, new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0,
@@ -286,10 +307,13 @@ public final class AiChunkRuntime {
         }
 
         record.attempts++;
-        AiProviderConfig reAskConfig = args.config.forCall(true, maxOutputTokens);
         AiProviderRequest reAskRequest = new AiProviderRequest(args.chunk.context,
                 args.config.targetLang, args.chunk.instructions, reAskItems);
-        long reservation = (long) args.chunk.estimatedInputTokens + maxOutputTokens;
+        AiProviderConfig reAskConfig = callConfig(args, reAskRequest, true, maxOutputTokens);
+        int estimatedCallInput = Math.max(args.chunk.estimatedInputTokens,
+                AiChunkPlanner.ceilHalf(AiText.utf8Bytes(reAskConfig.systemPrompt())
+                        + AiText.utf8Bytes(reAskRequest.toJson())));
+        long reservation = (long) estimatedCallInput + maxOutputTokens;
 
         AiProviderResult retry;
         try {
@@ -297,11 +321,17 @@ public final class AiChunkRuntime {
         } catch (Throwable dispatchedAgain) {
             // Unknown delivery on the re-ask: charge it conservatively and let the good rows stand.
             accountedTokens += reservation;
-            estimateUsage(record, args.chunk, maxOutputTokens);
+            estimateUsage(record, estimatedCallInput, maxOutputTokens);
             return new TargetedReAsk(acceptedRows, failed, accountedTokens);
         }
 
-        int input = retry.usage.input == null ? args.chunk.estimatedInputTokens
+        if (retry == null) {
+            accountedTokens += reservation;
+            estimateUsage(record, estimatedCallInput, maxOutputTokens);
+            return new TargetedReAsk(acceptedRows, failed, accountedTokens);
+        }
+
+        int input = retry.usage.input == null ? estimatedCallInput
                 : retry.usage.input;
         int output = retry.usage.output == null ? maxOutputTokens : retry.usage.output;
         accountedTokens += (long) input + output;
@@ -338,15 +368,27 @@ public final class AiChunkRuntime {
         return ids;
     }
 
+    /** The repair prompt never makes a fitting request cross the transport or model input bound. */
+    private static AiProviderConfig callConfig(Args args, AiProviderRequest request, boolean repair,
+                                                int outputTokens) {
+        AiProviderConfig config = args.config.forCall(repair, outputTokens);
+        int bytes = AiText.utf8Bytes(config.systemPrompt()) + AiText.utf8Bytes(request.toJson());
+        if (bytes > AiContract.MAX_REQUEST_BYTES
+                || (config.model != null && AiChunkPlanner.ceilHalf(bytes) > config.model.inputTokenLimit)) {
+            return args.config.forCall(false, outputTokens);
+        }
+        return config;
+    }
+
     /**
      * Charges the deliberately conservative estimate: this chunk's estimated input plus the full
      * configured output cap. It overstates a short answer on purpose — the alternative is a run
      * that spent real money and reports nothing.
      */
-    private static void estimateUsage(AiChunkRecord record, AiPlannedChunk chunk,
+    private static void estimateUsage(AiChunkRecord record, int inputTokens,
                                       int maxOutputTokens) {
         record.usageEstimated = true;
-        record.inputTokens += chunk.estimatedInputTokens;
+        record.inputTokens += inputTokens;
         record.outputTokens += maxOutputTokens;
     }
 

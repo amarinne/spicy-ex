@@ -16,6 +16,7 @@ import java.net.URI;
 public final class SpicyOrgAttributionView extends TextView {
     private LyricsDocument boundDocument;
     private boolean boundIncludeProvider = true;
+    private boolean boundIncludeWriters;
 
     public SpicyOrgAttributionView(Context context) {
         super(context);
@@ -34,8 +35,21 @@ public final class SpicyOrgAttributionView extends TextView {
     }
 
     public void bind(LyricsDocument document, boolean includeProvider) {
-        if (boundDocument == document && boundIncludeProvider == includeProvider) return;
+        bind(document, includeProvider, false);
+    }
+
+    public void bindOutro(LyricsDocument document) {
+        bind(document, true, true);
+    }
+
+    private void bind(LyricsDocument document, boolean includeProvider, boolean includeWriters) {
+        if (boundDocument == document && boundIncludeProvider == includeProvider
+                && boundIncludeWriters == includeWriters) return;
         SpannableStringBuilder text = new SpannableStringBuilder();
+        if (includeWriters && document != null && document.songWriters != null
+                && !document.songWriters.trim().isEmpty()) {
+            text.append("Written by: ").append(document.songWriters.trim());
+        }
         boolean previousContributor = false;
         for (SpicyOrgAttribution.Credit credit : SpicyOrgAttribution.credits(document, includeProvider)) {
             if (text.length() > 0) text.append(previousContributor ? ", " : "\n");
@@ -47,6 +61,7 @@ public final class SpicyOrgAttributionView extends TextView {
         }
         boundDocument = document;
         boundIncludeProvider = includeProvider;
+        boundIncludeWriters = includeWriters;
         setText(text);
         setVisibility(text.length() == 0 ? View.GONE : View.VISIBLE);
     }

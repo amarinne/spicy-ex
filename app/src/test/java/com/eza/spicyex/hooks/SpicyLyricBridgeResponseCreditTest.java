@@ -70,9 +70,10 @@ public class SpicyLyricBridgeResponseCreditTest {
         document.songWriters = "Writer";
         String writerFingerprint = SpicyLyricBridgeDocumentSerializer.publicationFingerprint(document);
         assertNotEquals(makerFingerprint, writerFingerprint);
+        assertEquals(lyricsFingerprint, LyricsDocumentProcessor.publicationFingerprint(document));
         document.spicyOrgSource = "apple_music";
         assertNotEquals(writerFingerprint, SpicyLyricBridgeDocumentSerializer.publicationFingerprint(document));
-        assertEquals(lyricsFingerprint, LyricsDocumentProcessor.publicationFingerprint(document));
+        assertNotEquals(lyricsFingerprint, LyricsDocumentProcessor.publicationFingerprint(document));
     }
 
     @Test
