@@ -24,14 +24,25 @@ import com.eza.spicyex.ui.PanelDialog;
 
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
+import com.eza.spicyex.BuildStamp;
+import com.eza.spicyex.lyrics.language.LanguageModelPack;
+import com.eza.spicyex.settings.editor.EditorChoice;
+import com.eza.spicyex.settings.editor.EditorControlRenderer;
+import com.eza.spicyex.settings.editor.EditorListPanel;
+import com.eza.spicyex.settings.editor.EditorListPlan;
+import com.eza.spicyex.settings.editor.EditorPanelPlacement;
+import com.eza.spicyex.settings.editor.EditorRows;
+import com.eza.spicyex.settings.registry.ControlSpec;
+import com.eza.spicyex.settings.registry.SettingsSnapshot;
+import com.eza.spicyex.settings.registry.UiContext;
 import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.ui.UiLanguage;
 import com.eza.spicyex.settings.SettingsWriter;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 import com.eza.spicyex.SpotifyPlusConfig;
@@ -69,6 +80,24 @@ final class LyricsLayoutEditController {
          */
         boolean agentSelect(String name, boolean revealPanel);
 
+        /**
+         * A tap on a preview element, through the same owner the element's own tap uses: the
+         * panel shows that element's options, leaving the full list when it is open.
+         *
+         * @return null when the tap was taken, or the reason it was refused: no open editor, a
+         *         name that is not one of the elements, or an element the open stage does not
+         *         show.
+         */
+        String agentTap(String name);
+
+        /**
+         * The toolbar's list toggle, through the same owner the toolbar control uses.
+         *
+         * @return null when the panel switched, or the reason it was refused: no open editor, or
+         *         the card editor, which has no list toggle.
+         */
+        String agentToggleList();
+
         /** The agent name of the selected element (e.g. "artwork", "skip"). */
         String selectedName();
 
@@ -82,6 +111,15 @@ final class LyricsLayoutEditController {
         boolean agentAction(String action, String argument);
 
         /**
+         * Switches the open editor's tab strip to the named tab, through the same selector the
+         * strip's own tap uses.
+         *
+         * @return null when the tab was switched, or the reason the request was refused: a tab
+         *         the open mode does not have, or no open editor at all.
+         */
+        String agentSwitchTab(String name);
+
+        /**
          * The real screen switched between the stacked and the two-column layout while the editor
          * stays open. The editor keeps its sheet, scroll, selection, tab and demo state and only
          * re-traces the elements that moved.
@@ -90,6 +128,39 @@ final class LyricsLayoutEditController {
 
         /** Adds the editor's own geometry and state to a probe reading. */
         void agentReport(LayoutProbeReport report);
+
+        /**
+         * Switches the options panel between the selected element and the list of all elements,
+         * through the same owner the toolbar toggle uses.
+         *
+         * @return null when the open editor is in the requested mode now, or the reason the
+         *         request was refused: the card editor has no list mode.
+         */
+        String agentSetMode(String name);
+
+        /** The list section the selected element scrolls to, or "" outside list mode. */
+        String listSection();
+
+        /**
+         * Picks one of the options the open editor really rendered, through that control's own
+         * click owner, so the write and the rebuild that follows it are the production ones.
+         *
+         * @param settingKey the setting the choice belongs to.
+         * @param value      the stored value the choice stands for.
+         * @return null when the choice was picked, or the reason the request was refused: no open
+         *         editor, a closed options panel, or a choice the panel does not render.
+         */
+        String agentChoose(String settingKey, String value);
+
+        /**
+         * Opens or drives the live Random pool dialog through its own controls.
+         *
+         * @return null when the action ran, or the reason the request was refused.
+         */
+        String agentRandomPool(String action, String argument);
+
+        /** The live Random dialog's state, including pending choices and the persisted pool. */
+        String agentRandomPoolStatus();
     }
 
     /**
@@ -113,15 +184,24 @@ final class LyricsLayoutEditController {
         names.put("card", "CARD");
         return java.util.Collections.unmodifiableMap(names);
     }
-    private static final int HANDLE_SIZE_DP = 22;
+
+    /**
+     * Whether a real preview tap can reach an element in the open editor stage.
+     *
+     * <p>The card editor stages only its card: the lyrics captures sit hidden behind it, and the
+     * lyrics editor has no card preview of its own. An agent tap outside that stage would be a
+     * selection no user tap could make.
+     */
+    static boolean previewTapReachable(boolean cardMode, String elementName) {
+        return ("card".equals(elementName)) == cardMode;
+    }
+
     /** Extra grab margin around the corner grip's drawn bracket. */
     private static final int HANDLE_TOUCH_PAD_DP = 10;
     /** Touch box of the Apple-style resize grip; the element's corner sits GRIP_OUTSIDE_DP in
      *  from its bottom-right, so most of the box (and the drawn arc) lies inside the element. */
     private static final int GRIP_BOX_DP = 56;
     private static final int GRIP_OUTSIDE_DP = 12;
-    private static final int TEXT_COLOR = 0xFFE8E8EE;
-    private static final int ACCENT_COLOR = 0xFF1ED760;
     /** Outline color actually painted on an UNSELECTED capture. Every capturable element is
      *  outlined at all times so the editor reads as one visual language, but at full-strength
      *  gray, seven simultaneous boxes plus a per-lyric-row grid buried the one box the user
@@ -132,16 +212,6 @@ final class LyricsLayoutEditController {
     /** Above every floating chip's elevation (8dp), so the editor always draws and hits first. */
     private static final int EDITOR_Z_DP = 24;
     private static final int OUTLINE_IDLE_DP = 1;
-    /** Options-panel group card: see Session#beginGroup. */
-    private static final int GROUP_RADIUS_DP = 14;
-    private static final int GROUP_FILL_COLOR = 0x0FFFFFFF;
-    private static final int GROUP_TITLE_SP = 12;
-    private static final int GROUP_TITLE_COLOR = 0x8AFFFFFF;
-    /** Interactive text in the panel. Chips and toggles are what the user aims at, so they read a
-     *  step larger than the group titles above them rather than the same size. */
-    private static final int CONTROL_TEXT_SP = 15;
-    /** Minimum height of a tappable chip/toggle, so every control clears a comfortable target. */
-    private static final int CONTROL_MIN_HEIGHT_DP = 44;
 
     // -- options panel (one floating window over the preview) ------------------------
     /** Clear space the panel keeps from every screen edge, and from the editor toolbar row. */
@@ -155,6 +225,14 @@ final class LyricsLayoutEditController {
     private static final float PANEL_MAX_HEIGHT_SHARE = 0.6f;
     /** The card stage stays visible, so the panel takes at most half the overlay there. */
     private static final float PANEL_MAX_HEIGHT_SHARE_CARD = 0.5f;
+    /** The panel keeps at least this height, even when clearing the element it edits wants less:
+     *  a panel too short to show its controls is worse than one that still covers the element. */
+    private static final int PANEL_MIN_HEIGHT_DP = 160;
+    /**
+     * The share of the selected element the options panel may cover before it hides it. The
+     * layout probe reads the same share, so the panel and the rule that judges it cannot drift.
+     */
+    public static final float SHEET_TARGET_COVER_LIMIT = 0.5f;
     /** Fade/scale in and out. The panel never slides: it is a window, not a sheet. */
     private static final int PANEL_FADE_MS = 180;
     private static final float PANEL_HIDDEN_SCALE = 0.96f;
@@ -306,6 +384,12 @@ final class LyricsLayoutEditController {
             int oy = Math.max(0, Math.min(bottom, other.bottom) - Math.max(top, other.top));
             return (long) ox * (long) oy;
         }
+
+        /** True when the two rects overlap. Shared edges only touch, they do not overlap. */
+        public boolean intersects(SlotRect other) {
+            if (other == null) return false;
+            return left < other.right && right > other.left && top < other.bottom && bottom > other.top;
+        }
     }
 
     public static final class Rect extends SlotRect {
@@ -315,30 +399,195 @@ final class LyricsLayoutEditController {
     }
 
     /**
+     * What a candidate toolbar slot has to satisfy besides "overlap as little as possible".
+     *
+     * <p>Some obstacles are not a matter of degree. The top controls cluster is chrome the user
+     * reads and taps: a toolbar row that lands on it hides the controls, so a slot that touches
+     * one is rejected outright instead of being traded against the other obstacles by area. The
+     * safe area is the part of the screen the row has to stay inside; a row that pokes out of it
+     * is worse than one that does not.
+     */
+    public static final class ToolbarConstraints {
+        /** Rectangles the toolbar row may not touch at all. */
+        private final List<? extends SlotRect> forbidden;
+        /** The area the toolbar row has to stay inside, or null when there is none. */
+        private final SlotRect safeArea;
+
+        public ToolbarConstraints(List<? extends SlotRect> forbidden, SlotRect safeArea) {
+            this.forbidden = forbidden == null
+                    ? Collections.<SlotRect>emptyList() : forbidden;
+            this.safeArea = safeArea;
+        }
+
+        /** No constraints: every slot is allowed and nothing is preferred over another. */
+        public static final ToolbarConstraints NONE =
+                new ToolbarConstraints(Collections.<SlotRect>emptyList(), null);
+
+        /** True when the row would touch a rect it may not touch. */
+        public boolean touches(SlotRect slot) {
+            if (slot == null) return false;
+            for (int i = 0; i < forbidden.size(); i++) {
+                SlotRect rect = forbidden.get(i);
+                if (rect != null && slot.intersects(rect)) return true;
+            }
+            return false;
+        }
+
+        /** True when the row fits completely inside the safe area. */
+        public boolean insideSafeArea(SlotRect slot) {
+            if (safeArea == null || slot == null) return true;
+            return slot.left >= safeArea.left && slot.top >= safeArea.top
+                    && slot.right <= safeArea.right && slot.bottom <= safeArea.bottom;
+        }
+    }
+
+    /**
      * Chooses the slot with the smallest total overlap area across all obstacle rects.
      * Candidate slots are evaluated in order; ties go to the earlier slot.
      */
     public static int chooseToolbarSlot(List<? extends SlotRect> slots, List<? extends SlotRect> obstacles) {
+        return chooseToolbarSlot(slots, obstacles, ToolbarConstraints.NONE);
+    }
+
+    /**
+     * Chooses the slot the toolbar row goes into.
+     *
+     * <p>A slot that touches one of the forbidden rects is rejected: the top controls cluster is
+     * chrome the user reads, and a row on top of it hides the controls whatever the area
+     * trade-off says. The slots that are left are compared the way they always were - the
+     * smallest total overlap with the obstacles, ties to the earlier slot.
+     *
+     * <p>When every slot is rejected - a compact screen can have no free slot at all - the
+     * least-overlapping slot is taken again, and a slot that stays inside the safe area wins over
+     * one that does not.
+     *
+     * @param slots       the candidate slots, in preference order.
+     * @param obstacles   the rects the row should overlap as little as possible.
+     * @param constraints what a slot may not touch, and the area it has to stay inside.
+     * @return the index of the chosen slot, or -1 when there is no slot at all.
+     */
+    public static int chooseToolbarSlot(List<? extends SlotRect> slots, List<? extends SlotRect> obstacles,
+            ToolbarConstraints constraints) {
         if (slots == null || slots.isEmpty()) return -1;
-        int bestIndex = 0;
+        ToolbarConstraints rules = constraints == null ? ToolbarConstraints.NONE : constraints;
+        int bestIndex = -1;
         long minOverlap = Long.MAX_VALUE;
+        boolean bestInside = false;
         for (int i = 0; i < slots.size(); i++) {
             SlotRect slot = slots.get(i);
-            long totalOverlap = 0;
-            if (slot != null && obstacles != null) {
-                for (int j = 0; j < obstacles.size(); j++) {
-                    SlotRect obstacle = obstacles.get(j);
-                    if (obstacle != null) {
-                        totalOverlap += slot.overlapArea(obstacle);
-                    }
-                }
-            }
-            if (totalOverlap < minOverlap) {
-                minOverlap = totalOverlap;
+            if (rules.touches(slot)) continue;
+            long totalOverlap = totalOverlap(slot, obstacles);
+            boolean inside = rules.insideSafeArea(slot);
+            if (bestIndex < 0 || totalOverlap < minOverlap
+                    || (totalOverlap == minOverlap && inside && !bestInside)) {
                 bestIndex = i;
+                minOverlap = totalOverlap;
+                bestInside = inside;
+            }
+        }
+        if (bestIndex >= 0) return bestIndex;
+        // Every slot touches a forbidden rect: take the least-bad one, and keep the row inside
+        // the safe area when that is a choice.
+        for (int i = 0; i < slots.size(); i++) {
+            SlotRect slot = slots.get(i);
+            long totalOverlap = totalOverlap(slot, obstacles);
+            boolean inside = rules.insideSafeArea(slot);
+            if (bestIndex < 0 || (inside && !bestInside)
+                    || (inside == bestInside && totalOverlap < minOverlap)) {
+                bestIndex = i;
+                minOverlap = totalOverlap;
+                bestInside = inside;
             }
         }
         return bestIndex;
+    }
+
+    private static long totalOverlap(SlotRect slot, List<? extends SlotRect> obstacles) {
+        long total = 0;
+        if (slot == null || obstacles == null) return 0;
+        for (int j = 0; j < obstacles.size(); j++) {
+            SlotRect obstacle = obstacles.get(j);
+            if (obstacle != null) {
+                total += slot.overlapArea(obstacle);
+            }
+        }
+        return total;
+    }
+
+    /**
+     * The height the options panel may take so that it does not hide the element it edits.
+     *
+     * <p>The panel is a window over the preview. It opens on the side away from the selected
+     * element, but a compact screen can put that element under the panel anyway: the stacked skip
+     * chip ends up where the panel's lower edge lands. When the panel would cover more than the
+     * spec's share of the element, the panel's free edge stops in front of it instead: the
+     * anchored edge stays where it is and the panel gets shorter.
+     *
+     * @param height     the panel's planned height, in pixels.
+     * @param panelRect  the panel's planned rect at that height, in overlay coordinates.
+     * @param targetRect the selected element's rect, or null when there is nothing to keep clear.
+     * @param placement  the edge the panel is anchored to.
+     * @param minHeight  the height the panel keeps even when clearing the element wants less.
+     * @return the height the panel may take; never more than {@code height}.
+     */
+    public static int capPanelHeightForTarget(int height, int[] panelRect, int[] targetRect,
+            SheetPlacement placement, int minHeight) {
+        if (height <= 0 || panelRect == null || panelRect.length < 4) return height;
+        if (targetRect == null || targetRect.length < 4) return height;
+        if (targetRect[2] <= targetRect[0] || targetRect[3] <= targetRect[1]) return height;
+        int targetArea = (targetRect[2] - targetRect[0]) * (targetRect[3] - targetRect[1]);
+        if (targetArea <= 0) return height;
+        int covered = rectOverlapArea(panelRect, targetRect);
+        if (covered <= targetArea * SHEET_TARGET_COVER_LIMIT) return height;
+        // The panel has to stop in front of the element. The anchored edge stays where it is: a
+        // top-anchored panel grows downwards, so its lower edge is the one that moves; every
+        // other placement grows upwards from the bottom edge, so its upper edge moves.
+        int capped = placement == SheetPlacement.TOP
+                ? targetRect[1] - panelRect[1]
+                : panelRect[3] - targetRect[3];
+        if (capped >= height) return height;
+        return Math.max(0, Math.min(height, Math.max(minHeight, capped)));
+    }
+
+    private static int rectOverlapArea(int[] a, int[] b) {
+        int width = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+        int height = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+        return width > 0 && height > 0 ? width * height : 0;
+    }
+
+    /**
+     * The top edge a top-anchored options panel may start at.
+     *
+     * <p>The panel opens over the preview, so it has to stay clear of the live chrome it spans.
+     * Two things live in the top band: the top controls the user reads and taps, and the editor's
+     * own toolbar row when the row sits there too. Both are read from the real geometry rather
+     * than from where the toolbar happens to be: a row that moved out of the band does not hand
+     * the panel back the controls it was covering.
+     *
+     * @param baseInset     the plain screen inset, used when nothing else applies.
+     * @param gap           the clear space the panel keeps from what it must not cover.
+     * @param overlayHeight the overlay height, in pixels.
+     * @param chrome        the live top controls' rect, or null when there is nothing to measure.
+     * @param row           the editor toolbar row's rect, or null when there is no row yet.
+     * @param panelLeft     the panel's left edge, in overlay coordinates.
+     * @param panelRight    the panel's right edge, in overlay coordinates.
+     * @return the y the panel may start at.
+     */
+    public static int panelTopInset(int baseInset, int gap, int overlayHeight, SlotRect chrome,
+            SlotRect row, int panelLeft, int panelRight) {
+        int top = baseInset;
+        // The live controls only matter where the panel actually reaches: a rail on the far side
+        // of a wide screen is not under the panel, and the panel does not move for it.
+        if (chrome != null && chrome.bottom > 0 && chrome.bottom < overlayHeight
+                && chrome.left < panelRight && chrome.right > panelLeft) {
+            top = Math.max(top, chrome.bottom + gap);
+        }
+        // The toolbar row is the editor's own control: the panel may never cover it.
+        if (row != null && row.bottom > 0 && row.bottom < overlayHeight / 2
+                && row.left < panelRight && row.right > panelLeft) {
+            top = Math.max(top, row.bottom + gap);
+        }
+        return top;
     }
 
     /** One editor invocation's mutable state - a plain instance instead of a pile of one-element
@@ -351,17 +600,18 @@ final class LyricsLayoutEditController {
                 Settings.TRACK_INFO_SHOW_TITLE, Settings.TRACK_INFO_SHOW_ARTIST,
                 Settings.TRACK_INFO_SHOW_ALBUM,
                 Settings.LYRICS_FOCUS_POSITION, Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT,
-                Settings.ENABLE_LINE_BLUR, Settings.LYRICS_BLUR_INTENSITY,
+                Settings.LYRICS_BLUR_STRENGTH,
                 Settings.LYRICS_TEXT_SIZE, Settings.LYRICS_TEXT_SIZE_CUSTOM,
                 Settings.LYRICS_FONT, Settings.LYRICS_WEIGHT,
                 Settings.LINE_SPACING, Settings.LINE_SPACING_CUSTOM,
                 Settings.TRACK_INFO_TEXT_SIZE, Settings.TRACK_INFO_TEXT_SIZE_CUSTOM,
                 Settings.BACKGROUND_STYLE,
-                Settings.FORCE_DARK_BACKGROUND, Settings.EXTRA_DARK_BACKGROUND,
+                Settings.BACKGROUND_EFFECT,
+                Settings.BACKGROUND_RANDOM_EFFECTS,
+                Settings.LYRICS_DARKENING,
                 Settings.SKIP_CHIP_POSITION, Settings.SKIP_CHIP_STYLE,
                 Settings.FOLLOW_CHIP_POSITION, Settings.FOLLOW_CHIP_STYLE,
                 Settings.FOLLOW_CHIP_ICON,
-                Settings.BACKGROUND_RENDER_QUALITY,
                 Settings.LIKED_SONGS_BUTTON, Settings.CHROME_CLUSTER_POSITION,
                 Settings.CHROME_CLUSTER_LAYOUT,
                 Settings.SHOW_FULLSCREEN_BACK_BUTTON, Settings.FULLSCREEN_CONTROLS,
@@ -425,6 +675,10 @@ final class LyricsLayoutEditController {
         private final MaxHeightScrollView optionsScroll;
         private final LinearLayout panelContainer;
         private final LinearLayout panelHeader;
+        /** Row widgets and group cards for the options panel; shared with the registry renderer. */
+        private final EditorRows rows;
+        /** Registry-driven options for the elements that have moved; the rest keep hand builders. */
+        private final EditorControlRenderer controlRenderer;
         private final TextView sheetTitle;
         private FrameLayout.LayoutParams panelLp;
         /** Which edge the panel is placed against right now; see {@link SheetPlacement#choose}. */
@@ -451,8 +705,12 @@ final class LyricsLayoutEditController {
         private View toolbarDone;
         private View toolbarReset;
         private View toolbarDemo;
-        private View toolbarOptions;
+        private View toolbarList;
         private View cardCaption;
+        /** Per-element or list panel. Fresh per session, so the editor always opens per element. */
+        private final EditorListPlan.State panelMode = new EditorListPlan.State();
+        /** List mode's views inside the options panel. */
+        private final EditorListPanel listPanel;
         private boolean demoActive;
         /** Outline -> real view it is tracing. Re-synced every frame by {@link #syncCaptures()}. */
         private final java.util.List<CaptureBinding> captureBindings = new java.util.ArrayList<>();
@@ -467,7 +725,6 @@ final class LyricsLayoutEditController {
         private TextView valueBubble;
         private boolean draggingArtwork;
         private boolean draggingFocusArea;
-        private boolean draggingSlider;
         private int currentToolbarSlot = 0;
 
         private boolean isDragGestureActive() {
@@ -477,7 +734,7 @@ final class LyricsLayoutEditController {
                     || draggingArtwork
                     || draggingFocusArea
                     || draggingPanel
-                    || draggingSlider;
+                    || rows.isDraggingSlider();
         }
 
         /** One outline and the real on-screen view it traces. */
@@ -656,7 +913,64 @@ final class LyricsLayoutEditController {
             this.optionsScroll = new MaxHeightScrollView(activity);
             this.panelContainer = new LinearLayout(activity);
             this.panelHeader = new LinearLayout(activity);
-            this.sheetTitle = text("", 17, TEXT_COLOR, true);
+            this.rows = new EditorRows(activity, optionsCard, strings, store, writer, this::put);
+            this.controlRenderer = new EditorControlRenderer(rows, new EditorControlRenderer.Host() {
+                @Override public void select(ControlSpec.Element element) {
+                    rebuildAfterEdit(editorElement(element));
+                }
+
+                @Override public void rebuildPanel() {
+                    // The skip and follow chips share one panel: a change to either of them
+                    // rebuilds the panel that is open, without moving the selection.
+                    Session.this.rebuildPanel();
+                }
+
+                @Override public void refreshArtwork() { Session.this.refreshArtwork(); }
+
+                @Override public void refreshTrackText() { Session.this.refreshTrackText(); }
+
+                @Override public void refreshFocus() { Session.this.repaintFocusHandle(); }
+
+                @Override public void backgroundStyleChanged(ControlSpec.Element element) {
+                    // The style change can make the ambient controller recreate its views in
+                    // shellRoot, shifting the geometry under the editor. Rebuild the panel so the
+                    // dependent rows follow, and refresh the captures after a delay so they
+                    // re-align with the real views once the ambient layer has settled.
+                    Session.this.rebuildAfterEdit(editorElement(element));
+                    Session.this.overlay.postDelayed(Session.this::refreshAllCaptures, 300);
+                }
+
+                @Override public void chromeChanged() {
+                    // The top bar changed: its capture re-anchors, the editor's own toolbar
+                    // re-places around it, and the panel rebuilds.
+                    Session.this.refreshDock();
+                    Session.this.refreshBackButton();
+                    Session.this.rebuildPanel();
+                }
+
+                @Override public void chipsChanged() {
+                    // The skip and follow chips are one system: both captures re-anchor, and
+                    // the panel rebuilds.
+                    Session.this.refreshSkipChip();
+                    Session.this.refreshFollowChip();
+                    Session.this.rebuildPanel();
+                }
+
+                @Override public void cardChanged() {
+                    // The now-playing card preview reads its configuration from the store on
+                    // the next frame, so one flag is all a card change needs.
+                    Session.this.markCardDirty();
+                }
+
+                @Override public void applyPreferences() {
+                    if (Session.this.applyPreferences != null) Session.this.applyPreferences.run();
+                }
+
+                @Override public void chooseFont(View anchor) { openFontChooser(anchor); }
+            });
+            this.listPanel = new EditorListPanel(rows, optionsCard, optionsScroll,
+                    () -> optionsScroll.maxHeightPx, panelMode);
+            this.sheetTitle = rows.text("", 17, EditorRows.TEXT_COLOR, true);
             this.overlay.setTag(OVERLAY_TAG);
         }
 
@@ -821,11 +1135,12 @@ final class LyricsLayoutEditController {
             titleLp.leftMargin = dp(16);
             titleLp.rightMargin = dp(8);
             panelHeader.addView(sheetTitle, titleLp);
-            TextView hide = actionPill(s("hide_options", "Hide options"), this::hideOptions);
-            hide.setSingleLine(true);
-            hide.setPadding(dp(12), 0, dp(12), 0);
+            // The header's only action is the close icon: it hides the panel, and the toolbar's
+            // All elements control or a tap on a preview section brings it back.
+            ImageView hide = iconButton(ActionIconDrawable.Kind.CLOSE, EditorRows.TEXT_COLOR,
+                    rows.s("hide_options", "Hide options"), this::hideOptions);
             LinearLayout.LayoutParams hideLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(PANEL_CLOSE_BUTTON_DP));
+                    dp(PANEL_CLOSE_BUTTON_DP), dp(PANEL_CLOSE_BUTTON_DP));
             hideLp.rightMargin = dp(8);
             panelHeader.addView(hide, hideLp);
             LinearLayout.LayoutParams headerLp = new LinearLayout.LayoutParams(
@@ -925,12 +1240,38 @@ final class LyricsLayoutEditController {
 
         @Override
         public boolean agentSelect(String name, boolean revealPanel) {
-            if (name == null) return false;
-            String element = AGENT_ELEMENTS.get(name.trim().toLowerCase(java.util.Locale.ROOT));
-            if (element == null) return false;
-            if (overlay.getParent() == null) return false;
-            selectElement(Element.valueOf(element), revealPanel);
+            Element element = agentElement(name);
+            if (element == null || overlay.getParent() == null) return false;
+            selectElement(element, revealPanel);
             return true;
+        }
+
+        @Override
+        public String agentTap(String name) {
+            if (overlay.getParent() == null) return "editor is not open";
+            if (name == null || name.trim().isEmpty()) return "tap needs an element name";
+            Element element = agentElement(name);
+            if (element == null) {
+                return "no element named '" + name.trim() + "'; expected "
+                        + String.join(", ", AGENT_ELEMENTS.keySet());
+            }
+            String elementName = agentNameFor(element);
+            if (!previewTapReachable(cardMode, elementName)) {
+                return "'" + elementName + "' has no preview in the "
+                        + (cardMode ? "card" : "lyrics") + " editor";
+            }
+            // The element's own tap owner: from the full list this leaves the list instead of
+            // only scrolling it, and a hidden panel comes back with this element's options.
+            selectFromPreview(element);
+            return null;
+        }
+
+        @Override
+        public String agentToggleList() {
+            String refusal = EditorListPlan.toggleRefusal(overlay.getParent() != null, cardMode);
+            if (refusal != null) return refusal;
+            togglePanelMode();
+            return null;
         }
 
         @Override
@@ -969,14 +1310,6 @@ final class LyricsLayoutEditController {
                     optionsCard.offsetDescendantRectToMyCoords(target, bounds);
                     optionsScroll.scrollTo(0, bounds.top);
                     return true;
-                case "tab":
-                    if (cardMode) return false;
-                    switch (value) {
-                        case "style": selectTextTab(TAB_STYLE); return true;
-                        case "animation": selectTextTab(TAB_ANIMATION); return true;
-                        case "effects": selectTextTab(TAB_EFFECTS); return true;
-                        default: return false;
-                    }
                 case "options":
                     if (!"show".equals(value) && !"hide".equals(value)) return false;
                     if ("show".equals(value)) showOptions(); else hideOptions();
@@ -987,6 +1320,65 @@ final class LyricsLayoutEditController {
                     return true;
                 default: return false;
             }
+        }
+
+        @Override
+        public String agentSwitchTab(String name) {
+            if (overlay.getParent() == null) return "editor is not open";
+            int index = LayoutEditorTabs.index(cardMode, name);
+            if (index < 0) return LayoutEditorTabs.refusal(cardMode, name);
+            // The same selector the strip's own tap uses, so a probe reaches the same tab a
+            // user would and the rows under it come from the same registry.
+            if (cardMode) selectCardTab(index); else selectTextTab(index);
+            return null;
+        }
+
+        @Override
+        public String agentSetMode(String name) {
+            if (overlay.getParent() == null) return "editor is not open";
+            String refusal = EditorListPlan.refusal(cardMode, name);
+            if (refusal != null) return refusal;
+            setPanelMode(EditorListPlan.Mode.parse(name));
+            return null;
+        }
+
+        @Override
+        public String listSection() {
+            if (!isListMode()) return "";
+            int index = EditorListPlan.indexOf(listElement(selected));
+            return index < 0 ? "" : EditorListPlan.SECTIONS.get(index).id;
+        }
+
+        @Override
+        public String agentChoose(String settingKey, String value) {
+            EditorChoice choice = EditorChoice.of(settingKey, value);
+            if (choice == null) return "choose needs a setting key and a value";
+            // The panel is the only source of truth: a setting the current layout does not
+            // offer has no chip, and a value that is not one of the setting's choices has none
+            // either. Neither writes anything.
+            Map<String, View> choices = rows.renderedChoices(choice.settingKey());
+            String refusal = choice.refusal(overlay.getParent() != null, panelVisible,
+                    choices.keySet());
+            if (refusal != null) return refusal;
+            View chip = choices.get(choice.value());
+            if (chip == null || !chip.isShown()) {
+                return "the choice '" + choice.value() + "' is not on screen";
+            }
+            // The chip's own click owner: the same write, the same effect and the same rebuild
+            // a tap on that chip produces.
+            chip.performClick();
+            return null;
+        }
+
+        @Override
+        public String agentRandomPool(String action, String argument) {
+            if (overlay.getParent() == null) return "editor is not open";
+            return rows.agentRandomPool(action, argument);
+        }
+
+        @Override
+        public String agentRandomPoolStatus() {
+            return overlay.getParent() == null ? "" : rows.agentRandomPoolStatus();
         }
 
         @Override
@@ -1018,14 +1410,25 @@ final class LyricsLayoutEditController {
             report.number("options_scroll_y", optionsScroll.getScrollY());
             report.text("sheet_placement", sheetPlacement.name());
             report.flag("sheet_moved", panelMovedByUser);
-            report.text("text_tab", textTab == TAB_ANIMATION ? "animation"
-                    : textTab == TAB_EFFECTS ? "effects" : "style");
+            report.text("text_tab", LayoutEditorTabs.name(false, textTab));
+            report.text("card_tab", LayoutEditorTabs.name(true, cardTab));
             report.text("selected", agentNameFor(selected));
+            report.text("editor_mode", isListMode() ? EditorListPlan.Mode.LIST.wire
+                    : EditorListPlan.Mode.ELEMENT.wire);
+            report.list("list_sections", isListMode() ? listPanel.sectionIds()
+                    : Collections.<String>emptyList());
+            report.text("list_scroll", isListMode() ? listPanel.firstVisible() : "");
+            // How many times the list has been filled. The scroll and the selection read the
+            // same whether an edit rebuilt the list in place or left it alone, so this counter
+            // is what tells the two apart.
+            report.number("list_rebuild", listPanel.buildCount());
+            // The code actually loaded in this host process, which can lag the installed APK.
+            report.text("build", BuildStamp.FULL);
             report.number("z.overlay", Math.round(overlay.getZ()));
             report.rect("toolbar.done", screenRectOf(toolbarDone));
             report.rect("toolbar.reset", screenRectOf(toolbarReset));
             report.rect("toolbar.demo", screenRectOf(toolbarDemo));
-            report.rect("toolbar.options", screenRectOf(toolbarOptions));
+            report.rect("toolbar.list", screenRectOf(toolbarList));
             report.rect("capture.artwork", screenRectOf(artCapture));
             report.rect("capture.track_text", screenRectOf(trackTextCapture));
             report.rect("capture.dock", screenRectOf(dockCapture));
@@ -1071,15 +1474,22 @@ final class LyricsLayoutEditController {
             return "";
         }
 
+        /** The editor element an agent element name means, or null when the name is not one. */
+        private static Element agentElement(String name) {
+            if (name == null) return null;
+            String element = AGENT_ELEMENTS.get(name.trim().toLowerCase(java.util.Locale.ROOT));
+            return element == null ? null : Element.valueOf(element);
+        }
+
         // -- top bar --------------------------------------------------------
 
         private void onResetClicked() {
             PanelDialog confirm = new PanelDialog(activity,
-                    s("reset_confirm_title", "Reset layout?"));
-            confirm.paragraph(s("reset_confirm_message",
+                    rows.s("reset_confirm_title", "Reset layout?"));
+            confirm.paragraph(rows.s("reset_confirm_message",
                     "Reset the layout editor changes to their defaults?"));
-            confirm.primary(s("reset", "Reset"), this::resetLayoutToDefaults);
-            confirm.secondary(s("cancel", "Cancel"), null);
+            confirm.primary(rows.s("reset", "Reset"), this::resetLayoutToDefaults);
+            confirm.secondary(rows.s("cancel", "Cancel"), null);
             confirm.show();
         }
 
@@ -1098,7 +1508,12 @@ final class LyricsLayoutEditController {
                     refreshFollowChip();
                     refreshDock();
                     evaluateToolbarPlacement();
-                    selectElement(selected);
+                    if (isListMode()) {
+                        rebuildPanel();
+                        showOptions();
+                    } else {
+                        selectElement(selected);
+                    }
                 });
             });
         }
@@ -1135,15 +1550,15 @@ final class LyricsLayoutEditController {
                 artCapture = null;
                 artHandle = null;
                 int sizePx = dp(Math.min(TrackInfoReadoutController.READOUT_MAX_ART_DP,
-                        safeGet(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP)));
+                        rows.safeGet(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP)));
                 // Editor preview is intentionally top-mounted. It remains selectable even when
                 // the saved track-info mode is Off; changing the mode in the panel still writes
                 // the user's real preference, while this virtual frame never disappears.
                 int[] pos = new int[] { dp(16), toolbarBottomPx() + dp(12) };
                 View capture = new View(activity);
                 GradientDrawable outline = new GradientDrawable();
-                outline.setStroke(dp(2), ACCENT_COLOR);
-                outline.setCornerRadius(dp(safeGet(Settings.TRACK_INFO_ART_RADIUS)));
+                outline.setStroke(dp(2), EditorRows.ACCENT_COLOR);
+                outline.setCornerRadius(dp(rows.safeGet(Settings.TRACK_INFO_ART_RADIUS)));
                 capture.setBackground(outline);
                 makeSelectableTarget(capture, Element.ARTWORK);
                 FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(sizePx, sizePx, Gravity.TOP | Gravity.START);
@@ -1159,11 +1574,11 @@ final class LyricsLayoutEditController {
                 return;
             }
             int[] pos = relativePosition(frame, shellRoot);
-            int radiusDp = safeGet(Settings.TRACK_INFO_ART_RADIUS);
+            int radiusDp = rows.safeGet(Settings.TRACK_INFO_ART_RADIUS);
 
             View capture = new View(activity);
             GradientDrawable outline = new GradientDrawable();
-            outline.setStroke(dp(2), ACCENT_COLOR);
+            outline.setStroke(dp(2), EditorRows.ACCENT_COLOR);
             outline.setCornerRadius(dp(radiusDp));
             capture.setBackground(outline);
             makeSelectableTarget(capture, Element.ARTWORK);
@@ -1179,9 +1594,9 @@ final class LyricsLayoutEditController {
             // An Apple-style curved corner grip - hugging the actual corner point rather than a
             // dot floating centered on top of it - covers a generous touch box for grabbability
             // while only painting the curved bracket itself.
-            // Touch box extends a bit past the drawn bracket's vertex for grabbability
-            // (HANDLE_SIZE_DP is the bracket's own arm length) - the vertex itself sits at the
-            // real frame corner, with both arms drawn extending down-right from it.
+            // Touch box extends a bit past the drawn bracket's vertex for grabbability - the
+            // vertex itself sits at the real frame corner, with both arms drawn extending
+            // down-right from it.
             int handleSize = dp(GRIP_BOX_DP);
             int cornerOffset = handleSize - dp(GRIP_OUTSIDE_DP);
             View handle = new CornerGripView(activity, cornerOffset, dp(radiusDp));
@@ -1241,7 +1656,7 @@ final class LyricsLayoutEditController {
                                 selectElement(Element.ARTWORK, false);
                             });
                         } else {
-                            selectElement(Element.ARTWORK);
+                            selectFromPreview(Element.ARTWORK);
                         }
                         return true;
                     }
@@ -1361,7 +1776,7 @@ final class LyricsLayoutEditController {
                     && capture.getLayoutParams().width > 0) {
                 return clamp(Math.round(capture.getLayoutParams().width / density), min, max);
             }
-            return clamp(safeGet(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP), min, max);
+            return clamp(rows.safeGet(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP), min, max);
         }
 
         /** Resizes the outline (and its grip) in place for immediate feedback while dragging. */
@@ -1377,8 +1792,8 @@ final class LyricsLayoutEditController {
                 capture.setLayoutParams(lp);
             }
             GradientDrawable updatedOutline = new GradientDrawable();
-            updatedOutline.setStroke(dp(OUTLINE_SELECTED_DP), ACCENT_COLOR);
-            updatedOutline.setCornerRadius(dp(safeGet(Settings.TRACK_INFO_ART_RADIUS)));
+            updatedOutline.setStroke(dp(OUTLINE_SELECTED_DP), EditorRows.ACCENT_COLOR);
+            updatedOutline.setCornerRadius(dp(rows.safeGet(Settings.TRACK_INFO_ART_RADIUS)));
             capture.setBackground(updatedOutline);
 
             View handle = artHandle;
@@ -1410,7 +1825,7 @@ final class LyricsLayoutEditController {
                 int height = dp(64);
                 View capture = new View(activity);
                 GradientDrawable outline = new GradientDrawable();
-                outline.setStroke(dp(2), ACCENT_COLOR);
+                outline.setStroke(dp(2), EditorRows.ACCENT_COLOR);
                 outline.setCornerRadius(dp(10));
                 capture.setBackground(outline);
                 makeSelectableTarget(capture, Element.TRACK_TEXT);
@@ -1419,7 +1834,7 @@ final class LyricsLayoutEditController {
                 lp.leftMargin = dp(16);
                 lp.topMargin = toolbarBottomPx() + dp(12)
                         + dp(Math.min(TrackInfoReadoutController.READOUT_MAX_ART_DP,
-                                safeGet(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP))) + dp(10);
+                                rows.safeGet(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP))) + dp(10);
                 trackTextLayer.addView(capture, lp);
                 trackTextCapture = capture;
                 paintCapture(trackTextCapture, selected == Element.TRACK_TEXT);
@@ -1429,7 +1844,7 @@ final class LyricsLayoutEditController {
             int[] pos = relativePosition(frame, shellRoot);
             View capture = new View(activity);
             GradientDrawable outline = new GradientDrawable();
-            outline.setStroke(dp(2), ACCENT_COLOR);
+            outline.setStroke(dp(2), EditorRows.ACCENT_COLOR);
             outline.setCornerRadius(dp(10));
             capture.setBackground(outline);
             makeSelectableTarget(capture, Element.TRACK_TEXT);
@@ -1514,7 +1929,7 @@ final class LyricsLayoutEditController {
             if ("Small".equals(mode)) return 85;
             if ("Large".equals(mode)) return 120;
             if ("XLarge".equals(mode)) return 145;
-            if ("Custom".equals(mode)) return safeGet(Settings.TRACK_INFO_TEXT_SIZE_CUSTOM);
+            if ("Custom".equals(mode)) return rows.safeGet(Settings.TRACK_INFO_TEXT_SIZE_CUSTOM);
             return 100;
         }
 
@@ -1599,7 +2014,7 @@ final class LyricsLayoutEditController {
                 public void onScaleEnd(android.view.ScaleGestureDetector detector) {
                     hideValueBubble();
                     // The size just pinched lives on the Style tab: show it there.
-                    textTab = TAB_STYLE;
+                    textTab = LayoutEditorTabs.index(false, "style");
                     if (selected == Element.TEXT) selectElement(Element.TEXT, false);
                 }
             });
@@ -1643,9 +2058,9 @@ final class LyricsLayoutEditController {
                         if (dragging[0]) {
                             forwardToFocusArea(event);
                         } else if (hitsAnyRow(event.getRawX(), event.getRawY())) {
-                            selectElement(Element.TEXT);
+                            selectFromPreview(Element.TEXT);
                         } else {
-                            selectElement(Element.BACKGROUND);
+                            selectFromPreview(Element.BACKGROUND);
                         }
                         recycleQuietly(pendingDown[0]);
                         pendingDown[0] = null;
@@ -1800,7 +2215,8 @@ final class LyricsLayoutEditController {
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
                         draggingFocus = false;
-                        selectElement(Element.FOCUS, !moved[0]);
+                        if (moved[0]) selectElement(Element.FOCUS, false);
+                        else selectFromPreview(Element.FOCUS);
                         return true;
                     default:
                         return false;
@@ -1856,7 +2272,7 @@ final class LyricsLayoutEditController {
             if ("Top".equals(pos)) return 0.28f;
             if ("Bottom".equals(pos)) return 0.72f;
             if ("Custom".equals(pos)) {
-                return clamp(safeGet(Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT), 0, 100) / 100f;
+                return clamp(rows.safeGet(Settings.LYRICS_FOCUS_POSITION_CUSTOM_PERCENT), 0, 100) / 100f;
             }
             return 0.5f;
         }
@@ -1921,6 +2337,15 @@ final class LyricsLayoutEditController {
             return 0;
         }
 
+        /**
+         * The candidate slots for the toolbar row, in preference order.
+         *
+         * <p>The four band slots come first: the row's own corners, at the top and at the bottom
+         * of the screen. The fifth candidate is the band right under the live top controls: on a
+         * compact portrait screen the controls and the row want the same top band, and a row that
+         * lands on them hides them. That band is measured from the controls' own geometry, not
+         * from a fixed offset, so it follows the chrome wherever the chrome sits.
+         */
         private List<SlotRect> candidateSlots(int rowWidth, int rowHeight) {
             int overlayW = overlay != null && overlay.getWidth() > 0 ? overlay.getWidth()
                     : activity.getResources().getDisplayMetrics().widthPixels;
@@ -1932,33 +2357,40 @@ final class LyricsLayoutEditController {
             int startX = dp(12);
             int centerX = Math.max(0, (overlayW - rowWidth) / 2);
 
-            return Arrays.asList(
-                    new SlotRect(startX, topY, startX + rowWidth, topY + rowHeight),
-                    new SlotRect(centerX, topY, centerX + rowWidth, topY + rowHeight),
-                    new SlotRect(startX, bottomY, startX + rowWidth, bottomY + rowHeight),
-                    new SlotRect(centerX, bottomY, centerX + rowWidth, bottomY + rowHeight)
-            );
+            List<SlotRect> slots = new ArrayList<>(5);
+            slots.add(new SlotRect(startX, topY, startX + rowWidth, topY + rowHeight));
+            slots.add(new SlotRect(centerX, topY, centerX + rowWidth, topY + rowHeight));
+            slots.add(new SlotRect(startX, bottomY, startX + rowWidth, bottomY + rowHeight));
+            slots.add(new SlotRect(centerX, bottomY, centerX + rowWidth, bottomY + rowHeight));
+            SlotRect chrome = chromeRect();
+            if (chrome != null && chrome.bottom > 0) {
+                int belowTop = chrome.bottom + dp(8);
+                if (belowTop + rowHeight <= overlayH) {
+                    slots.add(new SlotRect(startX, belowTop, startX + rowWidth,
+                            belowTop + rowHeight));
+                }
+            }
+            return slots;
         }
 
-        private void applySlotToRow(View row, int slotIndex, int rowWidth, int rowHeight) {
-            int overlayW = overlay != null && overlay.getWidth() > 0 ? overlay.getWidth()
-                    : activity.getResources().getDisplayMetrics().widthPixels;
-            int overlayH = overlay != null && overlay.getHeight() > 0 ? overlay.getHeight()
-                    : activity.getResources().getDisplayMetrics().heightPixels;
-
-            int topY = statusBarHeightPx() + dp(8);
-            int bottomY = overlayH - navigationInsetPx() - dp(12) - rowHeight;
-            int startX = dp(12);
-            int centerX = Math.max(0, (overlayW - rowWidth) / 2);
-
+        /**
+         * Puts the row where the chosen slot says, using that slot's own rect.
+         *
+         * <p>The row is placed from the candidate the rule picked, not from a second reading of
+         * the same geometry: two readings can disagree, and the panel, the probe and the user all
+         * read the row's real position.
+         */
+        private void applySlotToRow(View row, List<SlotRect> slots, int slotIndex) {
+            if (row == null || slots == null || slotIndex < 0 || slotIndex >= slots.size()) return;
+            SlotRect slot = slots.get(slotIndex);
             ViewGroup.LayoutParams raw = row.getLayoutParams();
             FrameLayout.LayoutParams lp = (raw instanceof FrameLayout.LayoutParams)
                     ? (FrameLayout.LayoutParams) raw
                     : new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                             ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
             lp.gravity = Gravity.TOP | Gravity.START;
-            lp.leftMargin = (slotIndex == 0 || slotIndex == 2) ? startX : centerX;
-            lp.topMargin = (slotIndex == 0 || slotIndex == 1) ? topY : bottomY;
+            lp.leftMargin = slot.left;
+            lp.topMargin = slot.top;
             row.setLayoutParams(lp);
         }
 
@@ -1972,14 +2404,43 @@ final class LyricsLayoutEditController {
             return obstacles;
         }
 
+        /**
+         * What the toolbar row may not touch: the top controls cluster.
+         *
+         * <p>The dock is chrome the user reads and taps, so a row that lands on it is not a
+         * trade-off between the obstacles - it is a slot that is out. On a compact portrait
+         * screen the dock and the row want the same band, so the row moves instead of the
+         * controls disappearing under it.
+         */
+        private ToolbarConstraints toolbarConstraints() {
+            List<SlotRect> forbidden = new ArrayList<>(1);
+            SlotRect dock = chromeRect();
+            if (dock != null) forbidden.add(dock);
+            return new ToolbarConstraints(forbidden,
+                    new SlotRect(0, 0, overlayWidthPx(), overlayHeightPx()));
+        }
+
+        /** The live top controls' rect in overlay coordinates, or null when they are not on
+         *  screen to measure. */
+        private SlotRect chromeRect() {
+            return obstacleRectOf(chromeClusterSupplier == null
+                    ? null : chromeClusterSupplier.get());
+        }
+
         private void addObstacle(List<SlotRect> list, View view) {
-            if (view == null || view.getWidth() <= 0 || view.getHeight() <= 0) return;
+            SlotRect rect = obstacleRectOf(view);
+            if (rect != null) list.add(rect);
+        }
+
+        /** A view's rect in overlay coordinates, or null when it is not on screen to measure. */
+        private SlotRect obstacleRectOf(View view) {
+            if (view == null || view.getWidth() <= 0 || view.getHeight() <= 0) return null;
             try {
-                if (!isShownInTree(view)) return;
+                if (!isShownInTree(view)) return null;
             } catch (Throwable ignored) {
             }
             int[] pos = relativePosition(view, overlay != null ? overlay : shellRoot);
-            list.add(new SlotRect(pos[0], pos[1], pos[0] + view.getWidth(), pos[1] + view.getHeight()));
+            return new SlotRect(pos[0], pos[1], pos[0] + view.getWidth(), pos[1] + view.getHeight());
         }
 
         private void evaluateToolbarPlacement() {
@@ -1996,10 +2457,10 @@ final class LyricsLayoutEditController {
             int rowHeight = dp(44);
 
             List<SlotRect> slots = candidateSlots(rowWidth, rowHeight);
-            int chosenSlot = chooseToolbarSlot(slots, collectObstacles());
+            int chosenSlot = chooseToolbarSlot(slots, collectObstacles(), toolbarConstraints());
             if (chosenSlot < 0 || chosenSlot == currentToolbarSlot) return;
             currentToolbarSlot = chosenSlot;
-            applySlotToRow(row, currentToolbarSlot, rowWidth, rowHeight);
+            applySlotToRow(row, slots, currentToolbarSlot);
             if (panelContainer != null && panelContainer.getLayoutParams() != null) {
                 applySheetPlacement(sheetPlacement);
             }
@@ -2015,24 +2476,39 @@ final class LyricsLayoutEditController {
             toolbarDone = null;
             toolbarReset = null;
             toolbarDemo = null;
-            toolbarOptions = null;
+            toolbarList = null;
             int buttonSize = dp(44);
 
             LinearLayout row = new LinearLayout(activity);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            ImageView save = iconButton(ActionIconDrawable.Kind.CHECK, TEXT_COLOR,
-                    s("done", "Done"), this::close);
+            ImageView save = iconButton(ActionIconDrawable.Kind.CHECK, EditorRows.TEXT_COLOR,
+                    rows.s("done", "Done"), this::close);
             LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(buttonSize, buttonSize);
             row.addView(save, saveLp);
-            ImageView reset = iconButton(ActionIconDrawable.Kind.REFRESH, TEXT_COLOR,
-                    s("reset", "Reset"), this::onResetClicked);
+            // Next to Done: switches the panel between the selection and every element. Card mode
+            // keeps its own list. Both states use one icon size, so the row never changes width.
+            if (!cardMode) {
+                // Hidden, the control always reads All elements: pressing it opens the full list.
+                boolean list = panelMode.isList() && panelVisible;
+                ImageView listToggle = iconButton(list ? ActionIconDrawable.Kind.CHEVRONS_DOWN_UP
+                                : ActionIconDrawable.Kind.CHEVRONS_UP_DOWN, EditorRows.TEXT_COLOR,
+                        list ? rows.s("show_selected_element", "Show selected element")
+                                : rows.s("show_all_elements", "Show all elements"),
+                        this::togglePanelMode);
+                LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(buttonSize, buttonSize);
+                listLp.leftMargin = dp(6);
+                row.addView(listToggle, listLp);
+                toolbarList = listToggle;
+            }
+            ImageView reset = iconButton(ActionIconDrawable.Kind.REFRESH, EditorRows.TEXT_COLOR,
+                    rows.s("reset", "Reset"), this::onResetClicked);
             LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(buttonSize, buttonSize);
             resetLp.leftMargin = dp(6);
             row.addView(reset, resetLp);
 
             if (!cardMode && enableDemoData != null && disableDemoData != null) {
-                TextView demoPill = actionPill(demoActive ? s("demo_lyrics", "Demo") : s("live_lyrics", "Live"),
+                TextView demoPill = actionPill(demoActive ? rows.s("demo_lyrics", "Demo") : rows.s("live_lyrics", "Live"),
                         this::toggleDemo);
                 demoPill.setSingleLine(true);
                 demoPill.setPadding(dp(10), 0, dp(10), 0);
@@ -2042,17 +2518,6 @@ final class LyricsLayoutEditController {
                 row.addView(demoPill, demoLp);
                 toolbarDemo = demoPill;
             }
-            // The recall exists only while the sheet is hidden; Done stays the one way to leave.
-            if (!panelVisible) {
-                TextView optionsPill = actionPill(s("show_options", "Show options"), this::showOptions);
-                optionsPill.setSingleLine(true);
-                optionsPill.setPadding(dp(10), 0, dp(10), 0);
-                LinearLayout.LayoutParams optionsLp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT, buttonSize);
-                optionsLp.leftMargin = dp(6);
-                row.addView(optionsPill, optionsLp);
-                toolbarOptions = optionsPill;
-            }
             toolbarDone = save;
             toolbarReset = reset;
 
@@ -2061,15 +2526,15 @@ final class LyricsLayoutEditController {
             int rowHeight = dp(44);
 
             int chosenSlot;
+            List<SlotRect> slots = candidateSlots(rowWidth, rowHeight);
             if (cardMode) {
                 chosenSlot = 0;
             } else {
-                List<SlotRect> slots = candidateSlots(rowWidth, rowHeight);
-                chosenSlot = chooseToolbarSlot(slots, collectObstacles());
+                chosenSlot = chooseToolbarSlot(slots, collectObstacles(), toolbarConstraints());
                 if (chosenSlot < 0) chosenSlot = 0;
             }
             currentToolbarSlot = chosenSlot;
-            applySlotToRow(row, currentToolbarSlot, rowWidth, rowHeight);
+            applySlotToRow(row, slots, currentToolbarSlot);
             backLayer.addView(row);
 
             if (panelContainer != null && panelContainer.getLayoutParams() != null) {
@@ -2089,24 +2554,62 @@ final class LyricsLayoutEditController {
             return statusBarHeightPx() + dp(8) + dp(44);
         }
 
-        /** The editor toolbar row's real rect in overlay coordinates, or null when it has not been
-         *  laid out yet. The row is the one thing the options panel must never end up on top of. */
+        /** The editor toolbar row's rect in overlay coordinates, or null when there is no row yet.
+         *  The row is the one thing the options panel must never end up on top of.
+         *
+         *  <p>Read from the margins {@link #applySlotToRow} set, not from the laid-out position:
+         *  every panel reveal rebuilds the row and places the panel in the same call, before the
+         *  new row is laid out. A null here used to drop the bottom panel onto a bottom toolbar. */
         private SlotRect toolbarRowRect() {
             if (backLayer == null || backLayer.getChildCount() == 0) return null;
             View row = backLayer.getChildAt(0);
-            if (row == null || row.getWidth() <= 0 || row.getHeight() == 0) return null;
-            int[] pos = relativePosition(row, overlay);
-            if (pos[1] <= 0) return null;
-            return new SlotRect(pos[0], pos[1], pos[0] + row.getWidth(), pos[1] + row.getHeight());
+            if (row == null || !(row.getLayoutParams() instanceof FrameLayout.LayoutParams)) return null;
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) row.getLayoutParams();
+            int width = row.getWidth() > 0 ? row.getWidth() : row.getMeasuredWidth();
+            int height = row.getHeight() > 0 ? row.getHeight() : Math.max(row.getMeasuredHeight(), dp(44));
+            if (width <= 0) return null;
+            return new SlotRect(lp.leftMargin, lp.topMargin, lp.leftMargin + width, lp.topMargin + height);
         }
 
-        /** Where a top-anchored panel starts: below the toolbar row when the row is in the top
-         *  band (the panel must never cover it), else the plain screen inset. */
+        /** Where a top-anchored panel starts.
+         *
+         *  <p>The panel opens over the preview, so it has to stay clear of the live chrome it
+         *  spans. Two things live in the top band: the top controls the user reads and taps, and
+         *  the editor's own toolbar row when the row sits there too. Both are read from the real
+         *  geometry, not from where the toolbar happens to be: a row that moved out of the band
+         *  does not hand the panel back the controls it was covering. */
         private int panelTopInsetPx() {
+            int inset = dp(PANEL_INSET_DP);
+            int gap = dp(PANEL_GAP_DP);
+            int[] span = plannedPanelHorizontal();
             SlotRect row = toolbarRowRect();
-            if (row == null) return statusBarHeightPx() + dp(8) + dp(44) + dp(PANEL_GAP_DP);
-            return row.bottom < overlayHeightPx() / 2
-                    ? row.bottom + dp(PANEL_GAP_DP) : dp(PANEL_INSET_DP);
+            int top = LyricsLayoutEditController.panelTopInset(inset, gap, overlayHeightPx(),
+                    chromeRect(), row, span[0], span[1]);
+            if (row == null) {
+                // No row yet: the panel still starts below the band the row would take.
+                top = Math.max(top, statusBarHeightPx() + dp(8) + dp(44) + gap);
+            }
+            return top;
+        }
+
+        /** The panel's horizontal span for the current placement, in overlay coordinates. */
+        private int[] plannedPanelHorizontal() {
+            int inset = dp(PANEL_INSET_DP);
+            int overlayW = overlayWidthPx();
+            int width = Math.max(0, Math.min(dp(PANEL_MAX_WIDTH_DP), overlayW - inset * 2));
+            int left;
+            switch (sheetPlacement) {
+                case START:
+                    left = inset;
+                    break;
+                case END:
+                    left = Math.max(inset, overlayW - inset - width);
+                    break;
+                default:
+                    left = Math.max(0, (overlayW - width) / 2);
+                    break;
+            }
+            return new int[]{left, left + width};
         }
 
         /** Where a bottom-anchored panel stops: above the toolbar row when the row is in the
@@ -2161,7 +2664,7 @@ final class LyricsLayoutEditController {
         private long cardLastFrameMs;
         private int cardLastIndex = -1;
         private final Runnable cardFrame = this::stepCardPreview;
-        /** The card panel's tabs: Text (size, weight, secondary line, overflow) and Animation. */
+        /** Which of the card panel's two tabs is open. */
         private int cardTab;
 
         /** Layers that belong to the lyrics-screen elements; hidden while editing the card. */
@@ -2173,6 +2676,8 @@ final class LyricsLayoutEditController {
         private void setCardMode(boolean enabled) {
             if (enabled == cardMode && (!enabled || cardLayer != null)) return;
             cardMode = enabled;
+            // The card editor keeps its own list.
+            if (enabled) panelMode.set(EditorListPlan.Mode.ELEMENT, true);
             for (View view : lyricsModeViews()) {
                 if (view != null) view.setVisibility(enabled ? View.GONE : View.VISIBLE);
             }
@@ -2241,7 +2746,7 @@ final class LyricsLayoutEditController {
             if (!sideSheet) cardLp.topMargin = dp(150);
             cardLayer.addView(card, cardLp);
             cardCapture = card;
-            TextView caption = text(s("card_caption", "Now playing card"), 13, 0x99FFFFFF, true);
+            TextView caption = rows.text(rows.s("card_caption", "Now playing card"), 13, 0x99FFFFFF, true);
             FrameLayout.LayoutParams captionLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                     Gravity.START | Gravity.TOP);
@@ -2290,40 +2795,22 @@ final class LyricsLayoutEditController {
             overlay.postOnAnimation(cardFrame);
         }
 
-        private void buildCardOptions() {
-            addOption(tabBar(new String[]{s("tab_text", "Text"), s("tab_animation", "Animation")},
-                    cardTab, index -> {
-                        cardTab = index;
-                        selectElement(Element.CARD);
-                    }), matchWrap(12));
-            if (cardTab == 0) {
-                beginGroup(strings.setting(Settings.LIVE_CARD_TEXT_SIZE));
-                addOption(customSliderRow(Settings.LIVE_CARD_TEXT_SIZE,
-                        Settings.LIVE_CARD_TEXT_SIZE_CUSTOM, "custom", this::markCardDirty), matchWrap(12));
-                cardChips(Settings.LIVE_CARD_WEIGHT, new String[]{"Regular", "Medium", "Bold"});
-                cardChips(Settings.LIVE_CARD_SECONDARY_MODE,
-                        new String[]{"Main only", "Transliteration", "Translation", "Both"});
-                cardChips(Settings.LIVE_CARD_OVERFLOW, new String[]{"Wrap", "Scroll with lyric", "Clip"});
-                if ("Scroll with lyric".equals(store.get(Settings.LIVE_CARD_OVERFLOW))) {
-                    cardChips(Settings.LIVE_CARD_SCROLL_SCOPE, new String[]{"Grouped", "Individual lines"});
-                }
-            } else {
-                cardChips(Settings.LIVE_CARD_ANIMATION, new String[]{"Minimal", "Karaoke fill", "Spotlight word"});
-                cardChips(Settings.LIVE_CARD_GLOW, new String[]{"Off", "Word only", "Subtle line"});
-                cardChips(Settings.LIVE_CARD_LINE_SYNC_FILL,
-                        new String[]{"Top to bottom", "Left to right (block)", "Left to right (sentence)"});
-                cardChips(Settings.LIVE_CARD_TRANSITION, new String[]{"Fade up", "Crossfade", "None"});
-            }
-            endGroup();
+        /**
+         * The card panel's tab strip: Text (size, weight, secondary line, overflow) and
+         * Animation. The strip is the editor session's own chrome - the rows under it come
+         * from the control registry, one tab at a time.
+         */
+        private View cardTabs() {
+            return tabBar(LayoutEditorTabs.CARD, cardTab, this::selectCardTab);
         }
 
-        private void cardChips(Settings.Setting<String> setting, String[] values) {
-            endGroup();
-            beginGroup(strings.setting(setting));
-            addOption(chipRow(setting, values, () -> {
-                markCardDirty();
-                selectElement(Element.CARD, false);
-            }), matchWrap(4));
+        /**
+         * Switches the card panel's tab. The agent's {@code editor tab} command comes through
+         * here too, so a probe reaches the same tab the strip's own tap does.
+         */
+        private void selectCardTab(int index) {
+            cardTab = index;
+            selectElement(Element.CARD);
         }
 
         private void markCardDirty() {
@@ -2380,7 +2867,7 @@ final class LyricsLayoutEditController {
             int[] pos = relativePosition(chip, shellRoot);
             View capture = new View(activity);
             GradientDrawable outline = new GradientDrawable();
-            outline.setStroke(dp(2), ACCENT_COLOR);
+            outline.setStroke(dp(2), EditorRows.ACCENT_COLOR);
             outline.setCornerRadius(dp(20));
             capture.setBackground(outline);
             makeSelectableTarget(capture, element);
@@ -2403,65 +2890,53 @@ final class LyricsLayoutEditController {
             selectElement(element, true);
         }
 
+        /**
+         * A tap on a preview element. It opens that section's own options; when the full list is
+         * open, the tap leaves the list instead of only moving its scroll position.
+         */
+        private void selectFromPreview(Element element) {
+            if (isListMode()) {
+                panelMode.set(EditorListPlan.Mode.ELEMENT, cardMode);
+                refreshBackButton();
+                // The element panel opens at its first row, not at the list scroll it replaces.
+                optionsScroll.scrollTo(0, 0);
+            }
+            selectElement(element);
+        }
+
+        /** Rebuilds the panel of the element that is still selected: the same rows again, the
+         *  same selection, the same scroll position. In list mode, the whole list. */
+        private void rebuildPanel() {
+            selectElement(selected, false);
+        }
+
+        /** An edit asked for its element's rows to be rebuilt. In list mode that is the whole list,
+         *  in place: an edit never moves the selection or the list's scroll position. */
+        private void rebuildAfterEdit(Element element) {
+            if (isListMode()) {
+                rebuildPanel();
+            } else {
+                selectElement(element);
+            }
+        }
+
         private void selectElement(Element element, boolean revealPanel) {
+            if (isListMode()) {
+                selectInList(element, revealPanel);
+                return;
+            }
             // Option callbacks re-select the current element to rebuild rows that depend on the
             // value just changed. That must read as the row updating in place: keep the list's
             // scroll position and leave the panel exactly where it is.
             int previousScrollY = optionsScroll.getScrollY();
             boolean rebuildOnly = selected == element && panelVisible;
-            // Decide the edge before the rows are built: a selection change is the only thing that
-            // may place the panel, and a rebuild of the same element must never re-place it. The
-            // reveal itself stays at the end of this method, so a relocated panel only becomes
-            // visible once it has the new element's options in it.
-            SheetPlacement wanted = rebuildOnly || !revealPanel
-                    ? sheetPlacement : placementForSelection(element);
-            if (wanted != sheetPlacement) {
-                if (panelMovedByUser) {
-                    // The user owns the panel's position now; the edge is only a leftover of where
-                    // it happened to be, and the panel is refilled in place.
-                    sheetPlacement = wanted;
-                } else {
-                    // Close it outright before moving it, so the jump to the other edge is never
-                    // seen dragging across the element the tap just opened it for.
-                    hidePanelSheet(false);
-                    applySheetPlacement(wanted);
-                }
-            }
+            placePanelFor(element, keepsPanelEdge(revealPanel, selected == element));
             selected = element;
-            sheetTitle.setText(labelFor(element));
-            optionsCard.removeAllViews();
-            endGroup(); // the cards just removed above are gone; never append into a stale one
+            // The height cap follows the element the panel edits: the same panel can clear the
+            // one element and still hide the next one.
+            applyPanelHeightBudget();
             repaintAllCaptures();
-
-            switch (element) {
-                case ARTWORK:
-                    buildArtworkOptions();
-                    break;
-                case TRACK_TEXT:
-                    buildTrackTextOptions();
-                    break;
-                case FOCUS:
-                    buildFocusOptions();
-                    break;
-                case TEXT:
-                    buildTextOptions();
-                    break;
-                case BACKGROUND:
-                    buildBackgroundOptions();
-                    break;
-                case SKIP:
-                    buildSkipOptions();
-                    break;
-                case FOLLOW:
-                    buildFollowOptions();
-                    break;
-                case DOCK:
-                    buildDockOptions();
-                    break;
-                case CARD:
-                    buildCardOptions();
-                    break;
-            }
+            renderElementOptions(element);
             if (rebuildOnly) {
                 optionsScroll.scrollTo(0, previousScrollY);
                 optionsScroll.post(() -> optionsScroll.scrollTo(0, previousScrollY));
@@ -2472,6 +2947,140 @@ final class LyricsLayoutEditController {
             // preview with it (they pass revealPanel = false). A panel relocated above was closed
             // and is re-revealed here, against its new edge and with the new element's options.
             if (revealPanel && !panelVisible) showPanelSheet(true);
+        }
+
+        /** Decides the edge before the rows are built: a selection change is the only thing that
+         *  may place the panel, and a rebuild of the same element must never re-place it. The
+         *  caller reveals the panel afterwards, so a relocated panel only becomes visible once it
+         *  has the new content in it. */
+        private void placePanelFor(Element element, boolean keepPlacement) {
+            SheetPlacement wanted = keepPlacement ? sheetPlacement : placementForSelection(element);
+            if (wanted == sheetPlacement) return;
+            if (panelMovedByUser) {
+                // The user owns the panel's position now; the edge is only a leftover of where
+                // it happened to be, and the panel is refilled in place.
+                sheetPlacement = wanted;
+            } else {
+                // Close it outright before moving it, so the jump to the other edge is never
+                // seen dragging across the element the tap just opened it for.
+                hidePanelSheet(false);
+                applySheetPlacement(wanted);
+            }
+        }
+
+        /**
+         * Whether the options panel keeps its edge for a change of its content.
+         *
+         * <p>A rebuild of the content that is already on screen keeps the edge, so an edit
+         * updates the panel in place. A new element moves the panel, unless it is the element
+         * that is already selected: picking it again refills the panel where it stands.
+         */
+        private boolean keepsPanelEdge(boolean revealPanel, boolean sameSelection) {
+            EditorPanelPlacement.Change change = revealPanel
+                    ? EditorPanelPlacement.Change.SELECTION
+                    : EditorPanelPlacement.Change.REBUILD;
+            return EditorPanelPlacement.keepsEdge(change, sameSelection, panelVisible);
+        }
+
+        /** Fills the panel with one element's options. */
+        private void renderElementOptions(Element element) {
+            listPanel.clear();
+            sheetTitle.setText(labelFor(element));
+            optionsCard.removeAllViews();
+            rows.endGroup(); // the cards just removed above are gone; never append into a stale one
+            switch (element) {
+                case ARTWORK:
+                case TRACK_TEXT:
+                case FOCUS:
+                case BACKGROUND:
+                case SKIP:
+                case FOLLOW:
+                case DOCK:
+                    controlRenderer.render(controlElement(element), uiContext());
+                    break;
+                case TEXT:
+                    buildTextOptions();
+                    break;
+                case CARD:
+                    // The card panel keeps its own tab strip; the rows under it are the
+                    // registry's, for the tab that is open.
+                    rows.addOption(cardTabs(), rows.matchWrap(12));
+                    controlRenderer.render(ControlSpec.Element.CARD, cardTab, uiContext());
+                    break;
+            }
+        }
+
+        // -- list mode -------------------------------------------------------------
+
+        private boolean isListMode() {
+            return panelMode.isList() && !cardMode;
+        }
+
+        /** The toolbar's list toggle. While the panel is hidden it always opens the full list,
+         *  whatever mode the hidden panel was left in. */
+        private void togglePanelMode() {
+            setPanelMode(EditorListPlan.toggled(panelMode.mode(), panelVisible));
+        }
+
+        /** Switches the panel between the selection and the list, and shows it. Writes nothing. */
+        private void setPanelMode(EditorListPlan.Mode mode) {
+            if (!panelMode.set(mode, cardMode)) {
+                // The mode is already set; a hidden panel still comes back when asked for it.
+                if (!panelVisible) showPanelSheet(true);
+                return;
+            }
+            refreshBackButton();
+            if (isListMode()) {
+                // The list opens on the selected element's section, so the panel places itself
+                // for that element exactly like the per-element panel does. A panel that kept
+                // the edge it happened to have - the default one after a rotation, for
+                // instance - can end up on top of the element the list is scrolled to.
+                placePanelFor(selected, EditorPanelPlacement.keepsEdge(
+                        EditorPanelPlacement.Change.MODE, false, panelVisible));
+                sheetTitle.setText(rows.s("all_elements", "All elements"));
+                listPanel.buildAt(listElement(selected), this::renderListSection);
+            } else {
+                renderElementOptions(selected);
+                optionsScroll.scrollTo(0, 0);
+            }
+            if (!panelVisible) showPanelSheet(true);
+        }
+
+        /**
+         * A selection in list mode. The agent select route scrolls the list to the element's
+         * section; a rebuild of the same selection keeps the list where it is.
+         */
+        private void selectInList(Element element, boolean revealPanel) {
+            boolean jump = revealPanel || element != selected;
+            placePanelFor(element, keepsPanelEdge(revealPanel, selected == element));
+            selected = element;
+            // The height cap follows the element the panel edits, in list mode too.
+            applyPanelHeightBudget();
+            repaintAllCaptures();
+            sheetTitle.setText(rows.s("all_elements", "All elements"));
+            if (jump && listPanel.isBuilt()) {
+                listPanel.scrollTo(listElement(element));
+            } else if (jump) {
+                listPanel.buildAt(listElement(element), this::renderListSection);
+            } else {
+                listPanel.rebuild(this::renderListSection);
+            }
+            if (revealPanel && !panelVisible) showPanelSheet(true);
+        }
+
+        /** One list section's rows. Lyrics keeps its tab strip. */
+        private void renderListSection(EditorListPlan.Section section) {
+            if (section.element == ControlSpec.Element.LYRICS) {
+                buildTextOptions();
+            } else {
+                controlRenderer.render(section.element, uiContext());
+            }
+        }
+
+        /** The registry element whose list section holds an editor element. */
+        private static ControlSpec.Element listElement(Element element) {
+            return element == Element.TEXT ? ControlSpec.Element.LYRICS
+                    : element == Element.CARD ? ControlSpec.Element.CARD : controlElement(element);
         }
 
         /** The edge the panel should be placed on for a given element: away from where that element
@@ -2518,7 +3127,9 @@ final class LyricsLayoutEditController {
             if (source == null || !source.isShown() || source.getWidth() <= 0 || source.getHeight() <= 0) {
                 return null;
             }
-            int[] pos = relativePosition(source, shellRoot);
+            // Overlay coordinates: the panel's rect is measured in them, and the overlay sits on
+            // the shell root's origin, so the two spaces are the same.
+            int[] pos = relativePosition(source, overlay != null ? overlay : shellRoot);
             return new int[]{pos[0], pos[1], pos[0] + source.getWidth(), pos[1] + source.getHeight()};
         }
 
@@ -2582,7 +3193,8 @@ final class LyricsLayoutEditController {
 
         // -- options panel -------------------------------------------------------
 
-        /** The one owner of the Hide options and Show options actions, for taps and agent routes. */
+        /** Reveals the hidden panel for the agent route and for Reset; the header close icon is
+         *  the one Hide action. */
         private void showOptions() {
             if (overlay.getParent() == null || panelVisible) return;
             showPanelSheet(true);
@@ -2595,8 +3207,9 @@ final class LyricsLayoutEditController {
 
         private void showPanelSheet(boolean animate) {
             panelVisible = true;
-            // Every reveal path (tap on an element, Reset, Show options) drops the recall pill.
-            if (toolbarOptions != null) refreshBackButton();
+            // The list toggle reads the panel's visibility: hidden it opens the full list,
+            // visible it swaps modes. Rebuild it so the control names the action it performs.
+            refreshBackButton();
             // Stop any fade-out still in flight first: its end action would park the panel as
             // INVISIBLE a frame after this reveal.
             panelContainer.animate().cancel();
@@ -2622,9 +3235,9 @@ final class LyricsLayoutEditController {
 
         private void hidePanelSheet(boolean animate) {
             panelVisible = false;
-            // Only a visible hide shows the recall: the silent hide is a relocation that re-shows
-            // at once, and card mode rebuilds the toolbar itself.
-            if (animate && toolbarOptions == null) refreshBackButton();
+            // Hidden, the list toggle always offers the full list again. The silent hide is a
+            // relocation that re-shows at once, so it leaves the toolbar row alone.
+            if (animate) refreshBackButton();
             panelContainer.animate().cancel();
             if (!animate) {
                 panelContainer.setAlpha(1f);
@@ -2649,6 +3262,45 @@ final class LyricsLayoutEditController {
         }
 
         /**
+         * The panel's height budget: the overlay share, the space the toolbar row leaves, and the
+         * cap that keeps the panel off the element it edits.
+         *
+         * <p>The cap is what a compact screen needs: the panel opens on the side away from the
+         * selected element, but the stacked skip chip can end up under the panel's edge anyway.
+         * The panel then stops in front of that element instead of hiding it.
+         */
+        private void applyPanelHeightBudget() {
+            int budget = panelMaxHeightPx();
+            int capped = budget;
+            if (!panelMovedByUser) {
+                capped = capPanelHeightForTarget(budget, plannedPanelRect(budget),
+                        targetRectFor(selected), sheetPlacement, dp(PANEL_MIN_HEIGHT_DP));
+            }
+            optionsScroll.maxHeightPx = Math.max(0, capped - dp(PANEL_HEADER_DP));
+        }
+
+        /**
+         * The panel's rect at a given height, in overlay coordinates, before the layout runs.
+         *
+         * <p>Read from the placement the panel is about to take, not from the laid-out view: the
+         * budget is decided before the panel is measured, and the panel's own margins are what
+         * place it.
+         */
+        private int[] plannedPanelRect(int height) {
+            int[] span = plannedPanelHorizontal();
+            int top;
+            int bottom;
+            if (sheetPlacement == SheetPlacement.TOP) {
+                top = panelTopInsetPx();
+                bottom = top + height;
+            } else {
+                bottom = Math.max(0, overlayHeightPx() - panelBottomInsetPx());
+                top = bottom - height;
+            }
+            return new int[]{span[0], top, span[1], bottom};
+        }
+
+        /**
          * Places the panel against one edge, sized to its content and never wider than the overlay
          * leaves room for. Gravity and margins do the positioning, so a change of edge is a plain
          * layout change with no measurement involved and nothing to settle afterwards. Once the
@@ -2664,7 +3316,7 @@ final class LyricsLayoutEditController {
             panelLp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
             // The list gets what is left of the panel's height budget: the header above it is a
             // fixed-height row, so the panel as a whole stays inside the cap.
-            optionsScroll.maxHeightPx = Math.max(0, panelMaxHeightPx() - dp(PANEL_HEADER_DP));
+            applyPanelHeightBudget();
             if (panelMovedByUser) {
                 if (panelContainer.getHeight() > 0) {
                     // A rotation or unfold can leave the user's position off screen: keep where they
@@ -2814,7 +3466,7 @@ final class LyricsLayoutEditController {
             refreshBackButton();
         }
 
-        /** Recolors a capture's outline stroke: {@link #ACCENT_COLOR} when it is the current
+        /** Recolors a capture's outline stroke: {@link EditorRows#ACCENT_COLOR} when it is the current
          *  selection, {@link #GRAY_IDLE_COLOR} otherwise - every capturable element shows an outline at
          *  all times now, not just the one currently selected, so it reads as one consistent
          *  selected/unselected visual language across the whole editor. */
@@ -2824,20 +3476,20 @@ final class LyricsLayoutEditController {
             if (!(background instanceof GradientDrawable)) return;
             ((GradientDrawable) background).setStroke(
                     dp(selected ? OUTLINE_SELECTED_DP : OUTLINE_IDLE_DP),
-                    selected ? ACCENT_COLOR : GRAY_IDLE_COLOR);
+                    selected ? EditorRows.ACCENT_COLOR : GRAY_IDLE_COLOR);
         }
 
         private String labelFor(Element element) {
             switch (element) {
-                case ARTWORK: return s("element_artwork", "Artwork");
-                case TRACK_TEXT: return s("element_track_text", "Track text");
-                case FOCUS: return s("element_focus", "Focus");
-                case TEXT: return s("element_lyrics", "Lyrics");
+                case ARTWORK: return rows.s("element_artwork", "Artwork");
+                case TRACK_TEXT: return rows.s("element_track_text", "Track text");
+                case FOCUS: return rows.s("element_focus", "Focus");
+                case TEXT: return rows.s("element_lyrics", "Lyrics");
                 case SKIP:
-                case FOLLOW: return s("element_chips", "Skip & Follow");
-                case DOCK: return s("element_top_bar", "Top bar");
-                case CARD: return s("element_card", "Now playing card");
-                default: return s("element_background", "Background");
+                case FOLLOW: return rows.s("element_chips", "Skip & Follow");
+                case DOCK: return rows.s("element_top_bar", "Top bar");
+                case CARD: return rows.s("element_card", "Now playing card");
+                default: return rows.s("element_background", "Background");
             }
         }
 
@@ -2848,117 +3500,56 @@ final class LyricsLayoutEditController {
             target.setContentDescription(labelFor(element));
             target.setFocusable(true);
             target.setClickable(true);
-            target.setOnClickListener(v -> selectElement(element));
+            target.setOnClickListener(v -> selectFromPreview(element));
         }
 
-        private void buildArtworkOptions() {
-            beginGroup(s("layout", "Layout"));
-            addOption(toggleRow(Settings.ADAPTIVE_LANDSCAPE_LAYOUT,
-                    strings.setting(Settings.ADAPTIVE_LANDSCAPE_LAYOUT), null), matchWrap(0));
-
-            endGroup();
-            if (twoColumn) {
-                // Two-column's left column is the readout's own column placement, so the only
-                // position choice that means anything there is whether it shows at all: the four
-                // floating placements have nowhere to go. One on/off row, same chip style as
-                // every other row: On writes "Top" (any non-Off value shows the column, so the
-                // first stored one is as good as any), Off clears it.
-                beginGroup(strings.setting(Settings.TRACK_INFO_POSITION));
-                addOption(toggleRow(s("show_artwork_info", "Show artwork & song info"),
-                        !"Off".equals(safeGetString(Settings.TRACK_INFO_POSITION)),
-                        (toggle, on) -> put(Settings.TRACK_INFO_POSITION,
-                                on ? "Top" : "Off", () -> {
-                                    refreshArtwork();
-                                    refreshTrackText();
-                                })), matchWrap(0));
-
-                endGroup();
-            } else {
-                beginGroup(strings.setting(Settings.TRACK_INFO_POSITION));
-                addOption(chipRow(Settings.TRACK_INFO_POSITION,
-                        new String[]{"Off", "Top", "Bottom", "Header"},
-                        () -> {
-                            refreshArtwork();
-                            refreshTrackText();
-                            selectElement(Element.ARTWORK);
-                        }), matchWrap(12));
-
-                addOption(text(s("artwork_hint", "Drag the handle at its corner to resize; "
-                        + "drag the artwork itself up/down to reposition."), 12, 0x80FFFFFF, false), matchWrap(12));
-
-                endGroup();
+        /** The registry element a migrated editor element renders from. */
+        private static ControlSpec.Element controlElement(Element element) {
+            switch (element) {
+                case ARTWORK:
+                    return ControlSpec.Element.ARTWORK;
+                case TRACK_TEXT:
+                    return ControlSpec.Element.TRACK_TEXT;
+                case FOCUS:
+                    return ControlSpec.Element.FOCUS;
+                case BACKGROUND:
+                    return ControlSpec.Element.BACKGROUND;
+                case SKIP:
+                case FOLLOW:
+                    return ControlSpec.Element.CHIPS;
+                case DOCK:
+                    return ControlSpec.Element.TOP_BAR;
+                default:
+                    throw new IllegalArgumentException("No registry renderer for " + element);
             }
-            beginGroup(strings.setting(Settings.TRACK_INFO_ART_RADIUS));
-            addOption(dragRow(
-                    Settings.TRACK_INFO_ART_RADIUS.minValue, Settings.TRACK_INFO_ART_RADIUS.maxValue,
-                    safeGet(Settings.TRACK_INFO_ART_RADIUS), "dp", Settings.TRACK_INFO_ART_RADIUS.defaultValue,
-                    value -> {
-                        writer.put(Settings.TRACK_INFO_ART_RADIUS, value);
-                        refreshArtwork();
-                    }),
-                    matchWrap(0));
-
-            endGroup();
-            beginGroup(strings.setting(Settings.PANEL_MEDIA_CONTROLS));
-            addOption(chipRow(Settings.PANEL_MEDIA_CONTROLS,
-                    new String[]{"Off", "Single tap", "Double tap"}, null), matchWrap(0));
-
-            endGroup();
-            buildTrackTextOptions();
         }
 
-        private void buildTrackTextOptions() {
-            beginGroup(s("fields", "Fields"));
-            addOption(toggleRow(Settings.TRACK_INFO_SHOW_TITLE,
-                    strings.setting(Settings.TRACK_INFO_SHOW_TITLE),
-                    () -> selectElement(Element.TRACK_TEXT)), matchWrap(6));
-            addOption(toggleRow(Settings.TRACK_INFO_SHOW_ARTIST,
-                    strings.setting(Settings.TRACK_INFO_SHOW_ARTIST),
-                    () -> selectElement(Element.TRACK_TEXT)), matchWrap(6));
-            addOption(toggleRow(Settings.TRACK_INFO_SHOW_ALBUM,
-                    strings.setting(Settings.TRACK_INFO_SHOW_ALBUM),
-                    () -> selectElement(Element.TRACK_TEXT)), matchWrap(12));
-
-            endGroup();
-            // Alignment stacks the text vertically beside readout art, and the background fills
-            // the readout's dock band. Two-column has its cover above the text and no dock, so both
-            // controls are omitted there instead of being offered as no-ops.
-            if (!twoColumn) {
-                beginGroup(strings.setting(Settings.TRACK_INFO_TEXT_ALIGN));
-                addOption(chipRow(Settings.TRACK_INFO_TEXT_ALIGN,
-                        new String[]{"Top", "Center", "Bottom"}, null), matchWrap(12));
-
-                endGroup();
+        /** The editor element a migrated registry entry rebuilds. */
+        private static Element editorElement(ControlSpec.Element element) {
+            switch (element) {
+                case ARTWORK:
+                    return Element.ARTWORK;
+                case TRACK_TEXT:
+                    return Element.TRACK_TEXT;
+                case LYRICS:
+                    return Element.TEXT;
+                case BACKGROUND:
+                    return Element.BACKGROUND;
+                case TOP_BAR:
+                    return Element.DOCK;
+                case CHIPS:
+                    return Element.SKIP;
+                case CARD:
+                    return Element.CARD;
+                default:
+                    throw new IllegalArgumentException("No editor element for " + element);
             }
-            beginGroup(strings.setting(Settings.TRACK_INFO_TEXT_SIZE));
-            addOption(toggleRow(Settings.TRACK_INFO_TEXT_SIZE_ADAPTIVE,
-                    strings.setting(Settings.TRACK_INFO_TEXT_SIZE_ADAPTIVE),
-                    () -> selectElement(Element.TRACK_TEXT)), matchWrap(8));
-            if (!Boolean.TRUE.equals(store.get(Settings.TRACK_INFO_TEXT_SIZE_ADAPTIVE))) {
-                addOption(customSliderRow(Settings.TRACK_INFO_TEXT_SIZE,
-                        Settings.TRACK_INFO_TEXT_SIZE_CUSTOM, "Custom", null), matchWrap(12));
-            }
-
-            endGroup();
-            if (!twoColumn) {
-                beginGroup(strings.setting(Settings.TRACK_INFO_BACKGROUND));
-                addOption(chipRow(Settings.TRACK_INFO_BACKGROUND,
-                        new String[]{"Gradient", "Solid", "None"}, null), matchWrap(12));
-
-                endGroup();
-            }
-            beginGroup(strings.setting(Settings.TRACK_INFO_TEXT_OVERFLOW));
-            addOption(chipRow(Settings.TRACK_INFO_TEXT_OVERFLOW,
-                    new String[]{"Clip", "Wrap", "Scroll"}, null), matchWrap(0));
         }
 
-        private void buildFocusOptions() {
-            beginGroup(strings.setting(Settings.LYRICS_FOCUS_POSITION));
-            addOption(chipRow(Settings.LYRICS_FOCUS_POSITION,
-                    new String[]{"Auto", "Top", "Center", "Bottom"},
-                    this::repaintFocusHandle), matchWrap(12));
-            addOption(text(s("focus_hint", "Or drag the line across the lyrics directly."), 12,
-                    0x80FFFFFF, false), matchWrap(0));
+        /** One immutable render snapshot for registry visibility rules. */
+        private UiContext uiContext() {
+            return new UiContext(twoColumn, cardMode, landscape, SettingsSnapshot.capture(store),
+                    LanguageModelPack.isReady(), com.eza.spicyex.FeatureAvailability.animatedBackgroundAvailable());
         }
 
         private static final int FILE_PICKER_REQUEST_CODE = 10234;
@@ -2969,34 +3560,25 @@ final class LyricsLayoutEditController {
          * the in-place rebuilds option changes trigger.
          */
         private int textTab;
-        private static final int TAB_STYLE = 0;
-        private static final int TAB_ANIMATION = 1;
-        private static final int TAB_EFFECTS = 2;
 
         private void buildTextOptions() {
-            addOption(textTabs(), matchWrap(12));
-            switch (textTab) {
-                case TAB_ANIMATION:
-                    buildAnimationOptions();
-                    break;
-                case TAB_EFFECTS:
-                    buildTextEffectOptions();
-                    break;
-                default:
-                    buildTextStyleOptions();
-                    break;
-            }
-            endGroup();
+            rows.addOption(textTabs(), rows.matchWrap(12));
+            controlRenderer.render(ControlSpec.Element.LYRICS, textTab, uiContext());
+            rows.endGroup();
         }
 
         /** One pill holding the three tabs; the current one is a white segment. */
         private View textTabs() {
-            return tabBar(new String[]{s("tab_style", "Style"), s("tab_animation", "Animation"),
-                    s("tab_effects", "Effects")}, textTab, this::selectTextTab);
+            return tabBar(LayoutEditorTabs.LYRICS, textTab, this::selectTextTab);
         }
 
         private void selectTextTab(int index) {
             textTab = index;
+            // In the list the strip sits inside the Lyrics section: it rebuilds in place.
+            if (isListMode()) {
+                rebuildPanel();
+                return;
+            }
             selectElement(Element.TEXT);
             optionsScroll.scrollTo(0, 0);
             optionsScroll.post(() -> optionsScroll.scrollTo(0, 0));
@@ -3004,15 +3586,16 @@ final class LyricsLayoutEditController {
 
         /** The panel's tab bar: one pill, the current tab a white segment; picking one rebuilds
          *  the options below it (through {@code onPick}) and scrolls them to the top. */
-        private View tabBar(String[] labels, int current, java.util.function.IntConsumer onPick) {
+        private View tabBar(LayoutEditorTabs.Tab[] tabs, int current, java.util.function.IntConsumer onPick) {
             LinearLayout bar = new LinearLayout(activity);
             bar.setPadding(dp(3), dp(3), dp(3), dp(3));
             GradientDrawable barBg = new GradientDrawable();
             barBg.setCornerRadius(dp(20));
             barBg.setColor(0x1AFFFFFF);
             bar.setBackground(barBg);
-            for (int i = 0; i < labels.length; i++) {
-                TextView tab = text(labels[i], 14, i == current ? Color.BLACK : 0xCCFFFFFF, i == current);
+            for (int i = 0; i < tabs.length; i++) {
+                TextView tab = rows.text(rows.s(tabs[i].labelKey, tabs[i].label), 14,
+                        i == current ? Color.BLACK : 0xCCFFFFFF, i == current);
                 tab.setGravity(Gravity.CENTER);
                 tab.setSingleLine(true);
                 tab.setPadding(dp(8), dp(8), dp(8), dp(8));
@@ -3026,256 +3609,11 @@ final class LyricsLayoutEditController {
                 tab.setOnClickListener(v -> {
                     if (current == index) return;
                     onPick.accept(index);
-                    optionsScroll.scrollTo(0, 0);
+                    if (!isListMode()) optionsScroll.scrollTo(0, 0);
                 });
                 bar.addView(tab, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             }
             return bar;
-        }
-
-        /** Style: size, font, weight, line spacing. */
-        private void buildTextStyleOptions() {
-            addSectionLabel(Settings.LYRICS_TEXT_SIZE, 10);
-            addOption(customSliderRow(Settings.LYRICS_TEXT_SIZE,
-                    Settings.LYRICS_TEXT_SIZE_CUSTOM, "custom", null), matchWrap(8));
-            addOption(toggleRow(Settings.LYRICS_ADAPTIVE_TEXT_SIZE,
-                    strings.setting(Settings.LYRICS_ADAPTIVE_TEXT_SIZE), null), matchWrap(8));
-            addOption(toggleRow(Settings.ADAPTIVE_SECTIONING,
-                    strings.setting(Settings.ADAPTIVE_SECTIONING), null), matchWrap(14));
-
-            addDivider();
-            addSectionLabel(Settings.LYRICS_FONT, 10);
-            addOption(fontChipRow(), matchWrap(8));
-            if ("custom".equals(store.get(Settings.LYRICS_FONT))) {
-                addOption(text(s("font_hint",
-                        "Tap below to choose a font."),
-                        12, 0x7AFFFFFF, false), matchWrap(6));
-                addOption(customFontDropdown(), matchWrap(8));
-                String summary = fontCoverageSummary(store.get(Settings.LYRICS_FONT_CUSTOM_PATH));
-                if (summary != null && !summary.isEmpty()) {
-                    addOption(text(summary, 12, 0x80FFFFFF, false), matchWrap(0));
-                }
-            }
-
-            addDivider();
-            addSectionLabel(Settings.LYRICS_WEIGHT, 10);
-            addOption(chipRow(Settings.LYRICS_WEIGHT,
-                    new String[]{"Regular", "Medium", "Bold"}, null), matchWrap(14));
-
-            addDivider();
-            addSectionLabel(Settings.LINE_SPACING, 10);
-            addOption(customSliderRow(Settings.LINE_SPACING,
-                    Settings.LINE_SPACING_CUSTOM, "custom", null), matchWrap(14));
-
-            endGroup();
-        }
-
-        /** Effects: interlude icon, glow, line blur. */
-        private void buildTextEffectOptions() {
-            addSectionLabel(Settings.INTERLUDE_ICON, 10);
-            addOption(chipRow(Settings.INTERLUDE_ICON,
-                    new String[]{"dots", "note"}, null), matchWrap(14));
-
-            addDivider();
-            addSectionLabel(Settings.ENABLE_GLOW_BLUR, 10);
-            addOption(toggleRow(Settings.ENABLE_GLOW_BLUR,
-                    strings.setting(Settings.ENABLE_GLOW_BLUR), null), matchWrap(14));
-
-            addDivider();
-            addSectionLabel(Settings.ENABLE_LINE_BLUR, 10);
-            int blur = "Off".equals(store.get(Settings.ENABLE_LINE_BLUR))
-                    ? 0 : safeGet(Settings.LYRICS_BLUR_INTENSITY);
-            addOption(text(s("blur_intensity_hint", "Off at 0%; increase to blur distant lines more."),
-                    12, 0x7AFFFFFF, false), matchWrap(6));
-            addOption(dragRow(0, Settings.LYRICS_BLUR_INTENSITY.maxValue, blur, "%", 0,
-                    value -> {
-                        writer.put(Settings.ENABLE_LINE_BLUR, value == 0 ? "Off" : "Heavy");
-                        if (value > 0) writer.put(Settings.LYRICS_BLUR_INTENSITY, value);
-                    }), matchWrap(14));
-            endGroup();
-        }
-
-        /** Animation style and everything that depends on it, in the order they appear. */
-        private void buildAnimationOptions() {
-            beginGroup(strings.setting(Settings.ANIMATION_STYLE));
-            addOption(chipRow(Settings.ANIMATION_STYLE,
-                    new String[]{"Gradient wash", "Spotlight", "Apple Music"},
-                    () -> selectElement(Element.TEXT)), matchWrap(8));
-            addOption(toggleRow(Settings.LOAD_LIFT_ANIMATION,
-                    strings.setting(Settings.LOAD_LIFT_ANIMATION), null), matchWrap(12));
-            if (isAppleStyle()) {
-                addOption(toggleRow(Settings.LINE_SLIDE_ANIMATION,
-                        strings.setting(Settings.LINE_SLIDE_ANIMATION), null), matchWrap(6));
-                addOption(toggleRow(Settings.APPLE_LIFT,
-                        strings.setting(Settings.APPLE_LIFT), null), matchWrap(6));
-                addOption(toggleRow(Settings.APPLE_FADE_PASSED_LINES,
-                        strings.setting(Settings.APPLE_FADE_PASSED_LINES), null), matchWrap(12));
-                addOption(text(strings.setting(Settings.APPLE_CASCADE_SPEED),
-                        12, GROUP_TITLE_COLOR, true), matchWrap(8));
-                addOption(settingSlider(Settings.APPLE_CASCADE_SPEED, "%", null), matchWrap(12));
-                addOption(text(strings.setting(Settings.APPLE_SPRING_STRENGTH),
-                        12, GROUP_TITLE_COLOR, true), matchWrap(8));
-                addOption(settingSlider(Settings.APPLE_SPRING_STRENGTH, "%", null), matchWrap(12));
-            }
-            if (!isAppleStyle()) {
-                addDivider();
-                addSectionLabel(Settings.WORD_BOUNCE, 10);
-                addOption(chipRow(Settings.WORD_BOUNCE,
-                        new String[]{"Off", "Word/syllable synced only", "All synced rows"},
-                        () -> selectElement(Element.TEXT)), matchWrap(8));
-                if (!"Off".equals(store.get(Settings.WORD_BOUNCE))) {
-                    addDivider();
-                    addSectionLabel(Settings.WORD_BOUNCE_STYLE, 10);
-                    addOption(chipRow(Settings.WORD_BOUNCE_STYLE,
-                            new String[]{"Phrase zoom", "Word zoom", "Phrase lift", "Word lift", "Apple lift"},
-                            () -> selectElement(Element.TEXT)), matchWrap(14));
-                }
-
-                addDivider();
-                addSectionLabel(Settings.LINE_SYNC_FILL, 10);
-                addOption(chipRow(Settings.LINE_SYNC_FILL,
-                        new String[]{"Top to bottom", "Left to right (block)", "Left to right (sentence)"},
-                        () -> selectElement(Element.TEXT)), matchWrap(0));
-            }
-            endGroup();
-        }
-
-        /** A smooth integer slider. The setting's default is marked, but never magnetically snaps. */
-        private LinearLayout settingSlider(Settings.IntegerSetting setting, String unit,
-                Runnable onChanged) {
-            return dragRow(setting.minValue, setting.maxValue, safeGet(setting), unit,
-                    setting.defaultValue, value -> {
-                        if (onChanged == null) writer.put(setting, value);
-                        else put(setting, value, onChanged);
-                    });
-        }
-
-        private void addSectionLabel(Settings.Setting<?> setting, int bottomDp) {
-            beginGroup(strings.setting(setting));
-        }
-
-        private void addDivider() {
-            endGroup();
-        }
-
-        // -- options panel grouping ------------------------------------------
-        //
-        // The panel used to be one flat column: a 13sp label, a control, a hairline rule, a 13sp
-        // label, a control, and so on for every setting an element has. Label and control text
-        // were the same size, so nothing established what belonged to what, and with a rule
-        // between every single row the whole card read as dense ruled paper rather than a set of
-        // choices. Each setting now gets its own softly-tinted rounded card with a smaller, muted
-        // title above larger, clearly tappable controls: the same options, one obvious visual unit
-        // each, and no rules at all.
-
-        /** Card the option builders are currently writing into; null means "straight to the card". */
-        private LinearLayout optionsGroup;
-
-        private void beginGroup(String title) {
-            endGroup();
-            LinearLayout box = new LinearLayout(activity);
-            box.setOrientation(LinearLayout.VERTICAL);
-            GradientDrawable bg = new GradientDrawable();
-            bg.setCornerRadius(dp(GROUP_RADIUS_DP));
-            bg.setColor(GROUP_FILL_COLOR);
-            box.setBackground(bg);
-            box.setPadding(dp(14), dp(12), dp(14), dp(13));
-            if (title != null && !title.isEmpty()) {
-                TextView label = text(title, GROUP_TITLE_SP, GROUP_TITLE_COLOR, true);
-                label.setLetterSpacing(0.02f);
-                box.addView(label, matchWrap(10));
-            }
-            optionsCard.addView(box, matchWrap(10));
-            optionsGroup = box;
-        }
-
-        private void endGroup() {
-            optionsGroup = null;
-        }
-
-        /** Option-builder entry point: lands in the open group card, or the panel itself when a
-         *  builder adds something before opening one. */
-        private void addOption(View view, LinearLayout.LayoutParams lp) {
-            (optionsGroup != null ? optionsGroup : optionsCard).addView(view, lp);
-        }
-
-        /** Single dropdown button that shows the current custom font selection. Tapping opens a
-         *  PopupMenu with all system font families, a "Pick file..." option, and a
-         *  "Type path..." option - consolidating the old system-font chips + folder + "+"
-         *  into one compact control. */
-        private View customFontDropdown() {
-            String current = store.get(Settings.LYRICS_FONT_CUSTOM_PATH);
-            String displayLabel = fontDisplayName(current);
-
-            TextView button = chip(displayLabel);
-            button.setPadding(dp(10), dp(10), dp(10), dp(10));
-            GradientDrawable bg = new GradientDrawable();
-            bg.setCornerRadius(dp(10));
-            bg.setColor(0x22FFFFFF);
-            bg.setStroke(dp(1), 0x33FFFFFF);
-            button.setBackground(bg);
-            button.setTextColor(TEXT_COLOR);
-            button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-
-            LinearLayout row = new LinearLayout(activity);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            row.addView(button, btnLp);
-
-            button.setOnClickListener(v -> openFontChooser(button));
-            return row;
-        }
-
-        /** Resolves a display name for the current font path - shows the system family name
-         *  directly, or the filename portion for a file path, or a placeholder if empty. */
-        private String fontDisplayName(String path) {
-            if (path == null || path.isEmpty()) {
-                return s("font_no_selection", "Select font...");
-            }
-            if (!path.contains("/") && !path.contains("\\")) {
-                return path;
-            }
-            // File path - show the filename
-            int lastSep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-            String name = lastSep >= 0 ? path.substring(lastSep + 1) : path;
-            if (name.length() > 28) name = name.substring(0, 25) + "...";
-            return name;
-        }
-
-        /** Font chips. Spotify/Apple apply at once; Custom only opens the chooser, and the setting
-         *  changes once a font is actually picked - backing out of the chooser (or the file
-         *  picker) leaves the previous font in place instead of a "custom" with nothing behind it. */
-        private LinearLayout fontChipRow() {
-            String[] values = {"spotify", "apple", "custom"};
-            LinearLayout row = new LinearLayout(activity);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            String current = store.get(Settings.LYRICS_FONT);
-            TextView[] chips = new TextView[values.length];
-            for (int i = 0; i < values.length; i++) {
-                TextView chip = chip(strings.option((Settings.StringSetting) Settings.LYRICS_FONT, values[i]));
-                chips[i] = chip;
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-                lp.leftMargin = dp(3);
-                lp.rightMargin = dp(3);
-                row.addView(chip, lp);
-                paintChip(chip, values[i].equals(current));
-            }
-            for (int i = 0; i < values.length; i++) {
-                String value = values[i];
-                TextView chip = chips[i];
-                chip.setOnClickListener(v -> {
-                    if ("custom".equals(value)) {
-                        openFontChooser(chip);
-                        return;
-                    }
-                    for (int j = 0; j < values.length; j++) paintChip(chips[j], values[j].equals(value));
-                    put(Settings.LYRICS_FONT, value, () -> selectElement(Element.TEXT));
-                });
-            }
-            return row;
         }
 
         private static final String[] SYSTEM_FONTS = {"sans-serif", "sans-serif-medium",
@@ -3287,7 +3625,7 @@ final class LyricsLayoutEditController {
             for (int i = 0; i < SYSTEM_FONTS.length; i++) {
                 popup.getMenu().add(0, i, i, SYSTEM_FONTS[i]);
             }
-            popup.getMenu().add(1, 100, 100, s("font_pick_file", "Pick file..."));
+            popup.getMenu().add(1, 100, 100, rows.s("font_pick_file", "Pick file..."));
             popup.setOnMenuItemClickListener(item -> {
                 if (item.getItemId() == 100) {
                     pickFontFile();
@@ -3302,7 +3640,7 @@ final class LyricsLayoutEditController {
         private void commitCustomFont(String path) {
             if (path == null || path.isEmpty()) return;
             writer.put(Settings.LYRICS_FONT_CUSTOM_PATH, path);
-            put(Settings.LYRICS_FONT, "custom", () -> selectElement(Element.TEXT));
+            put(Settings.LYRICS_FONT, "custom", () -> rebuildAfterEdit(Element.TEXT));
         }
 
         /** System document picker for a .ttf/.otf. The result comes back through
@@ -3324,7 +3662,7 @@ final class LyricsLayoutEditController {
                     String path = copyFontToPrivateStorage(app, uri);
                     overlay.post(() -> {
                         if (path == null) {
-                            android.widget.Toast.makeText(activity, s("font_pick_failed",
+                            android.widget.Toast.makeText(activity, rows.s("font_pick_failed",
                                     "Couldn't read that font file"), android.widget.Toast.LENGTH_SHORT).show();
                         } else if (overlay.getParent() != null) {
                             commitCustomFont(path);
@@ -3387,520 +3725,20 @@ final class LyricsLayoutEditController {
             }
         }
 
-        /** Mirrors PanelDialogs#reportFontCoverage's own resolution order (a real file on disk,
-         *  else an installed/system font family name) so the same value gets the same verdict in
-         *  either surface. */
-        private String fontCoverageSummary(String path) {
-            if (path == null || path.isEmpty()) return "";
-            android.graphics.Typeface typeface = null;
-            java.io.File file = new java.io.File(path);
-            if (file.isFile()) {
-                try {
-                    typeface = android.graphics.Typeface.createFromFile(file);
-                } catch (Throwable ignored) {
-                }
-            }
-            if (typeface == null) typeface = android.graphics.Typeface.create(path, android.graphics.Typeface.NORMAL);
-            java.util.List<String> missing = com.eza.spicyex.lyrics.LyricsFontValidator.missingScripts(typeface);
-            return missing.isEmpty()
-                    ? strings.get("settings_lyrics_font_check_all_covered", "Covers every supported language")
-                    : strings.get("settings_lyrics_font_check_missing", "Falls back for") + ": "
-                            + String.join(", ", missing);
-        }
-
-        private void buildBackgroundOptions() {
-            beginGroup(strings.setting(Settings.BACKGROUND_STYLE));
-            addOption(chipRow(Settings.BACKGROUND_STYLE,
-                    new String[]{"Gradient", "Static texture", "Animated texture"},
-                    () -> {
-                        // Background style change can trigger ambient controller to recreate views
-                        // in shellRoot, shifting geometry. Refresh captures after a delay so they
-                        // re-align with the real views once the ambient layer has settled.
-                        selectElement(Element.BACKGROUND);
-                        overlay.postDelayed(this::refreshAllCaptures, 300);
-                    }), matchWrap(12));
-
-            if ("Animated texture".equals(store.get(Settings.BACKGROUND_STYLE))) {
-                endGroup();
-                beginGroup(strings.setting(Settings.BACKGROUND_RENDER_QUALITY));
-                addOption(text(s("background_quality_hint", "Lower trades a softer/grainier "
-                        + "look for less sustained GPU load."), 12, 0x80FFFFFF, false), matchWrap(4));
-                addOption(settingSlider(Settings.BACKGROUND_RENDER_QUALITY, "%", null),
-                        matchWrap(12));
-            }
-
-            endGroup();
-            // Force-dark is one control: 0-100% intensity. The legacy boolean remains enabled
-            // internally for compatibility, but is no longer exposed as a separate button. Zero
-            // disables the effect; moving away from zero re-enables it, including for users whose
-            // old standalone toggle was off when they entered this editor.
-            beginGroup(strings.setting(Settings.FORCE_DARK_BACKGROUND));
-            addOption(dragRow(Settings.EXTRA_DARK_BACKGROUND.minValue,
-                    Settings.EXTRA_DARK_BACKGROUND.maxValue,
-                    safeGet(Settings.EXTRA_DARK_BACKGROUND), "%",
-                    Settings.EXTRA_DARK_BACKGROUND.defaultValue, value -> {
-                        writer.put(Settings.EXTRA_DARK_BACKGROUND, value);
-                        writer.put(Settings.FORCE_DARK_BACKGROUND, value > 0);
-                    }), matchWrap(12));
-
-            endGroup();
-        }
-
-        private void buildSkipOptions() {
-            buildChipOptions();
-        }
-
-        private void buildFollowOptions() {
-            buildChipOptions();
-        }
-
-        /** Skip and Follow are one floating-control system, so either outline opens the same
-         * combined options instead of making users bounce between two near-identical panels. */
-        private void buildChipOptions() {
-            beginGroup(s("element_skip", "Skip"));
-            addOption(text(strings.setting(Settings.SKIP_CHIP_POSITION), 12, GROUP_TITLE_COLOR, true), matchWrap(6));
-            addOption(chipRow(Settings.SKIP_CHIP_POSITION,
-                    new String[]{"Left", "Center", "Right"},
-                    () -> {
-                        refreshSkipChip();
-                        refreshFollowChip();
-                        selectElement(selected, false);
-                    }), matchWrap(12));
-            addOption(text(strings.setting(Settings.SKIP_CHIP_STYLE), 12, GROUP_TITLE_COLOR, true), matchWrap(6));
-            addOption(chipRow(Settings.SKIP_CHIP_STYLE,
-                    new String[]{"Auto", "Label", "Icon"},
-                    () -> {
-                        refreshSkipChip();
-                        selectElement(selected, false);
-                    }), matchWrap(12));
-
-            endGroup();
-            beginGroup(s("element_follow", "Follow"));
-            addOption(text(strings.setting(Settings.FOLLOW_CHIP_POSITION), 12, GROUP_TITLE_COLOR, true), matchWrap(6));
-            addOption(chipRow(Settings.FOLLOW_CHIP_POSITION,
-                    new String[]{"Left", "Center", "Right"},
-                    () -> {
-                        refreshFollowChip();
-                        refreshSkipChip();
-                        selectElement(selected, false);
-                    }), matchWrap(12));
-            addOption(text(strings.setting(Settings.FOLLOW_CHIP_STYLE), 12, GROUP_TITLE_COLOR, true), matchWrap(6));
-            addOption(chipRow(Settings.FOLLOW_CHIP_STYLE,
-                    new String[]{"Auto", "Label", "Icon"},
-                    () -> {
-                        refreshFollowChip();
-                        selectElement(selected, false);
-                    }), matchWrap(12));
-            addOption(text(strings.setting(Settings.FOLLOW_CHIP_ICON), 12, GROUP_TITLE_COLOR, true), matchWrap(6));
-            addOption(chipRow(Settings.FOLLOW_CHIP_ICON,
-                    new String[]{"Adaptive arrow", "Static arrow", "Waveform"},
-                    () -> {
-                        refreshFollowChip();
-                        selectElement(selected, false);
-                    }), matchWrap(12));
-
-            endGroup();
-        }
-
-        private void buildDockOptions() {
-            beginGroup(s("visibility", "Visibility"));
-            addOption(toggleRow(Settings.SHOW_FULLSCREEN_BACK_BUTTON,
-                    strings.setting(Settings.SHOW_FULLSCREEN_BACK_BUTTON), () -> {
-                        refreshDock();
-                        refreshBackButton();
-                        selectElement(Element.DOCK, false);
-                    }), matchWrap(12));
-
-            endGroup();
-            beginGroup(strings.setting(Settings.LIKED_SONGS_BUTTON));
-            addOption(chipRow(Settings.LIKED_SONGS_BUTTON,
-                    new String[]{"Off", "Heart", "Star"},
-                    () -> {
-                        refreshDock();
-                        selectElement(Element.DOCK);
-                    }), matchWrap(12));
-
-            endGroup();
-            beginGroup(strings.setting(Settings.CHROME_CLUSTER_POSITION));
-            addOption(chipRow(Settings.CHROME_CLUSTER_POSITION,
-                    new String[]{"Left", "Right"},
-                    () -> {
-                        refreshDock();
-                        selectElement(Element.DOCK);
-                    }), matchWrap(12));
-
-            endGroup();
-            beginGroup(strings.setting(Settings.CHROME_CLUSTER_LAYOUT));
-            addOption(chipRow(Settings.CHROME_CLUSTER_LAYOUT,
-                    new String[]{"Auto", "Vertical", "Horizontal"},
-                    () -> {
-                        refreshDock();
-                        selectElement(Element.DOCK);
-                    }), matchWrap(12));
-
-            endGroup();
-            beginGroup(strings.setting(Settings.FULLSCREEN_CONTROLS));
-            int timeout = com.eza.spicyex.lyrics.LyricsShellSettings
-                    .parseFullscreenControlsSeconds(store.get(Settings.FULLSCREEN_CONTROLS));
-            // 1..30 are seconds; 31 is the final Always stop.
-            addOption(dragRow(1, 31, timeout == 0 ? 31 : timeout, "", 31,
-                    value -> value == 31 ? s("always", "Always")
-                            : value + (value == 1 ? " second" : " seconds"), value -> {
-                String stored = com.eza.spicyex.lyrics.LyricsShellSettings
-                        .fullscreenControlsValue(value == 31 ? 0 : value);
-                writer.put(Settings.FULLSCREEN_CONTROLS, stored);
-                if (applyPreferences != null) applyPreferences.run();
-            }), matchWrap(0));
-        }
-
-        // -- shared row builders ------------------------------------------------
-
-        /** Chip labels always come from {@link SettingsUiStrings#option}, the same lookup the
-         *  main Settings panel uses for this exact setting/value pair - so a value already
-         *  labeled and translated there (most of them: Off/Top/Bottom/Regular/Small/...) reads
-         *  identically here with no separate translation to maintain. */
-        private LinearLayout chipRow(Settings.Setting<String> setting, String[] values,
-                Runnable onChanged) {
-            LinearLayout row = new LinearLayout(activity);
-            row.setOrientation(LinearLayout.VERTICAL);
-            row.setTag("setting." + setting.key);
-            TextView[] chips = new TextView[values.length];
-            String current = store.get(setting);
-            int labelCharacters = 0;
-            for (String value : values) {
-                labelCharacters += strings.option((Settings.StringSetting) setting, value).length();
-            }
-            int maxPerLine = values.length <= 3 ? values.length
-                    : (values.length == 4 || labelCharacters > 36 || values.length >= 5 ? 2 : 3);
-            // Scope and fill labels must show their distinguishing words on narrow screens.
-            boolean stacked = setting == Settings.WORD_BOUNCE || setting == Settings.LINE_SYNC_FILL
-                    || setting == Settings.LIVE_CARD_LINE_SYNC_FILL;
-            if (stacked) maxPerLine = 1;
-            LinearLayout line = null;
-            for (int i = 0; i < values.length; i++) {
-                if (i % maxPerLine == 0) {
-                    line = new LinearLayout(activity);
-                    line.setOrientation(LinearLayout.HORIZONTAL);
-                    LinearLayout.LayoutParams lineLp = matchWrap(0);
-                    if (i > 0) lineLp.topMargin = dp(6);
-                    row.addView(line, lineLp);
-                }
-                TextView chip = chip(strings.option((Settings.StringSetting) setting, values[i]));
-                chip.setTag("option." + setting.key + "." + i);
-                if (stacked || setting == Settings.WORD_BOUNCE_STYLE
-                        || setting == Settings.ANIMATION_STYLE) {
-                    chip.setSingleLine(false);
-                    chip.setEllipsize(null);
-                }
-                chips[i] = chip;
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-                lp.leftMargin = dp(3);
-                lp.rightMargin = dp(3);
-                line.addView(chip, lp);
-            }
-            for (int i = 0; i < values.length; i++) {
-                String value = values[i];
-                chips[i].setOnClickListener(v -> {
-                    for (int j = 0; j < values.length; j++) paintChip(chips[j], values[j].equals(value));
-                    // Deferred: TRACK_INFO_POSITION can reparent a whole view subtree
-                    // (entering/leaving Header mode) - see put()'s javadoc for why that can't
-                    // happen synchronously from inside this click callback.
-                    put(setting, value, onChanged);
-                });
-                paintChip(chips[i], value.equals(current));
-            }
-            return row;
-        }
-
-        /** Label + a two-state On/Off chip, for boolean settings - the same {@code chip()}/
-         *  {@code paintChip()} widgets {@code chipRow()} uses, just one toggling chip instead of
-         *  a row of mutually-exclusive ones. */
-        private LinearLayout toggleRow(Settings.Setting<Boolean> setting, String label, Runnable onChanged) {
-            boolean current = Boolean.TRUE.equals(store.get(setting));
-            return toggleRow(label, current, (toggle, next) -> put(setting, next, onChanged));
-        }
-
-        /** Label + a two-state On/Off chip, backed by a plain boolean rather than a
-         *  {@code Setting<Boolean>} directly - for a toggle derived from some other value (e.g.
-         *  Extra darken's on/off state is just "is the 0-100 intensity setting non-zero") rather
-         *  than its own persisted key. {@code onToggle} is responsible for persisting the new
-         *  state; it's given the chip so it can still opt into the same optimistic repaint the
-         *  plain-setting overload above does, or rebuild the whole panel (e.g. via
-         *  {@code selectElement}) when the toggle changes what else is shown. */
-        private LinearLayout toggleRow(String label, boolean current,
-                java.util.function.BiConsumer<TextView, Boolean> onToggle) {
-            LinearLayout row = new LinearLayout(activity);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            TextView labelView = text(label, CONTROL_TEXT_SP, 0xE0FFFFFF, false);
-            row.addView(labelView, new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-            TextView toggle = chip(onOffLabel(current));
-            paintChip(toggle, current);
-            boolean[] state = {current};
-            toggle.setOnClickListener(v -> {
-                boolean next = !state[0];
-                state[0] = next;
-                toggle.setText(onOffLabel(next));
-                paintChip(toggle, next);
-                onToggle.accept(toggle, next);
-            });
-            LinearLayout.LayoutParams toggleLp = new LinearLayout.LayoutParams(
-                    dp(68), ViewGroup.LayoutParams.WRAP_CONTENT);
-            row.addView(toggle, toggleLp);
-            return row;
-        }
-
-        /** @param defaultMarker optional visual marker for the one declared default. It never
-         *  changes, rounds, or magnetically snaps the user's value. */
-        private LinearLayout dragRow(int min, int max, int initial, String unit, Integer defaultMarker,
-                IntConsumer onChange) {
-            return dragRow(min, max, initial, unit, defaultMarker, value -> value + unit, onChange);
-        }
-
-        private LinearLayout dragRow(int min, int max, int initial, String unit, Integer defaultMarker,
-                java.util.function.IntFunction<String> labelForValue, IntConsumer onChange) {
-            int[] value = {initial};
-            LinearLayout row = new LinearLayout(activity);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-
-            TextView valueLabel = text(labelForValue.apply(initial), CONTROL_TEXT_SP, Color.WHITE, false);
-            valueLabel.setSingleLine(true);
-            LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
-                    dp(58), ViewGroup.LayoutParams.WRAP_CONTENT);
-            row.addView(valueLabel, labelLp);
-
-            FrameLayout track = new FrameLayout(activity);
-            track.setFocusable(true);
-            track.setContentDescription(valueLabel.getText());
-            GradientDrawable trackBg = new GradientDrawable();
-            trackBg.setColor(0x24FFFFFF);
-            trackBg.setCornerRadius(dp(3));
-            track.setBackground(trackBg);
-
-            View tick = null;
-            if (defaultMarker != null) {
-                tick = new View(activity);
-                tick.setBackgroundColor(0x80FFFFFF);
-                track.addView(tick, new FrameLayout.LayoutParams(dp(2), dp(10), Gravity.CENTER_VERTICAL));
-            }
-            final View tickView = tick;
-
-            View thumb = new View(activity);
-            GradientDrawable thumbBg = new GradientDrawable();
-            thumbBg.setShape(GradientDrawable.OVAL);
-            thumbBg.setColor(ACCENT_COLOR);
-            thumb.setBackground(thumbBg);
-            int thumbSize = dp(HANDLE_SIZE_DP);
-            FrameLayout.LayoutParams thumbLp = new FrameLayout.LayoutParams(
-                    thumbSize, thumbSize, Gravity.CENTER_VERTICAL | Gravity.START);
-            track.addView(thumb, thumbLp);
-            LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(0, thumbSize, 1f);
-            trackLp.leftMargin = dp(10);
-            row.addView(track, trackLp);
-
-            Runnable[] paint = new Runnable[1];
-            paint[0] = () -> {
-                int trackW = track.getWidth() - thumbSize;
-                if (trackW <= 0) {
-                    track.post(() -> paint[0].run());
-                    return;
-                }
-                float fraction = (value[0] - min) / (float) Math.max(1, max - min);
-                thumbLp.leftMargin = Math.round(trackW * clamp01(fraction));
-                thumb.setLayoutParams(thumbLp);
-                if (tickView != null) {
-                    float detentFraction = (defaultMarker - min) / (float) Math.max(1, max - min);
-                    FrameLayout.LayoutParams tickLp = (FrameLayout.LayoutParams) tickView.getLayoutParams();
-                    tickLp.leftMargin = thumbSize / 2 - dp(1) + Math.round(trackW * clamp01(detentFraction));
-                    tickView.setLayoutParams(tickLp);
-                }
-            };
-            track.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> paint[0].run());
-            track.setOnTouchListener((v, event) -> {
-                int action = event.getActionMasked();
-                // The options card now scrolls (see MaxHeightScrollView) - without this, a drag
-                // that drifts even slightly vertically hands the gesture to that scroll instead
-                // of finishing the slide here.
-                if (action == MotionEvent.ACTION_DOWN) {
-                    draggingSlider = true;
-                    if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
-                } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                    draggingSlider = false;
-                    if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(false);
-                }
-                if (action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_MOVE) return false;
-                draggingSlider = true;
-                int trackW = track.getWidth() - thumbSize;
-                if (trackW <= 0) return false;
-                float x = event.getX() - thumbSize / 2f;
-                float fraction = clamp01(x / trackW);
-                int newValue = Math.round(min + fraction * (max - min));
-                if (newValue != value[0]) {
-                    value[0] = newValue;
-                    valueLabel.setText(labelForValue.apply(newValue));
-                    track.setContentDescription(valueLabel.getText());
-                    onChange.accept(newValue);
-                }
-                paint[0].run();
-                return true;
-            });
-            track.setAccessibilityDelegate(new View.AccessibilityDelegate() {
-                @Override
-                public void onInitializeAccessibilityNodeInfo(View host,
-                        android.view.accessibility.AccessibilityNodeInfo info) {
-                    super.onInitializeAccessibilityNodeInfo(host, info);
-                    info.setClassName(android.widget.SeekBar.class.getName());
-                    info.setRangeInfo(android.view.accessibility.AccessibilityNodeInfo.RangeInfo.obtain(
-                            android.view.accessibility.AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT,
-                            min, max, value[0]));
-                    if (value[0] < max) info.addAction(
-                            android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD);
-                    if (value[0] > min) info.addAction(
-                            android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD);
-                }
-
-                @Override
-                public boolean performAccessibilityAction(View host, int action, android.os.Bundle args) {
-                    int direction = action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD ? 1
-                            : action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD ? -1 : 0;
-                    if (direction == 0) return super.performAccessibilityAction(host, action, args);
-                    int step = Math.max(1, Math.round((max - min) / 20f));
-                    int next = clamp(value[0] + direction * step, min, max);
-                    if (next == value[0]) return true;
-                    value[0] = next;
-                    valueLabel.setText(labelForValue.apply(next));
-                    track.setContentDescription(valueLabel.getText());
-                    onChange.accept(next);
-                    paint[0].run();
-                    host.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_SELECTED);
-                    return true;
-                }
-            });
-            return row;
-        }
-
-        /** Smooth custom-value slider for settings that retain legacy named modes in storage.
-         * Entering the editor converts the currently rendered named mode to its equivalent value;
-         * the first user movement then writes Custom directly with no preset snap points. */
-        private LinearLayout customSliderRow(Settings.Setting<String> modeSetting,
-                Settings.IntegerSetting customSetting, String customValue, Runnable onChanged) {
-            int initial = resolvedCustomPercent(modeSetting, customSetting);
-            return dragRow(customSetting.minValue, customSetting.maxValue, initial, "%",
-                    customSetting.defaultValue, value -> {
-                        writer.put(modeSetting, customValue);
-                        writer.put(customSetting, value);
-                        if (onChanged != null) onChanged.run();
-                    });
-        }
-
-        private int resolvedCustomPercent(Settings.Setting<String> modeSetting,
-                Settings.IntegerSetting customSetting) {
-            String mode = store.get(modeSetting);
-            if (modeSetting == Settings.LINE_SPACING) {
-                if ("compact".equals(mode)) return 80;
-                if ("default".equals(mode)) return 110;
-                if ("spacious".equals(mode)) return 150;
-                if ("more".equals(mode)) return 200;
-                if ("max".equals(mode)) return 250;
-            } else if (modeSetting == Settings.TRACK_INFO_TEXT_SIZE) {
-                if ("Small".equals(mode)) return 87;
-                if ("Normal".equals(mode)) return 100;
-                if ("Large".equals(mode)) return 120;
-                if ("XLarge".equals(mode)) return 147;
-            } else {
-                if ("small".equalsIgnoreCase(mode)) return 90;
-                if ("normal".equalsIgnoreCase(mode)) return 100;
-                if ("large".equalsIgnoreCase(mode)) return 120;
-                if ("xlarge".equalsIgnoreCase(mode)) return 150;
-            }
-            return safeGet(customSetting);
-        }
-
         // -- small view helpers -------------------------------------------------
 
-        /** Editor-only freeform text (hints, element names, action labels) that has no
-         *  corresponding {@link Settings.Setting} of its own to borrow a label from. */
-        private String s(String key, String fallback) {
-            return strings.get("settings_layout_editor_" + key, fallback);
-        }
-
-        private String onOffLabel(boolean on) {
-            return strings.get(on ? "settings_option_on" : "settings_option_off", on ? "On" : "Off");
-        }
-
-        private TextView text(String value, int sp, int color, boolean bold) {
-            TextView view = new TextView(activity);
-            view.setText(value);
-            view.setTextSize(sp);
-            view.setTextColor(color);
-            if (bold) view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            return view;
-        }
-
         private TextView textButton(String label) {
-            TextView view = text(label, 14, TEXT_COLOR, false);
+            TextView view = rows.text(label, 14, EditorRows.TEXT_COLOR, false);
             view.setPadding(dp(6), dp(6), dp(6), dp(6));
             view.setClickable(true);
             view.setFocusable(true);
             return view;
         }
 
-        private TextView chip(String label) {
-            TextView chip = text(label, CONTROL_TEXT_SP, TEXT_COLOR, false);
-            chip.setGravity(Gravity.CENTER);
-            chip.setClickable(true);
-            chip.setFocusable(true);
-            chip.setPadding(dp(6), dp(11), dp(6), dp(11));
-            chip.setMinHeight(dp(CONTROL_MIN_HEIGHT_DP));
-            chip.setSingleLine(true);
-            // Compact options stay on one line; long animation choices opt into wrapping.
-            chip.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            return chip;
-        }
-
-        private void paintChip(TextView chip, boolean selected) {
-            GradientDrawable bg = new GradientDrawable();
-            bg.setCornerRadius(dp(10));
-            bg.setColor(selected ? 0x331ED760 : 0x14FFFFFF);
-            chip.setBackground(bg);
-            chip.setTextColor(selected ? ACCENT_COLOR : TEXT_COLOR);
-            // Unselected chips also dim slightly - color alone (white vs. accent) read as too
-            // close in weight; a touch of transparency makes the selected one pop more clearly.
-            chip.setAlpha(selected ? 1f : 0.72f);
-        }
-
         private View divider() {
             View line = new View(activity);
             line.setBackgroundColor(0x1FFFFFFF);
             return line;
-        }
-
-        private LinearLayout.LayoutParams matchWrap(int bottomMarginDp) {
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.bottomMargin = dp(bottomMarginDp);
-            return lp;
-        }
-
-        private boolean isAppleStyle() {
-            return "Apple Music".equals(store.get(Settings.ANIMATION_STYLE));
-        }
-
-        private int safeGet(Settings.IntegerSetting setting) {
-            Integer value = store.get(setting);
-            return value == null ? setting.defaultValue : value;
-        }
-
-        /** Stored value of a string setting, with its declared default as the fallback - for a
-         *  control derived from another setting (the two-column on/off row over the readout
-         *  position) rather than backed by one. */
-        private String safeGetString(Settings.Setting<String> setting) {
-            String value = store.get(setting);
-            return value == null ? setting.defaultValue : value;
         }
 
         /** Current lyrics text size as a percent, matching whichever named preset (or custom
@@ -3910,7 +3748,7 @@ final class LyricsLayoutEditController {
             String[] presetValues = {"small", "normal", "large", "xlarge"};
             int[] presetPercents = {90, 100, 120, 150};
             String mode = store.get(Settings.LYRICS_TEXT_SIZE);
-            int percent = safeGet(Settings.LYRICS_TEXT_SIZE_CUSTOM);
+            int percent = rows.safeGet(Settings.LYRICS_TEXT_SIZE_CUSTOM);
             for (int i = 0; i < presetValues.length; i++) {
                 if (presetValues[i].equalsIgnoreCase(mode)) percent = presetPercents[i];
             }
@@ -4016,7 +3854,7 @@ final class LyricsLayoutEditController {
             bracketPaint.setStrokeWidth(dp(3));
             bracketPaint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
             bracketPaint.setStrokeJoin(android.graphics.Paint.Join.ROUND);
-            bracketPaint.setColor(ACCENT_COLOR);
+            bracketPaint.setColor(EditorRows.ACCENT_COLOR);
             dashPaint.setStyle(android.graphics.Paint.Style.STROKE);
             dashPaint.setStrokeWidth(dp(2));
             dashPaint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
@@ -4029,7 +3867,7 @@ final class LyricsLayoutEditController {
         void setSelectedState(boolean value) {
             if (isSelected == value) return;
             isSelected = value;
-            bracketPaint.setColor(value ? ACCENT_COLOR : GRAY_IDLE_COLOR);
+            bracketPaint.setColor(value ? EditorRows.ACCENT_COLOR : GRAY_IDLE_COLOR);
             bracketPaint.setStrokeWidth(dp(value ? 3 : OUTLINE_IDLE_DP));
             invalidate();
         }
@@ -4114,7 +3952,7 @@ final class LyricsLayoutEditController {
                 postInvalidateOnAnimation();
                 return;
             }
-            paint.setColor(ACCENT_COLOR);
+            paint.setColor(EditorRows.ACCENT_COLOR);
             paint.setStrokeWidth(dp(OUTLINE_SELECTED_DP));
             ViewGroup host = mountedRowsHostSupplier == null ? null : mountedRowsHostSupplier.get();
             if (host != null) {

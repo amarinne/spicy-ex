@@ -92,7 +92,10 @@ public final class EzaChineseRomanizer {
         else if (tone == 9) tone = 6;
         String onset = "";
         for (String candidate : new String[]{"gw", "kw", "ng", "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "z", "c", "s", "j", "w"}) {
-            if (s.startsWith(candidate)) { onset = candidate; break; }
+            if (s.startsWith(candidate) && mapCantoneseFinal(s.substring(candidate.length())) != null) {
+                onset = candidate;
+                break;
+            }
         }
         String fin = s.substring(onset.length());
         String mappedOnset;
@@ -108,19 +111,24 @@ public final class EzaChineseRomanizer {
             default: mappedOnset = onset;
         }
         String mappedFinal = mapCantoneseFinal(fin);
+        if (mappedFinal == null) return raw;
+        int toneNucleus = cantoneseToneNucleus(fin);
         if (onset.equals("j") && (fin.equals("yu") || fin.equals("yun") || fin.equals("yut"))) {
-            mappedOnset = "y";
-            mappedFinal = fin.substring(1);
+            mappedOnset = "";
         }
-        String result = mappedOnset + mappedFinal;
-        return tones ? applyTone(result, tone, false) : result;
+        return mappedOnset + (tones ? applyTone(mappedFinal, tone, false, toneNucleus) : mappedFinal);
     }
 
     private static String mapCantoneseFinal(String fin) {
         String[] from = {"aa", "aai", "aau", "aam", "aan", "aang", "aap", "aat", "aak", "a", "ai", "au", "am", "an", "ang", "ap", "at", "ak", "eoi", "eon", "eot", "oe", "oeng", "oet", "oek", "e", "ei", "eu", "em", "eng", "ep", "ek", "i", "iu", "im", "in", "ing", "ip", "it", "ik", "o", "oi", "ou", "on", "ong", "ot", "ok", "u", "ui", "un", "ung", "ut", "uk", "yu", "yun", "yut"};
         String[] to = {"a", "ai", "ao", "am", "an", "ang", "ap", "at", "ac", "ă", "ay", "au", "ăm", "ăn", "ăng", "ăp", "ăt", "ăc", "ơi", "ơn", "ơt", "ơo", "ơong", "ơot", "ơoc", "e", "ei", "eu", "em", "eng", "ep", "ec", "i", "iu", "im", "in", "ing", "ip", "it", "ic", "o", "oi", "ou", "on", "ong", "ot", "oc", "u", "ui", "un", "ung", "ut", "uc", "yu", "yun", "yut"};
         for (int i = 0; i < from.length; i++) if (fin.equals(from[i])) return to[i];
-        return fin;
+        return fin.equals("m") || fin.equals("ng") ? fin : null;
+    }
+
+    /** Eza tone nuclei are defined by the source final, not by the last-i/u heuristic. */
+    private static int cantoneseToneNucleus(String fin) {
+        return (fin.equals("yu") || fin.equals("yun") || fin.equals("yut")) ? 1 : 0;
     }
 
     private static int trailingTone(String value, int neutral) {
@@ -134,12 +142,16 @@ public final class EzaChineseRomanizer {
     }
 
     private static String applyTone(String value, int tone, boolean mandarin) {
+        return applyTone(value, tone, mandarin, toneIndex(value, mandarin));
+    }
+
+    private static String applyTone(String value, int tone, boolean mandarin, int index) {
         if (tone < 0 || (mandarin && tone == 1)) return value;
         String[] marks = mandarin ? new String[]{"\u0323", "", "\u0301", "\u0309", "\u0300"}
                 : new String[]{"", "\u0303", "\u0301", "", "\u0300", "\u0309", "\u0323"};
         if (tone >= marks.length || marks[tone].isEmpty()) return value;
-        int index = toneIndex(value, mandarin);
-        return index < 0 ? value : value.substring(0, index + 1) + marks[tone] + value.substring(index + 1);
+        return index < 0 || index >= value.length()
+                ? value : value.substring(0, index + 1) + marks[tone] + value.substring(index + 1);
     }
 
     private static int toneIndex(String value, boolean mandarin) {

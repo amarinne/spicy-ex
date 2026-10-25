@@ -3,6 +3,8 @@ package com.eza.spicyex.auto;
 import android.os.Bundle;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
+import com.eza.spicyex.settings.values.SecondaryTextMode;
+import com.eza.spicyex.settings.values.StoredValues;
 
 /** Spotify owns persistence; the provider transports the secondary-text selection. */
 public final class AutoDisplaySettings {
@@ -21,8 +23,13 @@ public final class AutoDisplaySettings {
                 : state.getString(Settings.AUTO_SECONDARY_TEXT.key));
     }
 
-    public static boolean showReading(Bundle state) { return AutoSecondaryText.showReading(secondary(state)); }
-    public static boolean showTranslation(Bundle state) { return AutoSecondaryText.showTranslation(secondary(state)); }
+    public static boolean showReading(Bundle state) { return mode(state).showsTransliteration(); }
+    public static boolean showTranslation(Bundle state) { return mode(state).showsTranslation(); }
     public static int pauseSeconds(Bundle state) { return 3; }
     public static int signature(Bundle state) { return secondary(state).hashCode(); }
+
+    /** The transported label as the value it names. */
+    private static SecondaryTextMode mode(Bundle state) {
+        return StoredValues.fromStored(SecondaryTextMode.class, secondary(state));
+    }
 }

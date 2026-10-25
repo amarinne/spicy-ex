@@ -95,8 +95,8 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 1045
-        versionName "2.0.41+B1045-20261012T1320Z"
+        versionCode 1137
+        versionName "2.1.0+B1137-20261025T1742Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
@@ -139,7 +139,8 @@ android {
     buildTypes {
         release {
             if (releaseKeystoreValid) signingConfig signingConfigs.release
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }

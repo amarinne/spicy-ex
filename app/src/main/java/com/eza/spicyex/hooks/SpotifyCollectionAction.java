@@ -1,7 +1,8 @@
 package com.eza.spicyex.hooks;
 
-import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.settings.values.LikedSongsButton;
+import com.eza.spicyex.settings.values.StoredValues;
 
 import java.util.List;
 import java.util.function.Supplier;
@@ -27,7 +28,7 @@ final class SpotifyCollectionAction {
     private SpotifyCollectionAction() {}
 
     static boolean enabled(String mode) {
-        return !Settings.LIKED_SONGS_BUTTON.defaultValue.equals(Settings.LIKED_SONGS_BUTTON.coerce(mode));
+        return StoredValues.fromStored(LikedSongsButton.class, mode) != LikedSongsButton.DEFAULT;
     }
 
     static boolean dispatch(String mode, SpotifyTrack expected, Supplier<SpotifyTrack> currentTrack,

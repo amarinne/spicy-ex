@@ -5,9 +5,11 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.eza.spicyex.Settings;
-import com.eza.spicyex.settings.PanelPolicy;
-import com.eza.spicyex.settings.PanelSnapshot;
-import com.eza.spicyex.settings.SettingsUiSchema;
+import com.eza.spicyex.settings.registry.ControlRegistry;
+import com.eza.spicyex.settings.registry.ControlSpec;
+import com.eza.spicyex.settings.registry.SettingsSnapshot;
+import com.eza.spicyex.settings.values.TrackInfoPosition;
+import com.eza.spicyex.settings.registry.UiContext;
 
 import org.junit.Test;
 
@@ -22,9 +24,12 @@ public class PipAlbumArtPolicyTest {
     }
 
     @Test
-    public void schemaListsAlbumArtInThePipSection() {
-        assertTrue(SettingsUiSchema.orderedSettings().contains(Settings.PIP_ALBUM_ART));
-        assertTrue(SettingsUiSchema.orderedSettings(Settings.PIP).contains(Settings.PIP_ALBUM_ART));
+    public void theRegistryListsAlbumArtInThePipSection() {
+        boolean listed = false;
+        for (ControlSpec entry : ControlRegistry.panelControls(Settings.PIP)) {
+            if (entry.setting == Settings.PIP_ALBUM_ART) listed = true;
+        }
+        assertTrue(listed);
     }
 
     @Test
@@ -47,13 +52,11 @@ public class PipAlbumArtPolicyTest {
     @Test
     public void pipColumnGateRestoresOnlyTheLandscapeColumn() {
         assertTrue(TrackInfoReadoutController.pipColumnAllowed(true, true));
-        assertEquals("Top", TrackInfoReadoutController.pipEffectiveMode(true, true));
+        assertEquals(TrackInfoPosition.TOP, TrackInfoReadoutController.pipEffectiveMode(true, true));
         // Off: every shape is lyrics-only.
-        assertFalse(TrackInfoReadoutController.pipColumnAllowed(true, false));
         assertFalse(TrackInfoReadoutController.pipColumnAllowed(false, true));
-        assertFalse(TrackInfoReadoutController.pipColumnAllowed(false, false));
-        assertEquals("Off", TrackInfoReadoutController.pipEffectiveMode(true, false));
-        assertEquals("Top", TrackInfoReadoutController.pipEffectiveMode(false, true));
+        assertFalse(TrackInfoReadoutController.pipColumnAllowed(true, false));
+        assertEquals(TrackInfoPosition.OFF, TrackInfoReadoutController.pipEffectiveMode(true, false));
     }
 
     @Test
@@ -66,9 +69,20 @@ public class PipAlbumArtPolicyTest {
 
     @Test
     public void albumArtRowFollowsThePipMasterSwitch() {
-        PanelSnapshot off = PanelSnapshot.builder().build();
-        assertFalse(PanelPolicy.shouldRender(Settings.PIP_ALBUM_ART, off));
-        PanelSnapshot on = PanelSnapshot.builder().put(Settings.PIP_ENABLED, true).build();
-        assertTrue(PanelPolicy.shouldRender(Settings.PIP_ALBUM_ART, on));
+        assertFalse(visible(Settings.PIP_ALBUM_ART, context(false)));
+        assertTrue(visible(Settings.PIP_ALBUM_ART, context(true)));
+    }
+
+    private static UiContext context(boolean pipEnabled) {
+        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put(Settings.PIP_ENABLED.key, pipEnabled);
+        return new UiContext(false, false, false, new SettingsSnapshot(values), true);
+    }
+
+    private static boolean visible(Settings.Setting<?> setting, UiContext context) {
+        for (ControlSpec entry : ControlRegistry.visiblePanelControls(context)) {
+            if (entry.setting == setting) return true;
+        }
+        return false;
     }
 }

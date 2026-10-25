@@ -177,4 +177,19 @@ public class AgentCommandActionsTest {
         assertFalse(calls.containsKey("seekSpotifyTo"));
         assertEquals("SPICY_AGENT error playback accepted=false #seek\n", reply());
     }
+
+    @Test public void anUnknownAmbientEffectNeverReachesTheShell() throws Exception {
+        channel.dispatch("ambient-effect compose #effect");
+        assertEquals("SPICY_AGENT error ambient-effect expected kawarp, mesh, or status #effect\n", reply());
+        assertTrue(posted.isEmpty());
+    }
+
+    @Test public void invalidPersistedBackgroundSelectionsNeverReachTheStore() throws Exception {
+        channel.dispatch("background-effect fixed compose #fixed");
+        channel.dispatch("background-effect pool random #pool");
+        assertEquals("SPICY_AGENT error background-effect unknown fixed effect 'compose' #fixed\n"
+                        + "SPICY_AGENT error background-effect expected a nonempty list of fixed ids #pool\n",
+                reply());
+        assertTrue(posted.isEmpty());
+    }
 }

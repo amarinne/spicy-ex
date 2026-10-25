@@ -1,0 +1,1147 @@
+package com.eza.spicyex.settings.panel;
+
+import com.eza.spicyex.BuildStamp;
+import com.eza.spicyex.CurrentLyricState;
+import com.eza.spicyex.Diagnostics;
+import com.eza.spicyex.Settings;
+import com.eza.spicyex.SettingsStore;
+import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.ui.SettingsUiStrings;
+import com.eza.spicyex.ui.UiLanguage;
+import com.eza.spicyex.ui.GlossyToggle;
+
+import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import com.eza.spicyex.diagnostics.DiagnosticReportingDialog;
+import com.eza.spicyex.lyrics.cache.CacheClearKind;
+import com.eza.spicyex.lyrics.cache.CacheStoragePolicy;
+import com.eza.spicyex.lyrics.language.LanguageModelPack;
+import com.eza.spicyex.lyrics.providers.LyricsFetchDiagnosticsState;
+import com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore;
+import com.eza.spicyex.settings.RowSyncPlan;
+import com.eza.spicyex.settings.SettingsWriter;
+import com.eza.spicyex.settings.registry.ControlRegistry;
+import com.eza.spicyex.settings.registry.ControlSpec;
+import com.eza.spicyex.settings.registry.SettingsSnapshot;
+import com.eza.spicyex.settings.registry.UiContext;
+import com.eza.spicyex.settings.values.AnimationStyle;
+import com.eza.spicyex.ui.ActionIconDrawable;
+import com.eza.spicyex.ui.ActionIconDrawable.Kind;
+import com.eza.spicyex.ui.Motion;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Coordinator for the in-Spotify settings panel.
+ *
+ * <p>Owns only what is genuinely panel-wide: the scrolling card, the section list, one applied
+ * state snapshot per render pass, anchor-preserving rebuilds, and the dispatch of each setting
+ * to its renderer. Everything with a narrower responsibility lives in an owner:
+ *
+ * <ul>
+ * <li>{@link PanelStyle} — colours, density, and every shared view construction.</li>
+ * <li>{@link SettingRowFactory} — one renderer per row kind, plus in-place patching.</li>
+ * <li>{@link SourceOrderEditor} — the merged source row, ranking, and drag-to-reorder.</li>
+ * <li>{@link PanelDialogs} — option, confirming, cache, and credential dialogs.</li>
+ * <li>{@link PanelPolicy} — pure availability, commit, and rebuild policy.</li>
+ * </ul>
+ *
+ * <p>The rows themselves are not listed here: they come from the control registry
+ * ({@link ControlRegistry}), which also owns their order, their kind, and their visibility.
+ * Does not own setting defaults ({@link Settings}) or persistence ({@link SettingsStore}).
+ * Rendered as a single floating rounded card using platform widgets and {@link GlossyToggle};
+ * layout stays visually stable unless device screenshots verify a change.
+ */
+public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs.Host,
+        SourceOrderEditor.Host {
+    // Static: survives panel re-opens within the process, so the panel never re-opens fully collapsed.
+    private static final Set<String> expandedSections = new java.util.HashSet<>();
+
+    private final Context context;
+    private final PanelStyle style;
+    private int sectionReflowGeneration;
+    private static final String TAG_SECTION_CHEVRON = "hdr:chevron";
+    private static final String TAG_LAYOUT_EDITOR_ACTION = "action:layout_editor";
+    private static final String TAG_CARD_EDITOR_ACTION = "action:card_editor";
+    /** The row id of the language pack download: an action, so it stores nothing. */
+    private static final String DOWNLOAD_LANGUAGE_MODELS_ROW = "download_language_models";
+
+    private final SettingsStore store;
+    private final SettingsWriter writer;
+    private final SettingRowFactory rows;
+    private final PanelDialogs dialogs;
+    private final SourceOrderEditor sources;
+    private final java.util.function.BooleanSupplier isHalfSize;
+    private final Runnable onToggleSize;
+    private final Runnable onClose;
+    /** Opens the layout editor: {@link #EDITOR_LYRICS} or {@link #EDITOR_CARD}. */
+    private final java.util.function.IntConsumer onOpenLayoutEditor;
+    public static final int EDITOR_LYRICS = 1;
+    public static final int EDITOR_CARD = 2;
+    private final java.util.function.Consumer<CacheClearKind> onClearCache;
+    private final Runnable onResyncTiming;
+    private com.eza.spicyex.hooks.LyricsHost lyricsHost;
+
+    private LinearLayout sectionsContainer;
+    private TextView panelTitle;
+    private SettingsUiStrings uiStrings;
+    private AiSettingsRows aiSettingsRows;
+    private ScrollView scrollRoot;
+    private ImageView aiBadgeView;
+    private String anchorTag;
+    private int anchorDelta;
+    /**
+     * Whether the built view is currently attached to a window.
+     *
+     * <p>AI model probes and discovery run on background threads and post back afterwards. This
+     * is the panel's own lifecycle signal, so a late result cannot rebuild a dismissed panel or
+     * repaint a detached badge.
+     */
+    private volatile boolean panelAttached;
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
+    /** One queued download-status tick at a time, so attach/detach cannot stack polling loops. */
+    private boolean languageModelPollQueued;
+
+    /** Locale lookup for the pure policy layer; reads the current uiStrings on every call. */
+    private final PanelStrings panelStrings = new PanelStrings() {
+        @Override public String get(String name, String fallback) {
+            return uiStrings.get(name, fallback);
+        }
+
+        @Override public String format(String name, String fallback, Object... args) {
+            return uiStrings.format(name, fallback, args);
+        }
+    };
+
+    public SettingsPanel(Context context, SettingsStore store,
+                         java.util.function.BooleanSupplier isHalfSize,
+                         Runnable onToggleSize, Runnable onClose,
+                         java.util.function.IntConsumer onOpenLayoutEditor,
+                         java.util.function.Consumer<CacheClearKind> onClearCache,
+                         Runnable onResyncTiming) {
+        this.context = context;
+        this.style = new PanelStyle(context);
+        this.store = store;
+        this.writer = new SettingsWriter(store);
+        this.rows = new SettingRowFactory(this);
+        this.dialogs = new PanelDialogs(this);
+        this.sources = new SourceOrderEditor(this);
+        this.isHalfSize = isHalfSize;
+        this.onToggleSize = onToggleSize;
+        this.onClose = onClose;
+        this.onOpenLayoutEditor = onOpenLayoutEditor;
+        this.onClearCache = onClearCache;
+        this.onResyncTiming = onResyncTiming;
+        writer.ensureBackgroundStyleMigrated(store.get(Settings.ENABLE_BACKGROUND));
+        this.uiStrings = UiLanguage.strings(context, store.get(Settings.UI_LANGUAGE));
+    }
+
+    /** Builds the card view; the host sizes/centers it. */
+    public View build() {
+        ScrollView scroll = new ScrollView(context);
+        scroll.setVerticalScrollBarEnabled(false);
+        android.graphics.drawable.GradientDrawable cardBg =
+                new android.graphics.drawable.GradientDrawable();
+        cardBg.setColor(PanelStyle.COL_CARD);
+        cardBg.setCornerRadius(style.dp(26));
+        cardBg.setStroke(style.dp(1), PanelStyle.COL_CARD_BORDER);
+        scroll.setBackground(cardBg);
+        scroll.setClipToOutline(true);
+        scrollRoot = scroll;
+        // The panel's lifecycle owner is its own view tree: the host shows and dismisses this
+        // ScrollView, so attach/detach is the exact moment work must start or stop.
+        scroll.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(View v) {
+                panelAttached = true;
+                // The panel is rebuilt on every open, so an install started earlier has no loop
+                // left to continue: resume it or the row keeps the progress it was built with.
+                if (LanguageModelPack.status().phase == LanguageModelPack.Phase.DOWNLOADING) {
+                    resumeLanguageModelDownloadPolling();
+                }
+            }
+
+            @Override public void onViewDetachedFromWindow(View v) {
+                panelAttached = false;
+                sectionReflowGeneration++;
+                if (sectionsContainer != null) {
+                    for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+                        View child = sectionsContainer.getChildAt(i);
+                        child.animate().cancel();
+                        child.setTranslationY(0f);
+                    }
+                }
+                languageModelPollQueued = false;
+                uiHandler.removeCallbacksAndMessages(null);
+            }
+        });
+
+        LinearLayout content = new LinearLayout(context);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(style.dp(20), style.dp(18), style.dp(20), style.dp(20));
+        scroll.addView(content, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+
+        renderHeader(content);
+        sectionsContainer = new LinearLayout(context);
+        sectionsContainer.setOrientation(LinearLayout.VERTICAL);
+        content.addView(sectionsContainer, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        renderSections(sectionsContainer);
+        return scroll;
+    }
+
+    private void renderHeader(LinearLayout content) {
+        LinearLayout header = new LinearLayout(context);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        panelTitle = style.text(uiStrings.appName(), 26, PanelStyle.COL_TITLE, true);
+        header.addView(panelTitle, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (onToggleSize != null) {
+            // Chevrons up/down = collapse toward the top-anchored half panel; down/up = grow.
+            android.widget.ImageButton resize = style.headerIconButton(resizeKind(),
+                    uiStrings.get("settings_panel_resize", "Resize settings panel"), v -> {
+                onToggleSize.run();
+                ((android.widget.ImageButton) v).setImageDrawable(
+                        new ActionIconDrawable(resizeKind(), PanelStyle.COL_SUMMARY, style.density()));
+            });
+            header.addView(resize);
+        }
+        if (onClose != null) {
+            header.addView(style.headerIconButton(Kind.CLOSE,
+                    uiStrings.get("settings_panel_close", "Close settings panel"), v -> onClose.run()));
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = style.dp(6);
+        content.addView(header, lp);
+    }
+
+    private Kind resizeKind() {
+        return isHalfSize != null && isHalfSize.getAsBoolean()
+                ? Kind.CHEVRONS_DOWN_UP
+                : Kind.CHEVRONS_UP_DOWN;
+    }
+
+    /** Opens and reveals a section through its existing header action. */
+    public boolean openSection(String id) {
+        for (Settings.Section section : ControlRegistry.panelSections()) {
+            if (!section.id.equals(id)) continue;
+            int index = indexOfChildByTag(PanelTags.header(section));
+            if (index < 0 || scrollRoot == null) return false;
+            View header = sectionsContainer.getChildAt(index);
+            if (!expandedSections.contains(id)) header.performClick();
+            scrollRoot.postDelayed(() -> {
+                if (scrollRoot.isAttachedToWindow()) scrollRoot.scrollTo(0,
+                        sectionsContainer.getTop() + header.getTop());
+            }, Motion.dur(Motion.BASE) + 50L);
+            return true;
+        }
+        return false;
+    }
+
+    // --- Section rendering ---
+
+    private void renderSections(LinearLayout content) {
+        aiRows().ensureInitialModelCheck();
+        for (Map.Entry<Settings.Section, List<ControlSpec>> entry
+                : groupVisibleSettings().entrySet()) {
+            renderSectionGroup(content, entry.getKey(), entry.getValue());
+        }
+        appendSectionHeader(content, Settings.DEBUG, expandedSections.contains(Settings.DEBUG.id), -1);
+        if (expandedSections.contains(Settings.DEBUG.id)) appendDebugCard(content, -1);
+    }
+
+    /** Closes this dialog (its usual animated exit), then hands off to the shell: the layout
+     *  editor is an overlay on the real lyrics screen, not a separate window. */
+    private void openEditor(int mode) {
+        if (onClose != null) onClose.run();
+        if (onOpenLayoutEditor != null) onOpenLayoutEditor.accept(mode);
+    }
+
+    /**
+     * The visible rows per section, in registry order.
+     *
+     * <p>Section order and row order come from the control registry, not from an accident of
+     * declaration order in the settings schema, and the registry owns their visibility.
+     */
+    private LinkedHashMap<Settings.Section, List<ControlSpec>> groupVisibleSettings() {
+        UiContext context = uiContext();
+        LinkedHashMap<Settings.Section, List<ControlSpec>> grouped = new LinkedHashMap<>();
+        for (Settings.Section section : ControlRegistry.visiblePanelSections(context)) {
+            grouped.put(section, new ArrayList<>());
+        }
+        for (ControlSpec entry : ControlRegistry.visiblePanelControls(context)) {
+            grouped.get(entry.section).add(entry);
+        }
+        return grouped;
+    }
+
+    /**
+     * One immutable applied-state snapshot per render pass; the registry reads this, never the
+     * store. The panel is a single-column overlay, so it never renders the two-column or the
+     * now-playing card variants.
+     */
+    @Override public UiContext uiContext() {
+        return new UiContext(false, false, landscape(), SettingsSnapshot.capture(store),
+                LanguageModelPack.isReady());
+    }
+
+    /** The panel's own orientation; a host without resources reads as portrait. */
+    private boolean landscape() {
+        try {
+            return context.getResources().getConfiguration().orientation
+                    == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        } catch (RuntimeException noResources) {
+            return false;
+        }
+    }
+
+    private void renderSectionGroup(LinearLayout content, Settings.Section section,
+                                    List<ControlSpec> items) {
+        boolean expanded = expandedSections.contains(section.id);
+        appendSectionHeader(content, section, expanded, -1);
+        if (!expanded) return;
+        // The AI section's remaining rows are not settings: a key that must not persist as it
+        // is typed, and a model list that has to be fetched before it can be offered.
+        appendSectionCard(content, section, items, -1);
+    }
+
+    /** Card for a settings section; AI gets its non-setting rows appended after the settings. */
+    private void appendSectionCard(LinearLayout parent, Settings.Section section,
+                                   List<ControlSpec> items, int at) {
+        LinearLayout card = style.newCard();
+        card.setTag(PanelTags.card(section));
+        for (ControlSpec entry : items) renderSetting(card, entry);
+        appendEditorActionRows(card, section);
+        if (section == Settings.AI) {
+            // Dynamic AI rows churn with setup state; they live in their own tagged block so
+            // keyed rebinding refreshes them as a unit without touching ordinary rows.
+            LinearLayout dynamic = new LinearLayout(context);
+            dynamic.setOrientation(LinearLayout.VERTICAL);
+            dynamic.setTag(PanelTags.AI_DYNAMIC);
+            aiRows().render(dynamic);
+            card.addView(dynamic, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        style.attachCard(parent, card, at);
+    }
+
+    private void appendDebugCard(LinearLayout parent, int at) {
+        LinearLayout card = style.newCard();
+        card.setTag(PanelTags.card(Settings.DEBUG));
+        renderActions(card);
+        renderStatus(card);
+        renderDiagnostics(card);
+        style.attachCard(parent, card, at);
+    }
+
+    // --- Anchor-preserving rebuilds ---
+    // scrollY alone orphans the reader's anchor when a section above folds; anchor on the
+    // first header/card boundary visible at viewport top instead.
+
+    private void captureAnchor() {
+        anchorTag = null;
+        anchorDelta = 0;
+        if (scrollRoot == null || sectionsContainer == null) return;
+        int scrollY = scrollRoot.getScrollY();
+        int bottom = scrollY + Math.max(1, scrollRoot.getHeight());
+        int base = sectionsContainer.getTop();
+        for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+            View child = sectionsContainer.getChildAt(i);
+            if (!(child.getTag() instanceof String)) continue;
+            int absTop = base + child.getTop();
+            if (absTop >= scrollY && absTop < bottom) {
+                anchorTag = (String) child.getTag();
+                anchorDelta = absTop - scrollY;
+                return;
+            }
+        }
+        // Nothing starts inside the viewport: anchor on the last boundary above it.
+        for (int i = sectionsContainer.getChildCount() - 1; i >= 0; i--) {
+            View child = sectionsContainer.getChildAt(i);
+            if (!(child.getTag() instanceof String)) continue;
+            int absTop = base + child.getTop();
+            if (absTop <= scrollY) {
+                anchorTag = (String) child.getTag();
+                anchorDelta = absTop - scrollY; // ≤ 0
+                return;
+            }
+        }
+    }
+
+    private void restoreAnchor() {
+        if (scrollRoot == null || sectionsContainer == null || anchorTag == null) return;
+        final String tag = anchorTag;
+        final int delta = anchorDelta;
+        final ViewTreeObserver observer = scrollRoot.getViewTreeObserver();
+        observer.addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                if (scrollRoot == null) return true;
+                ViewTreeObserver currentObserver = scrollRoot.getViewTreeObserver();
+                if (currentObserver.isAlive()) {
+                    currentObserver.removeOnPreDrawListener(this);
+                } else if (observer.isAlive()) {
+                    observer.removeOnPreDrawListener(this);
+                }
+                if (sectionsContainer == null) return true;
+                for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+                    View child = sectionsContainer.getChildAt(i);
+                    if (!tag.equals(child.getTag())) continue;
+                    scrollRoot.scrollTo(0,
+                            Math.max(0, sectionsContainer.getTop() + child.getTop() - delta));
+                    break;
+                }
+                return true;
+            }
+        });
+    }
+
+    private void retargetAnchorToHeader(Settings.Section target) {
+        int headerIdx = indexOfChildByTag(PanelTags.header(target));
+        if (headerIdx < 0 || scrollRoot == null) return;
+        View header = sectionsContainer.getChildAt(headerIdx);
+        anchorTag = PanelTags.header(target);
+        anchorDelta = sectionsContainer.getTop() + header.getTop() - scrollRoot.getScrollY();
+    }
+
+    // --- Setting dispatch ---
+
+    private void renderSetting(LinearLayout content, ControlSpec entry) {
+        Settings.Setting<?> setting = entry.setting;
+        switch (entry.kind) {
+            case COMPOSITE:
+                renderComposite(content, entry);
+                return;
+            case TOGGLE:
+                rows.switchRow(content, (Settings.BooleanSetting) setting);
+                return;
+            case STEPPER:
+                rows.stepperRow(content, (Settings.IntegerSetting) setting);
+                return;
+            case CHOICE:
+                renderChoice(content, (Settings.StringSetting) setting);
+                return;
+            case TEXT_FIELD:
+                rows.textFieldRow(content, (Settings.StringSetting) setting);
+                return;
+            default:
+                throw new IllegalStateException("The panel has no row for " + entry.kind);
+        }
+    }
+
+    /** A selector row offers the setting's own values; the interface language offers locales. */
+    private void renderChoice(LinearLayout content, Settings.StringSetting setting) {
+        if (setting == Settings.UI_LANGUAGE) {
+            rows.selectorRow(content, setting, uiStrings.availableUiLanguages(), null);
+            return;
+        }
+        rows.selectorRow(content, setting);
+    }
+
+    /** The hand-built rows the registry names by their composite id. */
+    private void renderComposite(LinearLayout content, ControlSpec entry) {
+        String id = entry.compositeId;
+        if ("source_row".equals(id)) {
+            sources.rows(content);
+            return;
+        }
+        if ("spicy_key".equals(id)) {
+            spicyKeyRow(content);
+            return;
+        }
+        if ("download_language_models".equals(id)) {
+            downloadLanguageModelsRow(content);
+            return;
+        }
+        throw new IllegalStateException("No panel renderer for composite " + id);
+    }
+
+    /**
+     * True when the AI star should be lit: the whole family is configured and could run now.
+     *
+     * <p>Falls back to the enable flag only before the AI rows exist, which is the one moment
+     * nothing can be asked about credentials.
+     */
+    private boolean aiReady() {
+        return aiSettingsRows != null ? aiSettingsRows.isReady()
+                : Boolean.TRUE.equals(store.get(Settings.AI_ENABLED));
+    }
+
+    private void rebuildSections() {
+        sectionReflowGeneration++;
+        if (sectionsContainer == null) return;
+        captureAnchor();
+        aiBadgeView = null;
+        sectionsContainer.removeAllViews();
+        renderSections(sectionsContainer);
+        restoreAnchor();
+    }
+
+    /**
+     * Re-renders one section (header + card) in place instead of tearing down the whole panel.
+     * Gating toggles, selector picks and section folds land here; UI_LANGUAGE still takes the
+     * full path because every label changes. Anchor-preserving either way.
+     *
+     * <p>The header is one fixed-height row and updates in place; card rows rebind by stable
+     * ID (ordinary rows patch in place, composites swap in place). DEBUG carries live values
+     * and re-renders its card as a unit.
+     */
+    private void rebuildSection(Settings.Section target) {
+        if (sectionsContainer == null) return;
+        int headerIdx = indexOfChildByTag(PanelTags.header(target));
+        if (headerIdx < 0) {
+            rebuildSections();
+            return;
+        }
+        captureAnchor();
+        Map<View, Float> previousTops = new java.util.IdentityHashMap<>();
+        if (Motion.animationsEnabled() && scrollRoot != null && sectionsContainer.isLaidOut()) {
+            for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+                View child = sectionsContainer.getChildAt(i);
+                float top = child.getTop() + child.getTranslationY() - scrollRoot.getScrollY();
+                child.animate().cancel();
+                previousTops.put(child, top);
+            }
+        }
+        boolean expanded = expandedSections.contains(target.id);
+        if (!expanded && PanelTags.card(target).equals(anchorTag)) {
+            retargetAnchorToHeader(target);
+        }
+
+        View headerView = sectionsContainer.getChildAt(headerIdx);
+        if (headerView != null) {
+            View chevron = headerView.findViewWithTag(TAG_SECTION_CHEVRON);
+            if (chevron != null) {
+                float targetRotation = expanded ? 90f : 0f;
+                if (!Motion.animationsEnabled()) {
+                    chevron.animate().cancel();
+                    chevron.setRotation(targetRotation);
+                } else {
+                    chevron.animate().rotation(targetRotation).setDuration(Motion.dur(Motion.REVEAL)).start();
+                }
+            }
+            if (target == Settings.AI && aiBadgeView != null) {
+                aiBadgeView.setImageDrawable(new ActionIconDrawable(Kind.SPARKLES,
+                        aiReady() ? PanelStyle.COL_ACCENT : PanelStyle.COL_SECTION, style.density()));
+            }
+        }
+
+        if (!expanded) {
+            int staleCard = indexOfChildByTag(PanelTags.card(target));
+            if (staleCard >= 0) sectionsContainer.removeViewAt(staleCard);
+        } else if (target == Settings.DEBUG) {
+            int cardIdx = indexOfChildByTag(PanelTags.card(target));
+            if (cardIdx >= 0) sectionsContainer.removeViewAt(cardIdx);
+            appendDebugCard(sectionsContainer, headerIdx + 1);
+        } else {
+            rebindCard(target, headerIdx);
+        }
+        restoreAnchor();
+        animateSectionReflow(previousTops);
+    }
+
+    private void animateSectionReflow(Map<View, Float> previousTops) {
+        final int generation = ++sectionReflowGeneration;
+        if (previousTops.isEmpty()) return;
+        final ViewTreeObserver observer = sectionsContainer.getViewTreeObserver();
+        observer.addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                if (observer.isAlive()) observer.removeOnPreDrawListener(this);
+                if (generation != sectionReflowGeneration || !sectionsContainer.isAttachedToWindow()) return true;
+                for (Map.Entry<View, Float> entry : previousTops.entrySet()) {
+                    View child = entry.getKey();
+                    if (child.getParent() != sectionsContainer) continue;
+                    float offset = entry.getValue() - (child.getTop() - scrollRoot.getScrollY());
+                    child.setTranslationY(Motion.animationsEnabled() ? offset : 0f);
+                    child.animate().translationY(0f).setDuration(Motion.dur(Motion.BASE))
+                            .setInterpolator(Motion.decel()).start();
+                }
+                return true;
+            }
+        });
+    }
+
+    /** Keyed card sync: stale rows out, the rest reused by ID and patched, missing rows built. */
+    private void rebindCard(Settings.Section target, int headerIdx) {
+        List<ControlSpec> items = groupVisibleSettings().get(target);
+        if (items == null || items.isEmpty()) {
+            rebuildSections(); // defensive: rendered section without visible settings
+            return;
+        }
+        int cardIdx = indexOfChildByTag(PanelTags.card(target));
+        LinearLayout card;
+        if (cardIdx < 0 || !(sectionsContainer.getChildAt(cardIdx) instanceof LinearLayout)) {
+            card = style.newCard();
+            card.setTag(PanelTags.card(target));
+            style.attachCard(sectionsContainer, card, headerIdx + 1);
+        } else {
+            card = (LinearLayout) sectionsContainer.getChildAt(cardIdx);
+        }
+        Map<String, ControlSpec> byKey = new java.util.HashMap<>();
+        List<String> visibleKeys = new ArrayList<>();
+        for (ControlSpec entry : items) {
+            byKey.put(entry.rowId(), entry);
+            visibleKeys.add(entry.rowId());
+        }
+        List<String> currentKeys = new ArrayList<>();
+        for (int i = 0; i < card.getChildCount(); i++) {
+            String key = PanelTags.keyOf(card.getChildAt(i).getTag());
+            if (key != null) currentKeys.add(key);
+        }
+        RowSyncPlan plan = RowSyncPlan.of(visibleKeys, currentKeys);
+        // The AI dynamic block re-renders as a unit; detach it so positions count rows only.
+        View dynamic = findChildByTag(card, PanelTags.AI_DYNAMIC);
+        if (dynamic != null) card.removeView(dynamic);
+        for (String dead : plan.removals) {
+            View stale = findRowIn(card, dead);
+            if (stale != null) card.removeView(stale);
+        }
+        for (int i = 0; i < plan.order.size(); i++) {
+            String key = plan.order.get(i);
+            ControlSpec entry = byKey.get(key);
+            if (entry == null) continue;
+            View row = findRowIn(card, key);
+            if (row == null || entry.kind == ControlSpec.Kind.COMPOSITE) {
+                if (row != null) card.removeView(row);
+                renderSetting(card, entry); // appends fresh; repositioned below
+                row = card.getChildAt(card.getChildCount() - 1);
+            } else {
+                rows.patchRow(row, entry);
+            }
+            if (row != null) {
+                card.removeView(row);
+                card.addView(row, Math.min(i, card.getChildCount()));
+            }
+        }
+        refreshAiDynamicBlock(card, target);
+        syncEditorActionRows(card, target);
+    }
+
+    /** Keeps non-setting editor launch rows present on both full renders and keyed section
+     * rebuilds. These rows have no preference key, so the ordinary RowSyncPlan cannot own them. */
+    private void syncEditorActionRows(LinearLayout card, Settings.Section section) {
+        removeChildByTag(card, TAG_LAYOUT_EDITOR_ACTION);
+        removeChildByTag(card, TAG_CARD_EDITOR_ACTION);
+        appendEditorActionRows(card, section);
+    }
+
+    private void appendEditorActionRows(LinearLayout card, Settings.Section section) {
+        if (section != Settings.LYRICS_SCREEN) return;
+        // Everything about how the lyrics screen and the now-playing card look is edited on the
+        // screen itself; tap behaviour and transition feel stay in the ordinary settings rows.
+        rows.actionRow(card, Kind.ALIGN_VERTICAL_DISTRIBUTE_CENTER,
+                uiStrings.get("settings_layout_editor", "Layout editor…"),
+                v -> openEditor(EDITOR_LYRICS));
+        card.getChildAt(card.getChildCount() - 1).setTag(TAG_LAYOUT_EDITOR_ACTION);
+        rows.actionRow(card, Kind.ALIGN_VERTICAL_DISTRIBUTE_CENTER,
+                uiStrings.get("settings_card_editor", "Now playing card editor…"),
+                v -> openEditor(EDITOR_CARD));
+        card.getChildAt(card.getChildCount() - 1).setTag(TAG_CARD_EDITOR_ACTION);
+    }
+
+    private static void removeChildByTag(LinearLayout parent, String tag) {
+        View child = findChildByTag(parent, tag);
+        if (child != null) parent.removeView(child);
+    }
+
+    /** AI dynamic rows re-render as one tagged block; ordinary AI settings rows patch by key. */
+    private void refreshAiDynamicBlock(LinearLayout card, Settings.Section target) {
+        View dynamic = findChildByTag(card, PanelTags.AI_DYNAMIC);
+        if (target != Settings.AI) {
+            if (dynamic != null) card.removeView(dynamic);
+            return;
+        }
+        LinearLayout block;
+        if (dynamic instanceof LinearLayout) {
+            block = (LinearLayout) dynamic;
+            block.removeAllViews();
+        } else {
+            block = new LinearLayout(context);
+            block.setOrientation(LinearLayout.VERTICAL);
+            block.setTag(PanelTags.AI_DYNAMIC);
+            card.addView(block, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        aiRows().render(block);
+    }
+
+    private View findRowIn(LinearLayout card, String key) {
+        return findChildByTag(card, PanelTags.row(key));
+    }
+
+    private static View findChildByTag(LinearLayout parent, String tag) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            if (tag.equals(parent.getChildAt(i).getTag())) return parent.getChildAt(i);
+        }
+        return null;
+    }
+
+    private int indexOfChildByTag(String tag) {
+        for (int i = 0; i < sectionsContainer.getChildCount(); i++) {
+            if (tag.equals(sectionsContainer.getChildAt(i).getTag())) return i;
+        }
+        return -1;
+    }
+
+    /** UI language rebuilds every label; dependency settings rebuild only their own section. */
+    @Override public void onSettingChanged(Settings.Setting<?> setting) {
+        if (setting == Settings.LYRICS_SOURCE_MODE) {
+            com.eza.spicyex.lyrics.session.LyricsSourcePreferences.setRankingMode(context,
+                    com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode.parse(
+                            String.valueOf(store.get(setting))));
+        }
+        if (setting == Settings.UI_LANGUAGE) {
+            rebuildSections();
+        } else if (setting == Settings.ANIMATION_STYLE) {
+            // The Apple Music card appears/disappears with this pick (a cross-section change),
+            // so the whole panel rebuilds anchor-preserved instead of one section in place.
+            if (store.get(Settings.ANIMATION_STYLE, AnimationStyle.class).isApple()) {
+                expandedSections.add(Settings.APPLE.id);
+            }
+            rebuildSections();
+        } else if (PanelPolicy.shouldRebuildSectionAfterChange(setting)) {
+            rebuildSection(setting.section);
+        }
+    }
+
+    /** Section headers --- */
+
+    private LinearLayout buildSectionHeader(Settings.Section section, boolean expanded) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(style.dp(44));
+        row.setPadding(style.dp(4), style.dp(8), style.dp(4), style.dp(8));
+        row.setBackground(new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x22FFFFFF), null,
+                new android.graphics.drawable.ColorDrawable(0xFFFFFFFF)));
+        row.setTag(PanelTags.header(section));
+
+        Kind sectionIcon = PanelStyle.sectionIcon(section);
+        if (sectionIcon != null) {
+            ImageView sectionIconView = style.kindView(sectionIcon,
+                    section == Settings.AI && aiReady() ? PanelStyle.COL_ACCENT : PanelStyle.COL_SECTION, 18);
+            if (section == Settings.AI) aiBadgeView = sectionIconView;
+            row.addView(sectionIconView, style.leadParams());
+        }
+
+        TextView title = style.text(uiStrings.section(section), 14, PanelStyle.COL_TITLE, true);
+        title.setAllCaps(true);
+        title.setLetterSpacing(0.05f);
+        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        ImageView chevron = style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 16);
+        chevron.setTag(TAG_SECTION_CHEVRON);
+        chevron.setRotation(expanded ? 90f : 0f);
+        row.addView(chevron,
+                new LinearLayout.LayoutParams(style.dp(28), style.dp(28)));
+        row.setOnClickListener(v -> {
+            boolean nowExpanded = !expandedSections.contains(section.id);
+            if (nowExpanded) expandedSections.add(section.id);
+            else expandedSections.remove(section.id);
+            rebuildSection(section);
+        });
+        return row;
+    }
+
+    private void appendSectionHeader(LinearLayout parent, Settings.Section section,
+                                     boolean expanded, int at) {
+        View row = buildSectionHeader(section, expanded);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = style.dp(4);
+        if (at < 0 || at >= parent.getChildCount()) parent.addView(row, lp);
+        else parent.addView(row, at, lp);
+    }
+
+    // --- Credentials row (composite) ---
+
+    private void spicyKeyRow(LinearLayout content) {
+        LinearLayout group = new LinearLayout(context);
+        group.setOrientation(LinearLayout.VERTICAL);
+        group.setTag(PanelTags.row(Settings.SPICY_ORG_CLIENT_KEY));
+        content.addView(group, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        boolean configured = SpicyOrgKeyStore.has(context);
+        List<AiSettingsRows.IconAction> actions = new ArrayList<>();
+        actions.add(new AiSettingsRows.IconAction(Kind.EDIT,
+                uiStrings.get("settings_spicy_key_edit", "Add or change key"), v -> dialogs.promptSpicyKey()));
+        if (configured) {
+            actions.add(new AiSettingsRows.IconAction(Kind.DELETE,
+                    uiStrings.get("settings_spicy_key_delete", "Remove key"), v -> {
+                SpicyOrgKeyStore.delete(context);
+                onSpicyKeyChanged();
+            }));
+        }
+        rows.aiFieldRow(group, uiStrings.setting(Settings.SPICY_ORG_CLIENT_KEY),
+                configured ? uiStrings.get("settings_spicy_key_present", "Key saved")
+                        : uiStrings.get("settings_spicy_key_absent", "Not set"),
+                false, null, v -> dialogs.promptSpicyKey(),
+                actions.toArray(new AiSettingsRows.IconAction[0]));
+        rows.actionRow(group, Kind.EXTERNAL_LINK,
+                uiStrings.get("settings_spicy_key_catalog", "Get your personal key"),
+                v -> openSpicyOrgCatalog(context));
+    }
+
+    /** The shared UI and debug-channel route to the approved personal-key catalog. */
+    public static boolean openSpicyOrgCatalog(Context context) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(SpicyOrgKeyStore.CATALOG_URL));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+            return true;
+        } catch (android.content.ActivityNotFoundException ignored) {
+            return false;
+        }
+    }
+
+    private void refreshLanguageModelDownloadStatus() {
+        languageModelPollQueued = false;
+        if (!panelAttached) return;
+        LanguageModelPack.DownloadStatus status = LanguageModelPack.status();
+        // Rebuild once more after the worker switches to READY or ERROR; otherwise the polling
+        // loop would stop before the terminal state became visible in the panel.
+        if (status.phase == LanguageModelPack.Phase.READY) rebuildSections();
+        else rebuildSection(Settings.TRANSLITERATION);
+        if (status.phase == LanguageModelPack.Phase.DOWNLOADING) {
+            languageModelPollQueued = true;
+            uiHandler.postDelayed(this::refreshLanguageModelDownloadStatus, 500);
+        }
+    }
+
+    /**
+     * Starts the status loop for a panel that was built while an install was already running.
+     *
+     * <p>Detach cancels the queued tick, and the host builds a fresh panel on every open, so
+     * without this the reopened panel shows the progress it rendered once and never notices the
+     * worker reach READY — leaving the transliteration toggle disabled after a successful install.
+     */
+    private void resumeLanguageModelDownloadPolling() {
+        if (languageModelPollQueued) return;
+        languageModelPollQueued = true;
+        uiHandler.postDelayed(this::refreshLanguageModelDownloadStatus, 500);
+    }
+
+    private void downloadLanguageModelsRow(LinearLayout content) {
+        LanguageModelPack.DownloadStatus status = LanguageModelPack.status();
+        LinearLayout row = style.newRow(content);
+        row.setTag(PanelTags.row(DOWNLOAD_LANGUAGE_MODELS_ROW));
+        row.setOnClickListener(v -> {
+            if (LanguageModelPack.isReady()) return;
+            if (status.phase == LanguageModelPack.Phase.ERROR) {
+                LanguageModelPack.clearTransientState();
+            }
+            LanguageModelPack.requestDownload();
+            rebuildSection(Settings.TRANSLITERATION);
+            refreshLanguageModelDownloadStatus();
+        });
+
+        TextView title = style.text(
+                uiStrings.get("settings_action_download_language_models", "Download language models"),
+                16, PanelStyle.COL_TITLE, false);
+        LinearLayout info = new LinearLayout(context);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.addView(title);
+
+        String summary;
+        String small = "";
+        if (status.phase == LanguageModelPack.Phase.DOWNLOADING) {
+            summary = uiStrings.get("settings_language_model_downloading", "Downloading…");
+            small = uiStrings.get("settings_language_model_progress", status.progressPercent + "%");
+        } else if (status.phase == LanguageModelPack.Phase.ERROR) {
+            summary = uiStrings.get("settings_language_model_failed", "Download failed");
+            small = status.errorCode.isEmpty()
+                    ? uiStrings.get("settings_language_model_retry", "Tap to retry")
+                    : status.errorCode;
+        } else {
+            summary = uiStrings.get("settings_language_model_idle", "Tap to download");
+            small = uiStrings.get("settings_language_model_size", "Optional language pack");
+        }
+
+        TextView statusView = style.text(summary, 12, PanelStyle.COL_SUMMARY, false);
+        statusView.setPadding(0, style.dp(2), 0, 0);
+        info.addView(statusView);
+
+        if (status.phase == LanguageModelPack.Phase.DOWNLOADING || status.phase == LanguageModelPack.Phase.ERROR) {
+            ProgressBar progress = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
+            progress.setMax(100);
+            progress.setProgress(status.phase == LanguageModelPack.Phase.DOWNLOADING ? status.progressPercent : 0);
+            progress.setIndeterminate(status.phase == LanguageModelPack.Phase.DOWNLOADING && status.progressPercent <= 0);
+            progress.setPadding(0, style.dp(8), 0, style.dp(6));
+            info.addView(progress, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+
+        if (!small.isEmpty()) {
+            TextView extra = style.text(small, 11, status.phase == LanguageModelPack.Phase.ERROR ? 0xFFFFB4B4 : PanelStyle.COL_SECTION, false);
+            extra.setPadding(0, style.dp(2), 0, 0);
+            info.addView(extra);
+        }
+
+        row.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(style.kindView(Kind.LANGUAGES, PanelStyle.COL_ACCENT, 18),
+                new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
+    }
+
+    // --- Diagnostics card ---
+
+    private void renderActions(LinearLayout content) {
+        rows.actionRow(content, Kind.BUG,
+                DiagnosticReportingDialog.reportProblemLabel(context, store),
+                v -> DiagnosticReportingDialog.show(context, store));
+        rows.actionRow(content, null,
+                uiStrings.get("settings_action_resync_timing", "Reset lyrics sync"),
+                v -> {
+                    // The panel owns the stored offset; the host re-anchors its playback clock so
+                    // the next frame measures from the real position instead of the old offset.
+                    writer.put(Settings.SYNC_OFFSET_MS, 0);
+                    if (onResyncTiming != null) onResyncTiming.run();
+                    android.widget.Toast.makeText(context,
+                            uiStrings.get("settings_resync_timing_done", "Lyrics sync reset"),
+                            android.widget.Toast.LENGTH_SHORT).show();
+                });
+        clearAction(content, "settings_action_clear_translation_cache",
+                "Clear translation cache", CacheClearKind.TRANSLATION);
+        clearAction(content, "settings_action_clear_reading_cache",
+                "Clear transliteration cache", CacheClearKind.TRANSLITERATION);
+        clearAction(content, "settings_action_clear_ai_cache",
+                "Clear AI results", CacheClearKind.AI);
+        clearAction(content, "settings_action_clear_lyrics_cache",
+                "Clear lyrics response cache", CacheClearKind.LYRICS_RESPONSE);
+        rows.actionRow(content, Kind.EXTERNAL_LINK,
+                uiStrings.get("settings_action_open_github", "Open GitHub"), v -> openGithub());
+    }
+
+    private void clearAction(LinearLayout content, String key, String fallback, CacheClearKind kind) {
+        rows.actionRow(content, null, uiStrings.get(key, fallback), v -> clearCache(kind));
+    }
+
+    private void clearCache(CacheClearKind kind) {
+        if (onClearCache == null) return;
+        onClearCache.accept(kind);
+        // Cache clears update preference memory (and the AI database) before returning. Rebuild
+        // the owning row now so its usage summary reflects the clear without closing the panel.
+        rebuildSection(Settings.LYRICS_SOURCES);
+    }
+
+    private void renderStatus(LinearLayout content) {
+        CurrentLyricState s = CurrentLyricState.get();
+        String summary = uiStrings.format("settings_status_summary",
+                "Last state: %1$s\nTrack: %2$s\nLine: %3$s",
+                s.status, s.title, s.originalLine);
+        TextView state = style.text(summary, 12, PanelStyle.COL_SUMMARY, false);
+        state.setPadding(0, style.dp(4), 0, style.dp(2));
+        content.addView(state);
+        TextView version = style.text(BuildStamp.FULL, 11, PanelStyle.COL_SECTION, false);
+        version.setPadding(0, style.dp(12), 0, 0);
+        content.addView(version);
+    }
+
+    private void renderDiagnostics(LinearLayout content) {
+        LyricsFetchDiagnosticsState.Snapshot s = LyricsFetchDiagnosticsState.get();
+        rows.infoRow(content, uiStrings.get("settings_diagnostic_source_chosen", "Source chosen"),
+                s.displayedSourceChosen());
+        rows.infoRow(content, uiStrings.get("settings_diagnostic_candidates_seen", "Candidates seen"),
+                s.candidatesSeen);
+        rows.infoRow(content, uiStrings.get("settings_diagnostic_provider", "Provider"), s.provider);
+        rows.infoRow(content, uiStrings.get("settings_diagnostic_type_chosen", "Type chosen"),
+                s.typeChosen);
+        rows.infoRow(content, uiStrings.get("settings_diagnostic_cache_write", "Cache write"),
+                yesNo(s.cacheWrite));
+    }
+
+    // --- AI rows adapter ---
+
+    /** Adapter giving the AI rows the panel's own row vocabulary, so they look like every other row. */
+    private AiSettingsRows aiRows() {
+        if (aiSettingsRows != null) return aiSettingsRows;
+        aiSettingsRows = new AiSettingsRows(context, new AiSettingsRows.Host() {
+            @Override public void info(LinearLayout content, String label, String value) {
+                rows.infoRow(content, label, value);
+            }
+
+            @Override public void field(LinearLayout content, String label, String value,
+                                        View.OnClickListener listener,
+                                        AiSettingsRows.IconAction... actions) {
+                rows.aiFieldRow(content, label, value, false, null, listener, actions);
+            }
+
+            @Override public void selector(LinearLayout content, String label, String value,
+                                           View.OnClickListener listener,
+                                           AiSettingsRows.IconAction... actions) {
+                rows.aiFieldRow(content, label, value, true, null, listener, actions);
+            }
+
+            @Override public void rebuild() {
+                // A probe can finish after the panel was dismissed; nothing is mounted then.
+                if (!panelAttached) return;
+                rebuildSection(Settings.AI);
+            }
+
+            @Override public void updateAiBadge(boolean live) {
+                if (!panelAttached) return;
+                // The probe outcome is not what the star reports; setup completeness is. This is
+                // only the signal that something about the AI configuration may have moved.
+                if (aiBadgeView == null) {
+                    rebuildSection(Settings.AI);
+                    return;
+                }
+                aiBadgeView.setImageDrawable(new ActionIconDrawable(Kind.SPARKLES,
+                        aiReady() ? PanelStyle.COL_ACCENT : PanelStyle.COL_SECTION, style.density()));
+            }
+
+            @Override public String string(String name, String fallback) {
+                return uiStrings.get(name, fallback);
+            }
+        }, store);
+        return aiSettingsRows;
+    }
+
+    // --- Misc ---
+
+    private String yesNo(boolean value) {
+        return value
+                ? uiStrings.get("settings_yes", "yes")
+                : uiStrings.get("settings_no", "no");
+    }
+
+    private void openGithub() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://github.com/amarinne/spicy-ex"));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Option label; magnitude-based selectors show the plain multiplier as the label. */
+    @Override public String labelFor(Settings.StringSetting setting, String value) {
+        String mult = SettingLabels.multiplierFor(setting.key, value);
+        if (mult != null) return "\u00d7" + mult;
+        return uiStrings.option(setting, value);
+    }
+
+    @Override public String stepperSummary(Settings.IntegerSetting setting) {
+        if (setting == Settings.SYNC_OFFSET_MS) {
+            return uiStrings.get("settings_sync_offset_summary", "Positive shows lyrics earlier");
+        }
+        return null;
+    }
+
+    /** Explains why a row is unavailable; current pack gating is visibility-only. */
+    @Override public String unavailableSummary(Settings.Setting<?> setting) {
+        return null;
+    }
+
+    @Override public boolean unavailable(Settings.Setting<?> setting) {
+        return PanelPolicy.unavailable(setting);
+    }
+
+    @Override public String cacheSizeSummary() {
+        String label = uiStrings.option(Settings.CACHE_SIZE, store.get(Settings.CACHE_SIZE));
+        return SettingLabels.cacheUsageSummary(panelStrings, label,
+                CacheStoragePolicy.formatBytes(CacheStoragePolicy.storedTotal(context)));
+    }
+
+    // --- SettingRowFactory.Host ---
+
+    @Override public SettingsStore store() {
+        return store;
+    }
+
+    @Override public SettingsWriter writer() {
+        return writer;
+    }
+
+    @Override public SettingsUiStrings strings() {
+        return uiStrings;
+    }
+
+    @Override public PanelStyle style() {
+        return style;
+    }
+
+    @Override public void openSelector(Settings.StringSetting setting, List<String> values,
+                                       TextView valueView) {
+        dialogs.openSelector(setting, values, valueView);
+    }
+
+    // --- PanelDialogs.Host ---
+
+    /** Writes the value and applies immediate side effects (the UI-language swap). */
+    @Override public void onOptionChosen(Settings.StringSetting setting, String value) {
+        writer.put(setting, value);
+        if (setting == Settings.UI_LANGUAGE) {
+            uiStrings = UiLanguage.strings(context, value);
+            if (panelTitle != null) panelTitle.setText(uiStrings.appName());
+        }
+    }
+
+    @Override public void afterSettingChosen(Settings.Setting<?> setting) {
+        onSettingChanged(setting);
+    }
+
+    @Override public String rowSummaryFor(Settings.StringSetting setting, String value) {
+        return setting == Settings.CACHE_SIZE ? cacheSizeSummary() : labelFor(setting, value);
+    }
+
+    @Override public PanelStrings panelStrings() {
+        return panelStrings;
+    }
+
+    @Override public void onSpicyKeyChanged() {
+        if (lyricsHost != null) lyricsHost.reconcileLyricsSources();
+        rebuildSection(Settings.LYRICS_SOURCES);
+    }
+
+    // --- SourceOrderEditor.Host ---
+
+    @Override public void onSourcesCommitted() {
+        onSettingChanged(Settings.LYRICS_SOURCE_MODE);
+    }
+
+    /** Session access for the current-song lyrics item; unset when hosted without a hook. */
+    public void setLyricsHost(com.eza.spicyex.hooks.LyricsHost host) {
+        lyricsHost = host;
+    }
+
+    @Override public com.eza.spicyex.SpotifyTrack currentTrack() {
+        try {
+            return lyricsHost == null ? null : lyricsHost.getCurrentTrackSafely();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    @Override public void manageCurrentTrackLyrics() {
+        try {
+            if (!(context instanceof android.app.Activity) || lyricsHost == null) return;
+            com.eza.spicyex.SpotifyTrack current = lyricsHost.getCurrentTrackSafely();
+            if (current == null || current.uri == null || current.uri.isEmpty()) return;
+            com.eza.spicyex.hooks.LyricsSourcePickerDialog.show(
+                    (android.app.Activity) context, lyricsHost, uiStrings,
+                    message -> android.widget.Toast.makeText(context, message,
+                            android.widget.Toast.LENGTH_SHORT).show());
+        } catch (Throwable ignored) {
+        }
+    }
+}

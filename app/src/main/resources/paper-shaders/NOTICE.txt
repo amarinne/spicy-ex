@@ -1,0 +1,11 @@
+Paper Shaders Android / Jetpack Compose port
+Copyright 2026 Andre Frelicot
+
+This package is a native Android port of paper-design/shaders:
+https://github.com/paper-design/shaders
+
+The original Paper Shaders project is licensed under the Apache License 2.0.
+Shader algorithms, presets, and visual design are based on the upstream work by
+Paper.
+Powered by Paper Shaders:
+https://shaders.paper.design

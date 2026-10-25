@@ -30,9 +30,24 @@ public class JyutpingRomanizerTest {
         assertEquals("tọc", EzaChineseRomanizer.cantonese("dok6", true));
         assertEquals("quã", EzaChineseRomanizer.cantonese("gwaa1", true));
         assertEquals("khwĩc", EzaChineseRomanizer.cantonese("kwik1", true));
+        assertEquals("sĩu", EzaChineseRomanizer.cantonese("siu1", true));
+        assertEquals("sũi", EzaChineseRomanizer.cantonese("sui1", true));
         assertEquals("BTS4 nei hou mp3", SpicyJapaneseChineseProcessor.romanizeChineseLine(
                 "BTS4 你好 mp3", "jyutping-eza", false));
         assertEquals("m̀", EzaChineseRomanizer.cantonese("m4", true));
         assertEquals("n̉g", EzaChineseRomanizer.cantonese("ng5", true));
+    }
+
+    @Test
+    public void ezaToneMarksTheFinalInsteadOfANasalOnsetOrOffglide() {
+        assertEquals("mặn", EzaChineseRomanizer.cantonese("man6", true));
+        assertEquals("mìng", EzaChineseRomanizer.cantonese("ming4", true));
+        assertEquals("ngỏ", EzaChineseRomanizer.cantonese("ngo5", true));
+        assertEquals("sĩu", EzaChineseRomanizer.cantonese("siu1", true));
+        assertEquals("wúi", EzaChineseRomanizer.cantonese("wui2", true));
+        assertEquals("tsyũn", EzaChineseRomanizer.cantonese("cyun1", true));
+        assertEquals("yụ", EzaChineseRomanizer.cantonese("jyu6", true));
+        assertEquals("hm̀", EzaChineseRomanizer.cantonese("hm4", true));
+        assertEquals("xyz5", EzaChineseRomanizer.cantonese("xyz5", true));
     }
 }

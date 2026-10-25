@@ -45,4 +45,28 @@ public class AmbientArtworkTextureTest {
         float center = result[3*((h/2)*w+w/2)];
         assertTrue(center > 0f && center < 0.5f/255f);
     }
+
+    @Test public void originalArtworkKeepsAspectWhileBoundingTheLongestEdge() {
+        assertArrayEquals(new int[]{384, 192},
+                AmbientArtworkTexture.originalSize(1200, 600, 384));
+        assertArrayEquals(new int[]{128, 384},
+                AmbientArtworkTexture.originalSize(400, 1200, 384));
+        assertArrayEquals(new int[]{300, 200},
+                AmbientArtworkTexture.originalSize(300, 200, 384));
+    }
+
+    @Test public void originalArtworkRejectsInvalidDimensions() {
+        try {
+            AmbientArtworkTexture.originalSize(0, 100, 384);
+            fail("zero width must be rejected");
+        } catch (IllegalArgumentException expected) {
+            // Expected: the worker never allocates an empty original.
+        }
+        try {
+            AmbientArtworkTexture.originalSize(100, 100, 0);
+            fail("zero edge must be rejected");
+        } catch (IllegalArgumentException expected) {
+            // Expected: the caller always supplies a decode target.
+        }
+    }
 }

@@ -5,8 +5,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.eza.spicyex.Settings;
-import com.eza.spicyex.settings.PanelPolicy;
-import com.eza.spicyex.settings.PanelSnapshot;
+import com.eza.spicyex.settings.registry.ControlRegistry;
+import com.eza.spicyex.settings.registry.ControlSpec;
+import com.eza.spicyex.settings.values.FollowChipIcon;
 
 import org.junit.Test;
 
@@ -46,16 +47,19 @@ public class FollowChipIconTest {
 
     @Test
     public void iconKindHelpers() {
-        assertTrue(LyricsJumpToCurrentController.isAdaptiveIcon("Adaptive arrow"));
-        assertFalse(LyricsJumpToCurrentController.isAdaptiveIcon("Static arrow"));
-        assertFalse(LyricsJumpToCurrentController.isAdaptiveIcon("Waveform"));
-        assertTrue(LyricsJumpToCurrentController.isWaveformIcon("Waveform"));
-        assertFalse(LyricsJumpToCurrentController.isWaveformIcon("Adaptive arrow"));
+        assertTrue(LyricsJumpToCurrentController.isAdaptiveIcon(FollowChipIcon.ADAPTIVE_ARROW));
+        assertFalse(LyricsJumpToCurrentController.isAdaptiveIcon(FollowChipIcon.STATIC_ARROW));
+        assertFalse(LyricsJumpToCurrentController.isAdaptiveIcon(FollowChipIcon.WAVEFORM));
+        assertTrue(LyricsJumpToCurrentController.isWaveformIcon(FollowChipIcon.WAVEFORM));
+        assertFalse(LyricsJumpToCurrentController.isWaveformIcon(FollowChipIcon.ADAPTIVE_ARROW));
     }
 
     @Test
     public void iconStaysOutOfTheNormalSettingsPanel() {
-        PanelSnapshot full = PanelSnapshot.builder().allCapabilities().build();
-        assertFalse(PanelPolicy.shouldRender(Settings.FOLLOW_CHIP_ICON, full));
+        // The layout editor owns the follow chip, so the panel has no row for it.
+        for (ControlSpec entry : ControlRegistry.panelControls()) {
+            assertFalse("the panel must not own " + entry.rowId(),
+                    entry.setting == Settings.FOLLOW_CHIP_ICON);
+        }
     }
 }

@@ -272,6 +272,39 @@ public class LayoutProbeReportTest {
         assertViolations(report);
     }
 
+    // R14 --------------------------------------------------------------------
+
+    @Test
+    public void sheetParkedOnTheLiveControlsFires() {
+        LayoutProbeReport report = clean();
+        // The sheet covers the top controls [700,60,1040,140] completely.
+        report.rect("sheet", 600, 40, 1100, 900);
+        assertViolations(report, "R14 sheet_over_chrome dock");
+    }
+
+    @Test
+    public void sheetBesideTheLiveControlsStaysQuiet() {
+        LayoutProbeReport report = clean();
+        report.rect("sheet", 10, 40, 600, 900);
+        assertViolations(report);
+    }
+
+    @Test
+    public void aSheetThatOnlyClipsTheControlsStaysQuiet() {
+        LayoutProbeReport report = clean();
+        // Exactly half of the controls: "more than half" is not "half".
+        report.rect("sheet", 600, 100, 1100, 900);
+        assertViolations(report);
+    }
+
+    @Test
+    public void cardModeIgnoresTheSheetOverTheHiddenControls() {
+        LayoutProbeReport report = clean();
+        report.flag("card_mode", true);
+        report.rect("sheet", 600, 40, 1100, 900);
+        assertViolations(report);
+    }
+
     // R9 / R10 ---------------------------------------------------------------
 
     /** Fold, landscape two-column, B907: the rail sat 72dp in while Follow sat 16dp in. */

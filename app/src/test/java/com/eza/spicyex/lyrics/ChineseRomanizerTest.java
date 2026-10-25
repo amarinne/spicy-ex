@@ -93,6 +93,16 @@ public class ChineseRomanizerTest {
     }
 
     @Test
+    public void cantoneseNucleusRevisionRetiresOnlyCantoneseEzaSound() {
+        assertEquals("cn=jyutping|kr=Off|cnStyle=eza@eza-2026-10-25.1|tn=1|cy=Off|cs=0",
+                new RomanizationOptions("jyutping-eza", "Off", true, "Off", false).cacheKey());
+        assertEquals("cn=pinyin|kr=Off|cnStyle=eza@eza-2026-10-08.1|tn=1|cy=Off|cs=0",
+                new RomanizationOptions("pinyin-eza", "Off", true, "Off", false).cacheKey());
+        assertEquals("cn=jyutping|kr=Off|cnStyle=canonical|tn=1|cy=Off|cs=0",
+                new RomanizationOptions("jyutping", "Off", true, "Off", false).cacheKey());
+    }
+
+    @Test
     public void chineseRomanizationClearsStaleJapaneseReadingInMixedJapaneseChineseDocument() {
         LyricsDocument doc = new LyricsDocument();
         doc.detectedScripts.add(SpicyTextDetection.Script.JAPANESE);

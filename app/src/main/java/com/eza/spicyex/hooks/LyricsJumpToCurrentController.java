@@ -18,10 +18,12 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
-import com.eza.spicyex.Settings;
 import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
+import com.eza.spicyex.settings.values.ChipPosition;
+import com.eza.spicyex.settings.values.ChipStyle;
+import com.eza.spicyex.settings.values.FollowChipIcon;
 
 /** Owns the floating "jump back to active lyric" affordance. */
 final class LyricsJumpToCurrentController {
@@ -39,9 +41,9 @@ final class LyricsJumpToCurrentController {
     private final WaveformIconDrawable waveIcon = new WaveformIconDrawable();
     private final Runnable collapse = this::collapseToIcon;
     private ValueAnimator widthAnimator;
-    private String style = Settings.FOLLOW_CHIP_STYLE.defaultValue;
-    private String position = Settings.FOLLOW_CHIP_POSITION.defaultValue;
-    private String icon = Settings.FOLLOW_CHIP_ICON.defaultValue;
+    private ChipStyle style = ChipStyle.DEFAULT;
+    private ChipPosition position = ChipPosition.DEFAULT;
+    private FollowChipIcon icon = FollowChipIcon.DEFAULT;
     /** Adaptive arrow direction: false = down (viewport above target), true = up (below). */
     private boolean pointingUp;
     /** Whether the chip is currently showing the icon alone (vs the labelled pill). */
@@ -95,24 +97,22 @@ final class LyricsJumpToCurrentController {
 
     /** Re-applies the editor-owned style, icon, and horizontal anchor. */
     void onPreferenceChanged() {
-        String nextStyle = config == null ? null : config.get(Settings.FOLLOW_CHIP_STYLE);
-        style = nextStyle == null ? Settings.FOLLOW_CHIP_STYLE.defaultValue : nextStyle;
-        String nextPosition = config == null ? null : config.get(Settings.FOLLOW_CHIP_POSITION);
-        position = nextPosition == null ? Settings.FOLLOW_CHIP_POSITION.defaultValue : nextPosition;
-        String nextIcon = config == null ? null : config.get(Settings.FOLLOW_CHIP_ICON);
-        icon = nextIcon == null ? Settings.FOLLOW_CHIP_ICON.defaultValue : nextIcon;
+        LyricsShellChromeConfig chrome = config == null ? null : LyricsShellChromeConfig.read(config);
+        style = chrome == null ? ChipStyle.DEFAULT : chrome.followChipStyle;
+        position = chrome == null ? ChipPosition.DEFAULT : chrome.followChipPosition;
+        icon = chrome == null ? FollowChipIcon.DEFAULT : chrome.followChipIcon;
         if (!isAdaptiveIcon(icon)) pointingUp = false;
         applyPosition();
         if (button.getVisibility() == View.VISIBLE) applyStyle(false);
     }
 
     /** Whether the chip shows the direction-following arrow (vs a fixed glyph). */
-    static boolean isAdaptiveIcon(String icon) {
-        return "Adaptive arrow".equals(icon);
+    static boolean isAdaptiveIcon(FollowChipIcon icon) {
+        return icon == FollowChipIcon.ADAPTIVE_ARROW;
     }
 
-    static boolean isWaveformIcon(String icon) {
-        return "Waveform".equals(icon);
+    static boolean isWaveformIcon(FollowChipIcon icon) {
+        return icon == FollowChipIcon.WAVEFORM;
     }
 
     /**
@@ -156,11 +156,11 @@ final class LyricsJumpToCurrentController {
         ViewGroup.LayoutParams raw = button.getLayoutParams();
         if (!(raw instanceof FrameLayout.LayoutParams)) return;
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) raw;
-        if ("Left".equals(position)) {
+        if (position == ChipPosition.LEFT) {
             lp.gravity = Gravity.BOTTOM | Gravity.START;
             lp.leftMargin = dp(SIDE_MARGIN_DP);
             lp.rightMargin = 0;
-        } else if ("Center".equals(position)) {
+} else if (position == ChipPosition.CENTER) {
             lp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
             lp.leftMargin = 0;
             lp.rightMargin = 0;
@@ -174,11 +174,11 @@ final class LyricsJumpToCurrentController {
 
     private void applyStyle(boolean appearing) {
         button.removeCallbacks(collapse);
-        if ("Icon".equals(style)) {
+        if (style == ChipStyle.ICON) {
             applyCollapsed(true);
         } else {
             applyCollapsed(false);
-            if (!"Label".equals(style)) {
+            if (style != ChipStyle.LABEL) {
                 button.postDelayed(collapse, appearing ? COLLAPSE_DELAY_MS : COLLAPSE_DELAY_MS / 2);
             }
         }

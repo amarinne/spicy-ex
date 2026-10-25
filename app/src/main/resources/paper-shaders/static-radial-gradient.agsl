@@ -1,0 +1,454 @@
+
+uniform vec2 u_resolution;
+uniform float u_pixelRatio;
+uniform float u_time;
+uniform float u_fit;
+uniform float u_scale;
+uniform float u_rotation;
+uniform float u_originX;
+uniform float u_originY;
+uniform float u_offsetX;
+uniform float u_offsetY;
+uniform float u_worldWidth;
+uniform float u_worldHeight;
+uniform float u_imageAspectRatio;
+
+const float PI = 3.14159265358979323846;
+const float TWO_PI = 6.28318530718;
+
+float glsl_mod(float x, float y) {
+  return x - y * floor(x / y);
+}
+
+vec3 permute(vec3 x) {
+  return mod(((x * 34.0) + 1.0) * x, 289.0);
+}
+
+float snoise(vec2 v) {
+  const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+    -0.577350269189626, 0.024390243902439);
+  vec2 i = floor(v + dot(v, C.yy));
+  vec2 x0 = v - i + dot(i, C.xx);
+  vec2 i1;
+  i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec4 x12 = x0.xyxy + C.xxzz;
+  x12.xy -= i1;
+  i = mod(i, 289.0);
+  vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0))
+    + i.x + vec3(0.0, i1.x, 1.0));
+  vec3 m = max(0.5 - vec3(dot(x0, x0), dot(x12.xy, x12.xy),
+      dot(x12.zw, x12.zw)), 0.0);
+  m = m * m;
+  m = m * m;
+  vec3 x = 2.0 * fract(p * C.www) - 1.0;
+  vec3 h = abs(x) - 0.5;
+  vec3 ox = floor(x + 0.5);
+  vec3 a0 = x - ox;
+  m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
+  vec3 g;
+  g.x = a0.x * x0.x + h.x * x0.y;
+  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+  return 130.0 * dot(m, g);
+}
+
+vec3 ps_getBoxSize(float boxRatio, vec2 givenBoxSize, float fit, vec2 resolution) {
+  vec2 box = vec2(0.0);
+  box.x = boxRatio * min(givenBoxSize.x / boxRatio, givenBoxSize.y);
+  float noFitBoxWidth = box.x;
+  if (fit == 1.0) {
+    box.x = boxRatio * min(resolution.x / boxRatio, resolution.y);
+  } else if (fit == 2.0) {
+    box.x = boxRatio * max(resolution.x / boxRatio, resolution.y);
+  }
+  box.y = box.x / boxRatio;
+  return vec3(box, noFitBoxWidth);
+}
+
+vec2 ps_baseUVAt(vec2 pos) {
+  return vec2(pos.x / u_resolution.x - 0.5, 0.5 - pos.y / u_resolution.y);
+}
+
+float ps_pixelDerivative(float multiplier) {
+  return max(multiplier / max(min(u_resolution.x, u_resolution.y), 1.0), 1e-4);
+}
+
+float ps_finiteFwidth(float center, float alongX, float alongY) {
+  return abs(alongX - center) + abs(alongY - center);
+}
+
+vec2 ps_objectUVAt(vec2 pos) {
+  vec2 uv = ps_baseUVAt(pos);
+  vec2 boxOrigin = vec2(0.5 - u_originX, u_originY - 0.5);
+  vec2 givenBoxSize = max(vec2(u_worldWidth, u_worldHeight), vec2(1.0)) * u_pixelRatio;
+  float r = u_rotation * PI / 180.0;
+  mat2 graphicRotation = mat2(cos(r), sin(r), -sin(r), cos(r));
+  vec2 graphicOffset = vec2(-u_offsetX, u_offsetY);
+
+  vec2 fixedRatioBoxGivenSize = vec2(
+    (u_worldWidth == 0.0) ? u_resolution.x : givenBoxSize.x,
+    (u_worldHeight == 0.0) ? u_resolution.y : givenBoxSize.y
+  );
+  vec2 objectBoxSize = ps_getBoxSize(1.0, fixedRatioBoxGivenSize, u_fit, u_resolution).xy;
+  vec2 objectWorldScale = u_resolution / objectBoxSize;
+
+  vec2 objectUV = uv;
+  objectUV *= objectWorldScale;
+  objectUV += boxOrigin * (objectWorldScale - 1.0);
+  objectUV += graphicOffset;
+  objectUV /= u_scale;
+  objectUV = graphicRotation * objectUV;
+  return objectUV;
+}
+
+vec2 ps_objectUV(vec2 fragCoord) {
+  return ps_objectUVAt(fragCoord);
+}
+
+vec2 ps_objectBoxSize() {
+  vec2 givenBoxSize = max(vec2(u_worldWidth, u_worldHeight), vec2(1.0)) * u_pixelRatio;
+  vec2 fixedRatioBoxGivenSize = vec2(
+    (u_worldWidth == 0.0) ? u_resolution.x : givenBoxSize.x,
+    (u_worldHeight == 0.0) ? u_resolution.y : givenBoxSize.y
+  );
+  return ps_getBoxSize(1.0, fixedRatioBoxGivenSize, u_fit, u_resolution).xy;
+}
+
+vec2 ps_objectPixelStepX(vec2 fragCoord) {
+  return ps_objectUVAt(fragCoord + vec2(1.0, 0.0)) - ps_objectUVAt(fragCoord);
+}
+
+vec2 ps_objectPixelStepY(vec2 fragCoord) {
+  return ps_objectUVAt(fragCoord + vec2(0.0, 1.0)) - ps_objectUVAt(fragCoord);
+}
+
+vec2 ps_patternUVAt(vec2 pos) {
+  vec2 uv = ps_baseUVAt(pos);
+  vec2 boxOrigin = vec2(0.5 - u_originX, u_originY - 0.5);
+  vec2 givenBoxSize = max(vec2(u_worldWidth, u_worldHeight), vec2(1.0)) * u_pixelRatio;
+  float r = u_rotation * PI / 180.0;
+  mat2 graphicRotation = mat2(cos(r), sin(r), -sin(r), cos(r));
+  vec2 graphicOffset = vec2(-u_offsetX, u_offsetY);
+
+  vec2 patternBoxGivenSize = vec2(
+    (u_worldWidth == 0.0) ? u_resolution.x : givenBoxSize.x,
+    (u_worldHeight == 0.0) ? u_resolution.y : givenBoxSize.y
+  );
+  float patternBoxRatio = patternBoxGivenSize.x / patternBoxGivenSize.y;
+  vec3 boxSizeData = ps_getBoxSize(patternBoxRatio, patternBoxGivenSize, u_fit, u_resolution);
+  vec2 patternBoxScale = u_resolution / boxSizeData.xy;
+
+  vec2 patternUV = uv;
+  patternUV += graphicOffset / patternBoxScale;
+  patternUV += boxOrigin;
+  patternUV -= boxOrigin / patternBoxScale;
+  patternUV *= u_resolution;
+  patternUV /= u_pixelRatio;
+  if (u_fit > 0.0) {
+    patternUV *= (boxSizeData.z / boxSizeData.x);
+  }
+  patternUV /= u_scale;
+  patternUV = graphicRotation * patternUV;
+  patternUV += boxOrigin / patternBoxScale;
+  patternUV -= boxOrigin;
+  patternUV *= 0.01;
+  return patternUV;
+}
+
+vec2 ps_patternUV(vec2 fragCoord) {
+  return ps_patternUVAt(fragCoord);
+}
+
+vec2 ps_patternBoxSize() {
+  vec2 givenBoxSize = max(vec2(u_worldWidth, u_worldHeight), vec2(1.0)) * u_pixelRatio;
+  vec2 patternBoxGivenSize = vec2(
+    (u_worldWidth == 0.0) ? u_resolution.x : givenBoxSize.x,
+    (u_worldHeight == 0.0) ? u_resolution.y : givenBoxSize.y
+  );
+  float patternBoxRatio = patternBoxGivenSize.x / patternBoxGivenSize.y;
+  return ps_getBoxSize(patternBoxRatio, patternBoxGivenSize, u_fit, u_resolution).xy;
+}
+
+vec2 ps_responsiveBoxGivenSize() {
+  vec2 givenBoxSize = max(vec2(u_worldWidth, u_worldHeight), vec2(1.0)) * u_pixelRatio;
+  return vec2(
+    (u_worldWidth == 0.0) ? u_resolution.x : givenBoxSize.x,
+    (u_worldHeight == 0.0) ? u_resolution.y : givenBoxSize.y
+  );
+}
+
+vec2 ps_responsiveUVAt(vec2 pos) {
+  vec2 uv = ps_baseUVAt(pos);
+  vec2 boxOrigin = vec2(0.5 - u_originX, u_originY - 0.5);
+  float r = u_rotation * PI / 180.0;
+  mat2 graphicRotation = mat2(cos(r), sin(r), -sin(r), cos(r));
+  vec2 graphicOffset = vec2(-u_offsetX, u_offsetY);
+
+  vec2 responsiveBoxGivenSize = ps_responsiveBoxGivenSize();
+  float responsiveRatio = responsiveBoxGivenSize.x / responsiveBoxGivenSize.y;
+  vec2 responsiveBoxSize = ps_getBoxSize(responsiveRatio, responsiveBoxGivenSize, u_fit, u_resolution).xy;
+  vec2 responsiveBoxScale = u_resolution / responsiveBoxSize;
+
+  vec2 responsiveUV = uv;
+  responsiveUV *= responsiveBoxScale;
+  responsiveUV += boxOrigin * (responsiveBoxScale - 1.0);
+  responsiveUV += graphicOffset;
+  responsiveUV /= u_scale;
+  responsiveUV.x *= responsiveRatio;
+  responsiveUV = graphicRotation * responsiveUV;
+  responsiveUV.x /= responsiveRatio;
+  return responsiveUV;
+}
+
+vec2 ps_responsiveUV(vec2 fragCoord) {
+  return ps_responsiveUVAt(fragCoord);
+}
+
+vec2 ps_imageUVAt(vec2 pos) {
+  vec2 uv = ps_baseUVAt(pos);
+  vec2 boxOrigin = vec2(0.5 - u_originX, u_originY - 0.5);
+  float r = u_rotation * PI / 180.0;
+  mat2 graphicRotation = mat2(cos(r), sin(r), -sin(r), cos(r));
+  vec2 graphicOffset = vec2(-u_offsetX, u_offsetY);
+  vec2 imageBoxSize = vec2(0.0);
+  if (u_fit == 1.0) {
+    imageBoxSize.x = min(u_resolution.x / u_imageAspectRatio, u_resolution.y) * u_imageAspectRatio;
+  } else if (u_fit == 2.0) {
+    imageBoxSize.x = max(u_resolution.x / u_imageAspectRatio, u_resolution.y) * u_imageAspectRatio;
+  } else {
+    imageBoxSize.x = min(10.0, 10.0 / u_imageAspectRatio * u_imageAspectRatio);
+  }
+  imageBoxSize.y = imageBoxSize.x / u_imageAspectRatio;
+  vec2 imageBoxScale = u_resolution / imageBoxSize;
+  vec2 imageUV = uv;
+  imageUV *= imageBoxScale;
+  imageUV += boxOrigin * (imageBoxScale - 1.0);
+  imageUV += graphicOffset;
+  imageUV /= u_scale;
+  imageUV.x *= u_imageAspectRatio;
+  imageUV = graphicRotation * imageUV;
+  imageUV.x /= u_imageAspectRatio;
+  imageUV += 0.5;
+  imageUV.y = 1.0 - imageUV.y;
+  return imageUV;
+}
+
+vec2 ps_imageUV(vec2 fragCoord) {
+  return ps_imageUVAt(fragCoord);
+}
+
+vec2 ps_patternPixelStepX(vec2 fragCoord) {
+  return ps_patternUVAt(fragCoord + vec2(1.0, 0.0)) - ps_patternUVAt(fragCoord);
+}
+
+vec2 ps_patternPixelStepY(vec2 fragCoord) {
+  return ps_patternUVAt(fragCoord + vec2(0.0, 1.0)) - ps_patternUVAt(fragCoord);
+}
+
+
+uniform vec4 u_colorBack;
+uniform vec4 u_colors[10];
+uniform float u_colorsCount;
+uniform float u_radius;
+uniform float u_focalDistance;
+uniform float u_focalAngle;
+uniform float u_falloff;
+uniform float u_mixing;
+uniform float u_distortion;
+uniform float u_distortionShift;
+uniform float u_distortionFreq;
+uniform float u_grainMixer;
+uniform float u_grainOverlay;
+
+vec4 srg_colorAt(int index) {
+  if (index <= 0) return u_colors[0];
+  if (index == 1) return u_colors[1];
+  if (index == 2) return u_colors[2];
+  if (index == 3) return u_colors[3];
+  if (index == 4) return u_colors[4];
+  if (index == 5) return u_colors[5];
+  if (index == 6) return u_colors[6];
+  if (index == 7) return u_colors[7];
+  if (index == 8) return u_colors[8];
+  return u_colors[9];
+}
+
+vec2 srg_rotate(vec2 uv, float th) {
+  return mat2(cos(th), sin(th), -sin(th), cos(th)) * uv;
+}
+
+float srg_hash21(vec2 p) {
+  p = fract(p * vec2(0.3183099, 0.3678794)) + 0.1;
+  p += dot(p, p + 19.19);
+  return fract(p.x * p.y);
+}
+
+float srg_valueNoise(vec2 st) {
+  vec2 i = floor(st);
+  vec2 f = fract(st);
+  float a = srg_hash21(i);
+  float b = srg_hash21(i + vec2(1.0, 0.0));
+  float c = srg_hash21(i + vec2(0.0, 1.0));
+  float d = srg_hash21(i + vec2(1.0, 1.0));
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float x1 = mix(a, b, u.x);
+  float x2 = mix(c, d, u.x);
+  return mix(x1, x2, u.y);
+}
+
+float srg_noise(vec2 n, vec2 seedOffset) {
+  return srg_valueNoise(n + seedOffset);
+}
+
+vec2 srg_getPanelPosition(int i, float t) {
+  float a = float(i) * 0.37;
+  float b = 0.6 + glsl_mod(float(i), 3.0) * 0.3;
+  float c = 0.8 + glsl_mod(float(i + 1), 4.0) * 0.25;
+  float x = sin(t * b + a);
+  float y = cos(t * c + a * 1.5);
+  return 0.5 + 0.5 * vec2(x, y);
+}
+
+vec4 paperMain(vec2 fragCoord) {
+  vec2 uv = 2.0 * ps_objectUV(fragCoord);
+  vec2 grainUV = uv * 1000.0;
+
+  vec2 center = vec2(0.0);
+  float angleRad = -radians(u_focalAngle + 90.0);
+  vec2 focalPoint = vec2(cos(angleRad), sin(angleRad)) * u_focalDistance;
+  float radius = u_radius;
+
+  vec2 centerToUv = uv - center;
+  vec2 focalToUv = uv - focalPoint;
+  vec2 focalToCenter = center - focalPoint;
+  float r = length(centerToUv);
+
+  float fragAngle = atan(centerToUv.y, centerToUv.x);
+  float angleDiff = fract((fragAngle - angleRad + PI) / TWO_PI) * TWO_PI - PI;
+
+  float halfAngle = acos(clamp(radius / max(u_focalDistance, 0.0001), 0.0, 1.0));
+  float e0 = 0.6 * PI;
+  float e1 = halfAngle;
+  float lo = min(e0, e1);
+  float hi = max(e0, e1);
+  float s = smoothstep(lo, hi, abs(angleDiff));
+  float isInSector = (e1 >= e0) ? (1.0 - s) : s;
+
+  float a = dot(focalToUv, focalToUv);
+  float b = -2.0 * dot(focalToUv, focalToCenter);
+  float c = dot(focalToCenter, focalToCenter) - radius * radius;
+  float discriminant = b * b - 4.0 * a * c;
+  float rayT = 1.0;
+
+  if (discriminant >= 0.0) {
+    float sqrtD = sqrt(discriminant);
+    float div = max(0.0001, 2.0 * a);
+    float t0 = (-b - sqrtD) / div;
+    float t1 = (-b + sqrtD) / div;
+    rayT = max(t0, t1);
+    if (rayT < 0.0) rayT = 0.0;
+  }
+
+  float dist = length(focalToUv);
+  float normalized = dist / max(0.0001, length(focalToUv * rayT));
+  float shape = clamp(normalized, 0.0, 1.0);
+
+  float falloffMapped = mix(
+    0.2 + 0.8 * max(0.0, u_falloff + 1.0),
+    mix(1.0, 15.0, u_falloff * u_falloff),
+    step(0.0, u_falloff)
+  );
+  float falloffExp = mix(falloffMapped, 1.0, shape);
+  shape = pow(shape, falloffExp);
+  shape = 1.0 - clamp(shape, 0.0, 1.0);
+
+  float outerMask = 0.002;
+  float outer = 1.0 - smoothstep(radius - outerMask, radius + outerMask, r);
+  outer = mix(outer, 1.0, isInSector);
+
+  shape = mix(0.0, shape, outer);
+  shape *= 1.0 - smoothstep(radius - 0.01, radius, r);
+
+  float angle = atan(focalToUv.y, focalToUv.x);
+  shape -= pow(u_distortion, 2.0) * shape *
+    pow(abs(sin(PI * clamp(length(focalToUv) - 0.2 + u_distortionShift, 0.0, 1.0))), 4.0) *
+    (sin(u_distortionFreq * angle) + cos(floor(0.65 * u_distortionFreq) * angle));
+
+  float grain = srg_noise(grainUV, vec2(0.0));
+  float mixerGrain = 0.4 * u_grainMixer * (grain - 0.5);
+
+  float mixer = shape * u_colorsCount + mixerGrain;
+  vec4 gradient = srg_colorAt(0);
+  gradient.rgb *= gradient.a;
+
+  float outerShape = 0.0;
+  for (int i = 1; i < 11; i++) {
+    if (i > int(u_colorsCount)) break;
+    float mLinear = clamp(mixer - float(i - 1), 0.0, 1.0);
+
+    float aa = ps_pixelDerivative(1.0);
+    float width = min(u_mixing, 0.5);
+    float blendT = clamp((mLinear - (0.5 - width - aa)) / (2.0 * width + 2.0 * aa), 0.0, 1.0);
+    float p = mix(2.0, 1.0, clamp((u_mixing - 0.5) * 2.0, 0.0, 1.0));
+    float m = blendT < 0.5
+      ? 0.5 * pow(2.0 * blendT, p)
+      : 1.0 - 0.5 * pow(2.0 * (1.0 - blendT), p);
+
+    float quadBlend = clamp((u_mixing - 0.5) * 2.0, 0.0, 1.0);
+    m = mix(m, m * m, 0.5 * quadBlend);
+
+    if (i == 1) {
+      outerShape = m;
+    }
+
+    vec4 c = srg_colorAt(i - 1);
+    c.rgb *= c.a;
+    gradient = mix(gradient, c, m);
+  }
+
+  vec3 color = gradient.rgb * outerShape;
+  float opacity = gradient.a * outerShape;
+
+  vec3 bgColor = u_colorBack.rgb * u_colorBack.a;
+  color = color + bgColor * (1.0 - opacity);
+  opacity = opacity + u_colorBack.a * (1.0 - opacity);
+
+  float grainOverlay = srg_valueNoise(srg_rotate(grainUV, 1.0) + vec2(3.0));
+  grainOverlay = mix(grainOverlay, srg_valueNoise(srg_rotate(grainUV, 2.0) + vec2(-1.0)), 0.5);
+  grainOverlay = pow(grainOverlay, 1.3);
+
+  float grainOverlayV = grainOverlay * 2.0 - 1.0;
+  vec3 grainOverlayColor = vec3(step(0.0, grainOverlayV));
+  float grainOverlayStrength = u_grainOverlay * abs(grainOverlayV);
+  grainOverlayStrength = pow(grainOverlayStrength, 0.8);
+  color = mix(color, grainOverlayColor, 0.35 * grainOverlayStrength);
+
+  opacity += 0.5 * grainOverlayStrength;
+  opacity = clamp(opacity, 0.0, 1.0);
+
+  return vec4(color, opacity);
+}
+
+// Spicy EX ambient integration: the upstream entry point is paperMain. This wrapper alone
+// unpremultiplies safely, applies the existing Kawarp/Mesh grade, and premultiplies the result.
+uniform float ambient_dark;
+uniform float ambient_brightness;
+
+float ps_ambientDitherHash(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.zyx + 31.32);
+  return fract((p.x + p.y) * p.z);
+}
+
+vec4 main(vec2 fragCoord) {
+  vec4 paperColor = paperMain(fragCoord);
+  float alpha = clamp(paperColor.a, 0.0, 1.0);
+  vec3 color = clamp(paperColor.rgb / max(alpha, 1e-6), 0.0, 1.0);
+  float cssGray = dot(color, vec3(0.213, 0.715, 0.072));
+  vec3 normal = clamp(mix(vec3(cssGray), color, 2.5), 0.0, 1.0) * 0.65;
+  vec3 dim = (mix(vec3(cssGray), color, 0.9) * 0.38 - 0.5) * 0.95 + 0.5;
+  color = mix(normal, dim, ambient_dark) * ambient_brightness;
+  float noise = ps_ambientDitherHash(vec3(floor(fragCoord), 0.0));
+  color += (noise - 0.5) * 0.008 * min(1.0, ambient_brightness * 255.0);
+  color = clamp(color, 0.0, 1.0);
+  return vec4(color * alpha, alpha);
+}

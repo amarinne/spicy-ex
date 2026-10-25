@@ -19,6 +19,8 @@ import android.widget.TextView;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.lyrics.SkipGapPolicy;
+import com.eza.spicyex.settings.values.ChipPosition;
+import com.eza.spicyex.settings.values.ChipStyle;
 import com.eza.spicyex.ui.ActionIconDrawable;
 
 import java.util.function.Supplier;
@@ -55,10 +57,10 @@ final class LyricsSkipGapController {
     private final Runnable collapse = this::collapseToIcon;
     /** The jump-to-current chip's current horizontal anchor - stacking only applies when this
      *  matches {@link #position}. */
-    private final Supplier<String> jumpPositionSupplier;
+    private final Supplier<ChipPosition> jumpPositionSupplier;
 
-    private String style = Settings.SKIP_CHIP_STYLE.defaultValue;
-    private String position = Settings.SKIP_CHIP_POSITION.defaultValue;
+    private ChipStyle style = ChipStyle.DEFAULT;
+    private ChipPosition position = ChipPosition.DEFAULT;
     private String shownLabel = "";
     private boolean collapsed;
     // Tracked separately from the view's own visibility, which lags: hide() fades out over 140ms
@@ -76,7 +78,7 @@ final class LyricsSkipGapController {
     private String requestedLabel = "";
 
     private LyricsSkipGapController(SpotifyPlusConfig config, LinearLayout pill, TextView label,
-            FrameLayout.LayoutParams lp, Runnable onTap, Supplier<String> jumpPositionSupplier) {
+            FrameLayout.LayoutParams lp, Runnable onTap, Supplier<ChipPosition> jumpPositionSupplier) {
         this.config = config;
         this.pill = pill;
         this.label = label;
@@ -89,7 +91,7 @@ final class LyricsSkipGapController {
             Activity activity,
             FrameLayout parent,
             SpotifyPlusConfig config,
-            Supplier<String> jumpPositionSupplier,
+            Supplier<ChipPosition> jumpPositionSupplier,
             Runnable onClick
     ) {
         float density = activity.getResources().getDisplayMetrics().density;
@@ -142,12 +144,11 @@ final class LyricsSkipGapController {
     /** Re-reads {@link Settings#SKIP_CHIP_STYLE} and {@link Settings#SKIP_CHIP_POSITION} (call
      *  at mount and from the preference listener). */
     void onPreferenceChanged() {
-        String nextStyle = config.get(Settings.SKIP_CHIP_STYLE);
-        style = nextStyle == null ? Settings.SKIP_CHIP_STYLE.defaultValue : nextStyle;
+        LyricsShellChromeConfig chrome = LyricsShellChromeConfig.read(config);
+        style = chrome.skipChipStyle;
         if (pill.getVisibility() == View.VISIBLE) applyStyle(shownLabel, false);
 
-        String nextPosition = config.get(Settings.SKIP_CHIP_POSITION);
-        position = nextPosition == null ? Settings.SKIP_CHIP_POSITION.defaultValue : nextPosition;
+        position = chrome.skipChipPosition;
         applyPosition();
 
         applyBottomMargin();
@@ -156,19 +157,19 @@ final class LyricsSkipGapController {
     /** True when this chip and the jump-to-current chip share the same horizontal anchor, so they
      *  stack vertically instead of each sitting at its own baseline. */
     private boolean isStacked() {
-        String jumpPosition = jumpPositionSupplier == null ? null : jumpPositionSupplier.get();
-        return position.equals(jumpPosition);
+        ChipPosition jumpPosition = jumpPositionSupplier == null ? null : jumpPositionSupplier.get();
+        return position == jumpPosition;
     }
 
     private void applyPosition() {
         int gravity;
         int leftMargin;
         int rightMargin;
-        if ("Left".equals(position)) {
+        if (position == ChipPosition.LEFT) {
             gravity = Gravity.BOTTOM | Gravity.START;
             leftMargin = dp(SIDE_MARGIN_DP);
             rightMargin = 0;
-        } else if ("Center".equals(position)) {
+} else if (position == ChipPosition.CENTER) {
             gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
             leftMargin = 0;
             rightMargin = 0;
@@ -255,12 +256,12 @@ final class LyricsSkipGapController {
         pill.removeCallbacks(collapse);
         label.setText(text);
 
-        if ("Icon".equals(style)) {
+        if (style == ChipStyle.ICON) {
             setCollapsed(true);
             return;
         }
         setCollapsed(false);
-        if (!"Label".equals(style)) {
+        if (style != ChipStyle.LABEL) {
             // "Auto": only worth collapsing if it was ever expanded; re-showing the same label
             // mid-life restarts the timer rather than snapping it shut.
             pill.postDelayed(collapse, appearing ? COLLAPSE_DELAY_MS : COLLAPSE_DELAY_MS / 2);

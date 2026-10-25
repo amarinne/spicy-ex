@@ -24,6 +24,28 @@ public final class AmbientArtworkTexture {
         return prepareWithProfile(source).bitmap;
     }
 
+    /**
+     * An owned, aspect-preserving copy for Paper's unblurred original-image samplers. Unlike the
+     * Kawarp atlas this keeps the cover geometry; the shader derives its aspect from it.
+     */
+    public static Bitmap prepareOriginal(Bitmap source, int maxLongestEdge) {
+        int[] size = originalSize(source.getWidth(), source.getHeight(), maxLongestEdge);
+        Bitmap copy = Bitmap.createBitmap(size[0], size[1], Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(copy);
+        canvas.drawBitmap(source, null, new Rect(0, 0, size[0], size[1]),
+                new Paint(Paint.FILTER_BITMAP_FLAG));
+        return copy;
+    }
+
+    static int[] originalSize(int width, int height, int maxLongestEdge) {
+        if (width <= 0 || height <= 0 || maxLongestEdge <= 0) {
+            throw new IllegalArgumentException("Invalid artwork dimensions");
+        }
+        float scale = Math.min(1f, maxLongestEdge / (float) Math.max(width, height));
+        return new int[]{Math.max(1, Math.round(width * scale)),
+                Math.max(1, Math.round(height * scale))};
+    }
+
     public static Prepared prepareWithProfile(Bitmap source) {
         Bitmap small = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888);
         int[] pixels = new int[SIZE * SIZE];

@@ -5,14 +5,15 @@ import com.eza.spicyex.lyrics.language.RomanizationOptions;
 import android.content.Context;
 
 import com.eza.spicyex.Diagnostics;
-import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
+import com.eza.spicyex.lyrics.TranslationConfig;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.DerivedLayerArtifact;
 import com.eza.spicyex.lyrics.session.MeaningArtifact;
 import com.eza.spicyex.lyrics.session.SoundArtifact;
 import com.eza.spicyex.lyrics.session.LayerKind;
 import com.eza.spicyex.lyrics.session.LayerFailure;
+import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
 import com.eza.spicyex.lyrics.ai.AiSettings;
 
 import com.eza.spicyex.xposed.XpLog;
@@ -100,14 +101,14 @@ public final class LyricsSecondaryProcessingSession {
         }
 
         if (callback != null) callback.status("Enhancing " + label(snapshot) + "…");
-        final String targetLang = config.get(Settings.TRANSLATION_TARGET);
-        final String backend = config.get(Settings.TRANSLATION_BACKEND);
-        final String sourceLanguage = "manual".equalsIgnoreCase(config.get(Settings.SOURCE_LANGUAGE_MODE))
-                ? config.get(Settings.SOURCE_LANGUAGE)
+        TranslationConfig translation = TranslationConfig.read(config);
+        final String targetLang = translation.target;
+        final String backend = translation.backend.storedLabel();
+        final String sourceLanguage = LyricsSourcePolicy.isStrictSourceLanguage(translation.sourceMode)
+                ? translation.sourceLanguage
                 : snapshot.language;
         final String effectiveSourceLang = effectiveGoogleSourceLanguage(
-                config.get(Settings.SOURCE_LANGUAGE_MODE),
-                config.get(Settings.SOURCE_LANGUAGE));
+                translation.sourceMode, translation.sourceLanguage);
         Diagnostics.event("secondary_processing", "branch_started",
                 Diagnostics.context(
                         "branch", label(snapshot),

@@ -216,6 +216,9 @@ public final class LyricsTextFactory {
         return (cp >= 0x3040 && cp <= 0x30FF)
                 || (cp >= 0x3400 && cp <= 0x4DBF)
                 || (cp >= 0x4E00 && cp <= 0x9FFF)
+                // Supplementary Han is outside the BMP. Keep rare ideographs in the same
+                // explicit CJK fallback run instead of falling back to Spotify's Latin face.
+                || (cp >= 0x20000 && cp <= 0x323AF)
                 || (cp >= 0x3000 && cp <= 0x303F)
                 || cp == 0x3005;
     }

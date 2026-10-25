@@ -28,6 +28,7 @@ public final class PanelSurface extends FrameLayout {
     private ValueAnimator dimAnimator;
     private boolean exiting;
     private Runnable availableSizeChanged;
+    private View systemBarScrim;
     private int availableWidth;
     private int availableHeight;
 
@@ -37,6 +38,12 @@ public final class PanelSurface extends FrameLayout {
 
     public int availableWidth() { return availableWidth; }
     public int availableHeight() { return availableHeight; }
+
+    /** Supplies a host-owned scrim for system-bar pixels outside the dialog window's surface. */
+    public void setSystemBarScrim(View scrim) {
+        systemBarScrim = scrim;
+        if (scrim != null) scrim.setAlpha(currentDim);
+    }
 
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
         int width = Math.max(1, MeasureSpec.getSize(widthSpec) - getPaddingLeft() - getPaddingRight());
@@ -97,6 +104,23 @@ public final class PanelSurface extends FrameLayout {
         window.setWindowAnimations(0);
         window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        // The scrim belongs to the whole display, including the transparent status/navigation bar
+        // regions. Keep the card inside those regions through the insets listener above instead of
+        // letting the dialog decor clip the scrim to the content area.
+        window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
+        window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(Color.TRANSPARENT);
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false);
+        } else {
+            View decor = window.getDecorView();
+            decor.setSystemUiVisibility(decor.getSystemUiVisibility()
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        }
     }
 
     public View getCard() {
@@ -114,6 +138,7 @@ public final class PanelSurface extends FrameLayout {
         }
         currentDim = Math.max(0f, Math.min(1f, dim));
         dimDrawable.setAlpha((int) (currentDim * 255 + 0.5f));
+        if (systemBarScrim != null) systemBarScrim.setAlpha(currentDim);
         invalidate();
     }
 
@@ -138,6 +163,7 @@ public final class PanelSurface extends FrameLayout {
         dimAnimator.addUpdateListener(anim -> {
             currentDim = (Float) anim.getAnimatedValue();
             dimDrawable.setAlpha((int) (currentDim * 255 + 0.5f));
+            if (systemBarScrim != null) systemBarScrim.setAlpha(currentDim);
             invalidate();
         });
         dimAnimator.addListener(new AnimatorListenerAdapter() {

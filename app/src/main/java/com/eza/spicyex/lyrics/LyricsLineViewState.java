@@ -27,17 +27,19 @@ public final class LyricsLineViewState {
     public static void applySentenceGradient(AppliedLine line, float gradient, float glow,
                                              float brightness) {
         if (line == null) return;
+        boolean softSweep = line.smoothSentenceGradient;
         if (state(line).mainView != null) {
-            state(line).mainView.setSoftSweep(true);
+            state(line).mainView.setSoftSweep(softSweep);
             state(line).mainView.setSequentialLineFill(true);
         }
         if (state(line).romanView != null) {
-            state(line).romanView.setSoftSweep(true);
+            state(line).romanView.setSoftSweep(softSweep);
             state(line).romanView.setSequentialLineFill(true);
         }
         applyLineLevelGradient(line, gradient, glow, brightness);
         if (line.words != null) for (SyllableSegment word : line.words) {
-            LyricsSyllableViewState.applySentenceGradient(word, gradient, glow, brightness);
+            LyricsSyllableViewState.applySentenceGradient(
+                    word, gradient, glow, brightness, softSweep);
         }
     }
 

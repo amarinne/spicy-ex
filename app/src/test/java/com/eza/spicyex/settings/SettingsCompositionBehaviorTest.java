@@ -25,7 +25,7 @@ public class SettingsCompositionBehaviorTest {
             metadata.addProperty("section", setting.section.id);
             metadata.add("default", gson.toJsonTree(setting.defaultValue));
             metadata.add("allowed", gson.toJsonTree(setting.allowedValues));
-            metadata.addProperty("orientation_specific", Settings.isOrientationSpecific(setting));
+            metadata.addProperty("orientation_specific", setting.isOrientationSpecific());
             if (setting instanceof Settings.IntegerSetting) {
                 Settings.IntegerSetting integer = (Settings.IntegerSetting) setting;
                 metadata.addProperty("min", integer.minValue); metadata.addProperty("max", integer.maxValue);
@@ -101,7 +101,7 @@ public class SettingsCompositionBehaviorTest {
     @Test public void orientationRoundTripPreservesAllScopedValues() {
         OrientedContext context = new OrientedContext();
         SettingsStore store = new SettingsStore(context); SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
-        for (Settings.Setting<?> setting : Settings.ALL) if (Settings.isOrientationSpecific(setting)) {
+        for (Settings.Setting<?> setting : Settings.ALL) if (setting.isOrientationSpecific()) {
             context.configuration.orientation = Configuration.ORIENTATION_PORTRAIT;
             put(store, setting, setting.defaultValue);
             context.configuration.orientation = Configuration.ORIENTATION_LANDSCAPE;

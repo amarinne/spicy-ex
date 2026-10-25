@@ -1,7 +1,7 @@
 package com.eza.spicyex.settings;
 
 import com.eza.spicyex.Settings;
-import com.eza.spicyex.lyrics.LyricsBackgroundStyle;
+import com.eza.spicyex.settings.values.BackgroundStyle;
 
 /**
  * The single commit point for ordinary setting writes: one write site per value kind.
@@ -51,8 +51,8 @@ public final class SettingsWriter {
     public void ensureBackgroundStyleMigrated(boolean legacyBackgroundEnabled) {
         if (!store.contains(Settings.BACKGROUND_STYLE)) {
             put(Settings.BACKGROUND_STYLE, legacyBackgroundEnabled
-                    ? LyricsBackgroundStyle.ANIMATED_TEXTURE
-                    : LyricsBackgroundStyle.GRADIENT);
+                    ? BackgroundStyle.ANIMATED_TEXTURE.storedLabel()
+                    : BackgroundStyle.DEFAULT.storedLabel());
         }
     }
 }

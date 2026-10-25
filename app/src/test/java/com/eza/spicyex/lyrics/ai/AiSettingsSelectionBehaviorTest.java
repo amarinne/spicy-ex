@@ -6,6 +6,8 @@ import static org.junit.Assert.assertTrue;
 
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
+import com.eza.spicyex.lyrics.TranslationConfig;
+import com.eza.spicyex.settings.values.TranslationBackend;
 import com.eza.spicyex.testsupport.FakeAndroidContext;
 
 import org.junit.Before;
@@ -70,6 +72,35 @@ public final class AiSettingsSelectionBehaviorTest {
 
         store.put(Settings.AI_TRANSLATION_PIPELINE, AiSettings.TRANSLATION_PIPELINE_GOOGLE_PREVIEW);
         assertFalse(settings.meaningUsesGoogleBaseline());
+    }
+
+    /** The gate and the flow are the translation holder's values, not separate store reads. */
+    @Test public void translationHolderMatchesTheStoredTranslationSettings() {
+        store.put(Settings.TRANSLATION_ENABLED, true);
+        store.put(Settings.TRANSLATION_BACKEND, TranslationBackend.PROVIDER.storedLabel());
+        store.put(Settings.TRANSLATION_TARGET, "es");
+        store.put(Settings.SOURCE_LANGUAGE_MODE, "manual");
+        store.put(Settings.SOURCE_LANGUAGE, "hi");
+        store.put(Settings.AI_TRANSLATION_PIPELINE,
+                AiSettings.TRANSLATION_PIPELINE_GOOGLE_PREVIEW);
+
+        TranslationConfig translation = settings.translation();
+        assertEquals(translation.enabled, settings.meaningLayerEnabled());
+        assertEquals(TranslationBackend.PROVIDER, translation.backend);
+        assertEquals("es", translation.target);
+        assertEquals(AiSettings.MeaningFlow.GOOGLE_PREVIEW, translation.meaningFlow);
+        assertEquals(translation.meaningFlow, settings.meaningFlow());
+
+        store.put(Settings.TRANSLATION_ENABLED, false);
+        assertFalse(settings.meaningLayerEnabled());
+        assertFalse(settings.translation().enabled);
+    }
+
+    /** The stored label of every flow round-trips through the selection it drives. */
+    @Test public void everyFlowRoundTripsThroughItsStoredLabel() {
+        for (AiSettings.MeaningFlow flow : AiSettings.MeaningFlow.values()) {
+            assertEquals(flow, AiSettings.MeaningFlow.ofStoredValue(flow.storedLabel()));
+        }
     }
 
     static final class PlainCipher implements AiCredentialStore.Cipher {

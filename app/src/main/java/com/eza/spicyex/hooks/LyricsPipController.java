@@ -60,8 +60,8 @@ final class LyricsPipController {
     private Rational aspect = new Rational(3, 4);
 
     private static Rational aspectSetting(Context context) {
-        int[] ratio = com.eza.spicyex.Settings.pipShapeRatio(
-                com.eza.spicyex.SpotifyPlusConfig.from(context).get(com.eza.spicyex.Settings.PIP_SHAPE));
+        int[] ratio = PipPresentationConfig.read(
+                com.eza.spicyex.SpotifyPlusConfig.from(context)).shapeRatio();
         return new Rational(ratio[0], ratio[1]);
     }
 
@@ -182,8 +182,8 @@ final class LyricsPipController {
     /** An explicit button opens PiP; a normal close or back press keeps its old behavior. */
     boolean openFromLyrics(Activity from) {
         if (from == null || !isSupported(from) || !hosts.isEmpty() || opener != null) return false;
-        if (!Boolean.TRUE.equals(com.eza.spicyex.SpotifyPlusConfig.from(from)
-                .get(com.eza.spicyex.Settings.PIP_ENABLED))) return false;
+        if (!PipPresentationConfig.read(
+                com.eza.spicyex.SpotifyPlusConfig.from(from)).enabled) return false;
         open(from);
         return opener != null;
     }
@@ -304,8 +304,8 @@ final class LyricsPipController {
      *  before it: left in front, it shows its now-playing page next to the PiP window. */
     private void leave(Activity from) {
         final int task = from.getTaskId();
-        final boolean toBack = !Boolean.FALSE.equals(com.eza.spicyex.SpotifyPlusConfig.from(from)
-                .get(com.eza.spicyex.Settings.PIP_LEAVE_SPOTIFY));
+        final boolean toBack = PipPresentationConfig.read(
+                com.eza.spicyex.SpotifyPlusConfig.from(from)).leaveSpotify;
         if (!from.isFinishing()) {
             if (toBack) {
                 try {
@@ -479,8 +479,8 @@ final class LyricsPipController {
     private List<RemoteAction> actions(Activity activity) {
         lastPlaying = host.isPlayerActuallyPlaying();
         List<RemoteAction> list = new ArrayList<>(3);
-        if (!Boolean.TRUE.equals(com.eza.spicyex.SpotifyPlusConfig.from(activity)
-                .get(com.eza.spicyex.Settings.PIP_CONTROLS))) return list;
+        if (!PipPresentationConfig.read(
+                com.eza.spicyex.SpotifyPlusConfig.from(activity)).controls) return list;
         list.add(action(activity, CONTROL_PREVIOUS, android.R.drawable.ic_media_previous, "Previous"));
         list.add(lastPlaying
                 ? action(activity, CONTROL_TOGGLE, android.R.drawable.ic_media_pause, "Pause")

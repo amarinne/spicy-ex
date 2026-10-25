@@ -7,6 +7,10 @@ import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 
+import com.eza.spicyex.settings.values.LineSyncFill;
+import com.eza.spicyex.settings.values.WordBounceMode;
+import com.eza.spicyex.settings.values.WordBounceStyle;
+
 import java.util.Set;
 import java.util.List;
 
@@ -408,7 +412,7 @@ public final class LyricsFrameRenderer {
         // Apple lift carries its own motion: it must not depend on the shared Word bounce gate.
         if (config != null && config.appleStyle && config.appleLift) return true;
         return config != null && config.wordBounceEnabled
-                && (config.wordBounceScope.equals("All synced rows") || hasRealTimedWords(line));
+                && (config.wordBounceScope == WordBounceMode.ALL_SYNCED_ROWS || hasRealTimedWords(line));
     }
 
     /** Lift curve source: shared Lift bounce style, or Apple lift owning motion in Apple style. */
@@ -417,19 +421,19 @@ public final class LyricsFrameRenderer {
     }
 
     private boolean liftBounce(LyricsRenderConfig config) {
-        return config != null && !"Apple lift".equals(config.wordBounceStyle)
-                && config.wordBounceStyle.endsWith(" lift");
+        return config != null && config.wordBounceStyle != WordBounceStyle.APPLE_LIFT
+                && config.wordBounceStyle.isLift();
     }
 
     private boolean individualWordBounce(LyricsRenderConfig config) {
-        return config != null && (config.wordBounceStyle.startsWith("Word ")
+        return config != null && (config.wordBounceStyle.isWordLevel()
                 || config.appleLift);
     }
 
     private boolean lineLevelBounceEnabled(LyricsRenderConfig config, AppliedLine line) {
         if (config != null && config.appleStyle) return true;
         return config != null && config.wordBounceEnabled
-                && "All synced rows".equals(config.wordBounceScope);
+                && config.wordBounceScope == WordBounceMode.ALL_SYNCED_ROWS;
     }
 
     /**
@@ -444,12 +448,11 @@ public final class LyricsFrameRenderer {
         return activeChanged && !userScrollHeld;
     }
 
-    static WordGradientRoute wordGradientRoute(String fillMode) {
-        if ("Left to right (block)".equals(fillMode)) {
+    static WordGradientRoute wordGradientRoute(LineSyncFill fillMode) {
+        if (fillMode == LineSyncFill.BLOCK) {
             return WordGradientRoute.CONTINUOUS_BLOCK;
         }
-        if ("Left to right (sentence)".equals(fillMode)
-                || "Left to right (word)".equals(fillMode)) {
+        if (fillMode == LineSyncFill.SENTENCE || fillMode == LineSyncFill.WORD) {
             return WordGradientRoute.TIMED_WORDS;
         }
         return WordGradientRoute.LINE_LEVEL;
@@ -589,26 +592,8 @@ public final class LyricsFrameRenderer {
         int distance = Math.abs(index - active);
         if (distance == 0) return 0f;
         boolean emphasized = line.dotLine || line.isShortText(SHORT_LINE_CODE_POINTS);
-        if (config.appleStyle) {
-            // Let nearby rows dissolve into the ambient blur as focus advances. The active row
-            // remains sharp; the first neighbour gets a restrained veil and the curve grows
-            // smoothly with distance rather than switching on abruptly at row two.
-            float max = config.lineBlurHeavy
-                    ? (emphasized ? 7.0f : 10.0f)
-                    : (emphasized ? 3.2f : 4.8f);
-            float curved = (float) Math.pow(Math.min(1f, distance / 3.2f), 0.72);
-            return max * curved * quality;
-        }
-        if (config.lineBlurHeavy) {
-            float max = emphasized ? 5.0f : 8.0f;
-            float curved = (float) Math.pow(Math.min(1f, distance / 4f), 0.75);
-            return max * curved * quality;
-        }
-        if (distance <= 1) return 0f;
-        float legacyMax = emphasized ? 1.0f : 1.8f;
-        float weighted = legacyMax * Math.min(1f, distance / 4f);
-        if (distance == 2) weighted *= 0.55f;
-        return weighted * quality;
+        return LyricsBlurCurve.blurPx(distance, emphasized, config.lineBlurHeavy,
+                config.appleStyle, quality);
     }
 
     private float progress01(long positionMs, long startMs, long endMs) {

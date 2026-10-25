@@ -13,6 +13,8 @@ import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.view.animation.PathInterpolator;
 
+import com.eza.spicyex.ambient.AmbientArtworkPalette;
+
 /**
  * The "artwork colours" lyrics background: a soft mesh of colour fields derived from the track's
  * colour, over a dark base with a light vignette - instead of a flat two-stop diagonal gradient.
@@ -130,57 +132,20 @@ public final class MeshGradientDrawable extends Drawable {
     }
 
     /**
-     * The artwork's prominent colours: hues bucketed and weighted by how saturated and bright they
-     * are, so a cover's accent colours win over its large grey or black areas. Brightness is
-     * evened out so every field reads as colour, not as a light or a hole. Null when the image
-     * is essentially colourless (the single-colour fallback then applies).
+     * Samples the artwork into the pure palette extractor. The returned colours are the cover's
+     * own dominant hues and neutral light/dark fields; no saturation or brightness is imposed here.
+     * Null only for a missing or fully recycled bitmap (the single-colour fallback then applies).
      */
     public static int[] extractPalette(Bitmap art, int max) {
         if (art == null || art.isRecycled()) return null;
         Bitmap small = Bitmap.createScaledBitmap(art, 32, 32, true);
-        int bins = 16;
-        float[] weight = new float[bins];
-        float[][] sum = new float[bins][3];
-        float[] hsv = new float[3];
-        for (int y = 0; y < 32; y++) {
-            for (int x = 0; x < 32; x++) {
-                int c = small.getPixel(x, y);
-                Color.colorToHSV(c, hsv);
-                if (hsv[2] < 0.12f || hsv[1] < 0.15f) continue;
-                int bin = Math.min(bins - 1, (int) (hsv[0] / 360f * bins));
-                float w = (hsv[1] + 0.15f) * (hsv[2] + 0.2f);
-                weight[bin] += w;
-                sum[bin][0] += Color.red(c) * w;
-                sum[bin][1] += Color.green(c) * w;
-                sum[bin][2] += Color.blue(c) * w;
-            }
+        int[] pixels = new int[32 * 32];
+        try {
+            small.getPixels(pixels, 0, 32, 0, 0, 32, 32);
+        } finally {
+            if (small != art) small.recycle();
         }
-        if (small != art) small.recycle();
-        java.util.List<Integer> order = new java.util.ArrayList<>();
-        for (int i = 0; i < bins; i++) if (weight[i] > 0.5f) order.add(i);
-        if (order.isEmpty()) return null;
-        order.sort((a, b) -> Float.compare(weight[b], weight[a]));
-        java.util.List<Integer> picked = new java.util.ArrayList<>();
-        for (int bin : order) {
-            boolean distinct = true;
-            for (int p : picked) {
-                int d = Math.abs(bin - p);
-                if (Math.min(d, bins - d) < 2) distinct = false;
-            }
-            if (distinct || picked.isEmpty()) picked.add(bin);
-            if (picked.size() >= max) break;
-        }
-        int[] out = new int[picked.size()];
-        for (int i = 0; i < out.length; i++) {
-            int bin = picked.get(i);
-            int c = Color.rgb(Math.round(sum[bin][0] / weight[bin]), Math.round(sum[bin][1] / weight[bin]),
-                    Math.round(sum[bin][2] / weight[bin]));
-            Color.colorToHSV(c, hsv);
-            hsv[1] = Math.min(0.92f, hsv[1] * 1.2f + 0.08f);
-            hsv[2] = Math.max(0.5f, Math.min(0.85f, hsv[2] * 1.1f));
-            out[i] = Color.HSVToColor(hsv);
-        }
-        return out;
+        return AmbientArtworkPalette.extract(pixels, max);
     }
 
     /** One soft colour field: full colour at its centre fading out over {@code radius} (of width). */

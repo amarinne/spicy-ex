@@ -10,6 +10,7 @@ import android.view.ViewConfiguration;
 
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
+import com.eza.spicyex.settings.values.TapSeekMode;
 
 /** Handles lyric scroll touch hold, optional tap-to-seek, and long-press-to-share gestures. */
 public final class LyricsTapSeekHandler implements View.OnTouchListener {
@@ -73,8 +74,9 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
             float dy = Math.abs(event.getY() - scrollDownY);
             long held = SystemClock.elapsedRealtime() - scrollDownAtMs;
             if (dy < dp(10) && held < 600) {
-                String mode = config == null ? "" : config.get(Settings.TAP_SEEK_MODE);
-                if ("Double tap".equalsIgnoreCase(mode)) {
+                TapSeekMode mode = config == null ? null
+                        : config.get(Settings.TAP_SEEK_MODE, TapSeekMode.class);
+                if (mode == TapSeekMode.DOUBLE_TAP) {
                     long now = SystemClock.elapsedRealtime();
                     if (now - lastTapAtMs < 350 && Math.abs(event.getY() - lastTapY) < dp(20)) {
                         seek(event.getY());
@@ -83,7 +85,7 @@ public final class LyricsTapSeekHandler implements View.OnTouchListener {
                         lastTapAtMs = now;
                         lastTapY = event.getY();
                     }
-                } else if ("Single tap".equalsIgnoreCase(mode)) {
+                } else if (mode == TapSeekMode.SINGLE_TAP) {
                     seek(event.getY());
                 }
                 return true;

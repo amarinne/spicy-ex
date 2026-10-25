@@ -7,7 +7,7 @@ Most options are available in **Spicy EX settings** inside Spotify.
 - **Readings:** Japanese, Chinese, Korean, Cyrillic, and Greek. See [readings and transliteration](TRANSLITERATION.md).
 - **Translation:** Google or [AI](#ai).
 - **Android Auto:** lyrics appear in the player and dashboard. Root and LSPosed are required.
-- **Appearance:** typography, layout, animation, spacing, and background controls.
+- **Appearance:** typography, layout, animation, spacing, and animated background effects.
 - **Integration:** synchronized lyrics for HyperGlow lockscreen/AOD.
 
 See the [FAQ](FAQ.md) for installation and troubleshooting.

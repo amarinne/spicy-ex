@@ -96,10 +96,10 @@ public class SettingsDefaultsTest {
         assertEquals("Off", Settings.KOREAN_ROMANIZATION.coerce("Off"));
         assertEquals("Off", Settings.KOREAN_ROMANIZATION.coerce("off"));
 
-        assertEquals(Integer.valueOf(100), Settings.LYRICS_BLUR_INTENSITY.defaultValue);
-        assertEquals(25, Settings.LYRICS_BLUR_INTENSITY.minValue);
-        assertEquals(250, Settings.LYRICS_BLUR_INTENSITY.maxValue);
-        assertEquals(5, Settings.LYRICS_BLUR_INTENSITY.stepValue);
+        assertEquals(Integer.valueOf(0), Settings.LYRICS_BLUR_STRENGTH.defaultValue);
+        assertEquals(0, Settings.LYRICS_BLUR_STRENGTH.minValue);
+        assertEquals(500, Settings.LYRICS_BLUR_STRENGTH.maxValue);
+        assertEquals(5, Settings.LYRICS_BLUR_STRENGTH.stepValue);
 
         assertEquals(Integer.valueOf(59), Settings.FURIGANA_BRIGHTNESS.defaultValue);
         assertEquals(20, Settings.FURIGANA_BRIGHTNESS.minValue);
@@ -120,12 +120,10 @@ public class SettingsDefaultsTest {
         assertEquals("Phrase zoom", Settings.WORD_BOUNCE_STYLE.coerce("bogus"));
         assertFalse(Settings.ALIGNED_PER_WORD_ROMAJI.defaultValue);
         assertTrue(Settings.ENABLE_GLOW_BLUR.defaultValue);
-        assertEquals("Off", Settings.ENABLE_LINE_BLUR.defaultValue);
-        assertEquals(java.util.Arrays.asList("Off", "Slight", "Heavy"),
-                Settings.ENABLE_LINE_BLUR.allowedValues);
-        assertEquals("Heavy", Settings.ENABLE_LINE_BLUR.coerce("Heavy"));
-        assertEquals("Off", Settings.ENABLE_LINE_BLUR.coerce("bogus"));
-        assertTrue(Settings.FORCE_DARK_BACKGROUND.defaultValue);
-        assertEquals(Integer.valueOf(35), Settings.EXTRA_DARK_BACKGROUND.defaultValue);
+        assertEquals(Integer.valueOf(35), Settings.LYRICS_DARKENING.defaultValue);
+        assertEquals(0, Settings.LYRICS_DARKENING.minValue);
+        assertEquals(100, Settings.LYRICS_DARKENING.maxValue);
+        assertEquals(5, Settings.LYRICS_DARKENING.stepValue);
+        assertEquals(java.util.Arrays.asList("Off", "Word only"), Settings.LIVE_CARD_GLOW.allowedValues);
     }
 }

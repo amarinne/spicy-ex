@@ -2,6 +2,7 @@ package com.eza.spicyex.lyrics;
 
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.providers.LyricsParser;
+import com.eza.spicyex.settings.values.LineSyncFill;
 import java.lang.reflect.Field;
 import org.junit.Test;
 import static org.junit.Assert.*;
@@ -17,7 +18,7 @@ public class SentenceRenderRoutingTest {
                         + "\"Syllables\":[{\"Text\":\"ab\",\"StartTime\":1,\"EndTime\":3,\"IsPartOfWord\":false},"
                         + "{\"Text\":\"cd\",\"StartTime\":3,\"EndTime\":5,\"IsPartOfWord\":false}]}}]"
         };
-        LyricsRenderConfig config = config("Left to right (sentence)");
+        LyricsRenderConfig config = config(LineSyncFill.SENTENCE);
         for (String body : bodies) {
             LyricsDocument document = new LyricsParser(null).parseSpicyOrgLyrics(null, track,
                     "{\"Status\":200,\"Type\":\"object\",\"Body\":{\"id\":\"" + id
@@ -40,7 +41,7 @@ public class SentenceRenderRoutingTest {
     @Test public void appleLineSentenceSelectionDoesNotLightTheWholeBlock() throws Exception {
         LyricsDocument document = new LyricsDocument();
         document.type = "Line";
-        LyricsRenderConfig config = config("Left to right (sentence)");
+        LyricsRenderConfig config = config(LineSyncFill.SENTENCE);
         assertFalse(LyricsFrameRenderer.lightsAppleLineAsWhole(config, document));
         AppliedLine line = new AppliedLine();
         line.text = "first visual line second visual line";
@@ -60,20 +61,21 @@ public class SentenceRenderRoutingTest {
     @Test public void otherAppleLineModesKeepWholeLineLighting() throws Exception {
         LyricsDocument document = new LyricsDocument();
         document.type = "Line";
-        for (String mode : new String[]{"Top to bottom", "Left to right (word)", "Left to right (block)"}) {
+        for (LineSyncFill mode : new LineSyncFill[]{LineSyncFill.TOP_TO_BOTTOM,
+                LineSyncFill.WORD, LineSyncFill.BLOCK}) {
             LyricsRenderConfig config = config(mode);
-            assertTrue(mode, LyricsFrameRenderer.lightsAppleLineAsWhole(config, document));
+            assertTrue(mode.name(), LyricsFrameRenderer.lightsAppleLineAsWhole(config, document));
             LyricsSurfaceRowPlanner.RowPlan row = LyricsSurfaceRowPlanner.plan(new AppliedLine(), document,
                     LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(config, false, false, "off"));
-            assertFalse(mode, row.options.continuousSentenceFill);
-            assertFalse(mode, row.options.sequentialLineFill);
+            assertFalse(mode.name(), row.options.continuousSentenceFill);
+            assertFalse(mode.name(), row.options.sequentialLineFill);
         }
     }
 
     @Test public void disabledWashAndSpotlightKeepTheirExistingAppleLighting() throws Exception {
         LyricsDocument document = new LyricsDocument();
         document.type = "Line";
-        LyricsRenderConfig config = config("Left to right (sentence)");
+        LyricsRenderConfig config = config(LineSyncFill.SENTENCE);
         Field wash = LyricsRenderConfig.class.getDeclaredField("lineGradientEnabled");
         wash.setAccessible(true);
         wash.setBoolean(config, false);
@@ -86,10 +88,10 @@ public class SentenceRenderRoutingTest {
     }
 
     @Test public void sentenceRowPlanningCoversEverySharedSurfaceAndRealWords() throws Exception {
-        LyricsRenderConfig config = config("Left to right (sentence)");
+        LyricsRenderConfig config = config(LineSyncFill.SENTENCE);
         Field cardMode = LyricsRenderConfig.class.getDeclaredField("liveCardLineSyncFillMode");
         cardMode.setAccessible(true);
-        cardMode.set(config, "Left to right (sentence)");
+        cardMode.set(config, LineSyncFill.SENTENCE);
         LyricsDocument document = new LyricsDocument();
         document.type = "Syllable";
         for (LyricsSurfaceRowPlanner.SurfacePolicy policy : new LyricsSurfaceRowPlanner.SurfacePolicy[]{
@@ -108,7 +110,7 @@ public class SentenceRenderRoutingTest {
         }
     }
 
-    private static LyricsRenderConfig config(String mode) throws Exception {
+    private static LyricsRenderConfig config(LineSyncFill mode) throws Exception {
         LyricsRenderConfig config = LyricsRenderConfig.read(null, null);
         for (String name : new String[]{"appleStyle", "lineGradientEnabled"}) {
             Field field = LyricsRenderConfig.class.getDeclaredField(name);

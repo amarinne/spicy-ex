@@ -2,7 +2,8 @@
 
 ## Offline coverage
 
-Spicy EX includes offline, deterministic romanization packages for these languages and scripts.
+Spicy EX supports offline, deterministic readings for these languages and scripts. Japanese requires
+one language-model download in Settings. The other offline engines listed below are bundled.
 
 | Language or script | Output | Example |
 |---|---|---|

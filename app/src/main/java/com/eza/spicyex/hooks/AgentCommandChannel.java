@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -13,6 +14,7 @@ import com.eza.spicyex.References;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.SpotifyTrack;
+import com.eza.spicyex.ambient.AmbientShaderEffect;
 import com.eza.spicyex.lyrics.catalog.CatalogSource;
 import com.eza.spicyex.lyrics.catalog.LyricsCatalog;
 import com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore;
@@ -23,6 +25,9 @@ import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode;
 import com.eza.spicyex.lyrics.cache.CacheClearKind;
 import com.eza.spicyex.settings.SourcePreferencesAdapter;
 import com.eza.spicyex.settings.SettingsWriter;
+import com.eza.spicyex.settings.values.BackgroundEffect;
+import com.eza.spicyex.settings.values.BackgroundEffectPool;
+import com.eza.spicyex.settings.values.StoredValues;
 import com.eza.spicyex.xposed.XpLog;
 
 import java.io.File;
@@ -78,8 +83,26 @@ import java.util.function.Consumer;
  *   <li>{@code editor select <name>} — select one element: {@code artwork},
  *       {@code track_text}, {@code focus}, {@code lyrics}, {@code background}, {@code skip},
  *       {@code follow}, {@code top_bar}, {@code card}</li>
+ *   <li>{@code editor tab <name>} — switch the open editor's tab strip: the card editor takes
+ *       {@code text} or {@code animation}, the lyrics editor {@code style}, {@code animation},
+ *       or {@code effects}</li>
+ *   <li>{@code editor mode element|list} — show the selected element's options or the list of
+ *       all elements; the card editor refuses {@code list}</li>
+ *   <li>{@code editor choose <setting key> <value>} — pick one of the options the open editor
+ *       really rendered, through that control's own click owner, so the write and the rebuild
+ *       that follows it are the production ones</li>
+ *   <li>{@code editor random open|search [TEXT]|toggle ID|apply|cancel|status} — open and drive
+ *       the live Random pool dialog through its own switch rows, Done, and Cancel; status keeps
+ *       the pending choices separate from the persisted pool</li>
  *   <li>{@code layout} — one JSON line of real on-screen geometry plus the layout rule violations
  *       it implies (see {@link LayoutProbeReport})</li>
+ *   <li>{@code ambient-effect kawarp|mesh|status} — internal paired-test shader selection for the
+ *       animated background; it writes no setting and reports the mounted layer's state</li>
+ *   <li>{@code background-effect status|fixed ID|random|pool ID[,ID...]|pool-toggle ID} — read or
+ *       write the persisted fixed effect and the nonempty Random pool, with content-free replies</li>
+ *   <li>{@code demo-frames SECONDS ID} — fixed offline demo, frame histogram and pipeline diagnostics</li>
+ *   <li>{@code lyrics-hitch CHANGES ID} — cold then warm scripted track changes with frame and
+ *       document-preparation timings (see {@link AgentLyricsHitchRun})</li>
  *   <li>{@code setting <key> <value>} — write one {@link Settings.Setting}, replying
  *       {@code old=… new=…} so a caller can put the previous value back</li>
  *   <li>{@code setting-get <key>} — read one setting's current value</li>
@@ -209,6 +232,10 @@ final class AgentCommandChannel {
         }
         String[] parts = raw.split("\\s+", 2);
         String verb = parts[0].toLowerCase(Locale.ROOT);
+        if (AgentDemoFrameRun.isBusy() || AgentLyricsHitchRun.isBusy()) {
+            reply("error", verb, "a debug measurement is running; wait for its reply", id(raw));
+            return;
+        }
         String rest = parts.length > 1 ? parts[1].trim() : "";
         // The correlation id is a trailing token, not part of the command's own argument.
         String correlation = id(raw);
@@ -227,8 +254,11 @@ final class AgentCommandChannel {
                         Activity activity = References.currentActivity();
                         NativeSpicyShellView shell = activity == null || activity.getWindow() == null
                                 ? null : findShell(activity.getWindow().getDecorView());
-                        reply("ok", verb, "track=" + trackLabel() + " fullscreen=" + (shell != null)
-                                + " document=" + (shell != null && shell.hasLyricsDocument()), correlation);
+                        reply("ok", verb, "track=" + trackLabel() + " cover=" + coverForm()
+                                + " fullscreen=" + (shell != null)
+                                + " document=" + (shell != null && shell.hasLyricsDocument())
+                                + " " + (shell == null ? "effect=none rejected=none"
+                                        : shell.agentAmbientEffect("status")), correlation);
                     });
                     return;
                 case "org-retention":
@@ -404,6 +434,18 @@ final class AgentCommandChannel {
                     return;
                 case "layout":
                     layout(correlation);
+                    return;
+                case "ambient-effect":
+                    ambientEffect(argument, correlation);
+                    return;
+                case "background-effect":
+                    backgroundEffect(argument, correlation);
+                    return;
+                case "demo-frames":
+                    demoFrames(argument, correlation);
+                    return;
+                case "lyrics-hitch":
+                    lyricsHitch(argument, correlation);
                     return;
                 case "setting":
                     writeSetting(argument, correlation);
@@ -634,7 +676,7 @@ final class AgentCommandChannel {
                     return;
                 }
                 if ("catalog".equals(action)) {
-                    boolean opened = com.eza.spicyex.settings.SettingsPanel.openSpicyOrgCatalog(context);
+                    boolean opened = com.eza.spicyex.settings.panel.SettingsPanel.openSpicyOrgCatalog(context);
                     reply(opened ? "ok" : "error", "spicy-key",
                             opened ? "catalog requested" : "no browser available", correlation);
                     return;
@@ -780,14 +822,123 @@ final class AgentCommandChannel {
                         }
                         String name = args[1].toLowerCase(Locale.ROOT);
                         boolean selected = shell.agentSelectElement(name);
+                        // In list mode the selection also scrolls the list to its section.
+                        String section = selected ? shell.agentEditorListSection() : "";
                         reply(selected ? "ok" : "error", "editor",
-                                selected ? "select name=" + name : "cannot select '" + args[1] + "'",
+                                selected ? "select name=" + name
+                                        + (section.isEmpty() ? "" : " section=" + section)
+                                        : "cannot select '" + args[1] + "'",
                                 correlation);
+                        return;
+                    }
+                    case "tap": {
+                        if (args.length != 2) {
+                            reply("error", "editor", "tap needs an element name", correlation);
+                            return;
+                        }
+                        // The element's own tap owner: its options open, and the full list is left
+                        // when it is the panel that is showing.
+                        String name = args[1].toLowerCase(Locale.ROOT);
+                        String refusal = shell.agentEditorTap(name);
+                        if (refusal != null) {
+                            reply("error", "editor", refusal, correlation);
+                            return;
+                        }
+                        reply("ok", "editor", "tap name=" + name, correlation);
+                        return;
+                    }
+                    case "mode": {
+                        if (args.length != 2) {
+                            reply("error", "editor", "mode needs element, list, or toggle",
+                                    correlation);
+                            return;
+                        }
+                        String mode = args[1].toLowerCase(Locale.ROOT);
+                        // The toggle is the toolbar's own control, not a direct mode write: while
+                        // the panel is hidden it always opens the full list.
+                        if ("toggle".equals(mode)) {
+                            String refusal = shell.agentEditorToggleList();
+                            if (refusal != null) {
+                                reply("error", "editor", refusal, correlation);
+                                return;
+                            }
+                            reply("ok", "editor", "mode=toggle", correlation);
+                            return;
+                        }
+                        // The editor session owns the panel mode: the card editor refuses the list.
+                        String refusal = shell.agentEditorMode(mode);
+                        if (refusal != null) {
+                            reply("error", "editor", refusal, correlation);
+                            return;
+                        }
+                        reply("ok", "editor", "mode=" + mode, correlation);
+                        return;
+                    }
+                    case "tab": {
+                        if (args.length != 2) {
+                            reply("error", "editor", "tab needs a tab name", correlation);
+                            return;
+                        }
+                        // The editor session owns the strip: it knows the open mode, so it can
+                        // refuse a tab that mode does not have and say which ones it does.
+                        String refusal = shell.agentEditorTab(args[1].toLowerCase(Locale.ROOT));
+                        if (refusal != null) {
+                            reply("error", "editor", refusal, correlation);
+                            return;
+                        }
+                        reply("ok", "editor", "accepted=true", correlation);
+                        return;
+                    }
+                    case "choose": {
+                        String[] request = editorChooseRequest(args);
+                        if (request == null) {
+                            reply("error", "editor", "choose needs a setting key and a value",
+                                    correlation);
+                            return;
+                        }
+                        // The editor picks the rendered choice itself and refuses the ones it
+                        // does not have, so nothing is written for a key or a value that is
+                        // not on screen.
+                        String refusal = shell.agentEditorChoose(request[0], request[1]);
+                        if (refusal != null) {
+                            reply("error", "editor", refusal, correlation);
+                            return;
+                        }
+                        reply("ok", "editor", "choose key=" + request[0] + " value=" + request[1],
+                                correlation);
+                        return;
+                    }
+                    case "random": {
+                        String[] request = editorRandomRequest(args);
+                        if (request == null) {
+                            reply("error", "editor",
+                                    "random needs open, search [TEXT], toggle ID, apply, cancel, or status",
+                                    correlation);
+                            return;
+                        }
+                        if ("status".equals(request[0])) {
+                            String status = shell.agentEditorRandomPoolStatus();
+                            if (status == null || status.isEmpty()) {
+                                reply("error", "editor", "random status needs an open editor",
+                                        correlation);
+                                return;
+                            }
+                            reply("ok", "editor", "random " + status, correlation);
+                            return;
+                        }
+                        // The live dialog owns each action: the chosen switch row, Done, or Cancel
+                        // runs its own click owner, so the pool write and dismissal are the
+                        // production ones.
+                        String refusal = shell.agentEditorRandomPool(request[0], request[1]);
+                        if (refusal != null) {
+                            reply("error", "editor", refusal, correlation);
+                            return;
+                        }
+                        reply("ok", "editor", "random action=" + request[0], correlation);
                         return;
                     }
                     case "back":
                     case "demo":
-                    case "tab":
                     case "options":
                     case "reveal":
                     case "reset": {
@@ -807,12 +958,151 @@ final class AgentCommandChannel {
                         return;
                     }
                     default:
-                        reply("error", "editor", "expected open, close, select, back, demo, tab, options, reveal, or reset", correlation);
+                        reply("error", "editor", "expected open, close, select, tap, back, demo, tab, mode, choose, random, options, reveal, or reset", correlation);
                 }
             } catch (Throwable t) {
                 reply("error", "editor", "threw " + t, correlation);
             }
         });
+    }
+
+    /**
+     * The setting key and the stored value of an {@code editor choose} request.
+     *
+     * <p>The value is the rest of the line: a choice can carry a space in its name, and the
+     * request names the choice exactly as the panel stores it, so its case and its wording both
+     * stand. A request that does not name both is not a request.
+     *
+     * @param args the words of the command, the verb first.
+     * @return the key and the value, or null when the request does not name both.
+     */
+    static String[] editorChooseRequest(String[] args) {
+        if (args == null || args.length < 3) return null;
+        String key = args[1];
+        if (key == null || key.isEmpty()) return null;
+        StringBuilder value = new StringBuilder();
+        for (int i = 2; i < args.length; i++) {
+            if (value.length() > 0) value.append(' ');
+            value.append(args[i]);
+        }
+        String text = value.toString();
+        if (text.isEmpty()) return null;
+        return new String[]{key, text};
+    }
+
+    /**
+     * The action and argument of an {@code editor random} request.
+     *
+     * <p>Search keeps the rest of the line as its text, so a multi-word query survives. The other
+     * actions take no argument, and a toggle names exactly one stable effect id.
+     *
+     * @param args the words of the command, the verb first.
+     * @return the action and its argument, or null when the request is malformed.
+     */
+    static String[] editorRandomRequest(String[] args) {
+        if (args == null || args.length < 2) return null;
+        String action = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+        switch (action) {
+            case "open":
+            case "status":
+            case "apply":
+            case "cancel":
+                return args.length == 2 ? new String[]{action, ""} : null;
+            case "toggle":
+                return args.length == 3 && args[2] != null && !args[2].isEmpty()
+                        ? new String[]{action, args[2]} : null;
+            case "search": {
+                StringBuilder text = new StringBuilder();
+                for (int i = 2; i < args.length; i++) {
+                    if (text.length() > 0) text.append(' ');
+                    text.append(args[i]);
+                }
+                return new String[]{action, text.toString()};
+            }
+            default:
+                return null;
+        }
+    }
+
+    private void demoFrames(String argument, String correlation) {
+        if (!BuildConfig.DEBUG) return;
+        String[] args = argument.split("\\s+");
+        if (!AgentDemoFrameRun.validRequest(args)) {
+            reply("error", "demo-frames", "expected SECONDS(5..60) ID(letters, digits, underscore, hyphen)", correlation);
+            return;
+        }
+        onMain("demo-frames", correlation, () -> {
+            NativeSpicyShellView shell = requireShell("demo-frames", correlation);
+            if (shell == null) return;
+            try {
+                AgentDemoFrameRun.start(References.currentActivity(), shell, Integer.parseInt(args[0]), args[1],
+                        summary -> reply(summary.startsWith("error ") ? "error" : "ok", "demo-frames", summary, correlation));
+            } catch (Exception failure) {
+                reply("error", "demo-frames", failure.getMessage(), correlation);
+            }
+        });
+    }
+
+    /**
+     * Opens the fullscreen lyrics surface when it is not mounted, waits for a document, then runs
+     * the scripted track-change window. The surface and current track are the two things the run
+     * needs; nothing here opens the editor or writes a setting.
+     */
+    private void lyricsHitch(String argument, String correlation) {
+        if (!BuildConfig.DEBUG) return;
+        String[] args = argument.split("\\s+");
+        if (!AgentLyricsHitchRun.validRequest(args)) {
+            reply("error", "lyrics-hitch",
+                    "expected CHANGES(10..20) ID(letters, digits, underscore, hyphen)", correlation);
+            return;
+        }
+        int changes = Integer.parseInt(args[0]);
+        String runId = args[1];
+        onMain("lyrics-hitch", correlation, () -> {
+            Activity activity = References.currentActivity();
+            if (activity == null || activity.isDestroyed() || activity.isFinishing()
+                    || activity.getWindow() == null) {
+                reply("error", "lyrics-hitch", "no current activity", correlation);
+                return;
+            }
+            awaitLyricsSurface(new Handler(Looper.getMainLooper()), changes, runId, correlation,
+                    SystemClock.elapsedRealtime() + 15_000L, false);
+        });
+    }
+
+    private void awaitLyricsSurface(Handler handler, int changes, String runId,
+                                    String correlation, long deadline, boolean launched) {
+        Activity current = References.currentActivity();
+        NativeSpicyShellView shell = current == null || current.isDestroyed()
+                || current.getWindow() == null ? null : findShell(current.getWindow().getDecorView());
+        if (shell != null && AgentLyricsHitchRun.surfaceReady(current, shell) && shell.hasLyricsDocument()) {
+            try {
+                AgentLyricsHitchRun.start(current, shell, host, context, changes, runId,
+                        summary -> reply(summary.startsWith("error ") ? "error" : "ok",
+                                "lyrics-hitch", summary, correlation));
+            } catch (Exception failure) {
+                reply("error", "lyrics-hitch", failure.getMessage(), correlation);
+            }
+            return;
+        }
+        if (shell == null && !launched) {
+            if (current == null || current.isDestroyed()) {
+                reply("error", "lyrics-hitch", "no current activity", correlation);
+                return;
+            }
+            if (!host.launchNativeLyricsFullscreen(current)) {
+                reply("error", "lyrics-hitch", "cannot open the fullscreen lyrics surface", correlation);
+                return;
+            }
+        }
+        boolean nextLaunched = launched || shell == null;
+        if (SystemClock.elapsedRealtime() > deadline) {
+            reply("error", "lyrics-hitch",
+                    "fullscreen lyrics with a loaded document did not appear within 15s", correlation);
+            return;
+        }
+        handler.postDelayed(() -> awaitLyricsSurface(handler, changes, runId, correlation,
+                deadline, nextLaunched), 250L);
     }
 
     private void layout(String correlation) {
@@ -828,6 +1118,105 @@ final class AgentCommandChannel {
                 reply("ok", "layout", report, correlation);
             } catch (Throwable t) {
                 reply("error", "layout", "threw " + t, correlation);
+            }
+        });
+    }
+
+    private void ambientEffect(String argument, String correlation) {
+        if (!BuildConfig.DEBUG) return;
+        String value = argument.trim().toLowerCase(Locale.ROOT);
+        if (!"status".equals(value) && AmbientShaderEffect.fromArgument(value) == null) {
+            reply("error", "ambient-effect", "expected kawarp, mesh, or status", correlation);
+            return;
+        }
+        onMain("ambient-effect", correlation, () -> {
+            NativeSpicyShellView shell = requireShell("ambient-effect", correlation);
+            if (shell == null) return;
+            String status = shell.agentAmbientEffect(value);
+            reply("ok", "ambient-effect", status, correlation);
+        });
+    }
+
+    private void backgroundEffect(String argument, String correlation) {
+        String[] parts = argument.trim().split("\\s+", 2);
+        String action = parts.length == 0 ? "" : parts[0];
+        String value = parts.length > 1 ? parts[1].trim() : "";
+        if ("status".equals(action) && value.isEmpty()) {
+            onMain("background-effect", correlation, () -> {
+                Activity activity = References.currentActivity();
+                if (activity == null || activity.isDestroyed()) {
+                    reply("error", "background-effect", "no current activity", correlation);
+                    return;
+                }
+                SettingsStore store = new SettingsStore(activity);
+                BackgroundEffect effect = StoredValues.fromStored(BackgroundEffect.class,
+                        store.get(Settings.BACKGROUND_EFFECT));
+                BackgroundEffectPool pool = BackgroundEffectPool.parse(
+                        store.get(Settings.BACKGROUND_RANDOM_EFFECTS));
+                reply("ok", "background-effect", "effect=" + effect.stableId()
+                        + " random=" + pool.encode(), correlation);
+            });
+            return;
+        }
+        if ("random".equals(action) && value.isEmpty()) {
+            writeBackgroundEffect(action, null, null, correlation);
+            return;
+        }
+        if ("fixed".equals(action) || "pool-toggle".equals(action)) {
+            BackgroundEffect effect = BackgroundEffect.fixedFromText(value);
+            if (effect == null) {
+                reply("error", "background-effect", "unknown fixed effect '" + value + "'", correlation);
+                return;
+            }
+            writeBackgroundEffect(action, effect, null, correlation);
+            return;
+        }
+        if ("pool".equals(action)) {
+            BackgroundEffectPool pool = BackgroundEffectPool.parseExplicit(value);
+            if (pool == null) {
+                reply("error", "background-effect", "expected a nonempty list of fixed ids", correlation);
+                return;
+            }
+            writeBackgroundEffect(action, null, pool, correlation);
+            return;
+        }
+        reply("error", "background-effect",
+                "expected status, fixed ID, random, pool ID[,ID...], or pool-toggle ID", correlation);
+    }
+
+    private void writeBackgroundEffect(String action, BackgroundEffect effect,
+            BackgroundEffectPool pool, String correlation) {
+        onMain("background-effect", correlation, () -> {
+            try {
+                Activity activity = References.currentActivity();
+                if (activity == null || activity.isDestroyed()) {
+                    reply("error", "background-effect", "no current activity", correlation);
+                    return;
+                }
+                SettingsStore store = new SettingsStore(activity);
+                SettingsWriter writer = new SettingsWriter(store);
+                String oldEffect = store.get(Settings.BACKGROUND_EFFECT);
+                String oldPool = store.get(Settings.BACKGROUND_RANDOM_EFFECTS);
+                if ("random".equals(action)) {
+                    writer.put(Settings.BACKGROUND_EFFECT, BackgroundEffect.RANDOM.stableId());
+                    reply("ok", "background-effect", "old=" + oldEffect + " new=random", correlation);
+                } else if ("fixed".equals(action)) {
+                    writer.put(Settings.BACKGROUND_EFFECT, effect.stableId());
+                    reply("ok", "background-effect", "old=" + oldEffect + " new="
+                            + effect.stableId(), correlation);
+                } else if ("pool".equals(action)) {
+                    writer.put(Settings.BACKGROUND_RANDOM_EFFECTS, pool.encode());
+                    reply("ok", "background-effect", "old=" + oldPool + " new="
+                            + pool.encode(), correlation);
+                } else {
+                    BackgroundEffectPool current = BackgroundEffectPool.parse(oldPool);
+                    BackgroundEffectPool next = current.toggle(effect);
+                    writer.put(Settings.BACKGROUND_RANDOM_EFFECTS, next.encode());
+                    reply("ok", "background-effect", "old=" + current.encode() + " new="
+                            + next.encode(), correlation);
+                }
+            } catch (Throwable t) {
+                reply("error", "background-effect", "threw " + t, correlation);
             }
         });
     }
@@ -1114,6 +1503,19 @@ final class AgentCommandChannel {
             if (source.name().equals(value)) return source;
         }
         return null;
+    }
+
+    /** The shape of the current cover id (none, hex, uri, or url), never the id itself. */
+    private String coverForm() {
+        try {
+            SpotifyTrack current = host.getCurrentTrackSafely();
+            String id = current == null ? null : current.imageId;
+            if (id == null || id.isEmpty()) return "none";
+            if (id.startsWith("http")) return "url";
+            return id.startsWith("spotify:image:") ? "uri" : "hex";
+        } catch (Throwable t) {
+            return "error";
+        }
     }
 
     private String trackLabel() {

@@ -27,6 +27,9 @@ public class Bundle {
     public void putLong(String key, long value) { values.put(key, value); }
     public long getLong(String key) { return getLong(key, 0); }
     public long getLong(String key, long fallback) { Object v = values.get(key); return v instanceof Long ? (Long) v : fallback; }
+    public void putFloat(String key, float value) { values.put(key, value); }
+    public float getFloat(String key) { return getFloat(key, 0f); }
+    public float getFloat(String key, float fallback) { Object v = values.get(key); return v instanceof Float ? (Float) v : fallback; }
     public void putBundle(String key, Bundle value) { values.put(key, value); }
     public Bundle getBundle(String key) { return (Bundle) values.get(key); }
     public void putIntArray(String key, int[] value) { values.put(key, value); }

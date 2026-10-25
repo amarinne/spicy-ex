@@ -79,6 +79,105 @@ public class ElasticScrollView extends ScrollView {
         invalidate();
     }
 
+    /** The progressive backdrop blur needs AGSL (API 33). */
+    public static boolean backdropBlurSupported() {
+        return android.os.Build.VERSION.SDK_INT >= 33;
+    }
+
+    private android.view.View backdropTopBand, backdropBottomBand;
+    private int backdropTop, backdropBottom;
+    private float backdropTopScale, backdropBottomScale;
+    private EdgeBlurRenderer backdropBlur;
+    private final int[] bandLocation = new int[2];
+    private final int[] ownLocation = new int[2];
+    private final android.view.ViewTreeObserver.OnPreDrawListener backdropTracker = () -> {
+        if (updateBackdropBands()) invalidate();
+        return true;
+    };
+
+    /**
+     * Blurs the lyrics behind each band view (a readout dock's scrim area, which may be
+     * INVISIBLE), from the screen edge to the band's inner boundary. The band follows its dock's
+     * position, visibility, and alpha every frame. Null bands draw no blur and hold no surfaces.
+     */
+    public void setBackdropBands(android.view.View top, android.view.View bottom) {
+        if (!backdropBlurSupported()) top = bottom = null;
+        if (top == backdropTopBand && bottom == backdropBottomBand) return;
+        backdropTopBand = top;
+        backdropBottomBand = bottom;
+        getViewTreeObserver().removeOnPreDrawListener(backdropTracker);
+        if (top != null || bottom != null) {
+            if (isAttachedToWindow()) getViewTreeObserver().addOnPreDrawListener(backdropTracker);
+        } else {
+            releaseBackdropBlur();
+        }
+        updateBackdropBands();
+        invalidate();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (backdropTopBand != null || backdropBottomBand != null) {
+            getViewTreeObserver().addOnPreDrawListener(backdropTracker);
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        getViewTreeObserver().removeOnPreDrawListener(backdropTracker);
+        releaseBackdropBlur();
+        super.onDetachedFromWindow();
+    }
+
+    private void releaseBackdropBlur() {
+        if (backdropBlur != null) backdropBlur.release();
+        backdropBlur = null;
+    }
+
+    /** Returns true when a band moved, resized, or faded since the last frame. */
+    private boolean updateBackdropBands() {
+        int top = bandExtent(backdropTopBand, true);
+        int bottom = bandExtent(backdropBottomBand, false);
+        float topScale = top > 0 ? ((android.view.View) backdropTopBand.getParent()).getAlpha() : 0f;
+        float bottomScale = bottom > 0 ? ((android.view.View) backdropBottomBand.getParent()).getAlpha() : 0f;
+        boolean changed = top != backdropTop || bottom != backdropBottom
+                || topScale != backdropTopScale || bottomScale != backdropBottomScale;
+        backdropTop = top;
+        backdropBottom = bottom;
+        backdropTopScale = topScale;
+        backdropBottomScale = bottomScale;
+        return changed;
+    }
+
+    /** How far the band reaches into this view from its top or bottom edge, in pixels. */
+    private int bandExtent(android.view.View band, boolean top) {
+        if (band == null || !(band.getParent() instanceof android.view.View)) return 0;
+        android.view.View dock = (android.view.View) band.getParent();
+        int h = getHeight();
+        if (!dock.isShown() || dock.getAlpha() <= 0f || band.getHeight() <= 0 || h <= 0) return 0;
+        band.getLocationInWindow(bandLocation);
+        getLocationInWindow(ownLocation);
+        int extent = top ? bandLocation[1] + band.getHeight() - ownLocation[1]
+                : ownLocation[1] + h - bandLocation[1];
+        return Math.max(0, Math.min(h / 2, extent));
+    }
+
+    /** Sharp content between the bands, the progressive blur inside them. */
+    private void drawWithBackdropBlur(android.graphics.Canvas canvas, int w, int h, int top) {
+        if (backdropBlur == null || !backdropBlur.fits(w, h, backdropTop, backdropBottom)) {
+            releaseBackdropBlur();
+            backdropBlur = new EdgeBlurRenderer(w, h, backdropTop, backdropBottom,
+                    getResources().getDisplayMetrics().density);
+        }
+        int center = canvas.save();
+        canvas.clipRect(0, top + backdropTop, w, top + h - backdropBottom);
+        super.draw(canvas);
+        canvas.restoreToCount(center);
+        backdropBlur.draw(canvas, top, backdropTopScale, backdropBottomScale,
+                content -> ElasticScrollView.super.draw(content));
+    }
+
     private int edgeFadeTop;
     private int edgeFadeBottom;
     private android.graphics.Paint edgeFadePaint;
@@ -89,6 +188,12 @@ public class ElasticScrollView extends ScrollView {
     public void draw(android.graphics.Canvas canvas) {
         int w = getWidth();
         int h = getHeight();
+        boolean blur = (backdropTop > 0 || backdropBottom > 0) && w > 0 && h > 0
+                && canvas.isHardwareAccelerated();
+        if (blur && edgeFadeTop <= 0 && edgeFadeBottom <= 0) {
+            drawWithBackdropBlur(canvas, w, h, getScrollY());
+            return;
+        }
         if ((edgeFadeTop <= 0 && edgeFadeBottom <= 0) || w <= 0 || h <= 0) {
             super.draw(canvas);
             return;
@@ -108,7 +213,8 @@ public class ElasticScrollView extends ScrollView {
         }
         int top = getScrollY();
         int save = canvas.saveLayer(0, top, w, top + h, null);
-        super.draw(canvas);
+        if (blur) drawWithBackdropBlur(canvas, w, h, top);
+        else super.draw(canvas);
         if (edgeFadeTop > 0) {
             edgeFadeMatrix.setScale(1f, edgeFadeTop);
             edgeFadeMatrix.postTranslate(0f, top);

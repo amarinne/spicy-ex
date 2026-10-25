@@ -2,6 +2,8 @@ package com.eza.spicyex.ui;
 
 import com.eza.spicyex.References;
 import com.eza.spicyex.Settings;
+import com.eza.spicyex.settings.values.BackgroundEffect;
+import com.eza.spicyex.settings.values.StoredValues;
 
 import android.content.Context;
 import android.content.res.Configuration;
@@ -222,6 +224,9 @@ public final class SettingsUiStrings {
     }
 
     private static String fallbackOptionLabel(Settings.StringSetting setting, String value) {
+        if (setting == Settings.BACKGROUND_EFFECT) {
+            return StoredValues.fromStored(BackgroundEffect.class, value).displayLabel();
+        }
         if (setting == Settings.AI_TRANSLATION_MODE) {
             if ("On demand".equals(value)) return "Manual";
             if ("Always use AI".equals(value)) return "Automatic";

@@ -4,6 +4,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import com.eza.spicyex.settings.values.WordBounceStyle;
+
 import org.junit.Test;
 
 public class AppleLiftMotionTest {
@@ -43,14 +45,14 @@ public class AppleLiftMotionTest {
 
     @Test
     public void sharedAppleLiftStyleSelectsMotionWithoutAppleStyle() {
-        assertTrue(LyricsRenderConfig.appleLiftMotion("Apple lift", false, false));
-        assertTrue(LyricsRenderConfig.appleLiftMotion("Apple lift", true, false));
+        assertTrue(LyricsRenderConfig.appleLiftMotion(WordBounceStyle.APPLE_LIFT, false, false));
+        assertTrue(LyricsRenderConfig.appleLiftMotion(WordBounceStyle.APPLE_LIFT, true, false));
     }
 
     @Test
     public void appleToggleStillGatesOnAppleStyle() {
-        assertTrue(LyricsRenderConfig.appleLiftMotion("Word lift", true, true));
-        assertFalse(LyricsRenderConfig.appleLiftMotion("Word lift", false, true));
-        assertFalse(LyricsRenderConfig.appleLiftMotion("Phrase zoom", false, false));
+        assertTrue(LyricsRenderConfig.appleLiftMotion(WordBounceStyle.WORD_LIFT, true, true));
+        assertFalse(LyricsRenderConfig.appleLiftMotion(WordBounceStyle.WORD_LIFT, false, true));
+        assertFalse(LyricsRenderConfig.appleLiftMotion(WordBounceStyle.PHRASE_ZOOM, false, false));
     }
 }

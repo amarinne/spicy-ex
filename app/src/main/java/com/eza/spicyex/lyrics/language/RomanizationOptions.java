@@ -46,7 +46,9 @@ public final class RomanizationOptions {
         return "cn=" + n(chineseMode)
                 + "|kr=" + n(koreanMode)
                 + "|cnStyle=" + chineseOutputStyle.value
-                + (chineseOutputStyle == ChineseOutputStyle.EZA ? "@" + ChineseOutputStyle.REVISION : "")
+                + (chineseOutputStyle == ChineseOutputStyle.EZA ? "@"
+                    + ("jyutping".equals(chineseMode) ? ChineseOutputStyle.CANTONESE_REVISION
+                    : ChineseOutputStyle.REVISION) : "")
                 + (KoreanDisplayMode.VN_PRONUNCIATION.value.equals(koreanMode)
                     ? "|krStyle=eza@" + ChineseOutputStyle.REVISION : "")
                 + "|tn=" + (chineseTones ? 1 : 0)

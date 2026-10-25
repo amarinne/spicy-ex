@@ -10,6 +10,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.function.Predicate;
 
 /** Small, build-scoped symbol records. Only completed discoveries are persisted. */
 public final class ResolvedSymbolCache {
@@ -75,6 +76,11 @@ public final class ResolvedSymbolCache {
     }
 
     public synchronized Method method(String key, Discovery<Method> discover) throws Exception {
+        return method(key, method -> true, discover);
+    }
+
+    synchronized Method method(String key, Predicate<Method> usable, Discovery<Method> discover)
+            throws Exception {
         String recordKey = "method." + key;
         String saved = records.getProperty(recordKey);
         if (saved != null) {
@@ -83,7 +89,7 @@ public final class ResolvedSymbolCache {
                 if (split > 0) {
                     Class<?> owner = Class.forName(saved.substring(0, split), false, loader);
                     for (Method method : owner.getDeclaredMethods()) {
-                        if (signature(method).equals(saved)) {
+                        if (signature(method).equals(saved) && usable.test(method)) {
                             hits++;
                             return method;
                         }

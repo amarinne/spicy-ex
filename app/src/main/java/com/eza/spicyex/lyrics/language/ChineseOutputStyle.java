@@ -8,6 +8,7 @@ public enum ChineseOutputStyle {
     EZA("eza");
 
     public static final String REVISION = "eza-2026-10-08.1";
+    public static final String CANTONESE_REVISION = "eza-2026-10-25.1";
     public final String value;
 
     ChineseOutputStyle(String value) {

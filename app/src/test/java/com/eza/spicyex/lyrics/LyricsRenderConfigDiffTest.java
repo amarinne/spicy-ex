@@ -1,7 +1,11 @@
 package com.eza.spicyex.lyrics;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+
+import com.eza.spicyex.settings.values.LyricsFont;
+import com.eza.spicyex.settings.values.WordBounceMode;
 
 import java.lang.reflect.Field;
 import org.junit.Test;
@@ -42,9 +46,20 @@ public class LyricsRenderConfigDiffTest {
     }
 
     @Test
+    public void translationFieldsAreTheHolderValues() {
+        TranslationConfig translation = TranslationConfig.read(null);
+        LyricsRenderConfig config = base();
+        assertEquals(translation.enabled, config.translationEnabled);
+        assertEquals(translation.backend.storedLabel(), config.translationBackend);
+        assertEquals(translation.target, config.translationTarget);
+        assertEquals(translation.identityInputs().configId(),
+                config.translation.identityInputs().configId());
+    }
+
+    @Test
     public void customFontPathInvalidatesBothSurfacesWithoutChangingFontMode() throws Exception {
-        LyricsRenderConfig previous = withField("lyricsFont", "custom");
-        LyricsRenderConfig next = withField("lyricsFont", "custom");
+        LyricsRenderConfig previous = withField("lyricsFont", LyricsFont.CUSTOM);
+        LyricsRenderConfig next = withField("lyricsFont", LyricsFont.CUSTOM);
         Field path = LyricsRenderConfig.class.getDeclaredField("lyricsFontCustomPath");
         path.setAccessible(true);
         path.set(previous, "/fonts/first.ttf");
@@ -75,9 +90,10 @@ public class LyricsRenderConfigDiffTest {
 
     @Test
     public void bounceScopeInvalidates() throws Exception {
-        String current = (String) fieldValue(base(), "wordBounceScope");
-        LyricsRenderConfig.Diff diff = base().diff(
-                withField("wordBounceScope", current + "-other"));
+        WordBounceMode current = (WordBounceMode) fieldValue(base(), "wordBounceScope");
+        LyricsRenderConfig.Diff diff = base().diff(withField("wordBounceScope",
+                current == WordBounceMode.ALL_SYNCED_ROWS
+                        ? WordBounceMode.SYNCED_WORDS_ONLY : WordBounceMode.ALL_SYNCED_ROWS));
         assertTrue(diff.needsToggleOnly);
         assertTrue(diff.hasChanges);
     }

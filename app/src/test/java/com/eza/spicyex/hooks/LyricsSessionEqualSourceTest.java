@@ -18,6 +18,42 @@ import org.junit.Test;
 public class LyricsSessionEqualSourceTest {
     private static final String URI = "spotify:track:aaaaaaaaaaaaaaaaaaaaaa";
 
+    @Test public void synchronousReplaysOwnTheirDocumentsBeforeQueuedPreparationRuns() throws Exception {
+        Fixture fixture = new Fixture();
+        List<LyricsDocument> received = new ArrayList<>();
+        ArrayDeque<Runnable> work = new ArrayDeque<>();
+        java.util.function.Consumer<LyricsDocument> enqueue = doc -> {
+            received.add(doc);
+            work.add(() -> doc.lines.get(0).romanizedText = "Prepared reading");
+        };
+        LyricsSessionManager.SessionSubscription subscription = fixture.manager.subscribe(
+                new LyricsSessionManager.Listener() {
+                    public void onSessionChanged(LyricsSessionManager.Snapshot snapshot) {}
+                    public void onDocumentChanged(LyricsSessionManager.Snapshot snapshot, LyricsDocument doc) {
+                        enqueue.accept(doc);
+                    }
+                });
+        LyricsSessionManager.LyricsRequest request = fixture.manager.requestLyrics(track(),
+                new NativeSpicyLyricsHook.LyricsResultCallback() {
+                    public void onSuccess(LyricsDocument doc) { enqueue.accept(doc); }
+                    public void onError(String error) { fail(error); }
+                });
+        try {
+            assertEquals("both replay callbacks return without awaiting preparation", 2, work.size());
+            assertNotSame(received.get(0), received.get(1));
+            assertNotSame(fixture.original, received.get(0));
+            assertNotSame(fixture.original, received.get(1));
+            work.remove().run();
+            assertEquals("", received.get(1).lines.get(0).romanizedText);
+            work.remove().run();
+            assertEquals("", fixture.original.lines.get(0).romanizedText);
+            assertEquals("", fixture.project().lines.get(0).romanizedText);
+        } finally {
+            subscription.close();
+            request.close();
+        }
+    }
+
     @Test public void equalSourceKeepsBothCapturedLayerCompletionsAndNewProviderInput() throws Exception {
         Fixture fixture = new Fixture();
         for (LayerKind layer : LayerKind.values()) {

@@ -39,4 +39,13 @@ public class LyricsTextFactoryTest {
         java.util.List<int[]> ranges = LyricsTextFactory.cjkFontRanges("track 2024 ready");
         assertTrue(ranges.isEmpty());
     }
+
+    @Test
+    public void supplementaryHanSharesTheCjkFontRun() {
+        String text = "男或女也不要再壓抑心\uD855\uDE83";
+        java.util.List<int[]> ranges = LyricsTextFactory.cjkFontRanges(text);
+        assertEquals(1, ranges.size());
+        assertEquals(0, ranges.get(0)[0]);
+        assertEquals(text.length(), ranges.get(0)[1]);
+    }
 }

@@ -106,10 +106,15 @@ public final class JapaneseReadingEngine {
     }
 
     /** Exposed for tests: how many analyses currently hold a resource lease. */
-    int activeUsesForTest() {
+    public int activeUsesForTest() {
         synchronized (this) {
             return activeUses;
         }
+    }
+
+    /** Exposed for tests: lets a JVM test fail an analysis while its resource lease is held. */
+    public void setTokenizerObserverForTest(Runnable observer) {
+        tokenizerObserverForTest = observer;
     }
 
     /** JMdict furigana span table, loaded only when decomposition needs it. */

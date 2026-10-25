@@ -89,8 +89,8 @@ public final class SentenceGradientInstrumentation {
         SpicyAnimatedTextView roman = (SpicyAnimatedTextView) secondary.get(0);
         if (roman.getLayout().getLineCount() < 2) throw new AssertionError("reading did not wrap");
         LyricsLineViewState.applySentenceGradient(line, -26f, 0f, 1f);
-        if (!flag(roman, "sequentialLineFill") || !flag(roman, "softSweep")) {
-            throw new AssertionError("standalone reading did not use sentence fill");
+        if (!flag(roman, "sequentialLineFill") || flag(roman, "softSweep")) {
+            throw new AssertionError("main-surface reading used the Auto soft sweep");
         }
     }
 

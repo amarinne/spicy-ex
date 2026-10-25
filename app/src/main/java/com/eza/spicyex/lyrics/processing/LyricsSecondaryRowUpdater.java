@@ -4,9 +4,9 @@ import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
 
 import android.view.ViewGroup;
 import com.eza.spicyex.lyrics.AppliedLine;
+import com.eza.spicyex.lyrics.LyricsDisplayMode;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLineViewState;
-import com.eza.spicyex.lyrics.LyricsShellSettings;
 
 /**
  * Applies line-level secondary romanization/translation results to already parsed rows.
@@ -110,7 +110,7 @@ public final class LyricsSecondaryRowUpdater {
                 && hasFurigana(row.sourceLine.japaneseReading);
         boolean remountForFurigana = furiganaAppeared
                 && showRomanization
-                && LyricsShellSettings.showJapaneseFurigana(japaneseReadingMode)
+                && LyricsDisplayMode.showJapaneseFurigana(japaneseReadingMode)
                 && isMounted;
         boolean remountForReadingPlan = readingPlanChanged && showRomanization && isMounted;
         return new RefreshDecision(romanChanged, translatedChanged, japaneseReadingChanged,

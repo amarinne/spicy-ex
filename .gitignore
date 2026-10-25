@@ -14,9 +14,10 @@ hs_err_pid*
 *.tar.gz
 *.jpg
 
-# Local APKs, investigation scratch, and tool caches
+# Local APKs, investigation scratch, and tool caches. The Jyutping data generator is tracked source.
 /artifacts/
-/tools/
+/tools/*
+!/tools/generate-jyutping-phrases.mjs
 /scratch/
 node_modules/
 __pycache__/

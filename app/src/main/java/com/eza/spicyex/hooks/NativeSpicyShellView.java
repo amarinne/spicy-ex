@@ -66,8 +66,76 @@ final class NativeSpicyShellView extends FrameLayout {
         return delegate.agentSettings(action);
     }
 
+    /** Debug-only ambient shader selection; returns the mounted layer's content-free state. */
+    String agentAmbientEffect(String argument) {
+        return delegate.agentAmbientEffect(argument);
+    }
+
     boolean agentEditorAction(String action, String argument) {
         return delegate.agentEditorAction(action, argument);
+    }
+
+    /**
+     * Switches the open editor's tab strip.
+     *
+     * @return null when the tab was switched, or the reason the request was refused.
+     */
+    String agentEditorTab(String name) {
+        return delegate.agentEditorTab(name);
+    }
+
+    /**
+     * Switches the open editor's panel between the selected element and the list.
+     *
+     * @return null when the mode was set, or the reason the request was refused.
+     */
+    String agentEditorMode(String name) {
+        return delegate.agentEditorMode(name);
+    }
+
+    /**
+     * Runs the toolbar's list toggle.
+     *
+     * @return null when the panel switched, or the reason the request was refused.
+     */
+    String agentEditorToggleList() {
+        return delegate.agentEditorToggleList();
+    }
+
+    /**
+     * Taps one preview element through its own tap owner.
+     *
+     * @return null when the tap was taken, or the reason the request was refused.
+     */
+    String agentEditorTap(String name) {
+        return delegate.agentEditorTap(name);
+    }
+
+    String agentEditorListSection() {
+        return delegate.agentEditorListSection();
+    }
+
+    /**
+     * Picks one of the options the open editor really rendered.
+     *
+     * @return null when the choice was picked, or the reason the request was refused.
+     */
+    String agentEditorChoose(String settingKey, String value) {
+        return delegate.agentEditorChoose(settingKey, value);
+    }
+
+    /**
+     * Drives the open editor's live Random pool dialog through its own controls.
+     *
+     * @return null when the action ran, or the reason the request was refused.
+     */
+    String agentEditorRandomPool(String action, String argument) {
+        return delegate.agentEditorRandomPool(action, argument);
+    }
+
+    /** The live Random dialog's state, or "" when the editor is closed. */
+    String agentEditorRandomPoolStatus() {
+        return delegate.agentEditorRandomPoolStatus();
     }
 
     boolean agentSharePreview(String action, int index) {

@@ -45,7 +45,7 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
     private static final long CLIMB_SETTLE_MS = 3000L;
     private static final String KEY_CHECK_ALL = CatalogPickerModel.RowKind.ACTION_CHECK_ALL.name();
 
-    /** Where short confirmations land (the fullscreen status line). */
+    /** Where short confirmations land on the surface that opened the picker. */
     public interface StatusSink {
         void show(String message);
     }
@@ -453,10 +453,12 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
     /** One command's outcome: report it, release the row, then read the store it wrote. */
     private void complete(String key, boolean success, String detail, String successMessage) {
         try {
-            String failure = detail == null || detail.isEmpty()
-                    ? text(strings, "source_picker_failed", "Could not update source") : detail;
+            // A failure reports the picker's one short line; the store or provider detail is a
+            // diagnostic, so it goes to the log instead of a toast.
+            if (!success) XpLog.log(TAG + " action failed: " + (detail == null ? "" : detail));
             // The outcome is reported even after the picker closed; only the rows stop updating.
-            status(success ? successMessage : failure);
+            status(success ? successMessage
+                    : text(strings, "source_picker_failed", "Could not update source"));
             if (closed) return;
             dispatch(state.finished(key, success));
             load();

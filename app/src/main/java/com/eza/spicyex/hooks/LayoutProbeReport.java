@@ -28,8 +28,12 @@ final class LayoutProbeReport {
     static final int CAPTURE_TOLERANCE_PX = 2;
     /** Same slack for the editor's focus line against the anchor the shell resolved. */
     static final int FOCUS_TOLERANCE_PX = 2;
-    /** Sheet coverage strictly above this share of the target counts as covering it. */
-    static final float SHEET_COVER_LIMIT = 0.5f;
+    /** Sheet coverage strictly above this share of the target counts as covering it. The editor
+     *  caps its panel against the same share, so the panel and this rule cannot drift. */
+    static final float SHEET_COVER_LIMIT = LyricsLayoutEditController.SHEET_TARGET_COVER_LIMIT;
+    /** Share of the live top controls the options sheet may park on. The editor keeps its panel
+     *  clear of them outright; this is the smoke detector for the case where it does not. */
+    static final float CHROME_COVER_LIMIT = 0.5f;
     /** Chrome dimmer than this is not "visible chrome" for the lyrics-under-chrome rule. */
     static final float CHROME_VISIBLE_ALPHA = 0.5f;
     /** Slack for the top controls' edge gap against the Follow chip's, and for the row's corner. */
@@ -87,6 +91,11 @@ final class LayoutProbeReport {
 
     LayoutProbeReport text(String name, String value) {
         return fact(name, value == null ? "" : value);
+    }
+
+    /** A list of names, reported as a JSON array. */
+    LayoutProbeReport list(String name, List<String> values) {
+        return fact(name, Collections.unmodifiableList(new ArrayList<>(values)));
     }
 
     private LayoutProbeReport fact(String name, Object value) {
@@ -156,6 +165,7 @@ final class LayoutProbeReport {
         if (isTrue("credit_present") && !isTrue("credit_in_footer")) {
             out.add("R13 credit_outside_footer");
         }
+        sheetOverChrome(out);
         return out;
     }
 
@@ -323,6 +333,21 @@ final class LayoutProbeReport {
             if (fact.getKey().startsWith("truncated.option.") && Boolean.TRUE.equals(fact.getValue())) {
                 out.add("R12 option_text_truncated " + fact.getKey().substring("truncated.option.".length()));
             }
+        }
+    }
+
+    /** R14: the options sheet parked on the live top controls. */
+    private void sheetOverChrome(List<String> out) {
+        int[] sheet = rects.get("sheet");
+        if (sheet == null) return;
+        // The card stage is opaque: the live chrome under it is not visible.
+        if (isTrue("card_mode")) return;
+        int[] dock = rects.get("dock");
+        if (dock == null) return;
+        int area = area(dock);
+        if (area <= 0) return;
+        if (overlapArea(sheet, dock) > area * CHROME_COVER_LIMIT) {
+            out.add("R14 sheet_over_chrome dock");
         }
     }
 

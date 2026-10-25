@@ -1,6 +1,9 @@
 package com.eza.spicyex.lyrics;
 
 import com.eza.spicyex.lyrics.language.ReadingLanguagePolicy;
+import com.eza.spicyex.settings.values.LiveCardOverflow;
+import com.eza.spicyex.settings.values.LyricsFont;
+import com.eza.spicyex.settings.values.TextWeight;
 
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 
@@ -477,8 +480,8 @@ public final class LyricsSurfaceRowPlanner {
                     cfg != null && cfg.lineSyncFillSentence(),
                     cfg != null && cfg.lineSyncFillWord(),
                     cfg != null && cfg.interludeNoteIcon,
-                    cfg == null ? "Medium" : cfg.lyricWeight,
-                    cfg == null ? "spotify" : cfg.lyricsFont,
+                    cfg == null ? TextWeight.MEDIUM.storedLabel() : cfg.lyricWeight.storedLabel(),
+                    cfg == null ? LyricsFont.SPOTIFY.storedLabel() : cfg.lyricsFont.storedLabel(),
                     cfg == null ? 1f : cfg.lyricsTextSizeMultiplier,
                     cfg != null && cfg.translationBright,
                     true,
@@ -492,8 +495,9 @@ public final class LyricsSurfaceRowPlanner {
 
         public static SurfacePolicy liveCard(LyricsRenderConfig config) {
             LyricsRenderConfig cfg = config;
-            boolean scrollOverflow = cfg != null && "Scroll with lyric".equals(cfg.liveCardOverflowMode);
-            boolean wrapOverflow = cfg != null && "Wrap".equals(cfg.liveCardOverflowMode);
+            boolean scrollOverflow = cfg != null
+                    && cfg.liveCardOverflowMode == LiveCardOverflow.SCROLL_WITH_LYRIC;
+            boolean wrapOverflow = cfg != null && cfg.liveCardOverflowMode == LiveCardOverflow.WRAP;
             return new SurfacePolicy(
                     0.30f,
                     cfg != null && cfg.liveCardShowTransliteration,
@@ -504,8 +508,8 @@ public final class LyricsSurfaceRowPlanner {
                     cfg != null && cfg.lineSyncFillSentence(),
                     cfg != null && cfg.lineSyncFillWord(),
                     cfg != null && cfg.interludeNoteIcon,
-                    cfg == null ? "Medium" : cfg.liveCardWeight,
-                    cfg == null ? "spotify" : cfg.lyricsFont,
+                    cfg == null ? TextWeight.MEDIUM.storedLabel() : cfg.liveCardWeight.storedLabel(),
+                    cfg == null ? LyricsFont.SPOTIFY.storedLabel() : cfg.lyricsFont.storedLabel(),
                     cfg == null ? 1f : Math.max(0.50f, 0.68f * cfg.liveCardTextSizeMultiplier),
                     cfg != null && cfg.translationBright,
                     wrapOverflow,
@@ -531,8 +535,8 @@ public final class LyricsSurfaceRowPlanner {
                     cfg != null && cfg.lineSyncFillSentence(),
                     cfg != null && cfg.lineSyncFillWord(),
                     cfg != null && cfg.interludeNoteIcon,
-                    cfg == null ? "Medium" : cfg.lyricWeight,
-                    cfg == null ? "spotify" : cfg.lyricsFont,
+                    cfg == null ? TextWeight.MEDIUM.storedLabel() : cfg.lyricWeight.storedLabel(),
+                    cfg == null ? LyricsFont.SPOTIFY.storedLabel() : cfg.lyricsFont.storedLabel(),
                     cfg == null ? 1f : cfg.lyricsTextSizeMultiplier,
                     cfg != null && cfg.translationBright,
                     true,

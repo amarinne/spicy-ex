@@ -6,13 +6,12 @@ import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 
 import android.content.Context;
 
-import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
-import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.lyrics.session.CanonicalBase;
 import com.eza.spicyex.lyrics.session.CanonicalRow;
 import com.eza.spicyex.lyrics.session.Digests;
 import com.eza.spicyex.lyrics.session.LayerConfigIds;
+import com.eza.spicyex.lyrics.session.LyricsSourcePolicy;
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.BackgroundLine;
@@ -22,6 +21,7 @@ import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
 import com.eza.spicyex.lyrics.SyllableSegment;
+import com.eza.spicyex.lyrics.TranslationConfig;
 import com.eza.spicyex.lyrics.cache.LyricCaches;
 import com.eza.spicyex.lyrics.cache.ProcessedLyricsCache;
 
@@ -67,20 +67,9 @@ public final class LyricsDocumentProcessor {
      */
     public static String meaningConfigId(Context context) {
         SpotifyPlusConfig config = context == null ? null : SpotifyPlusConfig.from(context);
-        String backend = config == null ? Settings.TRANSLATION_BACKEND.defaultValue
-                : config.get(Settings.TRANSLATION_BACKEND);
-        boolean enabled = config != null && config.get(Settings.TRANSLATION_ENABLED)
-                && !"disabled".equalsIgnoreCase(backend);
-        String sourceMode = config == null ? "auto" : config.get(Settings.SOURCE_LANGUAGE_MODE);
         // The stored pipeline value passes Settings coercion first: an unknown value reads as the
         // shipped default flow, so a downgrade can never keep a preview-shaped run identity.
-        String pipeline = config == null ? "" : config.get(Settings.AI_TRANSLATION_PIPELINE);
-        return LayerConfigIds.meaning(enabled, backend,
-                config == null ? "en" : config.get(Settings.TRANSLATION_TARGET),
-                sourceMode,
-                "manual".equalsIgnoreCase(sourceMode) && config != null
-                        ? config.get(Settings.SOURCE_LANGUAGE) : "auto",
-                AiSettings.MeaningFlow.ofStoredValue(pipeline).configToken());
+        return TranslationConfig.read(config).identityInputs().configId();
     }
 
     public static CanonicalBase canonicalBaseOf(LyricsDocument doc) {
@@ -100,7 +89,8 @@ public final class LyricsDocumentProcessor {
                 render.koreanMode, render.chineseTones, render.defaultCyrillicMode,
                 render.cyrillicKeepSigns);
         return soundConfigId(context, options,
-                effectiveSourceLanguage(config, doc == null ? "" : doc.language));
+                effectiveSourceLanguage(TranslationConfig.read(config),
+                        doc == null ? "" : doc.language));
     }
 
     /**
@@ -128,13 +118,16 @@ public final class LyricsDocumentProcessor {
                                             boolean preserveAi) {
         if (context == null || doc == null || doc.lines.isEmpty()) return;
         CanonicalBase base = canonicalBaseOf(doc);
-        String sourceLanguage = effectiveSourceLanguage(SpotifyPlusConfig.from(context), doc.language);
+        SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
+        TranslationConfig translation = TranslationConfig.read(config);
+        String sourceLanguage = effectiveSourceLanguage(translation, doc.language);
         ProcessedLyricsCache.Applied sound = shouldApplyCachedSound(doc, preserveAi)
                 ? ProcessedLyricsCache.applySound(context, doc, base,
                 soundConfigId(context, opts, sourceLanguage))
                 : ProcessedLyricsCache.Applied.NONE;
         ProcessedLyricsCache.Applied meaning = shouldApplyCachedMeaning(doc, preserveAi)
-                ? ProcessedLyricsCache.applyMeaning(context, doc, base, meaningConfigId(context))
+                ? ProcessedLyricsCache.applyMeaning(context, doc, base,
+                translation.identityInputs().configId())
                 : ProcessedLyricsCache.Applied.NONE;
         if (sound.present) {
             doc.includesRomanization = true;
@@ -386,15 +379,15 @@ public final class LyricsDocumentProcessor {
             if (row != null) row.romanizedText = "";
         }
         String fullText = collectText(doc);
-        String sourceLang = effectiveSourceLanguage(
-                context == null ? null : SpotifyPlusConfig.from(context), doc.language);
+        TranslationConfig translation = TranslationConfig.read(
+                context == null ? null : SpotifyPlusConfig.from(context));
+        String sourceLang = effectiveSourceLanguage(translation, doc.language);
         doc.includesRomanization = false;
         doc.readingFromAi = false;
         doc.readingAiPending = false;
         doc.readingAiFailureToken = "";
-        doc.romanizationPending = SpicyProcessing.flagsFor(fullText, sourceLang,
-                        context == null ? "en" : SpotifyPlusConfig.from(context)
-                                .get(Settings.TRANSLATION_TARGET)).romanizationPending;
+        doc.romanizationPending = SpicyProcessing.flagsFor(fullText, sourceLang, translation.target)
+                .romanizationPending;
         doc.processingPending = doc.romanizationPending || doc.translationPending;
     }
 
@@ -414,7 +407,8 @@ public final class LyricsDocumentProcessor {
     public static void saveSoundArtifact(Context context, LyricsDocument doc, RomanizationOptions opts,
                                          boolean complete) {
         if (context == null || doc == null || doc.lines.isEmpty()) return;
-        String sourceLanguage = effectiveSourceLanguage(SpotifyPlusConfig.from(context), doc.language);
+        String sourceLanguage = effectiveSourceLanguage(
+                TranslationConfig.read(SpotifyPlusConfig.from(context)), doc.language);
         ProcessedLyricsCache.saveSound(context, doc, canonicalBaseOf(doc),
                 soundConfigId(context, opts, sourceLanguage), complete);
     }
@@ -439,20 +433,17 @@ public final class LyricsDocumentProcessor {
             if (row != null) row.translatedText = "";
         }
         SpotifyPlusConfig config = context == null ? null : SpotifyPlusConfig.from(context);
+        TranslationConfig translation = TranslationConfig.read(config);
         applyProviderTranslations(context, doc);
-        String backend = config == null ? Settings.TRANSLATION_BACKEND.defaultValue
-                : config.get(Settings.TRANSLATION_BACKEND);
-        boolean enabled = config != null && config.get(Settings.TRANSLATION_ENABLED)
-                && !"disabled".equalsIgnoreCase(backend);
-        String target = config == null ? "en" : config.get(Settings.TRANSLATION_TARGET);
-        doc.includesTranslation = enabled && hasDisplayedTranslation(doc);
+        doc.includesTranslation = translation.enabled && hasDisplayedTranslation(doc);
         doc.translationFromAi = false;
         doc.translationAiPending = false;
         doc.translationAiRefinedFromGoogle = false;
         doc.translationAiFailureToken = "";
-        doc.translationPending = enabled
-                && "google_unofficial".equalsIgnoreCase(backend)
-                && hasGeneratedTranslationWork(doc, effectiveSourceLanguage(config, doc.language), target);
+        doc.translationPending = translation.enabled
+                && translation.usesGoogleBackend()
+                && hasGeneratedTranslationWork(doc,
+                        effectiveSourceLanguage(translation, doc.language), translation.target);
         doc.processingPending = doc.romanizationPending || doc.translationPending;
     }
 
@@ -475,9 +466,10 @@ public final class LyricsDocumentProcessor {
     private static void applyCachedGoogleEnhancements(Context context, LyricsDocument doc, int processingVersion) {
         if (context == null || doc == null || doc.lines == null) return;
         SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
-        if (!"google_unofficial".equalsIgnoreCase(config.get(Settings.TRANSLATION_BACKEND))) return;
-        String targetLang = config.get(Settings.TRANSLATION_TARGET);
-        String sourceLang = effectiveSourceLanguage(config, doc.language);
+        TranslationConfig translation = TranslationConfig.read(config);
+        if (!translation.usesGoogleBackend()) return;
+        String targetLang = translation.target;
+        String sourceLang = effectiveSourceLanguage(translation, doc.language);
         boolean documentNeedsTranslation = SpicyProcessing.flagsFor(
                 collectText(doc), sourceLang, targetLang).translationPending;
         if (!documentNeedsTranslation) return;
@@ -497,21 +489,17 @@ public final class LyricsDocumentProcessor {
     private static void initProcessing(Context context, LyricsDocument doc) {
         if (doc == null) return;
         SpotifyPlusConfig config = context != null ? SpotifyPlusConfig.from(context) : null;
-        String targetLang = config != null ? config.get(Settings.TRANSLATION_TARGET) : "en";
-        String backend = config == null ? Settings.TRANSLATION_BACKEND.defaultValue
-                : config.get(Settings.TRANSLATION_BACKEND);
-        boolean translationEnabled = config != null
-                && config.get(Settings.TRANSLATION_ENABLED)
-                && !"disabled".equalsIgnoreCase(backend);
+        TranslationConfig translation = TranslationConfig.read(config);
+        String targetLang = translation.target;
 
         String fullText = collectText(doc);
-        String sourceLang = effectiveSourceLanguage(config, doc.language);
+        String sourceLang = effectiveSourceLanguage(translation, doc.language);
         SpicyProcessing.ProcessingFlags flags = SpicyProcessing.flagsFor(fullText, sourceLang, targetLang);
         doc.processingVersion = flags.processingVersion;
         doc.romanizationPending = flags.romanizationPending;
-        doc.includesTranslation = translationEnabled && hasDisplayedTranslation(doc);
-        doc.translationPending = translationEnabled
-                && "google_unofficial".equalsIgnoreCase(backend)
+        doc.includesTranslation = translation.enabled && hasDisplayedTranslation(doc);
+        doc.translationPending = translation.enabled
+                && translation.usesGoogleBackend()
                 && hasGeneratedTranslationWork(doc, sourceLang, targetLang);
         doc.processingPending = doc.romanizationPending || doc.translationPending;
         doc.detectedScripts.clear();
@@ -528,35 +516,28 @@ public final class LyricsDocumentProcessor {
     public static void recomputePendingFlags(Context context, LyricsDocument doc) {
         if (doc == null || doc.lines == null || doc.lines.isEmpty()) return;
         SpotifyPlusConfig config = context != null ? SpotifyPlusConfig.from(context) : null;
-        String targetLang = config != null ? config.get(Settings.TRANSLATION_TARGET) : "en";
-        String backend = config == null ? Settings.TRANSLATION_BACKEND.defaultValue
-                : config.get(Settings.TRANSLATION_BACKEND);
-        boolean translationEnabled = config != null
-                && config.get(Settings.TRANSLATION_ENABLED)
-                && !"disabled".equalsIgnoreCase(backend);
-        String sourceLang = effectiveSourceLanguage(config, doc.language);
+        TranslationConfig translation = TranslationConfig.read(config);
+        String targetLang = translation.target;
+        String sourceLang = effectiveSourceLanguage(translation, doc.language);
         doc.romanizationPending = SpicyProcessing.flagsFor(
                 collectText(doc), sourceLang, targetLang).romanizationPending;
-        doc.translationPending = translationEnabled
-                && "google_unofficial".equalsIgnoreCase(backend)
+        doc.translationPending = translation.enabled
+                && translation.usesGoogleBackend()
                 && hasGeneratedTranslationWork(doc, sourceLang, targetLang);
         doc.processingPending = doc.romanizationPending || doc.translationPending;
     }
 
-    private static String effectiveSourceLanguage(SpotifyPlusConfig config, String documentLanguage) {
-        if (config != null && "manual".equalsIgnoreCase(config.get(Settings.SOURCE_LANGUAGE_MODE))) {
-            return config.get(Settings.SOURCE_LANGUAGE);
-        }
-        return documentLanguage;
+    private static String effectiveSourceLanguage(TranslationConfig translation, String documentLanguage) {
+        return LyricsSourcePolicy.isStrictSourceLanguage(translation.sourceMode)
+                ? translation.sourceLanguage : documentLanguage;
     }
 
     private static void applyProviderTranslations(Context context, LyricsDocument doc) {
         if (context == null || doc == null) return;
         SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
-        String backend = config.get(Settings.TRANSLATION_BACKEND);
-        if (!config.get(Settings.TRANSLATION_ENABLED)
-                || "disabled".equalsIgnoreCase(backend)) return;
-        ProviderTranslationResolver.applyTranslations(doc, config.get(Settings.TRANSLATION_TARGET),
+        TranslationConfig translation = TranslationConfig.read(config);
+        if (!translation.enabled) return;
+        ProviderTranslationResolver.applyTranslations(doc, translation.target,
                 ProviderTextDetectionStore.lookup(context));
     }
 

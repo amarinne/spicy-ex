@@ -322,58 +322,90 @@ public final class PanelDialog {
         return field;
     }
 
-    public static final class CheckChoice {
-        private final PanelDialog owner;
+    public static final class SwitchChoice {
         private final LinearLayout row;
-        private final ImageView indicator;
+        private final GlossyToggle toggle;
+        private final String label;
+        private final java.util.function.Predicate<Boolean> allowChange;
+        private final java.util.function.Consumer<Boolean> onChange;
         private boolean checked;
 
-        CheckChoice(PanelDialog owner, LinearLayout row, ImageView indicator, boolean checked) {
-            this.owner = owner;
+        SwitchChoice(LinearLayout row, GlossyToggle toggle, String label,
+                boolean checked, java.util.function.Predicate<Boolean> allowChange,
+                java.util.function.Consumer<Boolean> onChange) {
             this.row = row;
-            this.indicator = indicator;
-            setChecked(checked);
+            this.toggle = toggle;
+            this.label = label == null ? "" : label;
+            this.allowChange = allowChange;
+            this.onChange = onChange;
+            row.setContentDescription(this.label);
+            row.setFocusable(true);
+            row.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+                @Override public void onInitializeAccessibilityNodeInfo(View host,
+                        android.view.accessibility.AccessibilityNodeInfo info) {
+                    super.onInitializeAccessibilityNodeInfo(host, info);
+                    info.setClassName("android.widget.Switch");
+                    info.setCheckable(true);
+                    info.setChecked(SwitchChoice.this.checked);
+                    info.setContentDescription(SwitchChoice.this.label);
+                }
+            });
+            setChecked(checked, false);
         }
 
         public boolean isChecked() {
             return checked;
         }
 
-        private void toggle() {
-            setChecked(!checked);
+        public View view() {
+            return row;
         }
 
-        private void setChecked(boolean value) {
+        private void toggle() {
+            boolean next = !checked;
+            if (allowChange != null && !allowChange.test(next)) return;
+            setChecked(next, true);
+            if (onChange != null) onChange.accept(next);
+        }
+
+        private void setChecked(boolean value, boolean animate) {
             checked = value;
-            indicator.setBackground(owner.rounded(value ? COL_ACCENT : 0x00000000,
-                    value ? COL_ACCENT : COL_SUMMARY, 7));
-            indicator.setImageDrawable(value
-                    ? new ActionIconDrawable(ActionIconDrawable.Kind.CHECK, 0xFF101014,
-                    owner.context.getResources().getDisplayMetrics().density)
-                    : null);
+            toggle.setChecked(value, animate);
             row.setSelected(value);
         }
     }
 
-    /** Host-styled tick row; avoids the platform checkbox leaking another app theme. */
-    public CheckChoice checkbox(String label, boolean checked) {
+    /**
+     * Host-styled switch row. The whole row is the target and reports the switch role, while the
+     * drawn toggle stays a non-focusable state indicator.
+     */
+    public SwitchChoice switchChoice(String label, boolean checked, String tag,
+            java.util.function.Predicate<Boolean> allowChange,
+            java.util.function.Consumer<Boolean> onChange) {
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(14), dp(11), dp(14), dp(11));
+        row.setMinimumHeight(dp(48));
+        row.setPadding(dp(14), dp(10), dp(14), dp(10));
         row.setBackground(ripple(rounded(COL_FIELD, COL_CARD_BORDER, 14)));
-
-        ImageView indicator = new ImageView(context);
-        indicator.setPadding(dp(3), dp(3), dp(3), dp(3));
-        row.addView(indicator, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        if (tag != null) row.setTag(tag);
 
         TextView text = text(label, 15f, COL_TITLE);
-        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        textParams.leftMargin = dp(12);
-        row.addView(text, textParams);
+        text.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        row.addView(text, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        CheckChoice choice = new CheckChoice(this, row, indicator, checked);
+        GlossyToggle toggle = new GlossyToggle(context);
+        toggle.setAccent(COL_ACCENT);
+        toggle.setClickable(false);
+        toggle.setFocusable(false);
+        toggle.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(dp(50), dp(30));
+        toggleParams.leftMargin = dp(12);
+        row.addView(toggle, toggleParams);
+
+        SwitchChoice choice = new SwitchChoice(row, toggle, label, checked,
+                allowChange, onChange);
         row.setOnClickListener(v -> choice.toggle());
         add(row);
         return choice;
@@ -556,14 +588,28 @@ public final class PanelDialog {
 
     /** The confirming action. Accent-filled, like the panel's primary buttons. */
     public PanelDialog primary(String label, final Runnable action) {
-        root.addView(button(label, true, action), matchWrap(8));
+        primaryButton(label, action);
         return this;
+    }
+
+    /** The confirming action, returned so a caller can drive the very same button. */
+    public TextView primaryButton(String label, final Runnable action) {
+        TextView button = button(label, true, action);
+        root.addView(button, matchWrap(8));
+        return button;
     }
 
     /** The dismissing action. */
     public PanelDialog secondary(String label, final Runnable action) {
-        root.addView(button(label, false, action), matchWrap(0));
+        secondaryButton(label, action);
         return this;
+    }
+
+    /** The dismissing action, returned so a caller can drive the very same button. */
+    public TextView secondaryButton(String label, final Runnable action) {
+        TextView button = button(label, false, action);
+        root.addView(button, matchWrap(0));
+        return button;
     }
 
     public void show() {

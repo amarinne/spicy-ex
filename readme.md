@@ -60,6 +60,7 @@ To translate the settings, start from `app/translation/strings-template.xml`.
 - [Spikerko/Spicy Lyrics](https://github.com/Spikerko/spicy-lyrics)
 - [surfbryce/beautiful-lyrics](https://github.com/surfbryce/beautiful-lyrics)
 - [boidushya/better-lyrics](https://github.com/boidushya/better-lyrics) (+ kawarp background)
+- [paper-design/shaders](https://github.com/paper-design/shaders) (background effects)
 
 ## License
 

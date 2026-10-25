@@ -8,6 +8,7 @@ import android.widget.TextView;
 import com.eza.spicyex.References;
 import com.eza.spicyex.lyrics.AppliedLine;
 import com.eza.spicyex.lyrics.language.SpicyTextDetection;
+import com.eza.spicyex.settings.values.StatusBarHiddenMode;
 
 import java.util.Locale;
 
@@ -68,9 +69,13 @@ final class NativeLyricsUtils {
             boolean landscape = context.getResources().getDisplayMetrics().widthPixels
                     > context.getResources().getDisplayMetrics().heightPixels;
             com.eza.spicyex.SpotifyPlusConfig config = com.eza.spicyex.SpotifyPlusConfig.from(context);
-            String mode = config == null ? "Off" : config.get(com.eza.spicyex.Settings.STATUS_BAR_HIDDEN_MODE);
-            if ("Both".equals(mode)) return true;
-            return landscape ? "Landscape".equals(mode) : "Portrait".equals(mode);
+            StatusBarHiddenMode mode = config == null
+                    ? StatusBarHiddenMode.OFF
+                    : LyricsShellChromeConfig.read(config).statusBarHiddenMode;
+            if (mode == StatusBarHiddenMode.BOTH) return true;
+            return landscape
+                    ? mode == StatusBarHiddenMode.LANDSCAPE
+                    : mode == StatusBarHiddenMode.PORTRAIT;
         } catch (Throwable ignored) {
             return false;
         }

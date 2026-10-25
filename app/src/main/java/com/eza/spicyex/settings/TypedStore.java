@@ -8,9 +8,7 @@ import com.eza.spicyex.Settings;
  * <p>Implemented by {@code SettingsStore}; JVM tests substitute an in-memory fake. Reads keep
  * flowing through the same surface so snapshots and writers observe one store.
  */
-public interface TypedStore {
-    <T> T get(Settings.Setting<T> setting);
-
+public interface TypedStore extends SettingsReader {
     boolean contains(Settings.Setting<?> setting);
 
     void putBoolean(Settings.BooleanSetting setting, boolean value);

@@ -10,7 +10,10 @@ import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
 
 import java.util.WeakHashMap;
+import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
+import com.eza.spicyex.settings.values.StoredValues;
+import com.eza.spicyex.settings.values.TransitionFeel;
 
 /**
  * Shared motion tokens and helpers for module chrome (settings panel, dialogs, popups).
@@ -31,15 +34,15 @@ public final class Motion {
     public static final int SWAP = 240;
     public static final int BACKDROP = 600;
 
-    /** Transition feel values; must match {@code Settings.TRANSITION_FEEL} allowed values. */
-    public static final String FEEL_INSTANT = "Instant";
-    public static final String FEEL_FAST = "Fast";
-    public static final String FEEL_RELAXED = "Relaxed";
+    /** Transition feel labels, from {@code Settings.TRANSITION_FEEL}'s declared order. */
+    public static final String FEEL_INSTANT = TransitionFeel.INSTANT.storedLabel();
+    public static final String FEEL_FAST = TransitionFeel.DEFAULT.storedLabel();
+    public static final String FEEL_RELAXED = TransitionFeel.RELAXED.storedLabel();
 
     private static final String PREFS_NAME = SpotifyPlusConfig.PREFS_NAME;
-    private static final String KEY_TRANSITION_FEEL = "lyrics_transition_feel";
+    private static final String KEY_TRANSITION_FEEL = Settings.TRANSITION_FEEL.key;
 
-    private static volatile String feel = FEEL_FAST;
+    private static volatile TransitionFeel feel = TransitionFeel.DEFAULT;
     private static volatile boolean initialized;
 
     /**
@@ -52,13 +55,15 @@ public final class Motion {
             android.content.Context app = context.getApplicationContext();
             android.content.SharedPreferences prefs =
                     app.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE);
-            feel = sanitizeFeel(prefs.getString(KEY_TRANSITION_FEEL, FEEL_FAST));
+            feel = StoredValues.fromStored(TransitionFeel.class,
+                    prefs.getString(KEY_TRANSITION_FEEL, FEEL_FAST));
             if (!initialized) {
                 initialized = true;
                 prefs.registerOnSharedPreferenceChangeListener(
                         (changed, key) -> {
                             if (KEY_TRANSITION_FEEL.equals(key)) {
-                                feel = sanitizeFeel(changed.getString(key, FEEL_FAST));
+                                feel = StoredValues.fromStored(TransitionFeel.class,
+                                        changed.getString(key, FEEL_FAST));
                             }
                         });
             }
@@ -69,12 +74,7 @@ public final class Motion {
 
     /** Overrides the feel in tests or when the caller already holds the config value. */
     public static void setTransitionFeel(String value) {
-        feel = sanitizeFeel(value);
-    }
-
-    private static String sanitizeFeel(String value) {
-        if (FEEL_INSTANT.equals(value) || FEEL_RELAXED.equals(value)) return value;
-        return FEEL_FAST;
+        feel = StoredValues.fromStored(TransitionFeel.class, value);
     }
 
     /**
@@ -94,7 +94,7 @@ public final class Motion {
      * preserving playback-driven lyric timing, which never consults this gate.
      */
     public static boolean animationsEnabled() {
-        return systemAnimationsEnabled() && !FEEL_INSTANT.equals(feel);
+        return systemAnimationsEnabled() && feel != TransitionFeel.INSTANT;
     }
 
     /**
@@ -102,8 +102,8 @@ public final class Motion {
      * Fast halves them; Instant collapses to zero (callers normally skip instead).
      */
     public static int dur(int base) {
-        if (FEEL_INSTANT.equals(feel)) return 0;
-        if (FEEL_RELAXED.equals(feel)) return base;
+        if (feel == TransitionFeel.INSTANT) return 0;
+        if (feel == TransitionFeel.RELAXED) return base;
         return Math.max(1, base / 2);
     }
 

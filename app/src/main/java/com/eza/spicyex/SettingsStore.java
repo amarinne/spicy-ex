@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.eza.spicyex.lyrics.language.LanguageModelPack;
+import com.eza.spicyex.settings.BlurStrength;
 import com.eza.spicyex.settings.TypedStore;
 
 import java.util.Map;
@@ -14,6 +15,19 @@ import java.util.Map;
  * Runs in Spotify's process, so writes land in Spotify-side prefs that SpotifyPlusConfig reads directly.
  */
 public final class SettingsStore implements TypedStore {
+    /** The v2.0.41 force switch that the one darkening value replaces. */
+    static final String LEGACY_FORCE_DARK_BACKGROUND = "lyric_force_dark_background";
+    /** The v2.0.41 darkening level that the one darkening value replaces. */
+    static final String LEGACY_EXTRA_DARK_BACKGROUND = "lyric_extra_dark_background";
+    /** The v2.0.41 blur selector that the one blur strength replaces. */
+    static final String LEGACY_ENABLE_LINE_BLUR = "lyric_enable_line_blur";
+    /** The v2.0.41 blur intensity that the one blur strength replaces. */
+    static final String LEGACY_LYRICS_BLUR_INTENSITY = "lyrics_blur_intensity";
+    /** The intensity a v2.0.41 install used when it stored a selector but no intensity. */
+    static final int LEGACY_BLUR_INTENSITY_DEFAULT = 100;
+    /** The retired glow choice that rendered like "Word only". */
+    static final String LEGACY_LIVE_CARD_GLOW = "Subtle line";
+
     private final SharedPreferences prefs;
     private final Context context;
 
@@ -29,12 +43,78 @@ public final class SettingsStore implements TypedStore {
             com.eza.spicyex.lyrics.language.LanguageModelPack.attachContext(context);
         }
         migrateLikedSongsButton(prefs);
-        migrateLineBlurLevel(prefs);
         migratePanelMediaControls(prefs);
         migrateRemovedAppleCjkWrapFix(prefs);
         migrateRemovedFollowChipToggles(prefs);
         migrateStatusBarHiddenMode(prefs);
         migrateFullscreenControls(prefs);
+        migrateDarkening(prefs);
+        migrateBlurStrength(prefs);
+        migrateLiveCardGlow(prefs);
+    }
+
+    /** The v2.0.41 force switch and its level become one darkening value; 0 is off. */
+    static synchronized void migrateDarkening(SharedPreferences prefs) {
+        if (prefs.contains(Settings.LYRICS_DARKENING.key)) return;
+        Map<String, ?> values = prefs.getAll();
+        Object force = values.get(LEGACY_FORCE_DARK_BACKGROUND);
+        if (force == null) return;
+        if (!Boolean.TRUE.equals(force)) {
+            prefs.edit().putInt(Settings.LYRICS_DARKENING.key, 0).apply();
+            return;
+        }
+        Object level = values.get(LEGACY_EXTRA_DARK_BACKGROUND);
+        int darkening = level instanceof Integer ? (Integer) level
+                : Settings.LYRICS_DARKENING.defaultValue;
+        prefs.edit().putInt(Settings.LYRICS_DARKENING.key,
+                Settings.LYRICS_DARKENING.coerce(darkening)).apply();
+    }
+
+    /**
+     * The v2.0.41 blur selector and its intensity percentage become one blur strength. The
+     * landscape pair keeps its own value when the install stored one.
+     */
+    static synchronized void migrateBlurStrength(SharedPreferences prefs) {
+        Map<String, ?> values = prefs.getAll();
+        SharedPreferences.Editor editor = null;
+        if (!prefs.contains(Settings.LYRICS_BLUR_STRENGTH.key)) {
+            String level = legacyBlurLevel(values, LEGACY_ENABLE_LINE_BLUR);
+            if (level != null) {
+                editor = prefs.edit().putInt(Settings.LYRICS_BLUR_STRENGTH.key,
+                        BlurStrength.fromLegacyPair(level, legacyBlurIntensity(values, "")));
+            }
+        }
+        if (!prefs.contains(Settings.LYRICS_BLUR_STRENGTH.key + "_ls")) {
+            String level = legacyBlurLevel(values, LEGACY_ENABLE_LINE_BLUR + "_ls");
+            if (level != null) {
+                editor = (editor != null ? editor : prefs.edit()).putInt(
+                        Settings.LYRICS_BLUR_STRENGTH.key + "_ls",
+                        BlurStrength.fromLegacyPair(level, legacyBlurIntensity(values, "_ls")));
+            }
+        }
+        if (editor != null) editor.apply();
+    }
+
+    /** The legacy blur selector of one orientation; null when that orientation stored none. */
+    private static String legacyBlurLevel(Map<String, ?> values, String levelKey) {
+        Object level = values.get(levelKey);
+        return level instanceof String ? (String) level : null;
+    }
+
+    /**
+     * The legacy blur intensity of one orientation, with the v2.0.41 default when unset. The
+     * landscape intensity carries the same suffix as the landscape selector.
+     */
+    private static int legacyBlurIntensity(Map<String, ?> values, String suffix) {
+        Object intensity = values.get(LEGACY_LYRICS_BLUR_INTENSITY + suffix);
+        return intensity instanceof Integer ? (Integer) intensity : LEGACY_BLUR_INTENSITY_DEFAULT;
+    }
+
+    /** The retired glow choice folds into the one that renders the same. */
+    static synchronized void migrateLiveCardGlow(SharedPreferences prefs) {
+        Object stored = prefs.getAll().get(Settings.LIVE_CARD_GLOW.key);
+        if (!LEGACY_LIVE_CARD_GLOW.equals(stored)) return;
+        prefs.edit().putString(Settings.LIVE_CARD_GLOW.key, "Word only").apply();
     }
 
     static synchronized void migrateLikedSongsButton(SharedPreferences prefs) {
@@ -104,18 +184,6 @@ public final class SettingsStore implements TypedStore {
     }
 
     /**
-     * Bool-to-enum migration for the blur level: stored {@code true} keeps the legacy look as
-     * {@code Slight}, {@code false} becomes {@code Off}. Already-migrated strings pass through.
-     */
-    static synchronized void migrateLineBlurLevel(SharedPreferences prefs) {
-        if (!prefs.contains(Settings.ENABLE_LINE_BLUR.key)) return;
-        Object raw = prefs.getAll().get(Settings.ENABLE_LINE_BLUR.key);
-        if (raw instanceof String) return;
-        boolean on = Boolean.TRUE.equals(raw);
-        prefs.edit().putString(Settings.ENABLE_LINE_BLUR.key, on ? "Slight" : "Off").apply();
-    }
-
-    /**
      * Bool-pair-to-enum migration for the status-bar mode: stored portrait/landscape choices
      * combine into Off/Portrait/Landscape/Both. Already-migrated strings pass through, and the
      * legacy keys are removed.
@@ -174,10 +242,6 @@ public final class SettingsStore implements TypedStore {
 
     @Override
     public void putBoolean(Settings.BooleanSetting setting, boolean value) {
-        if (setting == Settings.DOWNLOAD_LANGUAGE_MODELS) {
-            // The row is intentionally a tap-to-download action rather than a persisted toggle.
-            return;
-        }
         prefs.edit().putBoolean(storageKey(setting), value).apply();
     }
 

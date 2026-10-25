@@ -120,7 +120,6 @@ public class SpicyAnimatedTextView extends TextView {
     /** Sentence geometry has a separate owner from the token's fill and glow. */
     public void setSentenceGradientPosition(float gradient, float glow, int width, float offset) {
         if (!sentenceGradientBase) {
-            setSoftSweep(true);
             setContainerGradientPosition(gradient, glow, width, offset);
             return;
         }

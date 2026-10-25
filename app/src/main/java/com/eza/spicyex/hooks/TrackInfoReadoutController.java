@@ -37,8 +37,17 @@ import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.ArtGestureArbiter;
+import com.eza.spicyex.lyrics.ElasticScrollView;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
-import com.eza.spicyex.lyrics.PanelMediaMode;
+import com.eza.spicyex.lyrics.cache.ArtworkNetworkCache;
+import com.eza.spicyex.settings.values.ChromeClusterPosition;
+import com.eza.spicyex.settings.values.PanelMediaMode;
+import com.eza.spicyex.settings.values.TrackInfoArtSize;
+import com.eza.spicyex.settings.values.TrackInfoBackground;
+import com.eza.spicyex.settings.values.TrackInfoPosition;
+import com.eza.spicyex.settings.values.TrackInfoTextAlign;
+import com.eza.spicyex.settings.values.TrackInfoTextOverflow;
+import com.eza.spicyex.settings.values.TrackInfoTextSize;
 import com.eza.spicyex.lyrics.cache.SpotifyArtworkCache;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.Motion;
@@ -89,26 +98,6 @@ final class TrackInfoReadoutController {
     private static final long ART_RETRY_WINDOW_MS = 10_000L;
     private static final long ART_RETRY_GAP_MS = 1_000L;
 
-    // Remote (Spotify Connect) playback: Spotify's own MediaMetadata often carries only an art
-    // URI with no embedded Bitmap in that mode, so SpotifyArtworkCache (which requires a real
-    // Bitmap) never has anything to serve. This is a network fallback fetched straight from
-    // Spotify's public image CDN by id, so the existing artMissing retry loop above (still on its
-    // ART_RETRY_GAP_MS cadence) picks it up as soon as it lands - no extra re-render plumbing.
-    private static final int ART_NETWORK_CACHE_LIMIT = 4;
-    static final java.util.Map<String, Bitmap> ART_NETWORK_CACHE =
-            java.util.Collections.synchronizedMap(
-                    new java.util.LinkedHashMap<String, Bitmap>(ART_NETWORK_CACHE_LIMIT, 0.75f, true) {
-                        @Override
-                        protected boolean removeEldestEntry(java.util.Map.Entry<String, Bitmap> eldest) {
-                            return size() > ART_NETWORK_CACHE_LIMIT;
-                        }
-                    });
-    private static final java.util.Set<String> ART_NETWORK_FETCH_IN_FLIGHT =
-            java.util.Collections.synchronizedSet(new java.util.HashSet<>());
-
-    // Active listeners to notify whenever a network artwork download arrives successfully.
-    static final java.util.List<Runnable> ART_NETWORK_LISTENERS =
-            new java.util.ArrayList<>();
     private static final int ACTION_PREV_ID = 0x00C0FFEE;
     private static final int ACTION_NEXT_ID = 0x00C0FFEF;
     /** Minimum width/height ratio for the landscape side-art mode (PR9's proven gate). */
@@ -128,8 +117,8 @@ final class TrackInfoReadoutController {
 
     /** Two-column cover side: the fitted column size, capped by a Custom art size when set. The
      *  presets are readout sizes, far smaller than a column, so they keep the fitted cover. */
-    static int columnCoverSidePx(int fitPx, String artSize, int customPx) {
-        if (!"Custom".equals(artSize) || customPx <= 0) return fitPx;
+    static int columnCoverSidePx(int fitPx, TrackInfoArtSize artSize, int customPx) {
+        if (artSize != TrackInfoArtSize.CUSTOM || customPx <= 0) return fitPx;
         return Math.min(fitPx, customPx);
     }
 
@@ -146,24 +135,24 @@ final class TrackInfoReadoutController {
      *  proportionally - that is what this reuses, over the block's own
      *  {@link #COLUMN_TITLE_SP}/{@link #COLUMN_ARTIST_SP}/{@link #COLUMN_ALBUM_SP} bases.
      *  Pure, unit-tested. */
-    static float columnTrackTextScale(String size, int customPercent, boolean adaptive,
+    static float columnTrackTextScale(TrackInfoTextSize size, int customPercent, boolean adaptive,
             float adaptiveArtDp) {
         if (adaptive) {
             // Same clamp applyTextSize() uses when it scales text off the art size; 96dp is its
             // "Normal" preset, so the scale is 1.0 at the original art size.
             return Math.max(0.5f, Math.min(2f, adaptiveArtDp / 96f));
         }
-        if ("Small".equals(size)) return 13f / 15f;
-        if ("Large".equals(size)) return 18f / 15f;
-        if ("XLarge".equals(size)) return 22f / 15f;
-        if ("Custom".equals(size)) return Math.max(50, Math.min(400, customPercent)) / 100f;
+        if (size == TrackInfoTextSize.SMALL) return 13f / 15f;
+        if (size == TrackInfoTextSize.LARGE) return 18f / 15f;
+        if (size == TrackInfoTextSize.XLARGE) return 22f / 15f;
+        if (size == TrackInfoTextSize.CUSTOM) return Math.max(50, Math.min(400, customPercent)) / 100f;
         return 1f;
     }
 
     /** Side dock engages on wide landscape only, and never when the readout is Off. */
-    static boolean sideModeEngaged(boolean landscape, float aspect, String mode) {
+    static boolean sideModeEngaged(boolean landscape, float aspect, TrackInfoPosition mode) {
         if (!landscape || aspect < SIDE_ASPECT_MIN) return false;
-        return "Top".equals(mode) || "Bottom".equals(mode);
+        return mode == TrackInfoPosition.TOP || mode == TrackInfoPosition.BOTTOM;
     }
 
     /** Largest Custom art the readout placements show. The stored setting goes higher for the
@@ -171,9 +160,9 @@ final class TrackInfoReadoutController {
     static final int READOUT_MAX_ART_DP = 160;
 
     /** {bottom art, top portrait art} for the art-size setting; landscape top stays 54dp. */
-    static int[] readoutArtSizes(String value) {
-        if ("Small".equals(value)) return new int[]{72, 48};
-        if ("Large".equals(value)) return new int[]{120, 96};
+    static int[] readoutArtSizes(TrackInfoArtSize value) {
+        if (value == TrackInfoArtSize.SMALL) return new int[]{72, 48};
+        if (value == TrackInfoArtSize.LARGE) return new int[]{120, 96};
         return new int[]{96, 72};
     }
 
@@ -183,8 +172,8 @@ final class TrackInfoReadoutController {
      *  rendered frame's corner handle, so whatever size that handle is dragged to is what should
      *  come back on screen - a Top-mode frame quietly ending up smaller than what was dragged
      *  would defeat the point of a direct-manipulation control. */
-    static int[] readoutArtSizes(String value, int customBottomDp) {
-        if ("Custom".equals(value)) {
+    static int[] readoutArtSizes(TrackInfoArtSize value, int customBottomDp) {
+        if (value == TrackInfoArtSize.CUSTOM) {
             int size = Math.max(24, Math.min(READOUT_MAX_ART_DP, customBottomDp));
             return new int[]{size, size};
         }
@@ -206,7 +195,7 @@ final class TrackInfoReadoutController {
     }
 
     private final Activity activity;
-    private final LyricsHost host;
+    private final PlaybackTransportHost host;
     private final SpotifyPlusConfig config;
     private final LyricsJumpToCurrentController jumpController;
     private LyricsSkipGapController skipGapController;
@@ -299,6 +288,7 @@ final class TrackInfoReadoutController {
     private float pendingDragDx;
     private boolean dragFrameScheduled;
     private String lastUri = "";
+    private String lastImageId = "";
     private LinearLayout topRow;
     private FrameLayout.LayoutParams topRowLp;
     /** Title+artist stacks, vertically aligned within their row by {@link #applyTextAlign()}. */
@@ -311,6 +301,7 @@ final class TrackInfoReadoutController {
     private ViewGroup headerRow;
     private View headerTitle;
     private View topGradientView;
+    private ElasticScrollView backdropTarget;
     private View bottomGradientView;
     private View sideGradientView;
     private int topInsetPx;
@@ -341,14 +332,14 @@ final class TrackInfoReadoutController {
     private boolean artMissing = true;
     private SpotifyTrack lastTrack;
     private boolean artworkEnabled;
-    private String lastMode;
+    private TrackInfoPosition lastMode;
     /** Current readout art/scrim corner radius (dp); -1 forces the first applyArtRadius() to act. */
     private int artRadiusDp = -1;
     /** Panel media controls mode (Off | Single tap | Double tap), shared with the panel art. */
-    private String panelMediaMode = PanelMediaMode.SINGLE_TAP;
+    private PanelMediaMode panelMediaMode = PanelMediaMode.DEFAULT;
 
-    private TrackInfoReadoutController(Activity activity, LyricsHost host, SpotifyPlusConfig config,
-            LyricsJumpToCurrentController jumpController,
+    private TrackInfoReadoutController(Activity activity, PlaybackTransportHost host,
+            SpotifyPlusConfig config, LyricsJumpToCurrentController jumpController,
             FrameLayout topBox, ImageView topArt, TextView topTitle, TextView topArtist,
             FrameLayout bottomBox, ArtTouchFrame bottomArtFrame, ImageView bottomArt,
             View bottomOverlayScrim, ImageButton bottomOverlayButton,
@@ -406,8 +397,8 @@ final class TrackInfoReadoutController {
 
     static TrackInfoReadoutController attach(Activity activity, FrameLayout shellRoot,
             LyricsJumpToCurrentController jumpController, LyricsTextFactory textFactory,
-            LyricsHost host, SpotifyPlusConfig config, Runnable onRevealChrome, boolean twoColumn,
-            ViewGroup headerRow, View headerTitle) {
+            PlaybackTransportHost host, SpotifyPlusConfig config, Runnable onRevealChrome,
+            boolean twoColumn, ViewGroup headerRow, View headerTitle) {
         boolean landscape = activity.getResources().getConfiguration().orientation
                 == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
         int artTop = landscape ? ART_TOP_LANDSCAPE_DP : ART_TOP_PORTRAIT_DP;
@@ -880,7 +871,7 @@ final class TrackInfoReadoutController {
      *  visibility. Used by the layout editor to anchor its selection overlay on the real view. */
     View currentArtFrame() {
         if (columnBox != null && columnBox.getVisibility() == View.VISIBLE) return columnArtFrame;
-        if ("Header".equals(lastMode)) return topArtFrame;
+        if (lastMode == TrackInfoPosition.HEADER) return topArtFrame;
         if (sideBox.getVisibility() == View.VISIBLE) return sideArtFrame;
         if (topBox.getVisibility() == View.VISIBLE) return topArtFrame;
         if (bottomBox.getVisibility() == View.VISIBLE) return bottomArtFrame;
@@ -892,7 +883,7 @@ final class TrackInfoReadoutController {
      *  outline, separate from the artwork it used to be bundled with. */
     View currentTextFrame() {
         if (columnBox != null && columnBox.getVisibility() == View.VISIBLE) return columnText;
-        if ("Header".equals(lastMode)) return topText;
+        if (lastMode == TrackInfoPosition.HEADER) return topText;
         if (sideBox.getVisibility() == View.VISIBLE) return sideText;
         if (topBox.getVisibility() == View.VISIBLE) return topText;
         if (bottomBox.getVisibility() == View.VISIBLE) return bottomText;
@@ -934,11 +925,11 @@ final class TrackInfoReadoutController {
         }
     }
 
-    String currentMode() {
+    TrackInfoPosition currentMode() {
         try {
-            return config.get(Settings.TRACK_INFO_POSITION);
+            return config.get(Settings.TRACK_INFO_POSITION, TrackInfoPosition.class);
         } catch (Throwable ignored) {
-            return "Off";
+            return TrackInfoPosition.OFF;
         }
     }
 
@@ -950,17 +941,30 @@ final class TrackInfoReadoutController {
      * through it; None removes the separation entirely.
      */
     private void applyBackgroundStyle() {
-        String style = config.get(Settings.TRACK_INFO_BACKGROUND);
-        boolean solid = "Solid".equals(style);
-        boolean none = "None".equals(style);
+        TrackInfoBackground style = config.get(Settings.TRACK_INFO_BACKGROUND, TrackInfoBackground.class);
+        boolean solid = style == TrackInfoBackground.SOLID;
+        boolean none = style == TrackInfoBackground.NONE;
         int fill = solid ? SOLID_BACKDROP : Color.TRANSPARENT;
         topBox.setBackgroundColor(fill);
         bottomBox.setBackgroundColor(fill);
         sideBox.setBackgroundColor(fill);
         int scrim = solid || none ? View.GONE : View.VISIBLE;
-        if (topGradientView != null) topGradientView.setVisibility(scrim);
-        if (bottomGradientView != null) bottomGradientView.setVisibility(scrim);
+        // Blur keeps the top and bottom scrims laid out as the band geometry but draws the lyrics
+        // behind them blurred instead. The side dock, and devices without AGSL, keep the gradient.
+        boolean blur = style == TrackInfoBackground.BLUR && ElasticScrollView.backdropBlurSupported();
+        int edgeScrim = blur ? View.INVISIBLE : scrim;
+        if (topGradientView != null) topGradientView.setVisibility(edgeScrim);
+        if (bottomGradientView != null) bottomGradientView.setVisibility(edgeScrim);
         if (sideGradientView != null) sideGradientView.setVisibility(scrim);
+        if (backdropTarget != null) {
+            backdropTarget.setBackdropBands(blur ? topGradientView : null, blur ? bottomGradientView : null);
+        }
+    }
+
+    /** The lyric scroll view that draws the Blur background behind the top and bottom docks. */
+    void setBackdropTarget(ElasticScrollView target) {
+        backdropTarget = target;
+        applyBackgroundStyle();
     }
 
     /**
@@ -1002,13 +1006,13 @@ final class TrackInfoReadoutController {
      * below the artwork rather than beside it, so this setting has no effect there.
      */
     private void applyTextAlign() {
-        String align = "Center";
+        TrackInfoTextAlign align = TrackInfoTextAlign.CENTER;
         try {
-            align = config.get(Settings.TRACK_INFO_TEXT_ALIGN);
+            align = config.get(Settings.TRACK_INFO_TEXT_ALIGN, TrackInfoTextAlign.class);
         } catch (Throwable ignored) {
         }
-        int gravity = "Top".equals(align) ? Gravity.TOP
-                : "Bottom".equals(align) ? Gravity.BOTTOM
+        int gravity = align == TrackInfoTextAlign.TOP ? Gravity.TOP
+                : align == TrackInfoTextAlign.BOTTOM ? Gravity.BOTTOM
                 : Gravity.CENTER_VERTICAL;
         if (topText != null) topText.setGravity(gravity);
         if (bottomText != null) bottomText.setGravity(gravity);
@@ -1051,7 +1055,7 @@ final class TrackInfoReadoutController {
         pipPresentation = true;
         pipAlbumArt = albumArt;
         applyFieldVisibility();
-        setMode("Off");
+        setMode(TrackInfoPosition.OFF);
     }
 
     /** Whether the PiP art column may show: the two-column layout plus the album-art toggle.
@@ -1062,14 +1066,14 @@ final class TrackInfoReadoutController {
     }
 
     /** PiP artwork uses the column or top readout according to its window shape. */
-    static String pipEffectiveMode(boolean twoColumn, boolean albumArt) {
-        return albumArt ? "Top" : "Off";
+    static TrackInfoPosition pipEffectiveMode(boolean twoColumn, boolean albumArt) {
+        return albumArt ? TrackInfoPosition.TOP : TrackInfoPosition.OFF;
     }
 
-    /** Live read of {@link Settings#PIP_ALBUM_ART}; false when unreadable, matching its default. */
+    /** Album art from the PiP snapshot; false when unreadable, matching its default. */
     private boolean pipAlbumArtEnabled() {
         try {
-            return Boolean.TRUE.equals(config.get(Settings.PIP_ALBUM_ART));
+            return PipPresentationConfig.read(config).albumArt;
         } catch (Throwable ignored) {
             return Settings.PIP_ALBUM_ART.defaultValue;
         }
@@ -1094,35 +1098,35 @@ final class TrackInfoReadoutController {
         applyTextAlign();
         applyFieldVisibility();
         panelMediaMode = readPanelMediaMode(config);
-        if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) hideOverlays();
+        if (!panelMediaMode.gesturesEnabled()) hideOverlays();
         if (pipPresentation) pipAlbumArt = pipAlbumArtEnabled();
         setMode(currentMode());
     }
 
-    private static String readPanelMediaMode(SpotifyPlusConfig config) {
+    private static PanelMediaMode readPanelMediaMode(SpotifyPlusConfig config) {
         try {
-            return config.get(Settings.PANEL_MEDIA_CONTROLS);
+            return config.get(Settings.PANEL_MEDIA_CONTROLS, PanelMediaMode.class);
         } catch (Throwable ignored) {
-            return PanelMediaMode.SINGLE_TAP;
+            return PanelMediaMode.DEFAULT;
         }
     }
 
-    private void setMode(String mode) {
+    private void setMode(TrackInfoPosition mode) {
         if (pipPresentation) mode = pipEffectiveMode(twoColumn, pipAlbumArt);
-        if (mode == null) mode = "Off";
+        if (mode == null) mode = TrackInfoPosition.OFF;
         // Two-column's left column is this readout's column placement: it shows for every stored
         // position except Off, and hiding it collapses that column (the lyrics take the width).
         // Every floating overlay stands down while two-column is engaged.
-        boolean column = twoColumn && !"Off".equals(mode);
+        boolean column = twoColumn && mode != TrackInfoPosition.OFF;
         boolean side = !twoColumn && sideModeEngaged(landscape, aspect, mode);
-        boolean header = !twoColumn && !side && "Header".equals(mode);
-        boolean top = !twoColumn && !side && !header && "Top".equals(mode);
-        boolean bottom = !twoColumn && !side && !header && "Bottom".equals(mode);
+        boolean header = !twoColumn && !side && mode == TrackInfoPosition.HEADER;
+        boolean top = !twoColumn && !side && !header && mode == TrackInfoPosition.TOP;
+        boolean bottom = !twoColumn && !side && !header && mode == TrackInfoPosition.BOTTOM;
         boolean enabled = top || bottom || side || header || column;
         applyHeaderPlacement(header);
         boolean wasEnabled = artworkEnabled;
         boolean firstMount = lastMode == null;
-        boolean modeChanged = firstMount || !mode.equals(lastMode);
+        boolean modeChanged = firstMount || mode != lastMode;
         lastMode = mode;
         artworkEnabled = enabled;
         // A plain cut, not a crossfade: showing the column reflows the whole screen (the cover is
@@ -1210,10 +1214,11 @@ final class TrackInfoReadoutController {
         topRow.setLayoutParams(topRowLp);
         // Keep the artwork/readout clear of whichever edge owns the vertical top-control rail.
         // This is preference-driven, not orientation detection: portrait and landscape already
-        // store independent CHROME_CLUSTER_POSITION values.
+        // keep independent cluster positions through the chrome snapshot.
         boolean controlsLeft = false;
         try {
-            controlsLeft = "Left".equals(config.get(Settings.CHROME_CLUSTER_POSITION));
+            controlsLeft = LyricsShellChromeConfig.read(config).chromeClusterPosition
+                    == ChromeClusterPosition.LEFT;
         } catch (Throwable ignored) {
         }
         int railClearance = chromeReserve != null ? chromeReserve.getAsInt() : dp(44 + 8);
@@ -1250,11 +1255,11 @@ final class TrackInfoReadoutController {
         columnArtwork = null;
     }
 
-    private String currentArtSize() {
+    private TrackInfoArtSize currentArtSize() {
         try {
-            return config.get(Settings.TRACK_INFO_ART_SIZE);
+            return config.get(Settings.TRACK_INFO_ART_SIZE, TrackInfoArtSize.class);
         } catch (Throwable ignored) {
-            return "Normal";
+            return TrackInfoArtSize.NORMAL;
         }
     }
 
@@ -1268,13 +1273,13 @@ final class TrackInfoReadoutController {
      *  Custom size (a small readout cover) read through to landscape and shrank the column cover
      *  to it; the column is a different placement, so it keeps its fitted size until the art
      *  size is changed in landscape itself. */
-    private String columnArtSize() {
+    private TrackInfoArtSize columnArtSize() {
         try {
             return config.hasOwnLandscapeValue(Settings.TRACK_INFO_ART_SIZE)
                     || config.hasOwnLandscapeValue(Settings.TRACK_INFO_ART_SIZE_CUSTOM_DP)
-                    ? currentArtSize() : Settings.TRACK_INFO_ART_SIZE.defaultValue;
+                    ? currentArtSize() : TrackInfoArtSize.NORMAL;
         } catch (Throwable ignored) {
-            return Settings.TRACK_INFO_ART_SIZE.defaultValue;
+            return TrackInfoArtSize.NORMAL;
         }
     }
 
@@ -1293,7 +1298,8 @@ final class TrackInfoReadoutController {
         // "Custom" size is a direct-manipulation drag result (see readoutArtSizes' own javadoc);
         // silently overriding it back to 54dp in landscape made the layout editor's resize
         // handle visibly do nothing for Top-position artwork whenever the device was rotated.
-        topArtDpF = (landscape && !"Custom".equals(currentArtSize())) ? ART_TOP_LANDSCAPE_DP : sizes[1];
+        topArtDpF = (landscape && currentArtSize() != TrackInfoArtSize.CUSTOM)
+                ? ART_TOP_LANDSCAPE_DP : sizes[1];
         setSquareLp(bottomArtFrame, dp(bottomArtDpF));
         setSquareLp(topArtFrame, dp(topArtDpF));
         ViewGroup.LayoutParams rowLp = bottomRow.getLayoutParams();
@@ -1308,7 +1314,8 @@ final class TrackInfoReadoutController {
         // A solid dock is opaque over its whole height (the gradient band included), and the
         // chips are drawn in the same plane: sitting just above the artwork row put them inside
         // that fill, hidden behind it. Keep them above the dock's top edge instead.
-        if (bottom && "Solid".equals(config.get(Settings.TRACK_INFO_BACKGROUND))) {
+        if (bottom && config.get(Settings.TRACK_INFO_BACKGROUND, TrackInfoBackground.class)
+                == TrackInfoBackground.SOLID) {
             jumpMarginDp = Math.max(rowTopDp, EDGE_GRADIENT_DP) + CLUSTER_GAP_DP;
         }
         jumpController.setBottomMarginDp(jumpMarginDp);
@@ -1323,7 +1330,8 @@ final class TrackInfoReadoutController {
      *  specs, so without its own layout request Android returns the cached size. */
     private void remeasureColumn() {
         if (columnArtFrame == null) return;
-        String state = currentArtSize() + ":" + currentCustomArtSizeDp() + ":" + currentOverflow()
+        String state = currentArtSize().storedLabel() + ":" + currentCustomArtSizeDp() + ":"
+                + currentOverflow().storedLabel()
                 + visibilityKey(columnTitle) + visibilityKey(columnArtist) + visibilityKey(columnAlbum)
                 + textSizeKey(columnTitle) + textSizeKey(columnArtist) + textSizeKey(columnAlbum);
         if (state.equals(appliedColumnLayout)) return;
@@ -1369,27 +1377,27 @@ final class TrackInfoReadoutController {
             artistSp = 12f * scale;
             albumSp = 11f * scale;
         } else {
-            String value = "Normal";
+            TrackInfoTextSize value = TrackInfoTextSize.NORMAL;
             try {
-                value = config.get(Settings.TRACK_INFO_TEXT_SIZE);
+                value = config.get(Settings.TRACK_INFO_TEXT_SIZE, TrackInfoTextSize.class);
             } catch (Throwable ignored) {
             }
             titleSp = 15f;
             artistSp = 12f;
             albumSp = 11f;
-            if ("Small".equals(value)) {
+            if (value == TrackInfoTextSize.SMALL) {
                 titleSp = 13f;
                 artistSp = 11f;
                 albumSp = 10f;
-            } else if ("Large".equals(value)) {
+            } else if (value == TrackInfoTextSize.LARGE) {
                 titleSp = 18f;
                 artistSp = 14f;
                 albumSp = 12f;
-            } else if ("XLarge".equals(value)) {
+            } else if (value == TrackInfoTextSize.XLARGE) {
                 titleSp = 22f;
                 artistSp = 16f;
                 albumSp = 14f;
-            } else if ("Custom".equals(value)) {
+            } else if (value == TrackInfoTextSize.CUSTOM) {
                 int multiplierX100 = 100;
                 try {
                     multiplierX100 = config.get(Settings.TRACK_INFO_TEXT_SIZE_CUSTOM);
@@ -1434,13 +1442,13 @@ final class TrackInfoReadoutController {
             adaptive = Settings.TRACK_INFO_TEXT_SIZE_ADAPTIVE.defaultValue;
         }
         if (adaptive) {
-            float artDp = "Custom".equals(columnArtSize())
+            float artDp = columnArtSize() == TrackInfoArtSize.CUSTOM
                     ? Math.min(READOUT_MAX_ART_DP, currentCustomArtSizeDp()) : 96f;
-            return columnTrackTextScale(null, 0, true, artDp);
+            return columnTrackTextScale(TrackInfoTextSize.NORMAL, 0, true, artDp);
         }
-        String size = Settings.TRACK_INFO_TEXT_SIZE.defaultValue;
+        TrackInfoTextSize size = TrackInfoTextSize.NORMAL;
         try {
-            size = config.get(Settings.TRACK_INFO_TEXT_SIZE);
+            size = config.get(Settings.TRACK_INFO_TEXT_SIZE, TrackInfoTextSize.class);
         } catch (Throwable ignored) {
         }
         int customPercent = Settings.TRACK_INFO_TEXT_SIZE_CUSTOM.defaultValue;
@@ -1452,23 +1460,24 @@ final class TrackInfoReadoutController {
     }
 
     /** Coerces the overflow setting to Clip/Wrap/Scroll (unknown values fall back to Wrap). */
-    static String normalizeOverflow(String value) {
-        if ("Clip".equals(value) || "Scroll".equals(value)) return value;
-        return "Wrap";
+    static TrackInfoTextOverflow normalizeOverflow(TrackInfoTextOverflow value) {
+        return value == TrackInfoTextOverflow.CLIP || value == TrackInfoTextOverflow.SCROLL
+                ? value : TrackInfoTextOverflow.WRAP;
     }
 
-    private String currentOverflow() {
+    private TrackInfoTextOverflow currentOverflow() {
         try {
-            return normalizeOverflow(config.get(Settings.TRACK_INFO_TEXT_OVERFLOW));
+            return normalizeOverflow(
+                    config.get(Settings.TRACK_INFO_TEXT_OVERFLOW, TrackInfoTextOverflow.class));
         } catch (Throwable ignored) {
-            return "Wrap";
+            return TrackInfoTextOverflow.WRAP;
         }
     }
 
     /** Applies Clip/Wrap/Scroll to every readout title/artist (live, no remount). The column
      *  block's album line follows it too - that block's three texts have always been one unit. */
     private void applyTextOverflow() {
-        String mode = currentOverflow();
+        TrackInfoTextOverflow mode = currentOverflow();
         applyOverflowMode(topTitle, mode);
         applyOverflowMode(bottomTitle, mode);
         applyOverflowMode(sideTitle, mode);
@@ -1480,11 +1489,11 @@ final class TrackInfoReadoutController {
         applyOverflowMode(columnAlbum, mode);
     }
 
-    static void applyOverflowMode(TextView view, String mode) {
+    static void applyOverflowMode(TextView view, TrackInfoTextOverflow mode) {
         if (view == null) return;
-        if ("Scroll".equals(mode)) {
+        if (mode == TrackInfoTextOverflow.SCROLL) {
             setupMarquee(view);
-        } else if ("Clip".equals(mode)) {
+        } else if (mode == TrackInfoTextOverflow.CLIP) {
             view.setSingleLine(true);
             view.setMaxLines(1);
             view.setEllipsize(TextUtils.TruncateAt.END);
@@ -1507,11 +1516,15 @@ final class TrackInfoReadoutController {
         String imageId = track == null || track.imageId == null ? "" : track.imageId;
         long now = android.os.SystemClock.elapsedRealtime();
         lastTrack = track;
-        if (!uri.equals(lastUri)) {
+        // After a cold start Spotify can publish the cover id after the track itself; a new id for
+        // the same song restarts the artwork attempt like a track change.
+        boolean coverArrived = uri.equals(lastUri) && !imageId.equals(lastImageId);
+        lastImageId = imageId;
+        if (!uri.equals(lastUri) || coverArrived) {
             cancelArtworkRequest();
             lastUri = uri;
             trackChangeMs = now;
-            resetVisuals();
+            if (!coverArrived) resetVisuals();
             if (artworkEnabled) {
                 if (imageId.isEmpty()) {
                     clearArtwork();
@@ -1525,6 +1538,10 @@ final class TrackInfoReadoutController {
             }
         } else if (artworkEnabled && artMissing && now - trackChangeMs < ART_RETRY_WINDOW_MS
                 && now - lastArtAttemptMs > ART_RETRY_GAP_MS) {
+            attemptArtwork(track);
+        } else if (artworkEnabled && !artMissing && !imageId.isEmpty()
+                && !imageId.equals(displayedImageId) && ArtworkNetworkCache.has(imageId)) {
+            // The shared download landed after the retry window gave up on this cover.
             attemptArtwork(track);
         } else if (artworkEnabled && artMissing && now - trackChangeMs >= ART_RETRY_WINDOW_MS) {
             // The previous cover stays while the new one loads; once retries give up it would
@@ -1777,22 +1794,20 @@ final class TrackInfoReadoutController {
                                          boolean needed, float radiusPx) {
         if (!needed) return null;
         Bitmap raw = null;
-        boolean fromNetworkCache = false;
         try {
             raw = large ? SpotifyArtworkCache.snapshotLarge(imageId, uri, size)
                     : SpotifyArtworkCache.snapshot(imageId, uri);
-            if (raw == null && imageId != null && !imageId.isEmpty()) {
-                raw = ART_NETWORK_CACHE.get(imageId);
-                fromNetworkCache = raw != null;
-                if (raw == null) fetchArtworkFromNetwork(imageId);
-            }
+            boolean fromNetwork = raw == null;
+            // Remote playback and cold starts can lack Spotify's own bitmap; the shared download
+            // serves every artwork surface, and its listener re-renders when it lands.
+            if (raw == null) raw = ArtworkNetworkCache.copyOrFetch(imageId, NativeRuntime.HTTP);
             if (raw == null) return null;
-            int targetPx = large ? (fromNetworkCache ? size : raw.getWidth()) : size;
+            int targetPx = large ? (fromNetwork ? size : raw.getWidth()) : size;
             return roundBitmap(raw, targetPx, 0f);
         } catch (RuntimeException unavailable) {
             return null;
         } finally {
-            if (raw != null && !fromNetworkCache) raw.recycle();
+            if (raw != null) raw.recycle();
         }
     }
 
@@ -1819,68 +1834,6 @@ final class TrackInfoReadoutController {
         }
     }
 
-    /** Fetches art straight from Spotify's public image CDN by id - the fallback for remote
-     *  (Spotify Connect) playback, where SpotifyArtworkCache has nothing to serve. Dedupes
-     *  concurrent requests per imageId; the existing artMissing retry loop (attemptArtwork, above)
-     *  re-checks ART_NETWORK_CACHE on its own cadence, so a successful fetch just needs to land in
-     *  the cache - no callback-driven re-render required here. */
-    static void fetchArtworkFromNetwork(String imageId) {
-        if (imageId == null || imageId.isEmpty()) return;
-        if (ART_NETWORK_CACHE.containsKey(imageId)) return;
-        if (!ART_NETWORK_FETCH_IN_FLIGHT.add(imageId)) return;
-
-        String url = imageId.startsWith("http") ? imageId : "https://i.scdn.co/image/" + imageId;
-
-        Request request = new Request.Builder()
-                .url(url)
-                .get()
-                .build();
-        NativeRuntime.HTTP.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                ART_NETWORK_FETCH_IN_FLIGHT.remove(imageId);
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                try (Response ignored = response) {
-                    if (response.isSuccessful() && response.body() != null) {
-                        byte[] bytes = response.body().bytes();
-                        Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
-                        if (bitmap != null) {
-                            ART_NETWORK_CACHE.put(imageId, bitmap);
-
-                            // Notify all registered listening components on the Main/UI thread
-                            // to immediately fetch the updated bitmap and refresh their canvas.
-                            synchronized (ART_NETWORK_LISTENERS) {
-                                for (Runnable listener : ART_NETWORK_LISTENERS) {
-                                    if (listener != null) {
-                                        listener.run();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } catch (Throwable ignored) {
-                } finally {
-                    ART_NETWORK_FETCH_IN_FLIGHT.remove(imageId);
-                }
-            }
-        });
-    }
-
-    /** Release network artwork cache entries and trim memory. Called by the host
-     *  on trim-memory events and when the readout is torn down. */
-    static void trimMemory() {
-        synchronized (ART_NETWORK_CACHE) {
-            for (java.util.Map.Entry<String, Bitmap> entry : ART_NETWORK_CACHE.entrySet()) {
-                try { if (entry.getValue() != null) entry.getValue().recycle(); } catch (Throwable ignored) {}
-            }
-            ART_NETWORK_CACHE.clear();
-        }
-        ART_NETWORK_FETCH_IN_FLIGHT.clear();
-        com.eza.spicyex.lyrics.GlowFlexbox.clearBlurCache();
-    }
 
     private static void fadeInArt(ImageView view, Bitmap bitmap) {
         view.animate().cancel();
@@ -1927,7 +1880,7 @@ final class TrackInfoReadoutController {
                     followThroughFrame = null;
                 }
                 frame.animate().cancel();
-                if (!PanelMediaMode.gesturesEnabled(panelMediaMode)) {
+                if (!panelMediaMode.gesturesEnabled()) {
                     arbiter.reset();
                     cancelArmed = false;
                     activeFrame = null;
@@ -1989,7 +1942,7 @@ final class TrackInfoReadoutController {
     private void handleUp(ArtGestureArbiter.Output out, ArtTouchFrame frame, int artDp) {
         switch (out) {
             case REVEAL:
-                if (PanelMediaMode.revealOnSingleTap(panelMediaMode)) showOverlay(frame);
+                if (panelMediaMode.revealsOnSingleTap()) showOverlay(frame);
                 else springBack(frame);
                 break;
             case TOGGLE:
@@ -2201,7 +2154,7 @@ final class TrackInfoReadoutController {
         // genuinely empty) - testing topBox's visibility would always fail and make every touch
         // look "outside," triggering onOutsideDown()/resetVisuals() on every ACTION_DOWN even
         // directly over the visible artwork (see NativeSpicyShellViewImpl#dispatchTouchEvent).
-        View topContainer = "Header".equals(lastMode) ? headerRow : topBox;
+        View topContainer = lastMode == TrackInfoPosition.HEADER ? headerRow : topBox;
         return hitsFrame(topContainer, topArtFrame, rawX, rawY)
                 || hitsFrame(bottomBox, bottomArtFrame, rawX, rawY)
                 || hitsFrame(sideBox, sideArtFrame, rawX, rawY)

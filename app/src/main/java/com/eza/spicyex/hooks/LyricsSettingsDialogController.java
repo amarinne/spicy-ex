@@ -7,9 +7,10 @@ import android.transition.TransitionManager;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
-import com.eza.spicyex.settings.SettingsPanel;
+import com.eza.spicyex.settings.panel.SettingsPanel;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.ui.VsyncFrameScheduler;
 import com.eza.spicyex.lyrics.LyricsAmbientController;
@@ -31,6 +32,8 @@ final class LyricsSettingsDialogController {
     private Dialog currentDialog;
     private PanelSurface currentSurface;
     private SettingsPanel currentPanel;
+    private View systemBarScrim;
+    private ViewGroup systemBarScrimParent;
 
     LyricsSettingsDialogController(
             Activity activity,
@@ -102,6 +105,15 @@ final class LyricsSettingsDialogController {
                     halfMode ? 0.1f : 0.5f);
             surfaceRef[0] = surface;
 
+            // The content root starts below the status-bar inset. Attach to the decor root so
+            // the scrim can cover the host system-bar pixels that show through this window.
+            systemBarScrimParent = (ViewGroup) activity.getWindow().getDecorView();
+            systemBarScrim = createSystemBarScrim(systemBarScrimParent);
+            if (systemBarScrim != null) {
+                systemBarScrimParent.addView(systemBarScrim, systemBarScrimLayoutParams());
+                surface.setSystemBarScrim(systemBarScrim);
+            }
+
             applyCardSize(panelView, halfMode);
 
             // Back and outside-scrim taps route through the unified animated exit.
@@ -131,6 +143,7 @@ final class LyricsSettingsDialogController {
                     currentSurface = null;
                     currentPanel = null;
                 }
+                removeSystemBarScrim();
                 frameScheduler.start();
                 // Source toggles and order are saved inside the panel; the session re-seats the
                 // current track from stored candidates instead of waiting for the next track.
@@ -153,8 +166,40 @@ final class LyricsSettingsDialogController {
         } catch (Throwable t) {
             XpLog.log(logTag + " settings dialog failed: " + t);
             if (currentDialog != null) currentDialog.dismiss();
+            removeSystemBarScrim();
             return false;
         }
+    }
+
+    private View createSystemBarScrim(ViewGroup parent) {
+        if (parent == null) return null;
+        View scrim = new View(activity);
+        scrim.setBackgroundColor(android.graphics.Color.BLACK);
+        scrim.setAlpha(0f);
+        scrim.setClickable(false);
+        scrim.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        return scrim;
+    }
+
+    private FrameLayout.LayoutParams systemBarScrimLayoutParams() {
+        int height = 0;
+        try {
+            int id = activity.getResources().getIdentifier(
+                    "status_bar_height", "dimen", "android");
+            if (id > 0) height = activity.getResources().getDimensionPixelSize(id);
+        } catch (Throwable ignored) {
+        }
+        return new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(0, height), Gravity.TOP);
+    }
+
+    private void removeSystemBarScrim() {
+        if (systemBarScrimParent != null && systemBarScrim != null
+                && systemBarScrim.getParent() == systemBarScrimParent) {
+            systemBarScrimParent.removeView(systemBarScrim);
+        }
+        systemBarScrim = null;
+        systemBarScrimParent = null;
     }
 
     boolean showSection(String id) {

@@ -940,17 +940,8 @@ public final class LyricsShareCardController {
         clock.start();
     }
 
-    /** A full demonstration the first three times, on every open, or never. */
+    /** A full demonstration the first three times; the hint is never shown again after that. */
     private int hintPasses() {
-        String mode;
-        try {
-            mode = com.eza.spicyex.SpotifyPlusConfig.from(activity)
-                    .get(com.eza.spicyex.Settings.SHARE_GESTURE_HINT);
-        } catch (Throwable ignored) {
-            mode = "First few times";
-        }
-        if ("Off".equals(mode)) return 0;
-        if ("Every time".equals(mode)) return 2;
         return hintShownCount() < 3 ? 2 : 0;
     }
 

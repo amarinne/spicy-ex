@@ -17,7 +17,7 @@ import com.eza.spicyex.lyrics.cache.CacheClearKind;
  * <p>Public so the settings surface can open the same source picker the
  * fullscreen surface uses.
  */
-public interface LyricsHost {
+public interface LyricsHost extends PlaybackTransportHost {
     SpotifyTrack getCurrentTrackSafely();
 
     boolean isPlayerActuallyPlaying();
@@ -38,14 +38,6 @@ public interface LyricsHost {
      *  callers hide/disable seek affordances proactively instead of finding out after a silent
      *  rejection. See PlaybackBridge#canSeek. */
     boolean canSeek();
-
-    /** Play/pause toggle and track skips via the captured MediaSession transport.
-     * False when no session is captured (callers degrade to no-op visuals). */
-    boolean togglePlayPause();
-
-    boolean skipToNextTrack();
-
-    boolean skipToPreviousTrack();
 
     boolean toggleSpotifySaved(String mode, SpotifyTrack expected);
 

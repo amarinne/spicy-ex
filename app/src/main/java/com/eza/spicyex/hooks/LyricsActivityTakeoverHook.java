@@ -870,7 +870,7 @@ final class LyricsActivityTakeoverHook {
 
     private boolean isStayInLyricsEnabled(Activity activity) {
         try {
-            return SpotifyPlusConfig.from(activity).get(Settings.STAY_IN_LYRICS);
+            return LyricsShellChromeConfig.read(SpotifyPlusConfig.from(activity)).stayInLyrics;
         } catch (Throwable ignored) {
             return true;
         }

@@ -823,7 +823,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
 
         JsonObject tlyricObject = Json.optObject(object, "tlyric");
         String translated = tlyricObject == null ? "" : Json.optString(tlyricObject, "lyric");
-        if (!isBlank(translated)) applyNeteaseTranslation(doc, translated);
+        if (!isBlank(translated)) applyExactTimestampTranslation(doc, translated);
 
         if (markInstrumentalPlaceholder(doc)) return doc;
         if (!ProviderTimingPolicy.normalizeAndValidate(doc)) throw new IllegalStateException("NetEase timing does not fit track");
@@ -833,6 +833,20 @@ public final class LyricsParser implements LyricsRepository.Parser {
 
     private static final Pattern YRC_LINE_HEADER = Pattern.compile("^\\[(\\d+),(\\d+)\\](.*)$");
     private static final Pattern YRC_WORD = Pattern.compile("\\((\\d+),(\\d+)(?:,-?\\d+)?\\)([^(]*)");
+
+    private void appendWordLine(LyricsDocument doc, JsonArray syllables, String providerLine,
+                                long lineStartMs, long lineEndMs, String lineId) {
+        ParsedSyllableLine parsed = parseSyllableLine(syllables, providerLine,
+                lineStartMs, lineEndMs, lineId);
+        if (parsed == null || isBlank(parsed.text)) return;
+        LyricsLine line = new LyricsLine();
+        line.text = parsed.text;
+        line.startMs = lineStartMs;
+        line.endMs = lineEndMs;
+        line.syllables = parsed.segments;
+        applySecondaryText(line, new JsonObject());
+        doc.lines.add(line);
+    }
 
     /**
      * NetEase word-level ("YRC") lyrics: {@code [lineStart,lineDuration]} plus one
@@ -892,16 +906,8 @@ public final class LyricsParser implements LyricsRepository.Parser {
             }
             if (syllables.size() == 0) continue;
 
-            ParsedSyllableLine parsed = parseSyllableLine(syllables, providerLine.toString(),
+            appendWordLine(doc, syllables, providerLine.toString(),
                     lineStartMs, lineEndMs, "netease-yrc-" + lineStartMs);
-            if (parsed == null || isBlank(parsed.text)) continue;
-            LyricsLine syncedLine = new LyricsLine();
-            syncedLine.text = parsed.text;
-            syncedLine.startMs = lineStartMs;
-            syncedLine.endMs = lineEndMs;
-            syncedLine.syllables = parsed.segments;
-            applySecondaryText(syncedLine, new JsonObject());
-            doc.lines.add(syncedLine);
         }
         if (!writers.isEmpty()) doc.songWriters = String.join(", ", writers);
         markInstrumentalPlaceholder(doc);
@@ -909,7 +915,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
 
         JsonObject ytlrcObject = Json.optObject(object, "ytlrc", "tlyric");
         String translated = ytlrcObject == null ? "" : Json.optString(ytlrcObject, "lyric");
-        if (!isBlank(translated)) applyNeteaseTranslation(doc, translated);
+        if (!isBlank(translated)) applyExactTimestampTranslation(doc, translated);
 
         if (!ProviderTimingPolicy.normalizeAndValidate(doc)) return null;
         finalizeParsedDocument(context, doc);
@@ -971,22 +977,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         doc.songWriters = credits[0] == null ? "" : credits[0];
         parseLrcLines(synced, doc);
 
-        if (!isBlank(translated)) {
-            java.util.Map<Long, String> byTimestamp = new java.util.LinkedHashMap<>();
-            for (String rawLine : translated.split("\\r?\\n")) {
-                Matcher matcher = LRC_TIMESTAMP.matcher(cleanInvisibles(rawLine));
-                if (!matcher.matches()) continue;
-                String text = cleanInvisibles(matcher.group(4));
-                if (isBlank(text)) continue;
-                byTimestamp.put(lrcTimestampMs(matcher), text);
-            }
-            if (!byTimestamp.isEmpty()) {
-                for (LyricsLine line : doc.lines) {
-                    String t = byTimestamp.get(line.startMs);
-                    if (t != null && !t.equals(line.text)) line.providerTranslatedText = t;
-                }
-            }
-        }
+        if (!isBlank(translated)) applyExactTimestampTranslation(doc, translated);
 
         if (markInstrumentalPlaceholder(doc)) return doc;
         if (!ProviderTimingPolicy.normalizeAndValidate(doc)) throw new IllegalStateException("QQ Music timing does not fit track");
@@ -1053,16 +1044,8 @@ public final class LyricsParser implements LyricsRepository.Parser {
             if (isQqTitleCard(candidateLine, track)) continue;
             if (credits.consume(candidateLine)) continue;
 
-            ParsedSyllableLine parsed = parseSyllableLine(syllables, providerLine.toString(),
+            appendWordLine(doc, syllables, providerLine.toString(),
                     lineStartMs, lineEndMs, "qq-qrc-" + lineStartMs);
-            if (parsed == null || isBlank(parsed.text)) continue;
-            LyricsLine syncedLine = new LyricsLine();
-            syncedLine.text = parsed.text;
-            syncedLine.startMs = lineStartMs;
-            syncedLine.endMs = lineEndMs;
-            syncedLine.syllables = parsed.segments;
-            applySecondaryText(syncedLine, new JsonObject());
-            doc.lines.add(syncedLine);
         }
         doc.songWriters = credits.credits() == null ? "" : credits.credits();
         markInstrumentalPlaceholder(doc);
@@ -1584,7 +1567,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
         }
     }
 
-    private void applyNeteaseTranslation(LyricsDocument doc, String translatedLrc) {
+    private void applyExactTimestampTranslation(LyricsDocument doc, String translatedLrc) {
         java.util.Map<Long, String> byTimestamp = new java.util.LinkedHashMap<>();
         for (String rawLine : translatedLrc.split("\\r?\\n")) {
             Matcher matcher = LRC_TIMESTAMP.matcher(cleanInvisibles(rawLine));

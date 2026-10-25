@@ -49,6 +49,10 @@ public final class LyricPipelineMetrics {
         DOCUMENT_REBUILD,
         /** Row-scoped derived update published instead of a rebuild. */
         LAYER_LOCAL_UPDATE,
+        /** Now-playing live card began drawing frames: its demand gate is open. */
+        LIVE_CARD_FRAME_LOOP_ENTERED,
+        /** Now-playing live card parked its frame loop on the idle re-check. */
+        LIVE_CARD_FRAME_LOOP_IDLED,
         /** Results discarded by the stale-result guard. */
         STALE_RESULT_REJECTED,
         /** Runs that joined existing in-flight work instead of starting a duplicate. */

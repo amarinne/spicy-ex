@@ -24,6 +24,7 @@ import com.eza.spicyex.lyrics.language.ChineseCharacterForm;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
 import com.eza.spicyex.lyrics.LyricsRenderMode;
 import com.eza.spicyex.lyrics.LyricsRowViewFactory;
+import com.eza.spicyex.lyrics.ResponseCreditOutro;
 import com.eza.spicyex.lyrics.session.LyricPipelineMetrics;
 import com.eza.spicyex.lyrics.LyricsShellLifecycle;
 import com.eza.spicyex.lyrics.language.RomanizationOptions;
@@ -39,9 +40,25 @@ import java.util.concurrent.atomic.AtomicLong;
  * vsync loop (so the current line inherits the fullscreen engine's karaoke wash): polls position via
  * the hook, fetches lyrics on track change, swaps the 3 lines on active-line change, and washes the
  * current line's gradient each frame. Paused on activity pause, stopped on destroy.
+ *
+ * <p>The loop is demand-gated rather than free-running. A frame is drawn only while the player
+ * advances and a mounted surface still projects something new: the card or the expanded artwork
+ * overlay is on screen with a timed document that has not run past its last sung row, or a canvas
+ * handoff is settling. Otherwise the loop drops to one re-check per
+ * {@link #IDLE_FRAME_PROBE_MS}; that probe is what resumes it after a pause, a re-attach, or any
+ * change that arrives without a callback.
  */
 final class NowPlayingLyricController {
     private static final long CANVAS_TRANSFER_SETTLE_MS = 400L;
+    /**
+     * Idle re-check cadence. This controller has no playback-state callback, so an idle loop still
+     * needs to look once in a while to notice that playback started. It is already faster than the
+     * throttles the frame pass itself uses for the track query (400 ms) and the artwork target
+     * check (250 ms), so nothing that was throttled gets slower.
+     */
+    private static final long IDLE_FRAME_PROBE_MS = 250L;
+    /** No rendered position in the current frame pass. */
+    static final long NO_POSITION_MS = Long.MIN_VALUE;
     interface ArtworkTargetHost {
         NowPlayingArtworkTargetResolver.Resolution resolve(boolean applyBounds);
         void invalidate();
@@ -87,6 +104,17 @@ final class NowPlayingLyricController {
     private long lastTrackCheckMs;
     private long lastCardTapMs;
     private long lastFrameMs;
+    /** A vsync callback is queued. */
+    private boolean framePosted;
+    /** The last demand decision: true while frames are actually needed. */
+    private boolean frameLoopContinuous;
+    /** Playback state read once per frame pass; reused by the demand decision. */
+    private boolean framePlaying;
+    /** Position rendered by the current frame pass, or {@link #NO_POSITION_MS} before it. */
+    private long framePositionMs = NO_POSITION_MS;
+    /** Mounted document {@link #sungEndMs} was derived from, and that end. */
+    private LyricsDocument sungEndDocument;
+    private long sungEndMs;
     private long lastArtworkTargetCheckMs;
     private long nextFetchAllowedMs;
     private int artworkTargetRefreshesRemaining;
@@ -119,6 +147,7 @@ final class NowPlayingLyricController {
                     failedId = id;
                 }
             }
+            requestFrame();
         }
 
         @Override public void onDocumentChanged(LyricsSessionManager.Snapshot snapshot,
@@ -145,11 +174,13 @@ final class NowPlayingLyricController {
         clearMiniProjection();
         placeholderShown = false;
         failedId = "no_lyrics".equals(snapshot.status) ? id : "";
+        requestFrame();
     }
 
     private final Choreographer.FrameCallback frame = new Choreographer.FrameCallback() {
         @Override
         public void doFrame(long frameTimeNanos) {
+            framePosted = false;
             if (!running) return;
             try {
                 onFrame(frameTimeNanos / 1_000_000L);
@@ -159,7 +190,22 @@ final class NowPlayingLyricController {
                     XpLog.log(NativeSpicyLyricsHook.TAG + " live card frame error: " + android.util.Log.getStackTraceString(t));
                 }
             }
-            Choreographer.getInstance().postFrameCallback(this);
+            // Queued or dropped from here: the pass above is what produced the state this reads.
+            updateFrameDemand();
+        }
+    };
+
+    /**
+     * The idle loop. It runs only while no frames are queued, and re-arms itself so a missed
+     * transition cannot strand the card: playback start, view re-attach, and a deferred handoff all
+     * arrive through here. It is removed as soon as demand opens again.
+     */
+    private final Runnable idleFrameProbe = new Runnable() {
+        @Override
+        public void run() {
+            if (!running) return;
+            requestFrame();
+            handler.postDelayed(this, IDLE_FRAME_PROBE_MS);
         }
     };
 
@@ -231,7 +277,109 @@ final class NowPlayingLyricController {
         synchronizeTrackBeforeSubscription();
         registerPreferenceListener();
         sessionSubscription = hook.subscribeLyricsSession(sessionListener);
+        frameLoopContinuous = false;
+        requestFrame();
+    }
+
+    /** Asks for one frame; a no-op while one is already queued or the controller is stopped. */
+    private void requestFrame() {
+        if (!running || framePosted) return;
+        // Only an idle loop restarts the delta clock. Resetting it from inside a running loop
+        // would report a 0 delta and advance every spring by a fixed 1/60 s per real frame.
+        if (!frameLoopContinuous) lastFrameMs = 0L;
+        framePosted = true;
         Choreographer.getInstance().postFrameCallback(frame);
+    }
+
+    private void cancelPendingFrame() {
+        if (!framePosted) return;
+        framePosted = false;
+        Choreographer.getInstance().removeFrameCallback(frame);
+    }
+
+    /** Keeps the loop open while the pass has work, and parks it on the idle probe when it does not. */
+    private void updateFrameDemand() {
+        if (!running) return;
+        boolean cardShown = card.isShown();
+        boolean artworkShown = artworkOverlay.isShown();
+        boolean open = frameDemandOpen(
+                pendingCanvasTransfer || (artworkShown && artworkTargetRefreshesRemaining > 0),
+                framePlaying,
+                cardShown || artworkShown,
+                timedSurfaceLive(cardShown, artworkShown),
+                framePositionMs,
+                sungEndMs());
+        if (!open) {
+            if (frameLoopContinuous) {
+                frameLoopContinuous = false;
+                LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LIVE_CARD_FRAME_LOOP_IDLED);
+                NativeSpicyLyricsHook.dbg("frameDemand", "live card frame loop idle");
+            }
+            // A pass can request a frame before it decides the work is done (a tap, a target
+            // invalidation, a track change). The gate is the authority: drop it.
+            cancelPendingFrame();
+            handler.removeCallbacks(idleFrameProbe);
+            handler.postDelayed(idleFrameProbe, IDLE_FRAME_PROBE_MS);
+            return;
+        }
+        if (!frameLoopContinuous) {
+            frameLoopContinuous = true;
+            LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LIVE_CARD_FRAME_LOOP_ENTERED);
+            NativeSpicyLyricsHook.dbg("frameDemand", "live card frame loop continuous");
+        }
+        handler.removeCallbacks(idleFrameProbe);
+        requestFrame();
+    }
+
+    /**
+     * The one rule for "the pass that just ran needs another frame". Callers only request a frame
+     * on a state change; this decides whether the loop stays open afterwards.
+     *
+     * <p>Playback has to be advancing first: when it is not, the hook stops extrapolating the
+     * position, so a repeated frame redraws the same pixels. The projection is unsettled while the
+     * playhead is still inside the document's sung span — the wash, the line sync fill and the
+     * overflow glide all read the position every frame there — and until the credit-outro hold
+     * window opens, because that is where the last row is cleared. Past it the card holds a settled
+     * frame: the outro itself is static text on a wall-clock window, so the idle probe presents and
+     * retires it.
+     *
+     * @param forcedWork a canvas handoff settling, or a bounded artwork target refresh burst
+     * @param playing    playback is advancing
+     * @param surfaceShown the card or the artwork overlay is attached and visible
+     * @param timedSurface that on-screen surface has a document whose rows carry timing
+     * @param positionMs the position the last pass rendered, or {@link #NO_POSITION_MS}
+     * @param sungEndMs  end of the last sung row of the mounted document
+     */
+    static boolean frameDemandOpen(
+            boolean forcedWork,
+            boolean playing,
+            boolean surfaceShown,
+            boolean timedSurface,
+            long positionMs,
+            long sungEndMs
+    ) {
+        if (forcedWork) return true;
+        if (!playing || !surfaceShown) return false;
+        if (!timedSurface) return false;
+        if (positionMs == NO_POSITION_MS || sungEndMs <= 0L) return false;
+        return positionMs < sungEndMs + ResponseCreditOutro.HOLD_MS;
+    }
+
+    private boolean timedSurfaceLive(boolean cardShown, boolean artworkShown) {
+        if (cardShown && cardDocument != null && !isUnsyncedDocument(cardDocument)) return true;
+        return artworkShown && artworkDocument != null;
+    }
+
+    /**
+     * End of the last sung row, cached per mounted document. Both the credit-outro clock and the
+     * frame gate need it, and deriving it walks every row.
+     */
+    private long sungEndMs() {
+        LyricsDocument document = cardDocument != null ? cardDocument : artworkDocument;
+        if (document == sungEndDocument) return sungEndMs;
+        sungEndDocument = document;
+        sungEndMs = ResponseCreditOutro.lastVocalEndMs(document);
+        return sungEndMs;
     }
 
     private void synchronizeTrackBeforeSubscription() {
@@ -265,7 +413,9 @@ final class NowPlayingLyricController {
         artworkOverlay.hideOverlay();
         clearPendingCanvasTransfer();
         unregisterPreferenceListener();
-        Choreographer.getInstance().removeFrameCallback(frame);
+        frameLoopContinuous = false;
+        cancelPendingFrame();
+        handler.removeCallbacks(idleFrameProbe);
         handler.removeCallbacksAndMessages(null);
     }
 
@@ -279,6 +429,8 @@ final class NowPlayingLyricController {
         float deltaSeconds = lastFrameMs <= 0L ? (1f / 60f)
                 : Math.max(1f / 120f, Math.min(1f / 15f, (nowMs - lastFrameMs) / 1000f));
         lastFrameMs = nowMs;
+        framePositionMs = NO_POSITION_MS;
+        framePlaying = hook.isPlayerActuallyPlaying();
         SpotifyTrack track = currentTrackThrottled(nowMs);
         if (track == null) return;
         String id = NativeLyricsUtils.trackIdFromUri(track.uri);
@@ -289,7 +441,7 @@ final class NowPlayingLyricController {
         // show a stale lyric while (or instead of) loading.
         if (!id.equals(currentId)) {
             boolean artworkWasVisible = artworkOverlay.isOverlayVisible();
-            if (artworkWasVisible && !config.get(com.eza.spicyex.Settings.STAY_IN_LYRICS)) {
+            if (artworkWasVisible && !LyricsShellChromeConfig.read(config).stayInLyrics) {
                 closeArtwork();
             }
             currentId = id;
@@ -325,7 +477,8 @@ final class NowPlayingLyricController {
         if (cardDocument == null || !id.equals(loadedId)) return; // not loaded for THIS track → stay cleared
 
         long pos = renderConfig.adjustedPositionMs(
-                hook.readBestMeasuredProgressMs(track, hook.isPlayerActuallyPlaying()));
+                hook.readBestMeasuredProgressMs(track, framePlaying));
+        framePositionMs = pos;
         if (artworkDocument != null) artworkOverlay.renderFrame(pos, deltaSeconds);
         if (card.renderCreditOutro(cardDocument, pos)) {
             lastIdx = Integer.MIN_VALUE;
@@ -420,6 +573,7 @@ final class NowPlayingLyricController {
 
     private void handleCardTap() {
         refreshConfig();
+        requestFrame();
         String mode = config.get(com.eza.spicyex.Settings.LIVE_CARD_TAP_MODE);
         if ("Off".equals(mode)) return;
         long now = SystemClock.uptimeMillis();
@@ -448,6 +602,7 @@ final class NowPlayingLyricController {
             artworkOverlay.setDocument(artworkDocument, renderConfig);
             artworkOverlay.showOverlay();
             artworkBackLifecycle.start();
+            requestFrame();
         } else {
             hook.launchNativeLyricsFullscreen(activity);
         }
@@ -463,6 +618,7 @@ final class NowPlayingLyricController {
         artworkUnavailableGraceArmed = false;
         artworkUnavailableRetriesRemaining = 0;
         if (clearPendingTransfer) clearPendingCanvasTransfer();
+        requestFrame();
     }
 
     private void expandArtwork() {
@@ -527,6 +683,7 @@ final class NowPlayingLyricController {
         pendingCanvasTransfer = true;
         pendingCanvasTrackId = currentId;
         pendingCanvasAtMs = SystemClock.uptimeMillis();
+        requestFrame();
     }
 
     private void evaluatePendingCanvasTransfer(String nextTrackId, long nowMs) {
@@ -539,7 +696,7 @@ final class NowPlayingLyricController {
         NowPlayingArtworkTargetResolver.PendingCanvasAction action =
                 NowPlayingArtworkTargetResolver.pendingCanvasAction(
                         true, pendingCanvasTrackId, nextTrackId,
-                        config.get(com.eza.spicyex.Settings.STAY_IN_LYRICS),
+                        LyricsShellChromeConfig.read(config).stayInLyrics,
                         Math.max(0L, nowMs - pendingCanvasAtMs),
                         CANVAS_TRANSFER_SETTLE_MS, target);
         if (action == NowPlayingArtworkTargetResolver.PendingCanvasAction.WAIT) return;
@@ -557,7 +714,9 @@ final class NowPlayingLyricController {
 
     private void refreshPreferences() {
         preferenceRefreshPosted = false;
-        if (running && refreshConfig()) lastIdx = Integer.MIN_VALUE;
+        if (!running) return;
+        if (refreshConfig()) lastIdx = Integer.MIN_VALUE;
+        requestFrame();
     }
 
     private void schedulePreferenceRefresh() {
@@ -728,6 +887,7 @@ final class NowPlayingLyricController {
             lastIdx = Integer.MIN_VALUE;
             clearMiniProjection();
         }
+        if (cardChanged || artworkChanged || cardRowsChanged || artworkRowsChanged) requestFrame();
         return true;
     }
 
@@ -754,6 +914,7 @@ final class NowPlayingLyricController {
         refreshConfig();
         if (nextCardDocument.appliedLines == null || nextCardDocument.appliedLines.isEmpty()) {
             failedId = id;
+            requestFrame(); // renders the placeholder
             return;
         }
         currentId = id;
@@ -765,6 +926,7 @@ final class NowPlayingLyricController {
         loadedId = id;
         lastIdx = Integer.MIN_VALUE;
         clearMiniProjection();
+        requestFrame();
     }
 
     private SpotifyTrack currentTrackThrottled(long nowMs) {

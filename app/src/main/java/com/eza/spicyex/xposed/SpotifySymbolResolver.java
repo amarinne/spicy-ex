@@ -12,12 +12,20 @@ import org.luckypray.dexkit.DexKitBridge;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Owns lazy DexKit discovery; warm startup uses validated symbol records without native loading. */
 public final class SpotifySymbolResolver implements AutoCloseable {
     // Bump when discovery matchers or record semantics change, not for unrelated module updates.
-    private static final int RESOLVER_REVISION = 1;
+    private static final int RESOLVER_REVISION = 2;
+    private static final Set<String> AMBIGUITY_WARNINGS = ConcurrentHashMap.newKeySet();
     public final ResolvedSymbolCache cache;
     private final String sourceDir;
     private DexKitBridge bridge;
@@ -86,19 +94,96 @@ public final class SpotifySymbolResolver implements AutoCloseable {
     }
 
     public Method trackMethod(Class<?> wrapper, Class<?> returnType) throws Exception {
+        return trackMethod(cache, wrapper, returnType);
+    }
+
+    static Method trackMethod(ResolvedSymbolCache cache, Class<?> wrapper, Class<?> returnType)
+            throws Exception {
         return cache.method("track." + wrapper.getName() + "." + returnType.getName(),
+                method -> eligible(method, wrapper, returnType),
                 () -> findTrackMethod(wrapper, returnType));
     }
 
     static Method findTrackMethod(Class<?> wrapper, Class<?> returnType) throws NoSuchMethodException {
-        int required = Modifier.PUBLIC | Modifier.FINAL;
-        for (Method method : wrapper.getDeclaredMethods()) {
-            if ((method.getModifiers() & required) == required
-                    && method.getParameterTypes().length == 0 && method.getReturnType() == returnType) {
-                return method;
+        return selectTrackMethod(rankTrackCandidates(wrapper, returnType), wrapper, returnType);
+    }
+
+    static Ranked rankTrackCandidates(Class<?> wrapper, Class<?> returnType) {
+        return rankTrackCandidates(wrapper, returnType, wrapper.getDeclaredMethods());
+    }
+
+    static Ranked rankTrackCandidates(Class<?> wrapper, Class<?> returnType, Method[] declared) {
+        Map<String, Method> unique = new LinkedHashMap<>();
+        for (Method method : declared) {
+            if (eligible(method, wrapper, returnType)) {
+                unique.putIfAbsent(ResolvedSymbolCache.signature(method), method);
             }
         }
-        throw new NoSuchMethodException(wrapper.getName() + " track accessor " + returnType.getName());
+        List<Method> ordered = new ArrayList<>(unique.values());
+        ordered.sort((left, right) -> {
+            int byScore = Integer.compare(candidateScore(right), candidateScore(left));
+            if (byScore != 0) return byScore;
+            return ResolvedSymbolCache.signature(left)
+                    .compareTo(ResolvedSymbolCache.signature(right));
+        });
+        int topScore = ordered.isEmpty() ? -1 : candidateScore(ordered.get(0));
+        boolean ambiguous = ordered.size() > 1
+                && candidateScore(ordered.get(1)) == topScore;
+        return new Ranked(Collections.unmodifiableList(ordered), topScore, ambiguous);
+    }
+
+    static Method selectTrackMethod(Ranked ranked, Class<?> wrapper, Class<?> returnType)
+            throws NoSuchMethodException {
+        if (ranked.ordered.isEmpty()) {
+            throw new NoSuchMethodException(wrapper.getName() + " track accessor "
+                    + returnType.getName());
+        }
+        Method winner = ranked.ordered.get(0);
+        if (ranked.ambiguous) logAmbiguity(wrapper, returnType, ranked);
+        return winner;
+    }
+
+    private static void logAmbiguity(Class<?> wrapper, Class<?> returnType, Ranked ranked) {
+        String key = wrapper.getName() + '|' + returnType.getName();
+        if (!AMBIGUITY_WARNINGS.add(key)) return;
+        List<String> tied = new ArrayList<>();
+        for (Method method : ranked.ordered) {
+            if (candidateScore(method) != ranked.topScore) break;
+            tied.add(ResolvedSymbolCache.signature(method));
+        }
+        XpLog.log("[SpotifyPlus] " + wrapper.getName() + " has " + tied.size()
+                + " equal-score track accessors for " + returnType.getName()
+                + ": " + String.join(", ", tied), null);
+    }
+
+    private static boolean eligible(Method method, Class<?> wrapper, Class<?> returnType) {
+        int modifiers = method.getModifiers();
+        int required = Modifier.PUBLIC | Modifier.FINAL;
+        return method.getDeclaringClass() == wrapper
+                && method.getParameterCount() == 0
+                && method.getReturnType() == returnType
+                && (modifiers & required) == required
+                && !Modifier.isStatic(modifiers)
+                && !Modifier.isAbstract(modifiers);
+    }
+
+    private static int candidateScore(Method method) {
+        int score = 0;
+        if (!method.isSynthetic() && !method.isBridge()) score += 2;
+        if (!Modifier.isNative(method.getModifiers())) score += 1;
+        return score;
+    }
+
+    static final class Ranked {
+        final List<Method> ordered;
+        final int topScore;
+        final boolean ambiguous;
+
+        Ranked(List<Method> ordered, int topScore, boolean ambiguous) {
+            this.ordered = ordered;
+            this.topScore = topScore;
+            this.ambiguous = ambiguous;
+        }
     }
 
     @Override public synchronized void close() {

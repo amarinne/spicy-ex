@@ -1,6 +1,9 @@
 package com.eza.spicyex.ui;
 
 import android.view.Choreographer;
+import com.eza.spicyex.BuildConfig;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 public class VsyncFrameScheduler implements Choreographer.FrameCallback {
     public interface FrameListener {
@@ -14,6 +17,44 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
     private boolean continuous = true;
     private boolean framePosted;
     private long lastFrameNanos;
+    private volatile boolean measuring;
+    private FrameDeltaHistogram histogram;
+
+    // Loaded only by debug start/stop or an explicitly requested debug measurement.
+    private static final class DebugSchedulers {
+        static final Map<VsyncFrameScheduler, Boolean> RUNNING = new WeakHashMap<>();
+    }
+
+    /** Main-thread diagnostic entry point. Reject ambiguity instead of mixing shell clocks. */
+    public static VsyncFrameScheduler beginMeasurement(long periodNanos, long fromNanos, long untilNanos) {
+        if (!BuildConfig.DEBUG) throw new IllegalStateException("debug build required");
+        VsyncFrameScheduler scheduler;
+        synchronized (DebugSchedulers.RUNNING) {
+            if (DebugSchedulers.RUNNING.size() != 1) throw new IllegalStateException("expected one running scheduler");
+            scheduler = DebugSchedulers.RUNNING.keySet().iterator().next();
+        }
+        if (scheduler.measuring) throw new IllegalStateException("measurement already running");
+        scheduler.histogram = new FrameDeltaHistogram(periodNanos, fromNanos, untilNanos);
+        scheduler.measuring = true;
+        return scheduler;
+    }
+
+    /** Call on main after the timed window. The returned histogram is safe to read on any thread. */
+    public FrameDeltaHistogram endMeasurement() {
+        if (!BuildConfig.DEBUG) throw new IllegalStateException("debug build required");
+        measuring = false;
+        return histogram;
+    }
+
+    /**
+     * Debug measurement only: follow a display-rate change so the histogram's 1.5x threshold
+     * stays truthful for the rest of the window. No-op when no measurement is open.
+     */
+    public void updateMeasurementPeriod(long periodNanos) {
+        if (!BuildConfig.DEBUG) throw new IllegalStateException("debug build required");
+        if (!measuring || histogram == null) return;
+        histogram.setPeriodNanos(periodNanos);
+    }
 
     public VsyncFrameScheduler(FrameListener listener) {
         this(Choreographer.getInstance(), listener);
@@ -30,6 +71,12 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
         }
 
         running = true;
+        if (BuildConfig.DEBUG) synchronized (DebugSchedulers.RUNNING) {
+            for (VsyncFrameScheduler scheduler : DebugSchedulers.RUNNING.keySet()) {
+                if (scheduler.measuring) scheduler.histogram.interrupt();
+            }
+            DebugSchedulers.RUNNING.put(this, Boolean.TRUE);
+        }
         continuous = true;
         lastFrameNanos = 0L;
         postFrameIfNeeded();
@@ -41,6 +88,10 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
         }
 
         running = false;
+        if (BuildConfig.DEBUG && measuring) histogram.interrupt();
+        if (BuildConfig.DEBUG) synchronized (DebugSchedulers.RUNNING) {
+            DebugSchedulers.RUNNING.remove(this);
+        }
         framePosted = false;
         lastFrameNanos = 0L;
         choreographer.removeFrameCallback(this);
@@ -57,6 +108,7 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
     public void setContinuous(boolean continuous) {
         if (this.continuous == continuous) return;
         this.continuous = continuous;
+        if (BuildConfig.DEBUG && measuring) histogram.interrupt();
         if (continuous) {
             lastFrameNanos = 0L;
             postFrameIfNeeded();
@@ -89,6 +141,7 @@ public class VsyncFrameScheduler implements Choreographer.FrameCallback {
             return;
         }
 
+        if (BuildConfig.DEBUG && measuring) histogram.recordFrame(frameTimeNanos);
         double deltaTimeSeconds = 0.0d;
         if (lastFrameNanos != 0L) {
             deltaTimeSeconds = (frameTimeNanos - lastFrameNanos) / 1_000_000_000.0d;

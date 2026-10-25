@@ -14,18 +14,21 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.lyrics.LyricsSkeletonView;
 import com.eza.spicyex.lyrics.LyricsTextFactory;
+import com.eza.spicyex.lyrics.providers.LyricsErrorSentences;
+import com.eza.spicyex.ui.SettingsUiStrings;
+import com.eza.spicyex.ui.UiLanguage;
+import com.eza.spicyex.xposed.XpLog;
 
 /** Builds transient loading and error rows for the fullscreen lyric surface. */
 final class LyricsShellEmptyStateController {
-    private static final long ERROR_DISPLAY_MS = 10_000L;
     private final Activity activity;
     private final SpotifyPlusConfig config;
     private final LyricsTextFactory textFactory;
-    private int stateToken;
 
     LyricsShellEmptyStateController(
             Activity activity,
@@ -48,7 +51,6 @@ final class LyricsShellEmptyStateController {
      */
     void showLoading(ScrollView lyricsScroll, LinearLayout lyricsColumn, String message,
                      float anchorFraction, int sideInsetPx) {
-        stateToken++;
         lyricsColumn.removeAllViews();
         if (config.get(Settings.SHOW_SKELETON)) {
             LyricsSkeletonView skeleton = new LyricsSkeletonView(activity);
@@ -119,9 +121,8 @@ final class LyricsShellEmptyStateController {
      * deliberate no-lyrics track does not read as a lookup failure.
      */
     void showInstrumental(LinearLayout lyricsColumn) {
-        ++stateToken;
         lyricsColumn.removeAllViews();
-        com.eza.spicyex.ui.SettingsUiStrings strings = com.eza.spicyex.ui.UiLanguage.strings(activity,
+        SettingsUiStrings strings = UiLanguage.strings(activity,
                 config.get(Settings.UI_LANGUAGE));
 
         LinearLayout box = new LinearLayout(activity);
@@ -164,56 +165,56 @@ final class LyricsShellEmptyStateController {
         if (note.isAttachedToWindow()) breathe.start();
     }
 
+    /**
+     * A terminal fetch failure: one or two short lines, what happened and, when useful, what to
+     * do next. The box stays until the state changes (new track, retry, lyrics arrive). The raw
+     * verdict chain is logged and reduced to a diagnostics token, never printed on the surface.
+     */
     void showError(LinearLayout lyricsColumn, String error) {
-        final int token = ++stateToken;
         lyricsColumn.removeAllViews();
+        SettingsUiStrings strings = UiLanguage.strings(activity,
+                config.get(Settings.UI_LANGUAGE));
+        LyricsErrorSentences.Report report = LyricsErrorSentences.describe(error);
+        XpLog.log("[SpotifyPlusDiagnostics] lyrics_fetch error_surface verdict="
+                + report.verdict.token() + " chain=" + safe(error));
+        Diagnostics.event("lyrics_fetch", "error_surface",
+                Diagnostics.context("result", report.verdict.token(),
+                        "reason", LyricsErrorSentences.diagnosticToken(error)));
+
         LinearLayout errorBox = new LinearLayout(activity);
         errorBox.setOrientation(LinearLayout.VERTICAL);
-        TextView title = textFactory.createText(
-                activity,
-                "No lyrics found",
-                24,
-                Color.WHITE,
-                textFactory.resolveTypeface(true));
-        title.setGravity(Gravity.CENTER);
-        title.setPadding(dp(16), dp(80), dp(16), dp(8));
-        errorBox.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView message = textFactory.createText(
-                activity,
-                safe(error),
-                14,
-                Color.rgb(179, 179, 179),
-                textFactory.resolveTypeface(false));
-        message.setGravity(Gravity.CENTER);
-        message.setPadding(dp(16), dp(4), dp(16), dp(16));
-        errorBox.addView(message, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        addErrorLine(errorBox, strings, report.title, 24, Color.WHITE, true, dp(80), dp(8));
+        addErrorLine(errorBox, strings, report.detail, 14, Color.rgb(179, 179, 179), false,
+                dp(4), dp(10));
+        addErrorLine(errorBox, strings, report.action, 14, Color.rgb(179, 179, 179), false,
+                0, dp(16));
         lyricsColumn.addView(errorBox, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         errorBox.setAlpha(1f);
-        lyricsColumn.postDelayed(() -> {
-            if (token != stateToken || errorBox.getParent() != lyricsColumn) return;
-            errorBox.animate().alpha(0f).setDuration(350L).withEndAction(() -> {
-                if (token != stateToken || errorBox.getParent() != lyricsColumn) return;
-                lyricsColumn.removeAllViews();
-                showInterludeIndicator(lyricsColumn);
-            }).start();
-        }, ERROR_DISPLAY_MS);
     }
 
-    private void showInterludeIndicator(LinearLayout lyricsColumn) {
-        boolean noteMode = "note".equals(config.get(Settings.INTERLUDE_ICON));
-        TextView indicator = textFactory.createText(
-                activity, noteMode ? "♪" : "•  •  •", noteMode ? 38 : 44,
-                Color.WHITE, textFactory.resolveTypeface(true));
-        indicator.setGravity(Gravity.START);
-        indicator.setAlpha(0f);
-        indicator.setPadding(dp(16), dp(80), dp(16), dp(16));
-        lyricsColumn.addView(indicator, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        indicator.animate().alpha(1f).setDuration(350L).start();
+    /** Adds one sentence line, or nothing when the verdict omits that line. */
+    private void addErrorLine(
+            LinearLayout errorBox,
+            SettingsUiStrings strings,
+            LyricsErrorSentences.Line line,
+            int sizeSp,
+            int color,
+            boolean bold,
+            int topPaddingPx,
+            int bottomPaddingPx
+    ) {
+        if (line == null) return;
+        TextView view = textFactory.createText(
+                activity,
+                strings.get(line.resource, line.fallback),
+                sizeSp,
+                color,
+                textFactory.resolveTypeface(bold));
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(dp(16), topPaddingPx, dp(16), bottomPaddingPx);
+        errorBox.addView(view, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 }

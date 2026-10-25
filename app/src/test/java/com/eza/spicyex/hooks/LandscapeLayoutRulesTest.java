@@ -4,6 +4,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import com.eza.spicyex.settings.values.LyricsFocusPosition;
+import com.eza.spicyex.settings.values.StoredValues;
+import com.eza.spicyex.settings.values.TrackInfoArtSize;
+import com.eza.spicyex.settings.values.TrackInfoTextSize;
+
 import org.junit.Test;
 
 public class LandscapeLayoutRulesTest {
@@ -27,12 +32,17 @@ public class LandscapeLayoutRulesTest {
     @Test
     public void columnCoverFollowsCustomArtSizeWithinItsColumn() {
         // Presets are readout sizes; the cover keeps filling its column.
-        assertEquals(700, TrackInfoReadoutController.columnCoverSidePx(700, "Normal", 300));
-        assertEquals(700, TrackInfoReadoutController.columnCoverSidePx(700, "Large", 300));
+        assertEquals(700,
+                TrackInfoReadoutController.columnCoverSidePx(700, TrackInfoArtSize.NORMAL, 300));
+        assertEquals(700,
+                TrackInfoReadoutController.columnCoverSidePx(700, TrackInfoArtSize.LARGE, 300));
         // Custom caps the cover, but never past the room the column has.
-        assertEquals(300, TrackInfoReadoutController.columnCoverSidePx(700, "Custom", 300));
-        assertEquals(700, TrackInfoReadoutController.columnCoverSidePx(700, "Custom", 1200));
-        assertEquals(700, TrackInfoReadoutController.columnCoverSidePx(700, "Custom", 0));
+        assertEquals(300,
+                TrackInfoReadoutController.columnCoverSidePx(700, TrackInfoArtSize.CUSTOM, 300));
+        assertEquals(700,
+                TrackInfoReadoutController.columnCoverSidePx(700, TrackInfoArtSize.CUSTOM, 1200));
+        assertEquals(700,
+                TrackInfoReadoutController.columnCoverSidePx(700, TrackInfoArtSize.CUSTOM, 0));
     }
 
     @Test
@@ -51,47 +61,48 @@ public class LandscapeLayoutRulesTest {
     public void landscapeHonoursExplicitFocusAndCentresAuto() {
         float d = 0.0001f;
         // Auto: centred in landscape even with line-slide on; raised in portrait with it on.
-        assertEquals(0.5f, NativeSpicyShellViewImpl.focusAnchorFraction("Auto", 50, true, true), d);
-        assertEquals(0.28f, NativeSpicyShellViewImpl.focusAnchorFraction("Auto", 50, false, true), d);
-        assertEquals(0.5f, NativeSpicyShellViewImpl.focusAnchorFraction("Auto", 50, false, false), d);
+        assertEquals(0.5f, NativeSpicyShellViewImpl.focusAnchorFraction(LyricsFocusPosition.AUTO, 50, true, true), d);
+        assertEquals(0.28f, NativeSpicyShellViewImpl.focusAnchorFraction(LyricsFocusPosition.AUTO, 50, false, true), d);
+        assertEquals(0.5f, NativeSpicyShellViewImpl.focusAnchorFraction(LyricsFocusPosition.AUTO, 50, false, false), d);
         // Explicit choices hold in landscape too.
-        assertEquals(0.28f, NativeSpicyShellViewImpl.focusAnchorFraction("Top", 50, true, false), d);
-        assertEquals(0.72f, NativeSpicyShellViewImpl.focusAnchorFraction("Bottom", 50, true, false), d);
-        assertEquals(0.35f, NativeSpicyShellViewImpl.focusAnchorFraction("Custom", 35, true, false), d);
-        assertEquals(1f, NativeSpicyShellViewImpl.focusAnchorFraction("Custom", 140, true, false), d);
+        assertEquals(0.28f, NativeSpicyShellViewImpl.focusAnchorFraction(LyricsFocusPosition.TOP, 50, true, false), d);
+        assertEquals(0.72f, NativeSpicyShellViewImpl.focusAnchorFraction(LyricsFocusPosition.BOTTOM, 50, true, false), d);
+        assertEquals(0.35f, NativeSpicyShellViewImpl.focusAnchorFraction(LyricsFocusPosition.CUSTOM, 35, true, false), d);
+        assertEquals(1f, NativeSpicyShellViewImpl.focusAnchorFraction(LyricsFocusPosition.CUSTOM, 140, true, false), d);
     }
 
     @Test
     public void columnTrackTextScaleMirrorsReadoutSizeModes() {
         // "Normal" is 1.0, the ratio the block's own 20/15/14sp bases are written at.
-        assertEquals(1f, scale("Normal", 100, 96f), 0.0001f);
+        assertEquals(1f, scale(TrackInfoTextSize.NORMAL, 100, 96f), 0.0001f);
         // The readout's title sizes (13/18/22sp off its 15sp "Normal") as a ratio.
-        assertEquals(13f / 15f, scale("Small", 100, 96f), 0.0001f);
-        assertEquals(1.2f, scale("Large", 100, 96f), 0.0001f);
-        assertEquals(22f / 15f, scale("XLarge", 100, 96f), 0.0001f);
+        assertEquals(13f / 15f, scale(TrackInfoTextSize.SMALL, 100, 96f), 0.0001f);
+        assertEquals(1.2f, scale(TrackInfoTextSize.LARGE, 100, 96f), 0.0001f);
+        assertEquals(22f / 15f, scale(TrackInfoTextSize.XLARGE, 100, 96f), 0.0001f);
         // Unknown or missing values stay at Normal, like the readout's own fallback.
-        assertEquals(1f, scale("Bogus", 100, 96f), 0.0001f);
+        assertEquals(1f, scale(StoredValues.fromStored(TrackInfoTextSize.class, "Bogus"), 100, 96f),
+                0.0001f);
         assertEquals(1f, scale(null, 100, 96f), 0.0001f);
     }
 
     @Test
     public void columnTrackTextCustomPercentIsTheStoredMultiplier() {
-        assertEquals(0.5f, scale("Custom", 50, 96f), 0.0001f);
-        assertEquals(1f, scale("Custom", 100, 96f), 0.0001f);
-        assertEquals(2.45f, scale("Custom", 245, 96f), 0.0001f);
-        assertEquals(4f, scale("Custom", 400, 96f), 0.0001f);
+        assertEquals(0.5f, scale(TrackInfoTextSize.CUSTOM, 50, 96f), 0.0001f);
+        assertEquals(1f, scale(TrackInfoTextSize.CUSTOM, 100, 96f), 0.0001f);
+        assertEquals(2.45f, scale(TrackInfoTextSize.CUSTOM, 245, 96f), 0.0001f);
+        assertEquals(4f, scale(TrackInfoTextSize.CUSTOM, 400, 96f), 0.0001f);
         // Clamped to the setting's own 50-400 stored range.
-        assertEquals(0.5f, scale("Custom", 4, 96f), 0.0001f);
-        assertEquals(4f, scale("Custom", 999, 96f), 0.0001f);
+        assertEquals(0.5f, scale(TrackInfoTextSize.CUSTOM, 4, 96f), 0.0001f);
+        assertEquals(4f, scale(TrackInfoTextSize.CUSTOM, 999, 96f), 0.0001f);
         // A stored percent only means anything in Custom.
-        assertEquals(1f, scale("Normal", 400, 96f), 0.0001f);
+        assertEquals(1f, scale(TrackInfoTextSize.NORMAL, 400, 96f), 0.0001f);
     }
 
     @Test
     public void adaptiveColumnTrackTextScalesOffTheArtSize() {
         // Adaptive replaces the manual mode and its Custom percent entirely.
-        assertEquals(1f, adaptive("Normal", 100, 96f), 0.0001f);
-        assertEquals(1f, adaptive("Small", 50, 96f), 0.0001f);
+        assertEquals(1f, adaptive(TrackInfoTextSize.NORMAL, 100, 96f), 0.0001f);
+        assertEquals(1f, adaptive(TrackInfoTextSize.SMALL, 50, 96f), 0.0001f);
         // 120dp art is the readout's "Large" preset bottom size.
         assertEquals(1.25f, adaptive(null, 0, 120f), 0.0001f);
         // Clamped to the readout's own 0.5-2.0 range, like applyTextSize().
@@ -99,12 +110,12 @@ public class LandscapeLayoutRulesTest {
         assertEquals(2f, adaptive(null, 0, 480f), 0.0001f);
     }
 
-    private static float scale(String size, int customPercent, float adaptiveArtDp) {
+    private static float scale(TrackInfoTextSize size, int customPercent, float adaptiveArtDp) {
         return TrackInfoReadoutController.columnTrackTextScale(
                 size, customPercent, false, adaptiveArtDp);
     }
 
-    private static float adaptive(String size, int customPercent, float adaptiveArtDp) {
+    private static float adaptive(TrackInfoTextSize size, int customPercent, float adaptiveArtDp) {
         return TrackInfoReadoutController.columnTrackTextScale(
                 size, customPercent, true, adaptiveArtDp);
     }

@@ -12,6 +12,9 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.eza.spicyex.SpotifyPlusConfig;
+import com.eza.spicyex.settings.values.LiveCardOverflow;
+import com.eza.spicyex.settings.values.LiveCardScrollScope;
+import com.eza.spicyex.settings.values.LiveCardTransition;
 import com.eza.spicyex.ui.Motion;
 
 import java.util.ArrayList;
@@ -43,7 +46,7 @@ public final class LiveLyricCardView extends LinearLayout {
     private LyricsRenderConfig mountedLiveConfig;
     private final List<LineOverflowViewport> mountedOverflowViewports = new ArrayList<>();
     private String mountedConfigKey = "";
-    private String mountedOverflowMode = "Wrap";
+    private LiveCardOverflow mountedOverflowMode = LiveCardOverflow.WRAP;
 
     public LiveLyricCardView(Context context) {
         super(context);
@@ -151,8 +154,9 @@ public final class LiveLyricCardView extends LinearLayout {
             return;
         }
         LyricsRenderConfig config = LyricsRenderConfig.read(getContext(), null).forLiveCard();
-        String mode = config.liveCardTransitionMode;
-        if ("None".equals(mode) || !Motion.animationsEnabled() || rowHost == null || rowHost.getChildCount() == 0) {
+        LiveCardTransition mode = config.liveCardTransitionMode;
+        if (mode == LiveCardTransition.NONE || !Motion.animationsEnabled()
+                || rowHost == null || rowHost.getChildCount() == 0) {
             clear();
             return;
         }
@@ -254,11 +258,11 @@ public final class LiveLyricCardView extends LinearLayout {
         animateIn(nextHost, config.liveCardTransitionMode);
     }
 
-    private LinearLayout replaceRowHost(boolean animateExit, String transitionMode) {
+    private LinearLayout replaceRowHost(boolean animateExit, LiveCardTransition transitionMode) {
         LinearLayout oldHost = rowHost;
         LinearLayout nextHost = newRowHost(getContext());
         rowHost = nextHost;
-        if (animateExit && !"None".equals(transitionMode) && Motion.animationsEnabled()
+        if (animateExit && transitionMode != LiveCardTransition.NONE && Motion.animationsEnabled()
                 && oldHost != null && oldHost.getChildCount() > 0 && oldHost.getParent() == stage) {
             oldHost.animate().cancel();
             android.view.ViewPropertyAnimator animator = oldHost.animate()
@@ -268,13 +272,13 @@ public final class LiveLyricCardView extends LinearLayout {
                         styleBatcher.invalidateRecursive(oldHost);
                         stage.removeView(oldHost);
                     });
-            if ("Fade up".equals(transitionMode)) animator.translationY(-dp(14));
+            if (transitionMode == LiveCardTransition.FADE_UP) animator.translationY(-dp(14));
             animator.start();
             stage.addView(nextHost, rowHostLayoutParams(mountedOverflowMode));
             return nextHost;
         }
         // A fast result can arrive while the prior line is still exiting behind an empty host.
-        if (animateExit && !"None".equals(transitionMode) && Motion.animationsEnabled()
+        if (animateExit && transitionMode != LiveCardTransition.NONE && Motion.animationsEnabled()
                 && oldHost != null && oldHost.getChildCount() == 0) {
             stage.removeView(oldHost);
         } else {
@@ -294,16 +298,16 @@ public final class LiveLyricCardView extends LinearLayout {
         return host;
     }
 
-    private void animateIn(View host, String transitionMode) {
+    private void animateIn(View host, LiveCardTransition transitionMode) {
         if (host == null) return;
-        if ("None".equals(transitionMode) || !Motion.animationsEnabled()) {
+        if (transitionMode == LiveCardTransition.NONE || !Motion.animationsEnabled()) {
             host.animate().cancel();
             host.setTranslationY(0f);
             host.setAlpha(1f);
             return;
         }
         host.animate().cancel();
-        host.setTranslationY("Fade up".equals(transitionMode) ? dp(14) : 0f);
+        host.setTranslationY(transitionMode == LiveCardTransition.FADE_UP ? dp(14) : 0f);
         host.setAlpha(0f);
         host.animate().translationY(0f).alpha(1f).setDuration(Motion.dur(210)).start();
     }
@@ -320,14 +324,14 @@ public final class LiveLyricCardView extends LinearLayout {
         }
     }
 
-    private FrameLayout.LayoutParams rowHostLayoutParams(String overflowMode) {
+    private FrameLayout.LayoutParams rowHostLayoutParams(LiveCardOverflow overflowMode) {
         return new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL);
     }
 
     private void updateOverflowScroll(AppliedLine line, LyricsRenderConfig config, long positionMs) {
         if (line == null || config == null || rowHost == null || stage == null) return;
         mountedOverflowMode = config.liveCardOverflowMode;
-        boolean wrap = "Wrap".equals(config.liveCardOverflowMode);
+        boolean wrap = config.liveCardOverflowMode == LiveCardOverflow.WRAP;
         stage.setWrapMode(wrap);
         stage.setClipToPadding(!wrap);
         stage.setClipChildren(!wrap);
@@ -376,7 +380,7 @@ public final class LiveLyricCardView extends LinearLayout {
     private void updateLineOverflowViewports(AppliedLine line, LyricsRenderConfig config,
                                              long positionMs, boolean transitionActive) {
         if (mountedOverflowViewports.isEmpty()) return;
-        boolean grouped = config != null && "Grouped".equals(config.liveCardScrollScope);
+        boolean grouped = config != null && config.liveCardScrollScope == LiveCardScrollScope.GROUPED;
         float groupTarget = grouped ? groupedScrollTarget(mountedOverflowViewports, line, config, positionMs, transitionActive) : 0f;
         for (LineOverflowViewport viewport : mountedOverflowViewports) {
             viewport.update(line, config, positionMs, transitionActive, grouped, groupTarget);
@@ -413,29 +417,29 @@ public final class LiveLyricCardView extends LinearLayout {
         // everything the mounted row plan bakes in. The custom size multiplier, bounce
         // scope, Apple motion, and blur controls were missing, so those changes never
         // rebuilt the mounted row until an unrelated change.
-        return config.liveCardTextSizeMode
+        return config.liveCardTextSizeMode.storedLabel()
                 + "|" + config.liveCardTextSizeMultiplier
-                + "|" + config.liveCardWeight
-                + "|" + config.lyricsFont
-                + "|" + config.liveCardSecondaryMode
+                + "|" + config.liveCardWeight.storedLabel()
+                + "|" + config.lyricsFont.storedLabel()
+                + "|" + config.liveCardSecondaryMode.storedLabel()
                 + "|" + config.liveCardShowTransliteration
                 + "|" + config.liveCardShowTranslation
                 + "|" + config.liveCardMinimalAnimation
-                + "|" + config.liveCardAnimationMode
-                + "|" + config.liveCardGlowMode
-                + "|" + config.liveCardLineSyncFillMode
-                + "|" + config.liveCardTransitionMode
-                + "|" + config.liveCardOverflowMode
-                + "|" + config.liveCardScrollScope
+                + "|" + config.liveCardAnimationMode.storedLabel()
+                + "|" + config.liveCardGlowMode.storedLabel()
+                + "|" + config.liveCardLineSyncFillMode.storedLabel()
+                + "|" + config.liveCardTransitionMode.storedLabel()
+                + "|" + config.liveCardOverflowMode.storedLabel()
+                + "|" + config.liveCardScrollScope.storedLabel()
                 + "|" + config.adaptiveSectioningEnabled
                 + "|" + config.spotlight
                 + "|" + config.wordBounceEnabled
-                + "|" + config.wordBounceScope
-                + "|" + config.wordBounceStyle
+                + "|" + config.wordBounceScope.storedLabel()
+                + "|" + config.wordBounceStyle.storedLabel()
                 + "|" + config.appleStyle
                 + "|" + config.appleLift
                 + "|" + config.appleDimPassed
-                + "|" + config.lineSyncFillMode
+                + "|" + config.lineSyncFillMode.storedLabel()
                 + "|" + config.glowBlurEnabled
                 + "|" + config.lineBlurEnabled
                 + "|" + config.lineBlurHeavy
@@ -542,11 +546,12 @@ public final class LiveLyricCardView extends LinearLayout {
     }
 
     private long transitionScrollReserveMs(LyricsRenderConfig config) {
-        return config != null && "None".equals(config.liveCardTransitionMode) ? 0L : 210L;
+        return config != null && config.liveCardTransitionMode == LiveCardTransition.NONE ? 0L : 210L;
     }
 
     private boolean canScroll(AppliedLine line, LyricsRenderConfig config, boolean transitionActive) {
-        boolean scroll = config != null && "Scroll with lyric".equals(config.liveCardOverflowMode);
+        boolean scroll = config != null
+                && config.liveCardOverflowMode == LiveCardOverflow.SCROLL_WITH_LYRIC;
         return scroll
                 && line != null
                 && !line.dotLine

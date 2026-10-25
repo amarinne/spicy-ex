@@ -4,12 +4,14 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 
+import com.eza.spicyex.settings.SettingsReader;
+
 /**
  * Owns hook/runtime reads from the host-process "SpotifyPlus" preferences.
  * Does not own panel writes (SettingsStore), schema/defaults (Settings), or UI normalization.
  * Acts as the bridge between Spotify-process prefs and module runtime settings.
  */
-public final class SpotifyPlusConfig {
+public final class SpotifyPlusConfig implements SettingsReader {
     public static final String PREFS_NAME = "SpotifyPlus";
 
     // Value constants shared by Settings declarations and normalization helpers.
@@ -26,7 +28,6 @@ public final class SpotifyPlusConfig {
         this.hostPrefs = hostPrefs;
         this.appContext = appContext;
         SettingsStore.migrateLikedSongsButton(hostPrefs);
-        SettingsStore.migrateLineBlurLevel(hostPrefs);
         SettingsStore.migrateFullscreenControls(hostPrefs);
     }
 

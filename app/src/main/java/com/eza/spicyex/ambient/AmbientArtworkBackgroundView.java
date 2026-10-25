@@ -8,9 +8,12 @@ import android.view.Choreographer;
 import android.view.View;
 import androidx.annotation.RequiresApi;
 
+import com.eza.spicyex.xposed.XpLog;
+
 /** A high-precision Kawase texture animated with the desktop Kawarp equations. All renderer state is UI-thread. */
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 public final class AmbientArtworkBackgroundView extends View implements AmbientBackgroundLayer {
+    private static final String TAG = "[SpotifyPlusAmbientView]";
     // Domain warp and output math ported from @kawarp/core. Keep float intermediates:
     // floating-point blur textures preserve smooth gradients without moving contours.
     private static final String AGSL =
@@ -97,14 +100,27 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
             + "    return half4(clamp(c, 0.0, 1.0), 1.0);\n"
             + "}\n";
 
-    private final RuntimeShader shader = new RuntimeShader(AGSL);
+    private RuntimeShader shader;
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint fallback = new Paint(Paint.DITHER_FLAG);
+    /** Kawarp's two-tile processed atlas. */
     private Bitmap texture;
+    /** Original, aspect-preserving cover used only by image-backed Paper effects. */
+    private Bitmap originalTexture;
+    /** Shared 128x128 noise sampler for the noise-backed Paper effects, loaded lazily. */
+    private Bitmap noiseTexture;
+    private PaperShaderCatalog.Spec paperSpec;
     private boolean enabled = true, moving = true, playing = true, posted;
+    private boolean forceDark;
     private long lastFrame;
     private double elapsedSeconds;
     private int colorA = Color.rgb(30,21,18), colorB = Color.rgb(16,15,16);
+    private int[] paletteColors = {colorA, colorB};
+    private final MeshGradientTransition meshTransition;
+    private AmbientShaderEffect effect = AmbientShaderEffect.DEFAULT;
+    /** Content-free record of the last candidate the platform refused; empty after a success. */
+    private String rejectedEffect = "";
+    private int lowWidth = 1, lowHeight = 1;
     private final Choreographer.FrameCallback frame = this::tick;
     /**
      * The AGSL noise shader's cost is per output pixel, so it's rendered into a much smaller
@@ -127,26 +143,277 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
 
     public AmbientArtworkBackgroundView(Context context, boolean dark) {
         super(context);
-        shader.setFloatUniform("brightness", 1f);
+        meshTransition = new MeshGradientTransition(MeshGradientShader.packColors(paletteColors),
+                paletteColors.length, 0f, MeshGradientMotionProfile.NEUTRAL_SPEED, 0L);
+        shader = buildShader(effect);
+        paint.setShader(shader);
+        updateFallback();
         setForceDark(dark);
+    }
+
+    /** The AGSL text for one selection; kept package-visible so the source contract is testable. */
+    static String shaderSource(AmbientShaderEffect selection) {
+        if (selection == AmbientShaderEffect.MESH_GRADIENT) return MeshGradientShader.SOURCE;
+        if (selection == null || selection == AmbientShaderEffect.KAWARP) return AGSL;
+        String source = paperSpec(selection).source;
+        if (selection == AmbientShaderEffect.PULSING_BORDER) {
+            // The upstream helper sizes a centered showcase object. Ambient lyrics need the
+            // effect to hug the actual output surface, including portrait screens.
+            source = source.replace("vec2 borderUV = ps_responsiveUV(fragCoord);",
+                    "vec2 borderUV = vec2(fragCoord.x / u_resolution.x - 0.5,"
+                            + " 0.5 - fragCoord.y / u_resolution.y);")
+                    .replace("float canvasRatio = ps_responsiveBoxGivenSize().x / ps_responsiveBoxGivenSize().y;",
+                            "float canvasRatio = u_resolution.x / max(u_resolution.y, 1.0);");
+        } else if (selection == AmbientShaderEffect.GOD_RAYS) {
+            // The upstream light source floats inside a centered tile. Behind lyrics the rays fall
+            // from the middle of the top screen edge, measured in short-side units on any aspect.
+            source = source.replace("vec2 shapeUv = ps_objectUV(fragCoord);",
+                    "vec2 shapeUv = vec2(fragCoord.x - 0.5 * u_resolution.x, -fragCoord.y)"
+                            + " / max(min(u_resolution.x, u_resolution.y), 1.0);");
+        } else if (selection == AmbientShaderEffect.DOT_ORBIT) {
+            // Upstream dots end in a one-pixel edge; behind lyrics they fade out from the center.
+            source = source.replace("float edgeWidth = ps_pixelDerivative(1.0);",
+                    "float edgeWidth = max(ps_pixelDerivative(1.0), 0.8 * radius);");
+        } else if (selection == AmbientShaderEffect.METABALLS) {
+            // Same for the blob outline: a wide threshold band lets neighbouring blobs melt.
+            source = source.replace("float finalShape = smoothstep(0.4, 0.4 + edgeWidth, totalShape);",
+                    "float finalShape = smoothstep(0.1, 0.75 + edgeWidth, totalShape);");
+        }
+        return source;
+    }
+
+    private static boolean isPaper(AmbientShaderEffect candidate) {
+        return candidate != null && candidate != AmbientShaderEffect.KAWARP
+                && candidate != AmbientShaderEffect.MESH_GRADIENT;
+    }
+
+    private static PaperShaderCatalog.Spec paperSpec(AmbientShaderEffect candidate) {
+        PaperShaderCatalog.Spec spec = PaperShaderCatalog.get(candidate.argument());
+        if (spec == null) throw new IllegalArgumentException("Unknown Paper effect");
+        return spec;
+    }
+
+    private RuntimeShader buildShader(AmbientShaderEffect candidate) {
+        RuntimeShader next = new RuntimeShader(shaderSource(candidate));
+        if (isPaper(candidate)) {
+            PaperShaderCatalog.Spec spec = paperSpec(candidate);
+            PaperShaderBinding.applyDefaultsAndPalette(next, spec, paletteColors);
+            applyPaperGlobals(next, spec, lowWidth, lowHeight, livePixelRatio());
+            applyPaperGrade(next, forceDark, baseBrightness);
+            bindPaperInputs(next, spec);
+        } else {
+            next.setFloatUniform("resolution", lowWidth, lowHeight);
+            next.setFloatUniform("time", (float) elapsedSeconds);
+            applyNativeGrade(next, forceDark, baseBrightness);
+            if (candidate == AmbientShaderEffect.MESH_GRADIENT) {
+                applyMeshPalette(next);
+                next.setFloatUniform("u_distortion", 0.8f);
+                next.setFloatUniform("u_swirl", 0.1f);
+                next.setFloatUniform("u_phase", meshTransition.phase());
+                next.setFloatUniform("u_motion", meshTransition.speed());
+                // Mesh Gradient ships with grain off; the upstream guards keep the work out of the
+                // default frame without deleting the sourced maths.
+                next.setFloatUniform("u_grainMixer", 0f);
+                next.setFloatUniform("u_grainOverlay", 0f);
+            } else {
+                bindTexture(next);
+            }
+        }
+        return next;
+    }
+
+    private void applyMeshPalette(RuntimeShader target) {
+        target.setFloatUniform("u_colors", meshTransition.colors());
+        target.setFloatUniform("u_colorsCount", meshTransition.count());
+    }
+
+    private void applyPaperPalette(RuntimeShader target, PaperShaderCatalog.Spec spec) {
+        if (spec == null) return;
+        for (java.util.Map.Entry<String, float[]> entry
+                : PaperShaderBinding.paletteUniforms(spec, paletteColors).entrySet()) {
+            Integer capacity = spec.colorCapacities.get(entry.getKey());
+            float[] values = entry.getValue();
+            if (capacity != null && capacity > 1) {
+                target.setFloatUniform(entry.getKey(), values);
+            } else {
+                target.setFloatUniform(entry.getKey(),
+                        values[0], values[1], values[2], values[3]);
+            }
+        }
+    }
+
+    /** Applies the imported sizing defaults plus the shared resolution/time/pixel-ratio contract. */
+    private void applyPaperGlobals(RuntimeShader target, PaperShaderCatalog.Spec spec,
+                                   int width, int height, float pixelRatio) {
+        PaperShaderBinding.applyGlobals(target, spec, width, height, pixelRatio, elapsedSeconds);
+        if (!spec.usesImageTexture || !hasOriginal()) {
+            target.setFloatUniform("u_imageAspectRatio", 1f);
+        }
+    }
+
+    private static void applyNativeGrade(RuntimeShader target, boolean dark, float brightness) {
+        target.setFloatUniform("dark", dark ? 1f : 0f);
+        target.setFloatUniform("brightness", brightness);
+    }
+
+    private static void applyPaperGrade(RuntimeShader target, boolean dark, float brightness) {
+        target.setFloatUniform("ambient_dark", dark ? 1f : 0f);
+        target.setFloatUniform("ambient_brightness", brightness);
+    }
+
+    /**
+     * Switches the shader behind the same layer, scale, cadence and grade. A candidate the platform
+     * refuses leaves the previous shader running: the failure is logged content-free and reported
+     * once, and there is no automatic retry.
+     */
+    @Override
+    public boolean setEffect(AmbientShaderEffect next) {
+        if (next == null) return false;
+        if (next == effect) {
+            rejectedEffect = "";
+            return true;
+        }
+        RuntimeShader replacement;
+        try {
+            replacement = buildShader(next);
+        } catch (Throwable t) {
+            rejectedEffect = next.argument();
+            XpLog.log(TAG + " ambient effect rejected effect=" + next.argument());
+            return false;
+        }
+        effect = next;
+        paperSpec = isPaper(next) ? paperSpec(next) : null;
+        rejectedEffect = "";
+        shader = replacement;
+        paint.setShader(shader);
+        schedule();
+        invalidate();
+        return true;
+    }
+
+    /** Content-free effect state for the debug CLI and evidence logs. */
+    public String effectStatus() {
+        return "effect=" + effect.argument()
+                + " rejected=" + (rejectedEffect.isEmpty() ? "none" : rejectedEffect);
+    }
+
+    @Override
+    public boolean usesArtworkTexture() {
+        if (isPaper(effect)) return paperSpec != null && paperSpec.usesImageTexture;
+        return effect.requiresArtworkTexture();
+    }
+
+    @Override
+    public boolean usesOriginalArtwork() {
+        return isPaper(effect) && paperSpec != null && paperSpec.usesImageTexture;
+    }
+
+    private boolean hasOriginal() {
+        return originalTexture != null && !originalTexture.isRecycled();
+    }
+
+    private void bindTexture(RuntimeShader target) {
+        Bitmap source = texture;
+        if (source == null || source.isRecycled()) return;
+        target.setInputShader("image", PaperShaderBinding.linearTexture(source));
+    }
+
+    private void bindPaperInputs(RuntimeShader target, PaperShaderCatalog.Spec spec) {
+        if (spec.usesNoiseTexture) {
+            ensureNoise();
+            PaperShaderBinding.bindNoise(target, noiseTexture);
+        }
+        Bitmap original = originalTexture;
+        if (spec.usesImageTexture && original != null && !original.isRecycled()) {
+            PaperShaderBinding.bindArtwork(target, original);
+        }
+    }
+
+    private void ensureNoise() {
+        if (noiseTexture == null || noiseTexture.isRecycled()) {
+            noiseTexture = PaperShaderBinding.loadNoise();
+        }
+    }
+
+    private boolean renderable() {
+        if (isPaper(effect)) {
+            return paperSpec != null
+                    && (!paperSpec.usesImageTexture || hasOriginal());
+        }
+        return !effect.requiresArtworkTexture() || (texture != null && !texture.isRecycled());
+    }
+
+    private boolean effectAnimates() {
+        if (isPaper(effect)) {
+            return paperSpec != null && paperSpec.animated && paperSpec.speed != 0f;
+        }
+        return true;
+    }
+
+    private float livePixelRatio() {
+        return getResources().getDisplayMetrics().density * renderScale;
+    }
+
+    private float snapshotPixelRatio(int width) {
+        float density = getResources().getDisplayMetrics().density;
+        int viewWidth = getWidth();
+        if (viewWidth > 0) return density * width / viewWidth;
+        return density * renderScale;
+    }
+
+    private void applyGrade() {
+        if (shader == null) return;
+        if (isPaper(effect)) applyPaperGrade(shader, forceDark, baseBrightness);
+        else applyNativeGrade(shader, forceDark, baseBrightness);
     }
 
     public View asView() { return this; }
     public void setForceDark(boolean dark) {
-        shader.setFloatUniform("dark", dark ? 1f : 0f);
+        forceDark = dark;
+        applyGrade();
         invalidate();
     }
     public void setDarkening(float brightness, ColorFilter filter) {
         baseBrightness = brightness;
-        shader.setFloatUniform("brightness", brightness);
+        applyGrade();
         // Animated shader receives brightness directly; only the fallback canvas needs a filter.
         fallback.setColorFilter(filter);
         invalidate();
     }
     public void setPaletteColors(int[] colors) {
         if (colors == null || colors.length < 2) return;
+        paletteColors = colors.clone();
         colorA = colors[0]; colorB = colors[colors.length-1];
+        setMeshPaletteAndMotion(colors, meshTransition.phase(), meshTransition.speed(),
+                meshTransition.generation() + 1L);
         updateFallback(); invalidate();
+    }
+
+    /** Starts one palette/profile handoff; callers provide a monotonically increasing track generation. */
+    public boolean setMeshPaletteAndMotion(int[] colors, float phase, float speed, long generation) {
+        if (colors == null || colors.length < 2 || generation < meshTransition.generation()) return false;
+        float[] packed = MeshGradientShader.packColors(colors);
+        boolean accepted = meshTransition.begin(generation, System.nanoTime(), phase, speed,
+                packed, colors.length);
+        if (accepted) {
+            paletteColors = colors.clone();
+            colorA = colors[0]; colorB = colors[colors.length - 1];
+            updateFallback();
+            invalidate();
+        }
+        if (accepted && effect == AmbientShaderEffect.MESH_GRADIENT) {
+            if (animating()) meshTransition.advance(System.nanoTime());
+            else meshTransition.finish();
+            applyMeshPalette(shader);
+            shader.setFloatUniform("u_phase", meshTransition.phase());
+            shader.setFloatUniform("u_motion", meshTransition.speed());
+        }
+        if (accepted && isPaper(effect)) applyPaperPalette(shader, paperSpec);
+        return accepted;
+    }
+
+    public boolean setMeshPalette(int[] colors, long generation) {
+        return setMeshPaletteAndMotion(colors, meshTransition.phase(), meshTransition.speed(), generation);
     }
     public void setPlaying(boolean value) {
         if (playing == value) return;
@@ -169,14 +436,30 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
     /**
      * Accepts the prepared normal/dark texture atlas. The profile is retained in the shared
      * handoff contract, but desktop Kawarp does not modulate brightness by artwork variance.
+     * Mesh Gradient is palette-only, so the texture is retained for a later switch back but not
+     * bound to the running shader.
      */
     public void updateImage(Bitmap prepared, AmbientArtworkProfile profile) {
         if (prepared == null || prepared.isRecycled()) return;
-        BitmapShader input = new BitmapShader(prepared, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-        input.setFilterMode(BitmapShader.FILTER_MODE_LINEAR);
-        shader.setInputShader("image", input);
         texture = prepared;
+        // The atlas and the Paper original are different representations; never sample one as
+        // the other after an effect change.
+        originalTexture = null;
+        if (effect == AmbientShaderEffect.KAWARP) bindTexture(shader);
         // Dropping references lets RenderThread finish using the previous texture before collection.
+        paint.setShader(shader);
+        schedule(); invalidate();
+    }
+
+    /** Installs the owned, aspect-preserving cover sampled by Paper image effects. */
+    @Override
+    public void updateOriginalImage(Bitmap art) {
+        if (art == null || art.isRecycled()) return;
+        originalTexture = art;
+        texture = null;
+        if (isPaper(effect) && paperSpec != null && paperSpec.usesImageTexture) {
+            PaperShaderBinding.bindArtwork(shader, art);
+        }
         paint.setShader(shader);
         schedule(); invalidate();
     }
@@ -185,22 +468,53 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
      * One frame of this background at {@code width} x {@code height}, for the lyric share card.
      * Renders with its own copy of the shader (so the live view's uniforms are never touched from
      * another thread) through an offscreen HardwareRenderer, and softens it like the live layer.
-     * Null when there is no artwork texture yet or the platform refuses.
+     * Null when the selected effect needs artwork and none exists yet, or the platform refuses.
      */
     public Bitmap snapshot(int width, int height) {
-        Bitmap source = texture;
-        if (source == null || source.isRecycled()) return null;
+        Bitmap source = isPaper(effect) ? originalTexture : texture;
+        if (effect.requiresArtworkTexture() && (source == null || source.isRecycled())) return null;
+        boolean paperImage = isPaper(effect) && paperSpec != null && paperSpec.usesImageTexture;
+        if (paperImage && (source == null || source.isRecycled())) return null;
         android.media.ImageReader reader = null;
         HardwareRenderer renderer = null;
         try {
-            RuntimeShader copy = new RuntimeShader(AGSL);
-            BitmapShader input = new BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-            input.setFilterMode(BitmapShader.FILTER_MODE_LINEAR);
-            copy.setInputShader("image", input);
-            copy.setFloatUniform("resolution", width, height);
-            copy.setFloatUniform("time", (float) elapsedSeconds);
-            copy.setFloatUniform("dark", 0f);
-            copy.setFloatUniform("brightness", baseBrightness);
+            RuntimeShader copy = new RuntimeShader(shaderSource(effect));
+            if (isPaper(effect)) {
+                PaperShaderBinding.applyDefaultsAndPalette(copy, paperSpec, paletteColors);
+                PaperShaderBinding.applyGlobals(copy, paperSpec, width, height,
+                        snapshotPixelRatio(width), elapsedSeconds);
+                applyPaperGrade(copy, false, baseBrightness);
+                if (!paperSpec.usesImageTexture || source == null) {
+                    copy.setFloatUniform("u_imageAspectRatio", 1f);
+                }
+                if (paperSpec.usesNoiseTexture) {
+                    ensureNoise();
+                    PaperShaderBinding.bindNoise(copy, noiseTexture);
+                }
+                if (paperImage) PaperShaderBinding.bindArtwork(copy, source);
+            } else if (effect == AmbientShaderEffect.MESH_GRADIENT) {
+                meshTransition.advance(System.nanoTime());
+                applyMeshPalette(copy);
+                copy.setFloatUniform("u_distortion", 0.8f);
+                copy.setFloatUniform("u_swirl", 0.1f);
+                copy.setFloatUniform("u_phase", meshTransition.phase());
+                copy.setFloatUniform("u_motion", meshTransition.speed());
+                copy.setFloatUniform("u_grainMixer", 0f);
+                copy.setFloatUniform("u_grainOverlay", 0f);
+                copy.setFloatUniform("resolution", width, height);
+                copy.setFloatUniform("time", (float) elapsedSeconds);
+                copy.setFloatUniform("dark", 0f);
+                copy.setFloatUniform("brightness", baseBrightness);
+            } else {
+                BitmapShader input = new BitmapShader(source, Shader.TileMode.CLAMP,
+                        Shader.TileMode.CLAMP);
+                input.setFilterMode(BitmapShader.FILTER_MODE_LINEAR);
+                copy.setInputShader("image", input);
+                copy.setFloatUniform("resolution", width, height);
+                copy.setFloatUniform("time", (float) elapsedSeconds);
+                copy.setFloatUniform("dark", 0f);
+                copy.setFloatUniform("brightness", baseBrightness);
+            }
             Paint p = new Paint(Paint.FILTER_BITMAP_FLAG);
             p.setShader(copy);
             RenderNode node = new RenderNode("ambientSnapshot");
@@ -238,18 +552,33 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
 
     public void release() {
         enabled = false; schedule();
-        paint.setShader(null);
-        shader.setInputShader("image", new LinearGradient(0,0,1,1,Color.BLACK,Color.BLACK,Shader.TileMode.CLAMP));
+        if (usesArtworkTexture()) {
+            paint.setShader(null);
+            Shader blank = new LinearGradient(0,0,1,1,Color.TRANSPARENT,Color.TRANSPARENT,Shader.TileMode.CLAMP);
+            if (effect == AmbientShaderEffect.KAWARP) {
+                shader.setInputShader("image", blank);
+            } else if (paperSpec != null) {
+                shader.setInputShader("u_image", blank);
+            }
+        }
         texture = null;
+        originalTexture = null;
+        noiseTexture = null;
         invalidate();
     }
     private boolean animating() {
-        return enabled && moving && playing && !thermalThrottled && texture != null
-                && isAttachedToWindow() && getWindowVisibility() == VISIBLE && isShown()
+        return enabled && moving && playing && !thermalThrottled && effectAnimates()
+                && renderable() && isAttachedToWindow() && getWindowVisibility() == VISIBLE && isShown()
                 && com.eza.spicyex.ui.Motion.animationsEnabled();
     }
     private void schedule() {
         if (!animating()) {
+            if (meshTransition.finish() && effect == AmbientShaderEffect.MESH_GRADIENT) {
+                applyMeshPalette(shader);
+                shader.setFloatUniform("u_phase", meshTransition.phase());
+                shader.setFloatUniform("u_motion", meshTransition.speed());
+                invalidate();
+            }
             Choreographer.getInstance().removeFrameCallback(frame);
             posted = false; lastFrame = 0; return;
         }
@@ -327,9 +656,16 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
         super.onSizeChanged(w,h,oldw,oldh);
         int lowW = Math.max(1, Math.round(w * renderScale));
         int lowH = Math.max(1, Math.round(h * renderScale));
+        lowWidth = lowW;
+        lowHeight = lowH;
         // Uniform tracks the offscreen surface's own size, not the view's - the shader's uv
         // mapping (p / resolution) only needs to span 0..1 across whatever it's drawn onto.
-        shader.setFloatUniform("resolution", lowW, lowH);
+        if (isPaper(effect) && paperSpec != null) {
+            PaperShaderBinding.applyGlobals(shader, paperSpec, lowW, lowH,
+                    livePixelRatio(), elapsedSeconds);
+        } else {
+            shader.setFloatUniform("resolution", lowW, lowH);
+        }
         if (offscreenNode == null) {
             offscreenNode = new RenderNode("ambientArtwork");
             // The compositing layer is what makes this node an actual lowW x lowH surface. Without
@@ -356,8 +692,18 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
                 colorA,colorB,Shader.TileMode.CLAMP));
     }
     protected void onDraw(Canvas canvas) {
-        if (texture != null) {
-            shader.setFloatUniform("time", (float) elapsedSeconds);
+        if (effect == AmbientShaderEffect.MESH_GRADIENT) {
+            boolean paletteChanged = meshTransition.advance(System.nanoTime());
+            shader.setFloatUniform("u_phase", meshTransition.phase());
+            shader.setFloatUniform("u_motion", meshTransition.speed());
+            if (paletteChanged) applyMeshPalette(shader);
+        }
+        if (renderable()) {
+            if (isPaper(effect) && paperSpec != null) {
+                shader.setFloatUniform("u_time", PaperShaderBinding.paperTime(paperSpec, elapsedSeconds));
+            } else {
+                shader.setFloatUniform("time", (float) elapsedSeconds);
+            }
             if (offscreenNode != null && canvas.isHardwareAccelerated()) {
                 int lowW = offscreenNode.getWidth(), lowH = offscreenNode.getHeight();
                 RecordingCanvas recording = offscreenNode.beginRecording();
@@ -370,6 +716,6 @@ public final class AmbientArtworkBackgroundView extends View implements AmbientB
                 return;
             }
         }
-        canvas.drawRect(0,0,getWidth(),getHeight(),texture == null ? fallback : paint);
+        canvas.drawRect(0,0,getWidth(),getHeight(),renderable() ? paint : fallback);
     }
 }
