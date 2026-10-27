@@ -63,7 +63,7 @@ public class EditorCompositesSourceTest {
         assertTrue(pool, pool.contains("TextView cancel = dialog.secondaryButton("));
         assertTrue(pool, pool.contains("done.performClick();"));
         assertTrue(pool, pool.contains("cancel.performClick();"));
-        assertTrue(pool, pool.contains("search.setText(argument == null ? \"\" : argument);"));
+        assertTrue(pool, pool.contains("query[0] = argument == null ? \"\" : argument;"));
         assertTrue(pool, pool.contains("dialog.onDismiss(() -> rows.clearRandomPoolAgent(agent));"));
     }
 

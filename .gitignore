@@ -30,6 +30,7 @@ __pycache__/
 .cursor/
 .aider*
 .understand-anything/
+.commandcode/
 
 # Editors and OS
 .idea/

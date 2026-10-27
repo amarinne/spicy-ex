@@ -6,6 +6,8 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.graphics.Color;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -29,6 +31,8 @@ final class LyricsShellEmptyStateController {
     private final Activity activity;
     private final SpotifyPlusConfig config;
     private final LyricsTextFactory textFactory;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private static final long NO_MATCH_NOTE_DELAY_MS = 15_000L;
 
     LyricsShellEmptyStateController(
             Activity activity,
@@ -51,6 +55,7 @@ final class LyricsShellEmptyStateController {
      */
     void showLoading(ScrollView lyricsScroll, LinearLayout lyricsColumn, String message,
                      float anchorFraction, int sideInsetPx) {
+        cancelNoMatchNote();
         lyricsColumn.removeAllViews();
         if (config.get(Settings.SHOW_SKELETON)) {
             LyricsSkeletonView skeleton = new LyricsSkeletonView(activity);
@@ -121,6 +126,7 @@ final class LyricsShellEmptyStateController {
      * deliberate no-lyrics track does not read as a lookup failure.
      */
     void showInstrumental(LinearLayout lyricsColumn) {
+        cancelNoMatchNote();
         lyricsColumn.removeAllViews();
         SettingsUiStrings strings = UiLanguage.strings(activity,
                 config.get(Settings.UI_LANGUAGE));
@@ -171,6 +177,7 @@ final class LyricsShellEmptyStateController {
      * verdict chain is logged and reduced to a diagnostics token, never printed on the surface.
      */
     void showError(LinearLayout lyricsColumn, String error) {
+        cancelNoMatchNote();
         lyricsColumn.removeAllViews();
         SettingsUiStrings strings = UiLanguage.strings(activity,
                 config.get(Settings.UI_LANGUAGE));
@@ -191,6 +198,17 @@ final class LyricsShellEmptyStateController {
         lyricsColumn.addView(errorBox, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         errorBox.setAlpha(1f);
+        if (report.verdict == LyricsErrorSentences.Verdict.NO_MATCH) {
+            // A confirmed miss is a normal song state. Keep the first report concise, then let it
+            // settle into the same quiet music-note presentation used for instrumental tracks.
+            main.postDelayed(() -> {
+                if (errorBox.getParent() == lyricsColumn) showInstrumental(lyricsColumn);
+            }, NO_MATCH_NOTE_DELAY_MS);
+        }
+    }
+
+    private void cancelNoMatchNote() {
+        main.removeCallbacksAndMessages(null);
     }
 
     /** Adds one sentence line, or nothing when the verdict omits that line. */

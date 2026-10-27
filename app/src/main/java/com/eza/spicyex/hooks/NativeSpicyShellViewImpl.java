@@ -2422,8 +2422,16 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         // per-language toggles below - its whole point is showing what the layout looks like
         // across every supported script, which most real configs don't have all enabled at once.
         if (demoModeActive) return true;
-        return renderConfig != null && renderConfig.transliterationEnabled
-                && transliterationSession != null && transliterationSession.showRomanization();
+        if (renderConfig == null || !renderConfig.transliterationEnabled
+                || transliterationSession == null) return false;
+        // The internal shell flag predates the user-facing transliteration setting. On an
+        // untouched install it is absent and therefore reads as false, which made the fullscreen
+        // surface hide readings even though the shared pipeline (and often the live card) was
+        // already configured to show them. Once the user taps the fullscreen chip, the choice is
+        // persisted and remains authoritative, including an explicit off choice.
+        boolean explicitShellChoice = preferences != null
+                && preferences.contains(Settings.NATIVE_SPICY_ROMANIZATION.key);
+        return transliterationSession.showRomanization() || !explicitShellChoice;
     }
 
     private boolean showTranslation() {

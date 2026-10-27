@@ -271,12 +271,16 @@ public final class LyricsAnimationApplier {
         int letterCount = LyricsSyllableViewState.letterCount(seg);
         if (letterCount <= 0) return;
         boolean letterUnitMotion = wordBounceEnabled && individualWordMotion && letterCount > 1;
+        // The letter anchor uses a shaped wave so neighbouring glyphs can influence one
+        // another, but the glyph's own animation and fill must use the authored playback clock.
+        // Applying the wave to the fill clock made the gradient edge drift from the bounce,
+        // especially on AMLL's Japanese rows where every timed span is rendered as glyphs.
         float timeAlpha = (float) Math.sin(progress * (Math.PI / 2d));
         float letterAnchor = LyricAnimations.activeLetterPosition(letterCount, timeAlpha);
         for (int letterIndex = 0; letterIndex < letterCount; letterIndex++) {
             AnimatedLetterState letter = LyricsSyllableViewState.letterAt(seg, letterIndex);
             if (letter == null || letter.view == null) continue;
-            float letterTime = timeAlpha - letter.start;
+            float letterTime = progress - letter.start;
             float letterTimeScale = clamp01(letterTime / Math.max(0.0001f, letter.duration));
             float glowTimeScale = clamp01(letterTime / Math.max(0.0001f, letter.glowDuration));
             float distance = Math.abs(letterIndex - letterAnchor);
@@ -307,12 +311,9 @@ public final class LyricsAnimationApplier {
                     : ((sung && !appleGlow) ? 0.55f
                             : (active ? LyricAnimations.glowSpline(glowTimeScale) * glowFalloff : 0f));
             if (!glowEnabled) targetLetterGlow = 0f;
-            float letterEnd = letter.start + letter.duration;
-            float letterGradient;
-            if (spotlight) letterGradient = active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG;
-            else if (timeAlpha >= letterEnd) letterGradient = LyricAnimations.GRADIENT_SUNG;
-            else if (timeAlpha <= letter.start) letterGradient = LyricAnimations.GRADIENT_UNSUNG;
-            else letterGradient = LyricAnimations.gradientPosition(LyricAnimations.easeSinOut(letterTimeScale));
+            float letterGradient = spotlight
+                    ? (active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG)
+                    : LyricAnimations.letterGradientPosition(progress, letter.start, letter.duration);
             float targetLetterBrightness = spotlight && active ? spotlightBrightness(letterTimeScale) : 1f;
             float letterScale = LyricsSyllableViewState.stepLetterScale(letter, targetLetterScale, deltaSeconds, directMotion);
             float letterY = LyricsSyllableViewState.stepLetterY(letter, targetLetterY, deltaSeconds, directMotion);

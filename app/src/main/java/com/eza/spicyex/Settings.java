@@ -123,10 +123,10 @@ public final class Settings {
             "lyric_stay_on_track_change", LYRICS, "Stay in lyric screen on song change", true
     );
 
-    // Manual scrolls suspend follow until the floating jump button is tapped. Auto-resume
-    // is opt-in: when on, follow returns by itself after the delay below.
+    // Manual scrolls suspend follow until the floating jump button is tapped. Auto-resume returns
+    // follow by itself after the delay below.
     public static final Setting<Boolean> AUTO_RESUME_FOLLOW = boolSetting(false,
-            "lyric_auto_resume_follow", LYRICS, "Auto-resume lyric follow", false
+            "lyric_auto_resume_follow", LYRICS, "Auto-resume lyric follow", true
     );
 
     // Cooldown, in seconds, after a manual scroll settles before auto-resuming follow - see
@@ -187,7 +187,7 @@ public final class Settings {
     // Adds a button to Spotify's persistent mini player (every non-lyrics screen) that jumps
     // straight to the native fullscreen lyrics - see LyricsActivityTakeoverHook.
     public static final Setting<Boolean> MINI_PLAYER_LYRICS_ICON = boolSetting(false,
-            "mini_player_lyrics_icon", LYRICS, "Show lyrics icon on mini player", false
+            "mini_player_lyrics_icon", LYRICS, "Show lyrics icon on mini player", true
     );
 
     // Which orientations keep the status bar hidden on the lyrics screen. A swipe from the
@@ -304,7 +304,10 @@ public final class Settings {
 
     public static final Setting<String> LIVE_CARD_LINE_SYNC_FILL = enumSetting(false,
             "lyrics_live_card_line_sync_fill", INTERNAL, "Fill direction",
-            LineSyncFill.class
+            LineSyncFill.TOP_TO_BOTTOM.storedLabel(),
+            LineSyncFill.TOP_TO_BOTTOM.storedLabel(),
+            LineSyncFill.BLOCK.storedLabel(),
+            LineSyncFill.SENTENCE.storedLabel()
     );
 
     public static final Setting<String> LIVE_CARD_OVERFLOW = enumSetting(false,
@@ -488,7 +491,7 @@ public final class Settings {
     // (top/bottom/side). Applies live.
     public static final IntegerSetting TRACK_INFO_ART_RADIUS = intSetting(true,
             "lyrics_track_info_art_radius", INTERNAL, "Track info art corner radius",
-            16, 0, 32, 2
+            0, 0, 32, 2
     );
 
     // Vertical alignment of the title/artist text block within its row, for Top/Bottom/Header
@@ -603,7 +606,7 @@ public final class Settings {
 
     public static final Setting<String> WORD_BOUNCE_STYLE = enumSetting(true,
             "lyric_word_bounce_style", INTERNAL, "Bounce style",
-            WordBounceStyle.class
+            WordBounceStyle.WORD_ZOOM.storedLabel(), WordBounceStyle.class
     );
 
 
@@ -621,11 +624,10 @@ public final class Settings {
             "lyrics_blur_strength", INTERNAL, "Blur distant lines", 0, 0, 500, 5
     );
 
-    // Direction the karaoke gradient fills each line as it plays: down the line ("Top to bottom")
-    // or word-by-word ("Left to right"). Applies under "Gradient wash" only.
+    // Direction the karaoke gradient fills each line as it plays. Applies under "Gradient wash".
     public static final Setting<String> LINE_SYNC_FILL = enumSetting(true,
             "lyric_line_sync_fill", INTERNAL, "Lyric fill direction",
-            LineSyncFill.class
+            LineSyncFill.SENTENCE.storedLabel(), LineSyncFill.class
     );
 
     // --- Background ---
@@ -1117,6 +1119,12 @@ public final class Settings {
             String key, Section section, String label, Class<E> type) {
         return new StringSetting(orientationSpecific, key, section, label,
                 StoredValues.defaultLabel(type), StoredValues.labels(type));
+    }
+
+    private static <E extends Enum<E> & StoredValue> Setting<String> enumSetting(boolean orientationSpecific,
+            String key, Section section, String label, String defaultLabel, Class<E> type) {
+        return new StringSetting(orientationSpecific, key, section, label,
+                defaultLabel, StoredValues.labels(type));
     }
 
     private static Setting<String> stringSetting(boolean orientationSpecific, String key, Section section, String label, String defaultValue) {

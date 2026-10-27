@@ -13,7 +13,7 @@ public enum WordBounceStyle implements StoredValue {
     APPLE_LIFT("Apple lift");
 
     /** The value used when the stored label is unknown or absent. */
-    public static final WordBounceStyle DEFAULT = PHRASE_ZOOM;
+    public static final WordBounceStyle DEFAULT = WORD_ZOOM;
 
     private final String label;
     private final List<String> legacyLabels;

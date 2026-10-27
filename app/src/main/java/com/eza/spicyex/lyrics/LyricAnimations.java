@@ -22,6 +22,15 @@ public final class LyricAnimations {
         return GRADIENT_UNSUNG + GRADIENT_RANGE * clamp01(progress);
     }
 
+    /**
+     * Gradient target for one glyph, using the same authored progress clock as its motion.
+     * The neighbouring-letter anchor may use a shaped wave, but the fill edge must not.
+     */
+    public static float letterGradientPosition(float progress, float start, float duration) {
+        float local = clamp01((progress - start) / Math.max(0.0001f, duration));
+        return gradientPosition(easeSinOut(local));
+    }
+
     // --- word-level karaoke curves ---
 
     // --- held-note emphasis (Apple "swell") ---------------------------------

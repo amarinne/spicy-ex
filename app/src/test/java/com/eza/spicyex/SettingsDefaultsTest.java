@@ -36,7 +36,7 @@ public class SettingsDefaultsTest {
                 Settings.AUTO_SKIP_INTRO_OUTRO.allowedValues);
         assertEquals("Auto", Settings.AUTO_SKIP_INTRO_OUTRO.coerce("Auto"));
         assertEquals("Off", Settings.AUTO_SKIP_INTRO_OUTRO.coerce("bogus"));
-        assertFalse(Settings.MINI_PLAYER_LYRICS_ICON.defaultValue);
+        assertTrue(Settings.MINI_PLAYER_LYRICS_ICON.defaultValue);
         assertFalse(Settings.KARAOKE_ORIGINAL_LYRICS.defaultValue);
         assertEquals("Single tap", Settings.PANEL_MEDIA_CONTROLS.defaultValue);
         assertEquals(java.util.Arrays.asList("Off", "Single tap", "Double tap"),
@@ -56,9 +56,11 @@ public class SettingsDefaultsTest {
         assertFalse(Settings.LINE_SLIDE_ANIMATION.defaultValue);
         assertTrue(Settings.APPLE_LIFT.defaultValue);
         assertEquals(Settings.INTERNAL, Settings.APPLE_LIFT.section); // edited in the layout editor
-        assertFalse(Settings.AUTO_RESUME_FOLLOW.defaultValue);
+        assertTrue(Settings.AUTO_RESUME_FOLLOW.defaultValue);
         assertEquals(3, (int) Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.defaultValue);
         assertEquals(Settings.LYRICS, Settings.AUTO_RESUME_FOLLOW_DELAY_SECONDS.section);
+        assertEquals(Integer.valueOf(0), Settings.TRACK_INFO_ART_RADIUS.defaultValue);
+        assertEquals("Left to right (sentence)", Settings.LINE_SYNC_FILL.defaultValue);
         assertEquals("Auto", Settings.SKIP_CHIP_STYLE.defaultValue);
         assertEquals("Right", Settings.SKIP_CHIP_POSITION.defaultValue);
         assertEquals("Right", Settings.FOLLOW_CHIP_POSITION.defaultValue);
@@ -113,11 +115,11 @@ public class SettingsDefaultsTest {
 
         // Text glow defaults ON since the B322+ desktop-parity rework made it subtle and cheap.
         assertEquals("Word/syllable synced only", Settings.WORD_BOUNCE.defaultValue);
-        assertEquals("Phrase zoom", Settings.WORD_BOUNCE_STYLE.defaultValue);
+        assertEquals("Word zoom", Settings.WORD_BOUNCE_STYLE.defaultValue);
         assertEquals(java.util.Arrays.asList("Phrase zoom", "Word zoom", "Phrase lift", "Word lift", "Apple lift"),
                 Settings.WORD_BOUNCE_STYLE.allowedValues);
         assertEquals("Apple lift", Settings.WORD_BOUNCE_STYLE.coerce("Apple lift"));
-        assertEquals("Phrase zoom", Settings.WORD_BOUNCE_STYLE.coerce("bogus"));
+        assertEquals("Word zoom", Settings.WORD_BOUNCE_STYLE.coerce("bogus"));
         assertFalse(Settings.ALIGNED_PER_WORD_ROMAJI.defaultValue);
         assertTrue(Settings.ENABLE_GLOW_BLUR.defaultValue);
         assertEquals(Integer.valueOf(35), Settings.LYRICS_DARKENING.defaultValue);

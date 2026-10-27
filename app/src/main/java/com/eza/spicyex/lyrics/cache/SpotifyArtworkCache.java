@@ -51,7 +51,10 @@ public final class SpotifyArtworkCache {
         Entry entry = current;
         if (entry == null || !matches(entry.imageUri,entry.trackUri,imageId,trackUri)) return null;
         Bitmap borrowed = entry.bitmap.get();
-        if (borrowed == null || borrowed.isRecycled() || borrowed.getConfig() == Bitmap.Config.HARDWARE) return null;
+        // Spotify commonly publishes hardware-backed metadata bitmaps. They can be drawn into
+        // the bounded software copy below; rejecting them made every readout fall back to the
+        // placeholder even though the host had already supplied the cover.
+        if (borrowed == null || borrowed.isRecycled()) return null;
         Bitmap copy = Bitmap.createBitmap(sizePx,sizePx,Bitmap.Config.ARGB_8888);
         try {
             Canvas canvas = new Canvas(copy);

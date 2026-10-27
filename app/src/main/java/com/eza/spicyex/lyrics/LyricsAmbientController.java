@@ -324,7 +324,10 @@ public final class LyricsAmbientController {
         appliedArtImageId = "";
         appliedArtOriginal = false;
         cancelArtwork();
-        parent.addView(animatedBackground.asView(), new FrameLayout.LayoutParams(
+        // The shell already contains the lyric and chrome layers when this is first selected.
+        // Insert the texture at the back so a live preference change cannot place it above the
+        // mounted lyrics until the screen is reopened.
+        parent.addView(animatedBackground.asView(), 0, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         applyAnimatedPalette(currentPageColors, currentMotionProfile);
     }

@@ -2,13 +2,10 @@ package com.eza.spicyex.settings.editor;
 
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.text.InputType;
-import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
-import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -157,18 +154,12 @@ final class EditorComposites {
             EditorControlRenderer.Host host, BackgroundEffect current) {
         PanelDialog dialog = new PanelDialog(rows.activity(),
                 rows.s("background_effect_title", "Background effect"));
-        EditText search = dialog.field(false, "");
-        search.setInputType(InputType.TYPE_CLASS_TEXT);
-        search.setHint(rows.s("background_effect_search", "Search effects"));
-        search.setContentDescription(rows.s("background_effect_search", "Search effects"));
         List<View> optionViews = new ArrayList<>();
         Runnable render = () -> {
             removeViews(optionViews);
-            String query = search.getText() == null ? "" : search.getText().toString();
             int shown = 0;
             for (BackgroundEffect effect : BackgroundEffect.pickerValues()) {
                 String label = effectLabel(rows, effect);
-                if (!EffectPickerSearch.matches(query, label, effect.stableId())) continue;
                 TextView option = dialog.option(label, effect == current, () ->
                         rows.apply(Settings.BACKGROUND_EFFECT, effect.storedLabel(),
                                 () -> host.backgroundStyleChanged(spec.element)));
@@ -186,7 +177,6 @@ final class EditorComposites {
             }
             dialog.refit();
         };
-        search.addTextChangedListener(searchWatcher(render));
         render.run();
         dialog.secondary(rows.s("cancel", "Cancel"), null);
         dialog.show();
@@ -199,10 +189,7 @@ final class EditorComposites {
         Set<BackgroundEffect> working = new LinkedHashSet<>(pool.effects());
         TextView count = rows.text("", HINT_TEXT_SP, HINT_COLOR, false);
         dialog.add(count);
-        EditText search = dialog.field(false, "");
-        search.setInputType(InputType.TYPE_CLASS_TEXT);
-        search.setHint(rows.s("background_random_search", "Search effects"));
-        search.setContentDescription(rows.s("background_random_search", "Search effects"));
+        final String[] query = {""};
         List<View> optionViews = new ArrayList<>();
         Map<String, PanelDialog.SwitchChoice> choices = new LinkedHashMap<>();
         Runnable paintCount = () -> count.setText(rows.format("background_random_count",
@@ -210,11 +197,10 @@ final class EditorComposites {
         Runnable render = () -> {
             removeViews(optionViews);
             choices.clear();
-            String query = search.getText() == null ? "" : search.getText().toString();
             int shown = 0;
             for (BackgroundEffect effect : BackgroundEffect.fixedValues()) {
                 String label = effectLabel(rows, effect);
-                if (!EffectPickerSearch.matches(query, label, effect.stableId())) continue;
+                if (!EffectPickerSearch.matches(query[0], label, effect.stableId())) continue;
                 PanelDialog.SwitchChoice choice = dialog.switchChoice(label,
                         working.contains(effect),
                         EditorRows.choiceTag(Settings.BACKGROUND_RANDOM_EFFECTS.key,
@@ -238,7 +224,6 @@ final class EditorComposites {
             paintCount.run();
             dialog.refit();
         };
-        search.addTextChangedListener(searchWatcher(render));
         render.run();
         TextView done = dialog.primaryButton(rows.s("done", "Done"), () -> {
             BackgroundEffectPool next = BackgroundEffectPool.of(working);
@@ -249,7 +234,8 @@ final class EditorComposites {
         EditorRows.RandomPoolAgent agent = (action, argument) -> {
             switch (action) {
                 case "search":
-                    search.setText(argument == null ? "" : argument);
+                    query[0] = argument == null ? "" : argument;
+                    render.run();
                     return null;
                 case "toggle": {
                     BackgroundEffect effect = BackgroundEffect.fixedFromText(argument);
@@ -269,10 +255,9 @@ final class EditorComposites {
                     cancel.performClick();
                     return null;
                 case "status": {
-                    String query = search.getText() == null ? "" : search.getText().toString();
                     String persisted = BackgroundEffectPool.parse(rows.safeGetString(
                             Settings.BACKGROUND_RANDOM_EFFECTS)).encode();
-                    return EditorRows.randomPoolStatus(dialog.isShowing(), query,
+                    return EditorRows.randomPoolStatus(dialog.isShowing(), query[0],
                             BackgroundEffectPool.of(working).encode(), persisted, choices.size());
                 }
                 default:
@@ -282,14 +267,6 @@ final class EditorComposites {
         rows.randomPoolAgent(agent);
         dialog.onDismiss(() -> rows.clearRandomPoolAgent(agent));
         dialog.show();
-    }
-
-    private static TextWatcher searchWatcher(Runnable render) {
-        return new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
-            @Override public void afterTextChanged(android.text.Editable s) { render.run(); }
-        };
     }
 
     private static void removeViews(List<View> views) {

@@ -31,6 +31,18 @@ public class LyricAnimationsTest {
     }
 
     @Test
+    public void letterFillUsesTheSameRawClockAsLetterMotion() {
+        // A shaped anchor wave is only for neighbouring-letter influence. The active letter's
+        // fill must start and finish at its authored fraction, just like its bounce.
+        assertEquals(LyricAnimations.GRADIENT_UNSUNG,
+                LyricAnimations.letterGradientPosition(0.5f, 0.5f, 0.5f), EPS);
+        assertEquals(LyricAnimations.gradientPosition(LyricAnimations.easeSinOut(0.5f)),
+                LyricAnimations.letterGradientPosition(0.75f, 0.5f, 0.5f), EPS);
+        assertEquals(LyricAnimations.GRADIENT_SUNG,
+                LyricAnimations.letterGradientPosition(1f, 0.5f, 0.5f), EPS);
+    }
+
+    @Test
     public void scaleSplineKnots() {
         assertEquals(0.95f, LyricAnimations.scaleSpline(0f), EPS);
         assertEquals(1.025f, LyricAnimations.scaleSpline(0.7f), EPS);

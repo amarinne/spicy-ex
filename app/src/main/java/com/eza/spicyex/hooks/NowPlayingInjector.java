@@ -650,8 +650,11 @@ final class NowPlayingInjector {
             card.getLocationInWindow(cardLocation);
             reference.getLocationInWindow(referenceLocation);
             int delta = referenceLocation[0] - (cardLocation[0] + card.getPaddingLeft());
-            if (delta > 0 && delta < dp(48)) {
-                card.setPadding(card.getPaddingLeft() + delta, card.getPaddingTop(),
+            // Spotify can move the native lyrics element when the now-playing layout changes.
+            // Correct either direction, and allow a larger but still local adjustment; the old
+            // positive-only 48dp guard left the injected card visibly offset on wider layouts.
+            if (delta != 0 && Math.abs(delta) <= dp(256)) {
+                card.setPadding(Math.max(0, card.getPaddingLeft() + delta), card.getPaddingTop(),
                         card.getPaddingRight(), card.getPaddingBottom());
             }
             return true;

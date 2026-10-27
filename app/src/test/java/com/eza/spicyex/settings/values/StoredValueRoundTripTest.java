@@ -67,7 +67,7 @@ public class StoredValueRoundTripTest {
     public void bounceModesKeepTheirLabels() {
         assertRoundTrip(Settings.WORD_BOUNCE, WordBounceMode.class, "Word/syllable synced only",
                 "Off", "Word/syllable synced only", "All synced rows");
-        assertRoundTrip(Settings.WORD_BOUNCE_STYLE, WordBounceStyle.class, "Phrase zoom",
+        assertRoundTrip(Settings.WORD_BOUNCE_STYLE, WordBounceStyle.class, "Word zoom",
                 "Phrase zoom", "Word zoom", "Phrase lift", "Word lift", "Apple lift");
     }
 
@@ -81,8 +81,9 @@ public class StoredValueRoundTripTest {
 
     @Test
     public void fillModesKeepTheirLabels() {
-        assertRoundTrip(Settings.LINE_SYNC_FILL, LineSyncFill.class, "Top to bottom",
-                "Top to bottom", "Left to right (block)", "Left to right (sentence)");
+        assertEquals(Arrays.asList("Top to bottom", "Left to right (block)", "Left to right (sentence)"),
+                Settings.LINE_SYNC_FILL.allowedValues);
+        assertEquals("Left to right (sentence)", Settings.LINE_SYNC_FILL.defaultValue);
         assertRoundTrip(Settings.LIVE_CARD_LINE_SYNC_FILL, LineSyncFill.class, "Top to bottom",
                 "Top to bottom", "Left to right (block)", "Left to right (sentence)");
     }
