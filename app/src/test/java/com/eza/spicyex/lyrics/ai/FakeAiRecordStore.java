@@ -45,6 +45,11 @@ public final class FakeAiRecordStore implements AiRecordStore {
         return null;
     }
 
+    @Override public AiPaidRecord readLegacy(AiRunConfig legacyConfig) {
+        AiPaidRecord record = AiPaidRecordCodec.decode(payloads.get(key(legacyConfig)));
+        return record != null && legacyConfig.matches(record) ? record : null;
+    }
+
     @Override public Reservation reserve(AiRunConfig config, long maxRecordBytes) {
         reservations++;
         if (rejectedReservationStatus != null

@@ -140,7 +140,8 @@ public final class EditorControlRenderer {
                 @SuppressWarnings("unchecked")
                 Settings.Setting<String> setting = (Settings.Setting<String>) spec.setting;
                 rows.addOption(rows.chipRow(setting,
-                        spec.choices.toArray(new String[0]), effect(spec)), rows.matchWrap(gap));
+                        spec.choices.toArray(new String[0]), effect(spec),
+                        spec.element == ControlSpec.Element.CARD), rows.matchWrap(gap));
                 break;
             }
             case SLIDER:

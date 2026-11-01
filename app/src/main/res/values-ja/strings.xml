@@ -181,7 +181,7 @@
     <string name="settings_option_translation">翻訳</string>
     <string name="settings_option_both">両方</string>
     <string name="settings_option_minimal">最小</string>
-    <string name="settings_option_karaoke_fill">カラオケ塗りつぶし</string>
+    <string name="settings_option_karaoke_fill">スイープ</string>
     <string name="settings_option_spotlight_word">スポットライト単語</string>
     <string name="settings_option_word_only">単語のみ</string>
     <string name="settings_option_top_to_bottom">上から下へ</string>
@@ -194,6 +194,7 @@
     <string name="settings_option_individual_lines">個別行</string>
     <string name="settings_option_fade_up">フェードアップ</string>
     <string name="settings_option_crossfade">クロスフェード</string>
+    <string name="settings_option_lyrics_live_card_transition_crossfade">ブレンド</string>
     <string name="settings_option_none">なし</string>
     <string name="settings_option_compact">コンパクト</string>
     <string name="settings_option_default">デフォルト</string>
@@ -443,6 +444,12 @@
     <string name="settings_layout_editor_tab_animation">アニメーション</string>
     <string name="settings_layout_editor_tab_effects">エフェクト</string>
     <string name="settings_layout_editor_tab_text">テキスト</string>
+    <string name="settings_layout_editor_tab_motion">モーション</string>
+    <string name="settings_layout_editor_card_group_text">テキスト</string>
+    <string name="settings_layout_editor_card_group_long_lines">長い行</string>
+    <string name="settings_layout_editor_card_group_motion">モーション</string>
+    <string name="settings_layout_editor_card_replay">リプレイ</string>
+    <string name="settings_layout_editor_card_live_unavailable">ライブ歌詞を利用できません。デモを表示します。</string>
     <string name="settings_layout_editor_element_skip">スキップ</string>
     <string name="settings_layout_editor_element_follow">追従</string>
     <string name="settings_layout_editor_element_chips">スキップと追従</string>

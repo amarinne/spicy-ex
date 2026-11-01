@@ -168,6 +168,41 @@ public class LyricsSurfaceRowPlannerTest {
         }
     }
 
+    /**
+     * Spotlight must build word spans even when the stored fill direction is top-to-bottom, so
+     * switching that (now hidden) control cannot silently turn Spotlight into a line fade.
+     */
+    @Test
+    public void spotlightAsksForWordSpansWhateverTheFillDirection() throws Exception {
+        LyricsRenderConfig config = LyricsRenderConfig.read(null, null);
+        setField(config, "lineSyncFillMode", com.eza.spicyex.settings.values.LineSyncFill.TOP_TO_BOTTOM);
+        setField(config, "spotlight", true);
+
+        assertTrue(LyricsSurfaceRowPlanner.SurfacePolicy.wantsWordSpans(config));
+        assertTrue(LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(config, false, false, "off")
+                .wordLevelFill);
+        assertTrue(LyricsSurfaceRowPlanner.SurfacePolicy.artwork(config).wordLevelFill);
+
+        AppliedLine fullscreen = line("hello bright world");
+        LyricsSurfaceRowPlanner.plan(fullscreen, document(fullscreen),
+                LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(config, false, false, "off"));
+        assertTrue(fullscreen.syntheticWords);
+
+        setField(config, "spotlight", false);
+        assertFalse(LyricsSurfaceRowPlanner.SurfacePolicy.wantsWordSpans(config));
+        AppliedLine wash = line("hello bright world");
+        LyricsSurfaceRowPlanner.plan(wash, document(wash),
+                LyricsSurfaceRowPlanner.SurfacePolicy.fullscreen(config, false, false, "off"));
+        assertFalse(wash.syntheticWords);
+    }
+
+    private static void setField(LyricsRenderConfig config, String name, Object value)
+            throws Exception {
+        java.lang.reflect.Field field = LyricsRenderConfig.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(config, value);
+    }
+
     @Test
     public void separateRomanizationUsesTimedRowWhenReadingUnitsCoverWords() {
         AppliedLine line = line("hello world");

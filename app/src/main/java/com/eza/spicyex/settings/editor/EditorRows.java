@@ -374,6 +374,16 @@ public final class EditorRows {
      *  ({@link ChipRowPlan}), so a long label gets room instead of an ellipsis. */
     public LinearLayout chipRow(Settings.Setting<String> setting, String[] values,
             Runnable onChanged) {
+        return chipRow(setting, values, onChanged, false);
+    }
+
+    /**
+     * @param balanced when true, cap each line at two chips and keep a lone short choice at
+     *                 half width, so the card editor's rows read as one grid instead of a
+     *                 ragged three-column strip.
+     */
+    public LinearLayout chipRow(Settings.Setting<String> setting, String[] values,
+            Runnable onChanged, boolean balanced) {
         LinearLayout row = new LinearLayout(activity);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setTag("setting." + setting.key);
@@ -383,10 +393,13 @@ public final class EditorRows {
         for (int i = 0; i < values.length; i++) {
             labels[i] = optionLabel((Settings.StringSetting) setting, values[i]);
         }
-        List<List<Integer>> lines = ChipRowPlan.plan(Arrays.asList(labels));
+        List<List<Integer>> lines = balanced
+                ? ChipRowPlan.plan(Arrays.asList(labels), 2)
+                : ChipRowPlan.plan(Arrays.asList(labels));
         for (int line = 0; line < lines.size(); line++) {
             LinearLayout chipsLine = new LinearLayout(activity);
             chipsLine.setOrientation(LinearLayout.HORIZONTAL);
+            chipsLine.setGravity(Gravity.CENTER_VERTICAL);
             LinearLayout.LayoutParams lineLp = matchWrap(0);
             if (line > 0) lineLp.topMargin = dp(6);
             row.addView(chipsLine, lineLp);
@@ -404,6 +417,12 @@ public final class EditorRows {
                 lp.leftMargin = dp(3);
                 lp.rightMargin = dp(3);
                 chipsLine.addView(chip, lp);
+                if (balanced && lines.get(line).size() == 1
+                        && ChipRowPlan.holds(labels[index], 2)) {
+                    View spacer = new View(activity);
+                    spacer.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                    chipsLine.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+                }
             }
         }
         for (int i = 0; i < values.length; i++) {

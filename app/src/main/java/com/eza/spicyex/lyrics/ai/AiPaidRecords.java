@@ -141,6 +141,30 @@ public final class AiPaidRecords implements AiRecordStore {
         return record;
     }
 
+    /**
+     * Reads older-epoch output without touching the run's deletion fence or failure flag.
+     *
+     * <p>{@link #read} pins the first read for the reservation and treats a second identity as a
+     * key mismatch. This path is therefore a separate, stateless storage read: the current-epoch
+     * run still needs its own fence when it decides to buy.
+     */
+    @Override
+    public AiPaidRecord readLegacy(AiRunConfig legacyConfig) {
+        if (legacyConfig == null) return null;
+        PaidArtifactIdentity identity = legacyConfig.recordIdentity();
+        if (identity == null || !identity.isComplete()) return null;
+        try {
+            AIPaidArtifactCache.Read read = storage.read(identity);
+            AiPaidRecord record = AiPaidRecordCodec.decode(read == null ? null : read.payload);
+            if (record == null || !legacyConfig.matches(record)) return null;
+            record.lastAccessedAtMs = System.currentTimeMillis();
+            return record;
+        } catch (Throwable failure) {
+            Diagnostics.warn("AiPaidRecords", "legacy_read", failure);
+            return null;
+        }
+    }
+
     @Override
     public boolean commit(AiRunConfig config, AiPaidRecord record) {
         if (config == null || record == null) return false;

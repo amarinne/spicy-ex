@@ -48,6 +48,7 @@ import com.eza.spicyex.lyrics.catalog.CatalogState;
 import com.eza.spicyex.lyrics.catalog.CatalogStore;
 import com.eza.spicyex.lyrics.catalog.LyricsCatalog;
 import com.eza.spicyex.lyrics.ai.AiRequestStartResult;
+import com.eza.spicyex.lyrics.ai.AiHarnessEpoch;
 import com.eza.spicyex.lyrics.ai.AiSettings;
 
 
@@ -1272,9 +1273,11 @@ final class LyricsSessionManager {
 
     void paidStatus(LyricsHost.CatalogActionCallback callback) {
         final String trackId = session == null ? "" : session.base.trackId;
+        final int meaningEpoch = session == null
+                ? -1 : AiHarnessEpoch.ofArtifact(session.meaning.artifact);
         NativeRuntime.LYRICS_IO.execute(() -> {
             try {
-                String report = AIPaidArtifactCache.linkageStatus(context, trackId);
+                String report = AIPaidArtifactCache.linkageStatus(context, trackId, meaningEpoch);
                 handler.post(() -> callback.onComplete(true, report));
             } catch (Throwable unavailable) {
                 handler.post(() -> callback.onComplete(false, "storage_unavailable"));
@@ -1415,7 +1418,10 @@ final class LyricsSessionManager {
                         adoptLayerArtifact(layer, artifact, com.eza.spicyex.lyrics.session.LayerFailure.NONE,
                                 currentDocument, generation);
                         notifyDocument(snapshot(), document);
-                        callback.onComplete(true, "reused layer=" + layer + " rows=" + artifact.size());
+                        int epoch = AiHarnessEpoch.ofArtifact(artifact);
+                        callback.onComplete(true, "reused layer=" + layer + " rows=" + artifact.size()
+                                + " epoch=" + epoch + " legacy="
+                                + AiHarnessEpoch.isLegacy(epoch, layer));
                     }
                 });
             } catch (Throwable unavailable) {

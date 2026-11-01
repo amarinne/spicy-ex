@@ -182,7 +182,7 @@
     <string name="settings_option_translation">번역</string>
     <string name="settings_option_both">둘 다</string>
     <string name="settings_option_minimal">최소</string>
-    <string name="settings_option_karaoke_fill">노래방식 채움</string>
+    <string name="settings_option_karaoke_fill">스윕</string>
     <string name="settings_option_spotlight_word">강조 단어</string>
     <string name="settings_option_word_only">단어만</string>
     <string name="settings_option_top_to_bottom">위에서 아래로</string>
@@ -195,6 +195,7 @@
     <string name="settings_option_individual_lines">줄마다 따로</string>
     <string name="settings_option_fade_up">떠오르며 나타남</string>
     <string name="settings_option_crossfade">크로스페이드</string>
+    <string name="settings_option_lyrics_live_card_transition_crossfade">블렌드</string>
     <string name="settings_option_none">없음</string>
     <string name="settings_option_compact">좁게</string>
     <string name="settings_option_default">기본</string>
@@ -447,6 +448,12 @@
     <string name="settings_layout_editor_tab_animation">애니메이션</string>
     <string name="settings_layout_editor_tab_effects">효과</string>
     <string name="settings_layout_editor_tab_text">텍스트</string>
+    <string name="settings_layout_editor_tab_motion">모션</string>
+    <string name="settings_layout_editor_card_group_text">텍스트</string>
+    <string name="settings_layout_editor_card_group_long_lines">긴 줄</string>
+    <string name="settings_layout_editor_card_group_motion">모션</string>
+    <string name="settings_layout_editor_card_replay">다시 재생</string>
+    <string name="settings_layout_editor_card_live_unavailable">라이브 가사를 사용할 수 없습니다. 데모를 표시합니다.</string>
     <string name="settings_layout_editor_element_skip">건너뛰기</string>
     <string name="settings_layout_editor_element_follow">현재 가사로</string>
     <string name="settings_layout_editor_element_chips">건너뛰기 및 현재 가사로</string>

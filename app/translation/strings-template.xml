@@ -193,7 +193,7 @@
     <string name="settings_option_translation">Translation</string>
     <string name="settings_option_both">Both</string>
     <string name="settings_option_minimal">Minimal</string>
-    <string name="settings_option_karaoke_fill">Karaoke fill</string>
+    <string name="settings_option_karaoke_fill">Sweep</string>
     <string name="settings_option_spotlight_word">Spotlight word</string>
     <string name="settings_option_word_only">Word only</string>
     <string name="settings_option_top_to_bottom">Top to bottom</string>
@@ -206,6 +206,7 @@
     <string name="settings_option_individual_lines">Individual lines</string>
     <string name="settings_option_fade_up">Fade up</string>
     <string name="settings_option_crossfade">Crossfade</string>
+    <string name="settings_option_lyrics_live_card_transition_crossfade">Blend</string>
     <string name="settings_option_none">None</string>
     <string name="settings_option_compact">Compact</string>
     <string name="settings_option_default">Default</string>
@@ -620,6 +621,12 @@
     <string name="settings_layout_editor_tab_animation">Animation</string>
     <string name="settings_layout_editor_tab_effects">Effects</string>
     <string name="settings_layout_editor_tab_text">Text</string>
+    <string name="settings_layout_editor_tab_motion">Motion</string>
+    <string name="settings_layout_editor_card_group_text">Text</string>
+    <string name="settings_layout_editor_card_group_long_lines">Long lines</string>
+    <string name="settings_layout_editor_card_group_motion">Motion</string>
+    <string name="settings_layout_editor_card_replay">Replay</string>
+    <string name="settings_layout_editor_card_live_unavailable">Live lyrics are unavailable. Showing the demo.</string>
     <string name="settings_layout_editor_element_skip">Skip</string>
     <string name="settings_layout_editor_element_follow">Follow</string>
     <string name="settings_layout_editor_element_chips">Skip &amp; Follow</string>

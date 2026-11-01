@@ -370,12 +370,16 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
         return new AIPaidArtifactCache.Stats(entries, bytes, Integer.MAX_VALUE, maxBytes);
     }
 
-    com.google.gson.JsonObject linkageStatus(String trackId) {
+    com.google.gson.JsonObject linkageStatus(String trackId, int displayedMeaningEpoch) {
         SQLiteDatabase db = getReadableDatabase();
         db.beginTransaction();
         try {
             com.google.gson.JsonObject out = new com.google.gson.JsonObject();
             out.addProperty("schema", db.getVersion());
+            out.addProperty("meaning_epoch", displayedMeaningEpoch);
+            out.addProperty("meaning_legacy",
+                    com.eza.spicyex.lyrics.ai.AiHarnessEpoch.isLegacy(displayedMeaningEpoch,
+                            LayerKind.MEANING));
             for (String table : new String[]{TABLE_ENTRIES, TABLE_REPLAY, TABLE_BINDINGS, TABLE_RESERVATIONS}) {
                 out.addProperty(table, DatabaseUtils.longForQuery(db, "SELECT COUNT(*) FROM " + table, null));
             }
@@ -403,15 +407,21 @@ final class AIPaidArtifactDatabase extends SQLiteOpenHelper {
 
     com.google.gson.JsonArray entryList() {
         com.google.gson.JsonArray entries = new com.google.gson.JsonArray();
-        try (Cursor cursor = getReadableDatabase().query(TABLE_ENTRIES,
+        SQLiteDatabase db = getReadableDatabase();
+        try (Cursor cursor = db.query(TABLE_ENTRIES,
                 new String[]{"entry_key", "layer", "raw_bytes", "updated_at_ms"},
                 null, null, null, null, "updated_at_ms DESC, entry_key")) {
             while (cursor.moveToNext()) {
+                String key = cursor.getString(0);
+                byte[] raw = get(db, key);
                 com.google.gson.JsonObject entry = new com.google.gson.JsonObject();
-                entry.addProperty("entry_key", cursor.getString(0));
+                entry.addProperty("entry_key", key);
                 entry.addProperty("layer", cursor.getString(1));
                 entry.addProperty("bytes", cursor.getLong(2));
                 entry.addProperty("updated_at_ms", cursor.getLong(3));
+                entry.addProperty("epoch", raw == null ? -1
+                        : com.eza.spicyex.lyrics.ai.AiHarnessEpoch.ofStoredPayload(
+                                new String(raw, StandardCharsets.UTF_8)));
                 entries.add(entry);
             }
         }

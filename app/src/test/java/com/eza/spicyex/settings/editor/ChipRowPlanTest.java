@@ -67,6 +67,15 @@ public class ChipRowPlanTest {
         }
     }
 
+    @Test public void aBalancedRowCapsAtTwoChips() {
+        assertEquals(Arrays.asList(Arrays.asList(0, 1), Arrays.asList(2)),
+                ChipRowPlan.plan(Arrays.asList("Minimal", "Karaoke fill", "Spotlight word"), 2));
+        assertEquals(Arrays.asList(Arrays.asList(0, 1), Arrays.asList(2)),
+                ChipRowPlan.plan(Arrays.asList("Fade up", "Blend", "None"), 2));
+        assertEquals(Arrays.asList(Arrays.asList(0, 1), Arrays.asList(2, 3)),
+                ChipRowPlan.plan(Arrays.asList("Main only", "Transliteration", "Translation", "Both"), 2));
+    }
+
     @Test public void aLabelLongerThanTheWholeRowStillGetsALine() {
         List<String> labels = Arrays.asList("A very long label that no line can hold");
         List<List<Integer>> plan = ChipRowPlan.plan(labels);

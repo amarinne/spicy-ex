@@ -70,6 +70,59 @@ public class LyricsFrameRendererRouteTest {
     }
 
     @Test
+    public void syntheticWordsSweepAsOneSentenceUnderKaraokeFill() throws Exception {
+        AppliedLine line = syntheticLine();
+        LyricsRenderConfig config = LyricsRenderConfig.read(null, null);
+
+        assertTrue(LyricsFrameRenderer.sweepsSyntheticWordsAsSentence(
+                config, line, LyricsFrameRenderer.WordGradientRoute.TIMED_WORDS));
+        assertFalse(LyricsFrameRenderer.sweepsSyntheticWordsAsSentence(
+                config, line, LyricsFrameRenderer.WordGradientRoute.CONTINUOUS_BLOCK));
+    }
+
+    @Test
+    public void spotlightKeepsPerWordEmphasisOnSyntheticSpans() throws Exception {
+        AppliedLine line = syntheticLine();
+        LyricsRenderConfig config = spotlightConfig();
+
+        assertFalse("Spotlight must not collapse line-synced rows into one line fade",
+                LyricsFrameRenderer.sweepsSyntheticWordsAsSentence(
+                        config, line, LyricsFrameRenderer.WordGradientRoute.TIMED_WORDS));
+        // Real word timing keeps its per-word path in every style.
+        line.syntheticWords = false;
+        assertFalse(LyricsFrameRenderer.sweepsSyntheticWordsAsSentence(
+                config, line, LyricsFrameRenderer.WordGradientRoute.TIMED_WORDS));
+    }
+
+    @Test
+    public void spotlightKeepsDegenerateProviderWords() throws Exception {
+        AppliedLine line = degenerateProviderLine();
+        LyricsRenderConfig wash = LyricsRenderConfig.read(null, null);
+
+        assertTrue(LyricsFrameRenderer.sweepsDegenerateWordsAsSentence(wash, line,
+                LyricsFrameRenderer.WordGradientRoute.TIMED_WORDS));
+        assertFalse("Spotlight owns word emphasis, so it skips the sentence fallback",
+                LyricsFrameRenderer.sweepsDegenerateWordsAsSentence(spotlightConfig(), line,
+                        LyricsFrameRenderer.WordGradientRoute.TIMED_WORDS));
+        assertFalse(LyricsFrameRenderer.sweepsDegenerateWordsAsSentence(wash, line,
+                LyricsFrameRenderer.WordGradientRoute.CONTINUOUS_BLOCK));
+        assertFalse(LyricsFrameRenderer.sweepsDegenerateWordsAsSentence(wash, syntheticLine(),
+                LyricsFrameRenderer.WordGradientRoute.TIMED_WORDS));
+    }
+
+    @Test
+    public void syntheticSpansOnlyCollapseUnderAWordFill() throws Exception {
+        LyricsRenderConfig wash = LyricsRenderConfig.read(null, null);
+        AppliedLine line = syntheticLine();
+        assertFalse(LyricsFrameRenderer.sweepsSyntheticWordsAsSentence(wash, line,
+                LyricsFrameRenderer.WordGradientRoute.CONTINUOUS_BLOCK));
+        assertFalse(LyricsFrameRenderer.sweepsSyntheticWordsAsSentence(wash, line,
+                LyricsFrameRenderer.WordGradientRoute.LINE_LEVEL));
+        assertFalse(LyricsFrameRenderer.sweepsSyntheticWordsAsSentence(wash, null,
+                LyricsFrameRenderer.WordGradientRoute.TIMED_WORDS));
+    }
+
+    @Test
     public void hyperAodBounceUsesDirectSplinePathForSyntheticRows() throws Exception {
         String source = new String(java.nio.file.Files.readAllBytes(
                 new java.io.File("src/main/java/com/eza/spicyex/lyrics/LyricsFrameRenderer.java").toPath()),
@@ -160,6 +213,35 @@ public class LyricsFrameRendererRouteTest {
         // No viewport known (all lines): nothing is culled.
         assertFalse(LyricsFrameRenderer.isCulledOffscreen(0, 4, 0, Integer.MAX_VALUE));
         assertFalse(LyricsFrameRenderer.isCulledOffscreen(9999, 4, 0, Integer.MAX_VALUE));
+    }
+
+    private static AppliedLine syntheticLine() {
+        AppliedLine line = new AppliedLine();
+        line.startMs = 1000;
+        line.endMs = 5000;
+        line.syntheticWords = true;
+        line.words.add(segment("hello", 1000, 3000));
+        line.words.add(segment("world", 3000, 5000));
+        return line;
+    }
+
+    /** Real provider spans that cover too little of the line to light one by one. */
+    private static AppliedLine degenerateProviderLine() {
+        AppliedLine line = new AppliedLine();
+        line.startMs = 1000;
+        line.endMs = 5000;
+        line.words.add(segment("a", 1000, 1100));
+        line.words.add(segment("b", 1100, 1200));
+        return line;
+    }
+
+    /** The full-screen config a Spotlight style builds; the field is derived from the style. */
+    private static LyricsRenderConfig spotlightConfig() throws Exception {
+        LyricsRenderConfig config = LyricsRenderConfig.read(null, null);
+        java.lang.reflect.Field spotlight = LyricsRenderConfig.class.getDeclaredField("spotlight");
+        spotlight.setAccessible(true);
+        spotlight.setBoolean(config, true);
+        return config;
     }
 
     private static SyllableSegment segment(String text, long startMs, long endMs) {

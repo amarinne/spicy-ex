@@ -2,7 +2,9 @@ package com.eza.spicyex.settings.values;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Reads the stored label of a value type. */
 public final class StoredValues {
@@ -39,5 +41,27 @@ public final class StoredValues {
             if (value.isStored()) labels.add(value.storedLabel());
         }
         return Collections.unmodifiableList(labels);
+    }
+
+    /**
+     * Every retired label, mapped to the label its value stores today.
+     *
+     * <p>A store read coerces the raw preference against the setting's current labels, so an old
+     * label would otherwise fall back to the default before {@link #fromStored} could read it. The
+     * schema passes this map to the setting so the read normalizes instead of losing the choice.
+     * The first value that declares a label owns it, matching {@link #fromStored}.
+     */
+    public static <E extends Enum<E> & StoredValue> Map<String, String> aliases(
+            Class<E> type) {
+        Map<String, String> aliases = new LinkedHashMap<>();
+        for (E value : type.getEnumConstants()) {
+            if (!value.isStored()) continue;
+            for (String legacy : value.legacyLabels()) {
+                if (!legacy.equals(value.storedLabel()) && !aliases.containsKey(legacy)) {
+                    aliases.put(legacy, value.storedLabel());
+                }
+            }
+        }
+        return Collections.unmodifiableMap(aliases);
     }
 }

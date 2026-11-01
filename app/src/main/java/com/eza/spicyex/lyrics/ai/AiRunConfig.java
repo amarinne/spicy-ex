@@ -26,10 +26,19 @@ public final class AiRunConfig {
     public final AiProviderConfig provider;
     /** Normalized steering, or empty. Part of {@code configId}, so it is fixed for the run. */
     public final String instructions;
+    /** Harness revision this run buys under; part of the record identity. */
+    public final int harnessEpoch;
 
     public AiRunConfig(LayerKind layer, String docDigest, String configId, String providerId,
                        AiLyricContext context, AiProviderConfig provider, String instructions,
                        String sourceLanguage, String pronunciationSystem) {
+        this(layer, docDigest, configId, providerId, context, provider, instructions,
+                sourceLanguage, pronunciationSystem, AiHarnessEpoch.LEGACY);
+    }
+
+    public AiRunConfig(LayerKind layer, String docDigest, String configId, String providerId,
+                       AiLyricContext context, AiProviderConfig provider, String instructions,
+                       String sourceLanguage, String pronunciationSystem, int harnessEpoch) {
         this.layer = layer == null ? LayerKind.MEANING : layer;
         this.docDigest = AiText.nz(docDigest);
         this.configId = AiText.nz(configId);
@@ -41,6 +50,7 @@ public final class AiRunConfig {
         this.instructions = AiContract.normalizeSteering(instructions);
         this.sourceLanguage = sourceLanguage;
         this.pronunciationSystem = pronunciationSystem;
+        this.harnessEpoch = Math.max(AiHarnessEpoch.LEGACY, harnessEpoch);
     }
 
     /** Where this run's result is stored, and the only place it may be read back from. */
@@ -66,6 +76,7 @@ public final class AiRunConfig {
                 && record.providerId.equals(providerId)
                 && record.modelName.equals(modelName)
                 && record.configId.equals(configId)
+                && record.harnessEpoch == harnessEpoch
                 && record.schemaVersion == AiContract.schemaFor(layer)
                 && record.chunkPlanVersion == AiContract.CHUNK_PLAN_VERSION;
     }

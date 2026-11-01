@@ -51,6 +51,8 @@ public final class AiPaidRecord {
     public final String pronunciationSystem;
     public final int schemaVersion;
     public final int chunkPlanVersion;
+    /** Harness revision that produced this record; zero for every record written before it existed. */
+    public final int harnessEpoch;
 
     public Status status = Status.PARTIAL;
     public int inputTokens;
@@ -71,6 +73,14 @@ public final class AiPaidRecord {
     public AiPaidRecord(LayerKind layer, String docDigest, String configId, String providerId,
                         String modelName, String targetLang, String sourceLanguage,
                         String pronunciationSystem, int schemaVersion, int chunkPlanVersion) {
+        this(layer, docDigest, configId, providerId, modelName, targetLang, sourceLanguage,
+                pronunciationSystem, schemaVersion, chunkPlanVersion, AiHarnessEpoch.LEGACY);
+    }
+
+    public AiPaidRecord(LayerKind layer, String docDigest, String configId, String providerId,
+                        String modelName, String targetLang, String sourceLanguage,
+                        String pronunciationSystem, int schemaVersion, int chunkPlanVersion,
+                        int harnessEpoch) {
         this.layer = layer == null ? LayerKind.MEANING : layer;
         this.docDigest = AiText.nz(docDigest);
         this.configId = AiText.nz(configId);
@@ -81,6 +91,7 @@ public final class AiPaidRecord {
         this.pronunciationSystem = pronunciationSystem;
         this.schemaVersion = schemaVersion;
         this.chunkPlanVersion = chunkPlanVersion;
+        this.harnessEpoch = Math.max(AiHarnessEpoch.LEGACY, harnessEpoch);
     }
 
     /** A fresh record for a plan about to run. */
@@ -88,7 +99,7 @@ public final class AiPaidRecord {
         AiPaidRecord record = new AiPaidRecord(config.layer, config.docDigest, config.configId,
                 config.providerId, config.modelName, config.targetLang, config.sourceLanguage,
                 config.pronunciationSystem, AiContract.schemaFor(config.layer),
-                AiContract.CHUNK_PLAN_VERSION);
+                AiContract.CHUNK_PLAN_VERSION, config.harnessEpoch);
         record.createdAtMs = nowMs;
         record.lastAccessedAtMs = nowMs;
         return record;

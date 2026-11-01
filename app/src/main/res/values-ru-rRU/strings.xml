@@ -130,7 +130,7 @@
     <string name="settings_option_translation">Перевод</string>
     <string name="settings_option_both">Оба</string>
     <string name="settings_option_minimal">Минимальное</string>
-    <string name="settings_option_karaoke_fill">Заливка "Караоке"</string>
+    <string name="settings_option_karaoke_fill">Развёртка</string>
     <string name="settings_option_spotlight_word">Выделить слово</string>
     <string name="settings_option_word_only">Только слово</string>
     <string name="settings_option_top_to_bottom">Сверху вниз</string>
@@ -143,6 +143,7 @@
     <string name="settings_option_individual_lines">Индивидуальные линии</string>
     <string name="settings_option_fade_up">Затухание вверх</string>
     <string name="settings_option_crossfade">Кроссфейд</string>
+    <string name="settings_option_lyrics_live_card_transition_crossfade">Смешение</string>
     <string name="settings_option_none">Ни одного</string>
     <string name="settings_option_compact">Компактный</string>
     <string name="settings_option_default">Обычный</string>

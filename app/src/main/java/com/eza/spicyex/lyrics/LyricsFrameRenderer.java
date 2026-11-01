@@ -308,13 +308,14 @@ public final class LyricsFrameRenderer {
                 applySecondaryGradient(line, positionMs, lineGlow, config);
                 WordGradientRoute wordGradientRoute = wordGradientRoute(config.lineSyncFillMode);
                 if (hasRealTimedWords(line)) {
-                    boolean degenerateWordTiming = wordGradientRoute == WordGradientRoute.TIMED_WORDS
-                            && hasDegenerateWordTiming(line);
+                    boolean degenerateWordTiming =
+                            sweepsDegenerateWordsAsSentence(config, line, wordGradientRoute);
                     if (lineState.active || lineState.sung) {
                         if (degenerateWordTiming) {
                             // Provider word spans are too compressed or malformed to light word by
                             // word; neutralize word motion and sweep the line as one sentence so
                             // the row matches line-synced rows instead of popping as a block.
+                            // Spotlight owns word emphasis, so it never takes this fill fallback.
                             LyricsAnimationApplier.resetSyllables(line, styleSink, false);
                             applyContinuousWordGradient(line, lineState, lineGlow);
                         } else {
@@ -333,7 +334,8 @@ public final class LyricsFrameRenderer {
                                     individualWordBounce(config),
                                     config.appleLift,
                                     config.appleDimPassed);
-                            if (wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
+                            if (wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK
+                                    && !config.spotlight) {
                                 applyContinuousWordGradient(line, lineState, lineGlow);
                             }
                         }
@@ -343,17 +345,21 @@ public final class LyricsFrameRenderer {
                                     liftBounce(config), individualWordBounce(config));
                     }
                 } else if (line.words != null && !line.words.isEmpty()
-                        && wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK) {
+                        && wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK
+                        && !config.spotlight) {
+                    // A block fill is still a fill. Spotlight owns word emphasis on every stored
+                    // fill direction, so it never runs the block sweep.
                     animateContinuousLineWords(line, lineState, lineGlow, deltaSeconds, config.appleStyle);
                 } else if (lineState.active || lineState.sung) {
-                    if (line.syntheticWords
-                            && wordGradientRoute == WordGradientRoute.TIMED_WORDS) {
+                    if (sweepsSyntheticWordsAsSentence(config, line, wordGradientRoute)) {
                         // These word spans are fabricated (evenly spread across the line purely to
                         // attach romanization - see AppliedLine#syntheticWords), not real per-word
                         // timing, so animating them under a word-by-word fill mode faked a
                         // karaoke-style reveal for plain Line-synced lyrics. Same fallback as the
                         // degenerate-provider-timing case above: reset the words and sweep the
-                        // line as one sentence instead.
+                        // line as one sentence instead. Spotlight is not a fill, though: it owns
+                        // the per-word emphasis, so it keeps the synthetic spans and lights them
+                        // word by word instead of turning the whole line into one brightness fade.
                         LyricsAnimationApplier.resetSyllables(line, styleSink, false);
                         applyContinuousWordGradient(line, lineState, lineGlow);
                     } else {
@@ -404,8 +410,32 @@ public final class LyricsFrameRenderer {
                 && !(config.lineSyncFillSentence() && config.lineGradientEnabled && !config.spotlight);
     }
 
-    private boolean hasRealTimedWords(AppliedLine line) {
+    static boolean hasRealTimedWords(AppliedLine line) {
         return line != null && !line.syntheticWords && line.words != null && !line.words.isEmpty();
+    }
+
+    /**
+     * Synthetic spans (line-synced rows with fabricated word timing) sweep as one sentence under
+     * a karaoke fill, so the row does not fake a word-by-word reveal. Spotlight is a per-word
+     * emphasis rather than a fill, so it must keep the synthetic spans: routing them through the
+     * sentence sweep collapsed the whole line into one brightness ramp (a fade) on the live card.
+     */
+    static boolean sweepsSyntheticWordsAsSentence(LyricsRenderConfig config, AppliedLine line,
+                                                  WordGradientRoute route) {
+        return line != null && line.syntheticWords && route == WordGradientRoute.TIMED_WORDS
+                && (config == null || !config.spotlight);
+    }
+
+    /**
+     * Provider word spans too compressed to light one by one would pop as a full block under a
+     * timed-word fill, so they fall back to the sentence sweep. Spotlight is not a fill and owns
+     * the word emphasis, so it keeps those spans too.
+     */
+    static boolean sweepsDegenerateWordsAsSentence(LyricsRenderConfig config, AppliedLine line,
+                                                  WordGradientRoute route) {
+        return hasRealTimedWords(line) && route == WordGradientRoute.TIMED_WORDS
+                && hasDegenerateWordTiming(line)
+                && (config == null || !config.spotlight);
     }
 
     private boolean wordBounceEnabled(LyricsRenderConfig config, AppliedLine line) {

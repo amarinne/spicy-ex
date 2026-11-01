@@ -24,7 +24,13 @@ import java.util.Map;
  */
 public final class AiIdentity {
 
-    /** Everything {@code configId} covers. Absent values are explicit null, never omitted. */
+    /**
+     * Everything {@code configId} covers. Absent values are explicit null, never omitted.
+     *
+     * <p>The one exception is {@link #harnessEpoch}: {@link AiHarnessEpoch#LEGACY} is omitted so
+     * that every existing epoch-zero identity stays byte-identical to the stored records and the
+     * desktop golden vectors. Only a newer epoch enters the digest.
+     */
     public static final class Config {
         public LayerKind layer = LayerKind.MEANING;
         public String provider;
@@ -58,6 +64,8 @@ public final class AiIdentity {
         public String parentRecordKey;
         public String parentOutputDigest;
         public String revisionInstructions;
+        /** Harness revision for this layer; see {@link AiHarnessEpoch}. */
+        public int harnessEpoch = AiHarnessEpoch.LEGACY;
     }
 
     private AiIdentity() {
@@ -86,6 +94,9 @@ public final class AiIdentity {
         value.put("parentOutputDigest", config.parentOutputDigest);
         value.put("revisionInstructions", config.revisionInstructions == null
                 ? null : AiContract.normalizeSteering(config.revisionInstructions));
+        if (config.harnessEpoch > AiHarnessEpoch.LEGACY) {
+            value.put("harnessEpoch", config.harnessEpoch);
+        }
         return Digests.canonicalSha256(value);
     }
 
@@ -142,5 +153,19 @@ public final class AiIdentity {
         return "ai|schema=" + AiContract.schemaFor(layer)
                 + "|plan=" + AiContract.CHUNK_PLAN_VERSION
                 + "|cfg=" + AiText.nz(configId);
+    }
+
+    /**
+     * Provenance-only contract identity for diagnostics: {@link #promptContractId} plus
+     * {@code |epoch=N} when the producing harness epoch is newer than
+     * {@link AiHarnessEpoch#LEGACY}.
+     *
+     * <p>Never use this for a storage key. The storage key keeps the plain prompt contract, so
+     * every existing record stays addressable and the codec payload carries the epoch instead.
+     */
+    public static String artifactContractId(LayerKind layer, String configId, int harnessEpoch) {
+        String contract = promptContractId(layer, configId);
+        return harnessEpoch > AiHarnessEpoch.LEGACY
+                ? contract + "|epoch=" + harnessEpoch : contract;
     }
 }

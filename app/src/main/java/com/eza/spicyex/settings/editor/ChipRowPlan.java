@@ -38,8 +38,16 @@ final class ChipRowPlan {
      * share it would get there.
      */
     static List<List<Integer>> plan(List<String> labels) {
+        return plan(labels, labels.size() <= 3 ? labels.size() : 2);
+    }
+
+    /**
+     * The same plan with an explicit cap. The card editor asks for two chips per line so its
+     * short rows stay a balanced grid instead of a ragged three-column strip.
+     */
+    static List<List<Integer>> plan(List<String> labels, int cap) {
+        if (cap < 1) throw new IllegalArgumentException("cap must be positive");
         List<List<Integer>> lines = new ArrayList<>();
-        int cap = labels.size() <= 3 ? labels.size() : 2;
         int index = 0;
         while (index < labels.size()) {
             int count = Math.min(cap, labels.size() - index);

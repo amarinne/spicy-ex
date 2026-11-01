@@ -42,6 +42,16 @@ public interface AiRecordStore {
     /** Complete compatible output, independent of a newly rebuilt Google draft. */
     default AiPaidRecord readReplay(AiRunConfig config, AiReplayIdentity replay) { return null; }
 
+    /**
+     * Reads output produced under an older harness epoch, using its own recomputed identity.
+     *
+     * <p>This is a stateless read. It must not pin the run's deletion fence or a failure flag,
+     * because the current-epoch run still needs those for its reservation.
+     *
+     * @return the stored record for {@code legacyConfig}, or null when there is none to trust
+     */
+    default AiPaidRecord readLegacy(AiRunConfig legacyConfig) { return null; }
+
     /** Records a source-to-paid-output association without copying or purchasing output. */
     default void bind(AiPaidRecord record, AiSourceBinding source, AiReplayIdentity replay) { }
 

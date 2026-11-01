@@ -197,8 +197,13 @@ public final class AiResponseValidator {
             if (parts.size() > 1 && AiText.segmentCount(text) != 1) {
                 return new RowFailure(rowId, "delimiter_mismatch");
             }
-            if (layer == LayerKind.MEANING && echoesVoiceHint(part, text)) {
-                return new RowFailure(rowId, "voice_hint_echo");
+            if (layer == LayerKind.MEANING) {
+                if (echoesVoiceHint(part, text)) {
+                    return new RowFailure(rowId, "voice_hint_echo");
+                }
+                if (echoesClassHint(part, text)) {
+                    return new RowFailure(rowId, "class_hint_echo");
+                }
             }
             if (layer == LayerKind.SOUND && !soundOrthographyAccepts(text, target,
                     part.source)) {
@@ -213,7 +218,21 @@ public final class AiResponseValidator {
 
     /** Rejects request metadata copied into Meaning text while preserving a genuine same word. */
     private static boolean echoesVoiceHint(AiRequestItem item, String text) {
-        String token = AiVoiceHint.tokenOf(item == null ? null : item.voice);
+        return echoesHint(AiVoiceHint.tokenOf(item == null ? null : item.voice), item, text);
+    }
+
+    /**
+     * Rejects the wire class label copied into Meaning text — the weak-model failure behind
+     * {@code class_hint_echo}, where {@code ordinary} or {@code adlib} came back as the row's
+     * translation. The exceptions are the voice hint's: the token is genuine when the row's
+     * source, or the previous answer it is being revised from, really is that word.
+     */
+    private static boolean echoesClassHint(AiRequestItem item, String text) {
+        return echoesHint(item == null ? null : item.lineClass.token, item, text);
+    }
+
+    /** One echo test for both kinds of request hint. A null token means there is nothing to echo. */
+    private static boolean echoesHint(String token, AiRequestItem item, String text) {
         if (token == null || !token.equalsIgnoreCase(AiText.trim(text))) return false;
         if (token.equalsIgnoreCase(AiText.trim(item.source))) return false;
         return item.previous == null || !token.equalsIgnoreCase(AiText.trim(item.previous));

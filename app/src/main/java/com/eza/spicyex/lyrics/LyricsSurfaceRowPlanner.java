@@ -470,6 +470,9 @@ public final class LyricsSurfaceRowPlanner {
                 String japaneseReadingMode
         ) {
             LyricsRenderConfig cfg = config;
+            // Spotlight is a word emphasis, not a fill: it always asks for word spans so its
+            // effect never depends on the stored fill direction (the card forces WORD the same way).
+            boolean wordLevelFill = wantsWordSpans(cfg);
             return new SurfacePolicy(
                     cfg == null ? 1f : cfg.lineSpacingMultiplier,
                     showRomanization,
@@ -478,7 +481,7 @@ public final class LyricsSurfaceRowPlanner {
                     cfg != null && cfg.attachTransliterationToWords,
                     cfg != null && cfg.lineSyncFillTopDown(),
                     cfg != null && cfg.lineSyncFillSentence(),
-                    cfg != null && cfg.lineSyncFillWord(),
+                    wordLevelFill,
                     cfg != null && cfg.interludeNoteIcon,
                     cfg == null ? TextWeight.MEDIUM.storedLabel() : cfg.lyricWeight.storedLabel(),
                     cfg == null ? LyricsFont.SPOTIFY.storedLabel() : cfg.lyricsFont.storedLabel(),
@@ -525,6 +528,8 @@ public final class LyricsSurfaceRowPlanner {
          */
         public static SurfacePolicy artwork(LyricsRenderConfig config) {
             LyricsRenderConfig cfg = config;
+            // Same rule as fullscreen: Spotlight asks for word spans regardless of fill direction.
+            boolean wordLevelFill = wantsWordSpans(cfg);
             return new SurfacePolicy(
                     cfg == null ? 1f : cfg.lineSpacingMultiplier,
                     cfg != null && cfg.transliterationEnabled,
@@ -533,7 +538,7 @@ public final class LyricsSurfaceRowPlanner {
                     cfg != null && cfg.attachTransliterationToWords,
                     cfg != null && cfg.lineSyncFillTopDown(),
                     cfg != null && cfg.lineSyncFillSentence(),
-                    cfg != null && cfg.lineSyncFillWord(),
+                    wordLevelFill,
                     cfg != null && cfg.interludeNoteIcon,
                     cfg == null ? TextWeight.MEDIUM.storedLabel() : cfg.lyricWeight.storedLabel(),
                     cfg == null ? LyricsFont.SPOTIFY.storedLabel() : cfg.lyricsFont.storedLabel(),
@@ -549,6 +554,15 @@ public final class LyricsSurfaceRowPlanner {
         public static SurfacePolicy defaultPolicy() {
             return new SurfacePolicy(1f, false, false, "", false, false, false,
                     false, false, "Medium", "spotify", 1f, false, true, false);
+        }
+
+        /**
+         * True when the surface should build word views even without provider word timing.
+         * Spotlight is a per-word emphasis, so it asks for spans on its own; a stored fill
+         * direction must not decide whether Spotlight looks word-by-word or line-by-line.
+         */
+        static boolean wantsWordSpans(LyricsRenderConfig config) {
+            return config != null && (config.lineSyncFillWord() || config.spotlight);
         }
     }
 }

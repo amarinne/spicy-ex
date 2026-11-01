@@ -221,10 +221,10 @@ final class LyricsLayoutEditController {
     private static final int PANEL_CLOSE_BUTTON_DP = 44;
     /** The panel header: the close button's touch target plus its own top padding. */
     private static final int PANEL_HEADER_DP = 48;
-    /** Share of the overlay height the panel may take, options list included. */
+    /** The card editor's pinned tab strip, kept out of the scrolling options list. */
+    private static final int PANEL_CARD_TABS_DP = 54;
+    /** Share of the overlay height the floating lyrics panel may take, options list included. */
     private static final float PANEL_MAX_HEIGHT_SHARE = 0.6f;
-    /** The card stage stays visible, so the panel takes at most half the overlay there. */
-    private static final float PANEL_MAX_HEIGHT_SHARE_CARD = 0.5f;
     /** The panel keeps at least this height, even when clearing the element it edits wants less:
      *  a panel too short to show its controls is worse than one that still covers the element. */
     private static final int PANEL_MIN_HEIGHT_DP = 160;
@@ -276,6 +276,7 @@ final class LyricsLayoutEditController {
         private Runnable onClosed;
         private Runnable enableDemoData;
         private Runnable disableDemoData;
+        private Supplier<com.eza.spicyex.lyrics.LyricsDocument> liveDocumentSupplier;
         private EditableChip skipChip;
         private EditableChip followChip;
         private boolean cardMode;
@@ -300,6 +301,15 @@ final class LyricsLayoutEditController {
         Request onClosed(Runnable value) { this.onClosed = value; return this; }
         Request enableDemoData(Runnable value) { this.enableDemoData = value; return this; }
         Request disableDemoData(Runnable value) { this.disableDemoData = value; return this; }
+        /**
+         * The shell's latest real document, for the card preview's Live source. It returns the
+         * same instance until a new track or lyric publication replaces it; null means none is
+         * available. The editor reads it on the UI thread only.
+         */
+        Request liveDocumentSupplier(Supplier<com.eza.spicyex.lyrics.LyricsDocument> value) {
+            this.liveDocumentSupplier = value;
+            return this;
+        }
         Request skipChip(EditableChip value) { this.skipChip = value; return this; }
         Request followChip(EditableChip value) { this.followChip = value; return this; }
         /** Open on the now-playing card instead of the lyrics screen. */
@@ -356,6 +366,9 @@ final class LyricsLayoutEditController {
             return targetRect[1] + targetRect[3] >= overlayHeight ? TOP : BOTTOM;
         }
     }
+
+    /** Which document the card preview loops: the synthetic demo, or the last real track. */
+    private enum CardPreviewSource { DEMO, LIVE }
 
     public static class SlotRect {
         public final int left;
@@ -652,6 +665,7 @@ final class LyricsLayoutEditController {
         private final Runnable onClosed;
         private final Runnable enableDemoData;
         private final Runnable disableDemoData;
+        private final Supplier<com.eza.spicyex.lyrics.LyricsDocument> liveDocumentSupplier;
         private final EditableChip skipChip;
         private final EditableChip followChip;
         private final boolean startInCardMode;
@@ -675,6 +689,10 @@ final class LyricsLayoutEditController {
         private final MaxHeightScrollView optionsScroll;
         private final LinearLayout panelContainer;
         private final LinearLayout panelHeader;
+        /** The card editor's tab strip: pinned between the header and the scrolling rows. */
+        private LinearLayout cardTabHost;
+        /** Caption, card, and preview controls: the menu docks below this column. */
+        private LinearLayout cardStage;
         /** Row widgets and group cards for the options panel; shared with the registry renderer. */
         private final EditorRows rows;
         /** Registry-driven options for the elements that have moved; the rest keep hand builders. */
@@ -892,6 +910,7 @@ final class LyricsLayoutEditController {
             this.onClosed = request.onClosed;
             this.enableDemoData = request.enableDemoData;
             this.disableDemoData = request.disableDemoData;
+            this.liveDocumentSupplier = request.liveDocumentSupplier;
             this.skipChip = request.skipChip;
             this.followChip = request.followChip;
             this.startInCardMode = request.cardMode;
@@ -1110,7 +1129,9 @@ final class LyricsLayoutEditController {
             // its own surface, clear of the screen edges. Which edge it is placed against is decided
             // per selection in selectElement - this only fixes the default.
             android.content.res.Configuration screen = activity.getResources().getConfiguration();
-            sideSheet = landscape || screen.screenWidthDp >= 600;
+            // The card editor always docks its menu under the preview, so it never takes the
+            // side-sheet posture even on a wide screen.
+            sideSheet = !startInCardMode && (landscape || screen.screenWidthDp >= 600);
             GradientDrawable panelBg = new GradientDrawable();
             panelBg.setColor(0xF21C1C22);
             panelBg.setStroke(dp(1), 0x24FFFFFF);
@@ -1147,6 +1168,14 @@ final class LyricsLayoutEditController {
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(PANEL_CLOSE_BUTTON_DP));
             headerLp.topMargin = dp(4);
             panelContainer.addView(panelHeader, headerLp);
+            // The card editor's tab strip sits here, outside the scroll view: scrolling to a
+            // row must never clip the only control that changes tabs.
+            cardTabHost = new LinearLayout(activity);
+            cardTabHost.setOrientation(LinearLayout.VERTICAL);
+            cardTabHost.setPadding(dp(14), 0, dp(14), dp(10));
+            cardTabHost.setVisibility(View.GONE);
+            panelContainer.addView(cardTabHost, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             installPanelDrag();
             // Editor actions live in the top chrome, so the panel is only as tall as its options.
             panelContainer.addView(optionsScroll, new LinearLayout.LayoutParams(
@@ -1218,7 +1247,9 @@ final class LyricsLayoutEditController {
         @Override
         public boolean onBackPressed() {
             if (overlay.getParent() == null) return false;
-            if (panelVisible || panelContainer.getVisibility() == View.VISIBLE) {
+            if (!cardMode && (panelVisible || panelContainer.getVisibility() == View.VISIBLE)) {
+                // The lyrics editor's floating panel closes first; the card menu cannot close,
+                // so back leaves the card editor directly.
                 hidePanelSheet(true);
             } else {
                 // Every edit is persisted as it happens. Back only leaves the editor; it never
@@ -1301,6 +1332,14 @@ final class LyricsLayoutEditController {
                     if (cardMode || enableDemoData == null || disableDemoData == null) return false;
                     if (!"live".equals(value) && !"synthetic".equals(value)) return false;
                     if (demoActive != "synthetic".equals(value)) toggleDemo();
+                    return true;
+                case "source":
+                    if (!cardMode || (!"demo".equals(value) && !"live".equals(value))) return false;
+                    setCardPreviewSource("live".equals(value));
+                    return true;
+                case "replay":
+                    if (!cardMode || !value.isEmpty()) return false;
+                    replayCardPreview();
                     return true;
                 case "reveal":
                     View target = optionsCard.findViewWithTag("setting." + value);
@@ -1444,6 +1483,18 @@ final class LyricsLayoutEditController {
             }
             report.rect("card", screenRectOf(cardCapture));
             report.rect("card_caption", screenRectOf(cardCaption));
+            if (cardMode) {
+                report.text("card_source", cardPreviewSource == CardPreviewSource.LIVE
+                        ? "live" : "demo");
+                report.number("card_lines", cardDocument == null
+                        || cardDocument.appliedLines == null ? 0 : cardDocument.appliedLines.size());
+                report.number("card_index", cardLastIndex);
+                report.number("card_position", (int) CardPreviewClock.position(
+                        android.os.SystemClock.uptimeMillis(), cardStartMs,
+                        cardDocument == null ? 0L : cardDocument.durationMs));
+                report.flag("card_notice", cardPreviewNotice != null
+                        && cardPreviewNotice.getVisibility() == View.VISIBLE);
+            }
         }
 
         private void reportOptionTruncation(LayoutProbeReport report, View view) {
@@ -2658,6 +2709,12 @@ final class LyricsLayoutEditController {
         private com.eza.spicyex.lyrics.LiveLyricCardView cardPreview;
         private View cardCapture;
         private com.eza.spicyex.lyrics.LyricsDocument cardDocument;
+        /** The shell's latest real document; kept even while the lyrics editor's demo mode is on. */
+        private com.eza.spicyex.lyrics.LyricsDocument cardLiveDocument;
+        private CardPreviewSource cardPreviewSource = CardPreviewSource.DEMO;
+        private TextView cardSourceDemo;
+        private TextView cardSourceLive;
+        private TextView cardPreviewNotice;
         private com.eza.spicyex.lyrics.LyricsRenderConfig cardConfig;
         private boolean cardConfigDirty = true;
         private long cardStartMs;
@@ -2686,23 +2743,38 @@ final class LyricsLayoutEditController {
                 buildCardPreview();
                 cardLayer.setVisibility(View.VISIBLE);
                 cardConfigDirty = true;
-                cardStartMs = android.os.SystemClock.uptimeMillis();
+                cardStartMs = android.os.SystemClock.uptimeMillis() - firstCardLineStart();
                 cardLastFrameMs = 0L;
                 cardLastIndex = -1;
                 overlay.removeCallbacks(cardFrame);
                 overlay.postOnAnimation(cardFrame);
                 selectElement(Element.CARD, false);
+                dockCardPanelChrome();
+                applySheetPlacement(SheetPlacement.BOTTOM);
+                showPanelSheet(false);
             } else {
                 overlay.removeCallbacks(cardFrame);
                 if (cardLayer != null) cardLayer.setVisibility(View.GONE);
                 selectElement(Element.TEXT, false);
                 afterNextLayout(this::refreshAllCaptures);
             }
-            // The card stage stays visible: the panel's height cap is tighter here, which
-            // applySheetPlacement reads off cardMode.
-            applySheetPlacement(sheetPlacement);
-            hidePanelSheet(false);
+            if (!enabled) {
+                applySheetPlacement(sheetPlacement);
+                hidePanelSheet(false);
+            }
             refreshBackButton();
+        }
+
+        /**
+         * The card editor's menu is a section of the screen, not a floating window over it: no
+         * raised surface, no move handle, no title that repeats the caption above the card.
+         */
+        private void dockCardPanelChrome() {
+            GradientDrawable dock = new GradientDrawable();
+            dock.setColor(0xFF141418);
+            panelContainer.setBackground(dock);
+            panelContainer.setElevation(0);
+            panelHeader.setVisibility(View.GONE);
         }
 
         /** A stand-in for Spotify's now-playing card: same dark rounded surface, the real
@@ -2722,43 +2794,62 @@ final class LyricsLayoutEditController {
             bg.setCornerRadius(dp(12));
             card.setBackground(bg);
             makeSelectableTarget(card, Element.CARD);
+            // With the options open, a card tap steps the preview to the next line. With the
+            // panel hidden, the same tap recalls the card's options instead.
+            card.setOnClickListener(v -> {
+                // The menu is always docked in card mode, so a card tap always steps the
+                // preview instead of hiding and recalling the options.
+                if (selected == Element.CARD && advanceCardPreview()) return;
+                selectFromPreview(Element.CARD);
+            });
             card.setPadding(dp(16), dp(14), dp(16), dp(14));
             cardPreview = new com.eza.spicyex.lyrics.LiveLyricCardView(activity);
             card.addView(cardPreview, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            // In the top part of the stage, under the editor's buttons, where the options panel
-            // (capped to half the height) never reaches it; beside the panel when wide.
-            android.content.res.Configuration screen = activity.getResources().getConfiguration();
-            boolean sideSheet = landscape || screen.screenWidthDp >= 600;
+            // In the top part of the stage, under the editor's buttons. The menu is docked
+            // below this column in every posture, so the card is centered at the top instead
+            // of sharing the width with a side sheet.
             int width = overlay.getWidth() > 0 ? overlay.getWidth()
                     : activity.getResources().getDisplayMetrics().widthPixels;
-            // Keep the stage clear of the panel it shares the screen with, insets included.
-            int sheetWidth = sideSheet
-                    ? Math.min(dp(PANEL_MAX_WIDTH_DP), width - dp(PANEL_INSET_DP) * 2)
-                        + dp(PANEL_INSET_DP) * 2 : 0;
-            int room = width - sheetWidth;
-            int side = Math.max(dp(16), (room - dp(560)) / 2);
+            int side = Math.max(dp(16), (width - dp(560)) / 2);
             FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    sideSheet ? Gravity.START | Gravity.CENTER_VERTICAL : Gravity.TOP);
+                    Gravity.TOP);
             cardLp.leftMargin = side;
-            cardLp.rightMargin = side + sheetWidth;
-            if (!sideSheet) cardLp.topMargin = dp(150);
-            cardLayer.addView(card, cardLp);
-            cardCapture = card;
+            cardLp.rightMargin = side;
+            cardLp.topMargin = dp(landscape ? 90 : 150);
+            // The caption rides the stage instead of a measured offset: the toolbar can be
+            // placed after this view is built, and an absolute margin read then lands stale
+            // (it used to leave the label behind the navigation bar).
+            LinearLayout stage = new LinearLayout(activity);
+            stage.setOrientation(LinearLayout.VERTICAL);
             TextView caption = rows.text(rows.s("card_caption", "Now playing card"), 13, 0x99FFFFFF, true);
-            FrameLayout.LayoutParams captionLp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.START | Gravity.TOP);
-            captionLp.leftMargin = side + dp(4);
-            captionLp.topMargin = Math.max(sideSheet ? dp(72) : dp(122), toolbarBottomPx() + dp(10));
-            cardLayer.addView(caption, captionLp);
+            LinearLayout.LayoutParams captionLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            captionLp.leftMargin = dp(4);
+            captionLp.bottomMargin = dp(8);
+            stage.addView(caption, captionLp);
+            stage.addView(card, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            stage.addView(cardPreviewControls(), new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            // The menu below is docked to this column's real bottom, so a wrapped card row or
+            // a fallback notice must move the menu rather than sit under it.
+            stage.addOnLayoutChangeListener((v, left, top, right, bottom,
+                                             oldLeft, oldTop, oldRight, oldBottom) -> {
+                if (cardMode && bottom != oldBottom) applySheetPlacement(sheetPlacement);
+            });
+            cardLayer.addView(stage, cardLp);
+            cardStage = stage;
+            cardCapture = card;
             cardCaption = caption;
             // Above the lyrics-screen layers, below the editor's own buttons and the panel.
             overlay.addView(cardLayer, overlay.indexOfChild(backLayer), new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            if (liveDocumentSupplier != null) cardLiveDocument = liveDocumentSupplier.get();
             cardDocument = DemoLyricsContent.demoDocument();
             com.eza.spicyex.lyrics.LyricTimeline.applySyncedRows(cardDocument);
+            updateCardSourceTabs();
         }
 
         private void stepCardPreview() {
@@ -2775,7 +2866,15 @@ final class LyricsLayoutEditController {
                     cardPreview.invalidateMountedContent();
                     cardLastIndex = -1;
                 }
-                long pos = (now - cardStartMs) % Math.max(1L, cardDocument.durationMs);
+                if (cardPreviewSource == CardPreviewSource.LIVE && liveDocumentSupplier != null) {
+                    com.eza.spicyex.lyrics.LyricsDocument live = liveDocumentSupplier.get();
+                    if (live != cardLiveDocument) {
+                        cardLiveDocument = live;
+                        applyCardSourceDocument();
+                        updateCardSourceTabs();
+                    }
+                }
+                long pos = CardPreviewClock.position(now, cardStartMs, cardDocument.durationMs);
                 java.util.List<com.eza.spicyex.lyrics.AppliedLine> lines = cardDocument.appliedLines;
                 int index = com.eza.spicyex.lyrics.LyricTimeline.findPrimaryActiveRow(lines, pos);
                 if (index < 0 || index >= lines.size()) {
@@ -2797,11 +2896,158 @@ final class LyricsLayoutEditController {
 
         /**
          * The card panel's tab strip: Text (size, weight, secondary line, overflow) and
-         * Animation. The strip is the editor session's own chrome - the rows under it come
-         * from the control registry, one tab at a time.
+         * Motion (animation, glow, fill direction, transition). The strip is the editor
+         * session's own chrome - the rows under it come from the control registry, one tab
+         * at a time.
          */
         private View cardTabs() {
             return tabBar(LayoutEditorTabs.CARD, cardTab, this::selectCardTab);
+        }
+
+        /** Replay plus the Demo/Live source switch, under the card and clear of the panel. */
+        private View cardPreviewControls() {
+            LinearLayout column = new LinearLayout(activity);
+            column.setOrientation(LinearLayout.VERTICAL);
+            column.setPadding(dp(4), dp(12), dp(4), 0);
+
+            LinearLayout row = new LinearLayout(activity);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+
+            TextView replay = actionPill(rows.s("card_replay", "Replay"), this::replayCardPreview);
+            replay.setSingleLine(true);
+            replay.setContentDescription(rows.s("card_replay", "Replay"));
+            row.addView(replay, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)));
+
+            LinearLayout source = new LinearLayout(activity);
+            source.setOrientation(LinearLayout.HORIZONTAL);
+            source.setPadding(dp(3), dp(3), dp(3), dp(3));
+            GradientDrawable sourceBg = new GradientDrawable();
+            sourceBg.setCornerRadius(dp(19));
+            sourceBg.setColor(0x1AFFFFFF);
+            source.setBackground(sourceBg);
+            cardSourceDemo = previewSourceTab(rows.s("demo_lyrics", "Demo"), false);
+            cardSourceLive = previewSourceTab(rows.s("live_lyrics", "Live"), true);
+            source.addView(cardSourceDemo, new LinearLayout.LayoutParams(0, dp(32), 1f));
+            source.addView(cardSourceLive, new LinearLayout.LayoutParams(0, dp(32), 1f));
+            LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(dp(148), dp(38));
+            sourceLp.leftMargin = dp(8);
+            row.addView(source, sourceLp);
+
+            column.addView(row, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            cardPreviewNotice = rows.text("", 12, 0x80FFFFFF, false);
+            cardPreviewNotice.setVisibility(View.GONE);
+            LinearLayout.LayoutParams noticeLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            noticeLp.topMargin = dp(8);
+            column.addView(cardPreviewNotice, noticeLp);
+            return column;
+        }
+
+        private TextView previewSourceTab(String label, boolean live) {
+            TextView tab = rows.text(label, 13, 0xCCFFFFFF, true);
+            tab.setGravity(Gravity.CENTER);
+            tab.setSingleLine(true);
+            tab.setClickable(true);
+            tab.setOnClickListener(v -> setCardPreviewSource(live));
+            return tab;
+        }
+
+        private void updateCardSourceTabs() {
+            boolean live = cardPreviewSource == CardPreviewSource.LIVE;
+            paintSourceTab(cardSourceDemo, !live);
+            paintSourceTab(cardSourceLive, live);
+        }
+
+        private void paintSourceTab(TextView tab, boolean on) {
+            if (tab == null) return;
+            tab.setTextColor(on ? Color.BLACK : 0xCCFFFFFF);
+            if (on) {
+                GradientDrawable bg = new GradientDrawable();
+                bg.setCornerRadius(dp(16));
+                bg.setColor(Color.WHITE);
+                tab.setBackground(bg);
+            } else {
+                tab.setBackground(null);
+            }
+        }
+
+        private void setCardPreviewSource(boolean live) {
+            CardPreviewSource next = live ? CardPreviewSource.LIVE : CardPreviewSource.DEMO;
+            if (cardPreviewSource == next) return;
+            cardPreviewSource = next;
+            applyCardSourceDocument();
+            updateCardSourceTabs();
+        }
+
+        /** A real document only useful as a preview when it actually carries lyric lines. */
+        private static boolean hasCardLines(com.eza.spicyex.lyrics.LyricsDocument doc) {
+            return doc != null && doc.appliedLines != null && !doc.appliedLines.isEmpty();
+        }
+
+        /** Replaces the looping document and restarts it at the first line. */
+        private void applyCardSourceDocument() {
+            if (cardPreview == null) return;
+            boolean live = cardPreviewSource == CardPreviewSource.LIVE;
+            boolean fallback = live && !hasCardLines(cardLiveDocument);
+            com.eza.spicyex.lyrics.LyricsDocument next;
+            if (live && hasCardLines(cardLiveDocument)) {
+                next = cardLiveDocument;
+            } else {
+                next = DemoLyricsContent.demoDocument();
+                com.eza.spicyex.lyrics.LyricTimeline.applySyncedRows(next);
+            }
+            cardDocument = next;
+            cardStartMs = android.os.SystemClock.uptimeMillis() - firstCardLineStart();
+            cardLastFrameMs = 0L;
+            cardLastIndex = -1;
+            cardPreview.invalidateMountedContent();
+            cardPreview.clear();
+            if (cardPreviewNotice != null) {
+                if (fallback) {
+                    cardPreviewNotice.setText(rows.s("card_live_unavailable",
+                            "Live lyrics are unavailable. Showing the demo."));
+                    cardPreviewNotice.setVisibility(View.VISIBLE);
+                } else {
+                    cardPreviewNotice.setVisibility(View.GONE);
+                }
+            }
+        }
+
+        /** The first vocal line's start, so opening the card shows a lyric instead of the intro
+         *  dot row a gap would otherwise put at 0. */
+        private long firstCardLineStart() {
+            if (cardDocument == null || cardDocument.lines == null) return 0L;
+            int index = com.eza.spicyex.lyrics.LyricTimeline.firstNonInterludeIndex(cardDocument.lines);
+            return index < 0 ? 0L : Math.max(0L, cardDocument.lines.get(index).startMs);
+        }
+
+        /** Restarts the line the loop is on, including its transition. */
+        private void replayCardPreview() {
+            if (cardDocument == null) return;
+            long now = android.os.SystemClock.uptimeMillis();
+            long position = CardPreviewClock.position(now, cardStartMs, cardDocument.durationMs);
+            jumpCardPreviewTo(now, CardPreviewClock.lineStartAt(cardDocument.appliedLines, position));
+        }
+
+        /** Steps to the next line. Returns false when there is no document to step. */
+        private boolean advanceCardPreview() {
+            if (cardDocument == null) return false;
+            long now = android.os.SystemClock.uptimeMillis();
+            long position = CardPreviewClock.position(now, cardStartMs, cardDocument.durationMs);
+            jumpCardPreviewTo(now, CardPreviewClock.nextLineStartAt(
+                    cardDocument.appliedLines, position));
+            return true;
+        }
+
+        private void jumpCardPreviewTo(long now, long lineStartMs) {
+            cardStartMs = now - Math.max(0L, lineStartMs);
+            cardLastFrameMs = 0L;
+            cardLastIndex = -1;
+            if (cardPreview != null) cardPreview.invalidateMountedContent();
         }
 
         /**
@@ -2937,6 +3183,9 @@ final class LyricsLayoutEditController {
             applyPanelHeightBudget();
             repaintAllCaptures();
             renderElementOptions(element);
+            // The card tab strip changes the fixed chrome above the scroll view, so the scroll
+            // budget is only final after the rows have decided whether that strip is showing.
+            applyPanelHeightBudget();
             if (rebuildOnly) {
                 optionsScroll.scrollTo(0, previousScrollY);
                 optionsScroll.post(() -> optionsScroll.scrollTo(0, previousScrollY));
@@ -2988,6 +3237,10 @@ final class LyricsLayoutEditController {
             sheetTitle.setText(labelFor(element));
             optionsCard.removeAllViews();
             rows.endGroup(); // the cards just removed above are gone; never append into a stale one
+            if (cardTabHost != null) {
+                cardTabHost.removeAllViews();
+                cardTabHost.setVisibility(View.GONE);
+            }
             switch (element) {
                 case ARTWORK:
                 case TRACK_TEXT:
@@ -3002,9 +3255,14 @@ final class LyricsLayoutEditController {
                     buildTextOptions();
                     break;
                 case CARD:
-                    // The card panel keeps its own tab strip; the rows under it are the
-                    // registry's, for the tab that is open.
-                    rows.addOption(cardTabs(), rows.matchWrap(12));
+                    // The card panel keeps its own tab strip, pinned above the scrolling rows;
+                    // the rows under it are the registry's, for the tab that is open.
+                    if (cardTabHost != null) {
+                        cardTabHost.setVisibility(View.VISIBLE);
+                        cardTabHost.addView(cardTabs(), new LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT));
+                    }
                     controlRenderer.render(ControlSpec.Element.CARD, cardTab, uiContext());
                     break;
             }
@@ -3041,6 +3299,7 @@ final class LyricsLayoutEditController {
                 listPanel.buildAt(listElement(selected), this::renderListSection);
             } else {
                 renderElementOptions(selected);
+                applyPanelHeightBudget();
                 optionsScroll.scrollTo(0, 0);
             }
             if (!panelVisible) showPanelSheet(true);
@@ -3234,6 +3493,11 @@ final class LyricsLayoutEditController {
         }
 
         private void hidePanelSheet(boolean animate) {
+            if (cardMode) {
+                // The card menu is part of the page; it is never parked off screen.
+                showPanelSheet(false);
+                return;
+            }
             panelVisible = false;
             // Hidden, the list toggle always offers the full list again. The silent hide is a
             // relocation that re-shows at once, so it leaves the toolbar row alone.
@@ -3252,13 +3516,44 @@ final class LyricsLayoutEditController {
         }
 
         /** The panel's whole height budget: the smaller of its share of the overlay and the space
-         *  the toolbar row leaves free. In card mode the stage has to stay visible, so it takes
-         *  at most half. */
+         *  the toolbar row leaves free. */
         private int panelMaxHeightPx() {
             int overlayH = overlayHeightPx();
             if (overlayH <= 0) return 0;
-            float share = cardMode ? PANEL_MAX_HEIGHT_SHARE_CARD : PANEL_MAX_HEIGHT_SHARE;
-            return Math.max(0, Math.min(Math.round(overlayH * share), panelFreeHeightPx()));
+            return Math.max(0, Math.min(Math.round(overlayH * PANEL_MAX_HEIGHT_SHARE),
+                    panelFreeHeightPx()));
+        }
+
+        /**
+         * The card editor's menu is the page section under the preview: full width, from the
+         * stage's real bottom to the navigation inset, with no floating margins or height cap.
+         */
+        private void applyCardPanelDock() {
+            if (panelLp == null) panelLp = new FrameLayout.LayoutParams(0, 0);
+            int width = overlayWidthPx();
+            int height = overlayHeightPx();
+            if (width <= 0 || height <= 0) return;
+            int top = cardStageBottomPx() + dp(PANEL_GAP_DP);
+            int bottom = Math.max(top, height - navigationInsetPx());
+            panelLp.gravity = Gravity.TOP | Gravity.START;
+            panelLp.leftMargin = 0;
+            panelLp.topMargin = top;
+            panelLp.rightMargin = 0;
+            panelLp.bottomMargin = 0;
+            panelLp.width = width;
+            panelLp.height = Math.max(0, bottom - top);
+            panelContainer.setLayoutParams(panelLp);
+            int fixed = cardTabHost != null && cardTabHost.getVisibility() == View.VISIBLE
+                    ? dp(PANEL_CARD_TABS_DP) : 0;
+            optionsScroll.maxHeightPx = Math.max(0, panelLp.height - fixed);
+        }
+
+        /** The stage's bottom in overlay coordinates; before the first layout, an estimate
+         *  the stage's own layout listener immediately replaces. */
+        private int cardStageBottomPx() {
+            if (cardStage == null || cardStage.getHeight() <= 0) return dp(330);
+            int[] pos = relativePosition(cardStage, overlay);
+            return pos[1] + cardStage.getHeight();
         }
 
         /**
@@ -3270,13 +3565,20 @@ final class LyricsLayoutEditController {
          * The panel then stops in front of that element instead of hiding it.
          */
         private void applyPanelHeightBudget() {
+            if (cardMode) {
+                applyCardPanelDock();
+                return;
+            }
             int budget = panelMaxHeightPx();
             int capped = budget;
             if (!panelMovedByUser) {
                 capped = capPanelHeightForTarget(budget, plannedPanelRect(budget),
                         targetRectFor(selected), sheetPlacement, dp(PANEL_MIN_HEIGHT_DP));
             }
-            optionsScroll.maxHeightPx = Math.max(0, capped - dp(PANEL_HEADER_DP));
+            int fixed = PANEL_HEADER_DP
+                    + (cardTabHost != null && cardTabHost.getVisibility() == View.VISIBLE
+                            ? PANEL_CARD_TABS_DP : 0);
+            optionsScroll.maxHeightPx = Math.max(0, capped - dp(fixed));
         }
 
         /**
@@ -3310,6 +3612,10 @@ final class LyricsLayoutEditController {
         private void applySheetPlacement(SheetPlacement placement) {
             sheetPlacement = placement;
             if (panelLp == null) panelLp = new FrameLayout.LayoutParams(0, 0);
+            if (cardMode) {
+                applyCardPanelDock();
+                return;
+            }
             int inset = dp(PANEL_INSET_DP);
             panelLp.width = Math.max(0,
                     Math.min(dp(PANEL_MAX_WIDTH_DP), overlayWidthPx() - inset * 2));

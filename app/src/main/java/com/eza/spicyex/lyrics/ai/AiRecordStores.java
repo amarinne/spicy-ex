@@ -32,6 +32,9 @@ public final class AiRecordStores {
         if (!SpicyOrgPolicy.isRestricted(document)) return store;
         return new AiRecordStore() {
             @Override public AiPaidRecord read(AiRunConfig config) { return store.read(config); }
+            @Override public AiPaidRecord readLegacy(AiRunConfig legacyConfig) {
+                return store.readLegacy(legacyConfig);
+            }
             @Override public AiPaidRecord readReplay(AiRunConfig config, AiReplayIdentity replay) {
                 return store.readReplay(config, replay);
             }

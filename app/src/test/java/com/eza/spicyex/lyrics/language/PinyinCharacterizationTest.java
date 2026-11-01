@@ -21,9 +21,9 @@ public class PinyinCharacterizationTest {
     private static final String CANONICAL_TONE_DIGEST =
             "cda00046c7e42c515a712ecb321fffdaa778e55222c330fbcac98df7d9421208";
     private static final String EZA_NO_TONE_DIGEST =
-            "3da988c8638a8987aa8327a7a205e2927ea52d8621ce76792bb92ba742113e65";
+            "3dc0582986713d1ad70dca43c467f698894a366cda0c20afaed9c98e62f60d24";
     private static final String EZA_TONE_DIGEST =
-            "da212d237e15b0ecefb74d0066aea92376f3d27a4c03ee00554d960530ba6e21";
+            "9c53d930ef70af9005348ffc12a95fa75afac7592f569f5a47008045fc8a933d";
 
     private static final String PHRASE_DATA_DIGEST =
             "f055da03094b63ad65ed4b74de94be328d7fbc0d4367548797fe81b45fb5c2c1";
@@ -42,23 +42,23 @@ public class PinyinCharacterizationTest {
             {"\u7761\u89c9", "shui jiao", "shu\u00ec ji\u00e0o", "shu\u1ec1i zi\u00e0o"},
             {"\u957f\u53d1\u53ca\u8170", "chang fa ji yao",
                     "ch\u00e1ng f\u00e0 j\u00ed y\u0101o", "ch\u00e1ng f\u00e0 z\u00ed yao"},
-            {"\u4e3a\u4e86\u4f60", "wei le ni", "w\u00e8i le n\u012d", "w\u1ec1i l\u1ee3 n\u1ec9"},
+            {"\u4e3a\u4e86\u4f60", "wei le ni", "w\u00e8i le n\u012d", "w\u1ec1i l\u1ef1a n\u1ec9"},
             {"\u6211\u8fd8\u662f\u5f88\u559c\u6b22\u4f60", "wo hai shi hen xi huan ni",
                     "w\u014f h\u00e1i sh\u00ec h\u0115n x\u012d hu\u0101n n\u012d",
                     "w\u1ecf h\u00e1i sh\u1eeb h\u1ea9n sh\u1ec9 huan n\u1ec9"},
-            {"\u5feb\u4e50", "kuai le", "ku\u00e0i l\u00e8", "khu\u00e0i l\u1edd"},
+            {"\u5feb\u4e50", "kuai le", "ku\u00e0i l\u00e8", "khu\u00e0i l\u1eeba"},
             {"\u91cd\u5e86", "zhong qing", "zh\u00f2ng q\u00ecng", "zh\u00f2ng ch\u00ecng"},
             {"BTS4 \u5728 2024 \u5e74", "BTS4 zai 2024 nian",
                     "BTS4 z\u00e0i 2024 ni\u00e1n", "BTS4 z\u00e0i 2024 ni\u00e9n"},
             {"\ud840\udc00\u5728\u5531\u6b4c", "\ud840\udc00zai chang ge",
                     "\ud840\udc00z\u00e0i ch\u00e0ng g\u0113",
-                    "\ud840\udc00z\u00e0i ch\u00e0ng k\u01a1"},
+                    "\ud840\udc00z\u00e0i ch\u00e0ng k\u01b0a"},
             {"Hello, world! 123", "Hello, world! 123", "Hello, world! 123", "Hello, world! 123"},
             {"\u4e2d\u56fd rock'n'roll", "zhong guo rock'n'roll",
                     "zh\u014dng gu\u00f3 rock'n'roll", "zhong ku\u00f3 rock'n'roll"},
             {"\u6162\u6162\u5730\u8d70", "man man de zou",
-                    "m\u00e0n m\u00e0n de z\u014fu", "m\u00e0n m\u00e0n t\u1ee3 z\u1ecfu"},
-            {"\u5973\u6b4c\u624b", "nv ge shou", "n\u01da g\u0113 sh\u014fu", "ny\u1ee7 k\u01a1 sh\u1ecfu"}
+                    "m\u00e0n m\u00e0n de z\u014fu", "m\u00e0n m\u00e0n t\u1ef1a z\u1ecfu"},
+            {"\u5973\u6b4c\u624b", "nv ge shou", "n\u01da g\u0113 sh\u014fu", "ny\u1ee7 k\u01b0a sh\u1ecfu"}
     };
 
     private static final class Sweep {
@@ -200,8 +200,8 @@ public class PinyinCharacterizationTest {
     public void neutralToneIsLocked() {
         assertEquals("de", canonical("\u7684", false));
         assertEquals("de", canonical("\u7684", true));
-        assertEquals("t\u01a1", eza("\u7684", false));
-        assertEquals("t\u1ee3", eza("\u7684", true));
+        assertEquals("t\u01b0a", eza("\u7684", false));
+        assertEquals("t\u1ef1a", eza("\u7684", true));
     }
 
     @Test

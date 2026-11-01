@@ -81,7 +81,7 @@
     <string name="settings_option_translation">翻译</string>
     <string name="settings_option_both">两者</string>
     <string name="settings_option_minimal">最简</string>
-    <string name="settings_option_karaoke_fill">卡拉 OK 填充</string>
+    <string name="settings_option_karaoke_fill">扫过</string>
     <string name="settings_option_spotlight_word">聚焦单词</string>
     <string name="settings_option_word_only">仅单词</string>
     <string name="settings_option_top_to_bottom">从上到下</string>
@@ -94,6 +94,7 @@
     <string name="settings_option_individual_lines">逐行</string>
     <string name="settings_option_fade_up">向上淡入</string>
     <string name="settings_option_crossfade">交叉淡化</string>
+    <string name="settings_option_lyrics_live_card_transition_crossfade">混合</string>
     <string name="settings_option_none">无</string>
     <string name="settings_option_compact">紧凑</string>
     <string name="settings_option_default">默认</string>

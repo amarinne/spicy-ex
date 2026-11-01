@@ -352,10 +352,15 @@ public final class AIPaidArtifactCache {
 
     /** Identity-only diagnostic report; no lyric text, output, or credentials. */
     public static String linkageStatus(Context context, String trackId) {
+        return linkageStatus(context, trackId, -1);
+    }
+
+    /** Ledger status plus the harness epoch of the displayed Meaning output, when one exists. */
+    public static String linkageStatus(Context context, String trackId, int displayedMeaningEpoch) {
         synchronized (LOCK) {
             AIPaidArtifactDatabase db = database(context);
             if (!db.ensureV515Migration()) throw new IllegalStateException("migration-failed");
-            return db.linkageStatus(Digests.nz(trackId)).toString();
+            return db.linkageStatus(Digests.nz(trackId), displayedMeaningEpoch).toString();
         }
     }
 

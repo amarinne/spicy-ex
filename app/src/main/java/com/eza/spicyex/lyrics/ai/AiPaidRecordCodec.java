@@ -52,6 +52,10 @@ final class AiPaidRecordCodec {
         }
         root.addProperty("schemaVersion", record.schemaVersion);
         root.addProperty("chunkPlanVersion", record.chunkPlanVersion);
+        // Omitted at legacy zero so every existing epoch-0 payload keeps its exact bytes.
+        if (record.harnessEpoch > AiHarnessEpoch.LEGACY) {
+            root.addProperty("harnessEpoch", record.harnessEpoch);
+        }
         if (record.planning != null) root.add("planning", record.planning.encode());
         root.addProperty("status", record.status.name());
         root.addProperty("inputTokens", record.inputTokens);
@@ -92,7 +96,8 @@ final class AiPaidRecordCodec {
                     stringOf(root, "modelName"), stringOf(root, "targetLang"),
                     optionalStringOf(root, "sourceLanguage"),
                     optionalStringOf(root, "pronunciationSystem"),
-                    intOf(root, "schemaVersion", -1), intOf(root, "chunkPlanVersion", -1));
+                    intOf(root, "schemaVersion", -1), intOf(root, "chunkPlanVersion", -1),
+                    intOf(root, "harnessEpoch", AiHarnessEpoch.LEGACY));
 
             AiPaidRecord.Status status = statusOf(stringOf(root, "status"));
             if (status == null) return null;
@@ -274,5 +279,25 @@ final class AiPaidRecordCodec {
     static String describe(AiPaidRecord record) {
         return record == null ? "none"
                 : record.layer.name().toLowerCase(Locale.ROOT) + "/" + record.status.name();
+    }
+
+    /**
+     * The epoch recorded in one stored entry wrapper, for diagnostics only.
+     *
+     * @return the epoch, or {@code -1} when the wrapper or its payload cannot be read
+     */
+    static int storedEpoch(String wrapper) {
+        if (wrapper == null || wrapper.isEmpty()) return -1;
+        try {
+            JsonElement outer = JsonParser.parseString(wrapper);
+            if (!outer.isJsonObject()) return -1;
+            JsonElement payload = outer.getAsJsonObject().get("payload");
+            if (payload == null || !payload.isJsonPrimitive()) return -1;
+            JsonElement decoded = JsonParser.parseString(payload.getAsString());
+            if (!decoded.isJsonObject()) return -1;
+            return intOf(decoded.getAsJsonObject(), "harnessEpoch", AiHarnessEpoch.LEGACY);
+        } catch (RuntimeException unreadable) {
+            return -1;
+        }
     }
 }

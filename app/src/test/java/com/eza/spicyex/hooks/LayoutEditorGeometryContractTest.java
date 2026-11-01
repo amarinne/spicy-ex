@@ -152,11 +152,16 @@ public class LayoutEditorGeometryContractTest {
         assertTrue(editor.contains("panelContainer.setElevation(dp(16))"));
         assertTrue(editor.contains("private static final int PANEL_INSET_DP = 12;"));
         assertTrue(editor.contains("private static final int PANEL_MAX_WIDTH_DP = 360;"));
-        // Height is the smaller of the overlay share and what the toolbar row leaves free; card
-        // mode keeps the stage visible, so it is capped harder there.
+        // The lyrics panel is capped by the overlay share and what the toolbar row leaves free.
         assertTrue(editor.contains("private static final float PANEL_MAX_HEIGHT_SHARE = 0.6f;"));
-        assertTrue(editor.contains("private static final float PANEL_MAX_HEIGHT_SHARE_CARD = 0.5f;"));
-        assertTrue(editor.contains("Math.min(Math.round(overlayH * share), panelFreeHeightPx())"));
+        assertTrue(editor.contains("Math.round(overlayH * PANEL_MAX_HEIGHT_SHARE)"));
+        assertTrue(editor.contains("panelFreeHeightPx()"));
+        // The card menu is a page section: full width, docked to the stage's real bottom and
+        // ending at the navigation inset, with no floating height cap.
+        assertTrue(editor.contains("private void applyCardPanelDock()"));
+        assertTrue(editor.contains("int top = cardStageBottomPx() + dp(PANEL_GAP_DP);"));
+        assertTrue(editor.contains("panelLp.width = width;"));
+        assertTrue(editor.contains("panelLp.height = Math.max(0, bottom - top);"));
         // The header moves it, and a moved panel keeps that position for the session.
         assertTrue(editor.contains("panelHeader.setOnTouchListener"));
         assertTrue(editor.contains("if (moved[0]) panelMovedByUser = true;"));
@@ -188,7 +193,8 @@ public class LayoutEditorGeometryContractTest {
         assertTrue(editor.contains("report.rect(\"sheet\", screenRectOf(panelContainer))"));
         // The list is capped in pixels, not by a share of whatever the parent hands it, and the
         // cap is the one that keeps the panel off the element it edits.
-        assertTrue(editor.contains("optionsScroll.maxHeightPx = Math.max(0, capped - dp(PANEL_HEADER_DP));"));
+        assertTrue(editor.contains("int fixed = PANEL_HEADER_DP"));
+        assertTrue(editor.contains("optionsScroll.maxHeightPx = Math.max(0, capped - dp(fixed));"));
         assertTrue(editor.contains("capPanelHeightForTarget(budget, plannedPanelRect(budget),"));
         assertTrue(editor.contains("int maxHeightPx = 0;"));
     }

@@ -224,10 +224,36 @@ public class StoredValueRoundTripTest {
                 StoredValues.fromStored(SecondaryTextMode.class, "Romanization"));
         assertSame(SecondaryTextMode.TRANSLITERATION,
                 StoredValues.fromStored(SecondaryTextMode.class, "Romanized"));
-        assertSame(LiveCardAnimation.SPOTLIGHT_WORD,
+        // "Full" was the pre-2.x card's normal full animation, not Spotlight: the old setting only
+        // had Full and Minimal. It reads as the mode that renders that same full animation.
+        assertSame(LiveCardAnimation.KARAOKE_FILL,
                 StoredValues.fromStored(LiveCardAnimation.class, "Full"));
         assertSame(LiveCardGlow.WORD_ONLY,
                 StoredValues.fromStored(LiveCardGlow.class, "Subtle line"));
+    }
+
+    /** A store read runs coerce before the enum lookup, so the retired label must survive it. */
+    @Test
+    public void retiredLabelsSurviveTheStoreRead() {
+        java.util.Map<String, Object> stored = new java.util.HashMap<>();
+        stored.put(Settings.LIVE_CARD_GLOW.key, "Subtle line");
+        stored.put(Settings.LIVE_CARD_ANIMATION.key, "Full");
+        stored.put(Settings.LIVE_CARD_SECONDARY_MODE.key, "Romanization");
+        stored.put(Settings.AUTO_SECONDARY_TEXT.key, "Romanized");
+        SettingsSnapshot snapshot = new SettingsSnapshot(stored);
+
+        assertSame(LiveCardGlow.WORD_ONLY,
+                snapshot.get(Settings.LIVE_CARD_GLOW, LiveCardGlow.class));
+        assertSame(LiveCardAnimation.KARAOKE_FILL,
+                snapshot.get(Settings.LIVE_CARD_ANIMATION, LiveCardAnimation.class));
+        assertSame(SecondaryTextMode.TRANSLITERATION,
+                snapshot.get(Settings.LIVE_CARD_SECONDARY_MODE, SecondaryTextMode.class));
+        assertSame(SecondaryTextMode.TRANSLITERATION,
+                snapshot.get(Settings.AUTO_SECONDARY_TEXT, SecondaryTextMode.class));
+        // The read also reports the label the editor and UI compare against.
+        assertEquals("Word only", snapshot.get(Settings.LIVE_CARD_GLOW));
+        assertEquals("Karaoke fill", snapshot.get(Settings.LIVE_CARD_ANIMATION));
+        assertEquals("Transliteration", snapshot.get(Settings.LIVE_CARD_SECONDARY_MODE));
     }
 
     @Test

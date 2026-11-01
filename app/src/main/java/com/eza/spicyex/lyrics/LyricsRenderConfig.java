@@ -514,6 +514,9 @@ public final class LyricsRenderConfig {
             boolean spacingChanged = oldValue.lineSpacingMode != next.lineSpacingMode
                     || changed(oldValue.lineSpacingMultiplier, next.lineSpacingMultiplier);
             boolean fillChanged = oldValue.lineSyncFillMode != next.lineSyncFillMode;
+            // Spotlight asks for word spans on its own, so switching into or out of it changes the
+            // row shape even when no fill or text setting changed.
+            boolean spotlightChanged = oldValue.spotlight != next.spotlight;
             japaneseModeConfigChanged = changed(oldValue.japaneseModeConfig, next.japaneseModeConfig);
             chineseModeConfigChanged = changed(oldValue.chineseModeConfig, next.chineseModeConfig)
                     || changed(oldValue.defaultChineseMode, next.defaultChineseMode);
@@ -526,7 +529,7 @@ public final class LyricsRenderConfig {
                     || oldValue.cyrillicKeepSigns != next.cyrillicKeepSigns;
             boolean visualOnlyChanged = oldValue.toggleSpinnerEnabled != next.toggleSpinnerEnabled
                     || oldValue.lineGradientEnabled != next.lineGradientEnabled
-                    || oldValue.spotlight != next.spotlight
+                    || spotlightChanged
                      || oldValue.wordBounceEnabled != next.wordBounceEnabled
                      || oldValue.wordBounceScope != next.wordBounceScope
                      || oldValue.wordBounceStyle != next.wordBounceStyle
@@ -559,7 +562,8 @@ public final class LyricsRenderConfig {
             needsTimingOnly = oldValue.syncOffsetMs != next.syncOffsetMs;
 
             needsRowRemount = interludeChanged || weightChanged || textSizeChanged || attachChanged || transliterationChanged
-                    || adaptiveSectioningChanged || spacingChanged || fillChanged || japaneseModeConfigChanged
+                    || adaptiveSectioningChanged || spacingChanged || fillChanged || spotlightChanged
+                    || japaneseModeConfigChanged
                     || oldValue.translationBright != next.translationBright
                     || oldValue.appleCompactText != next.appleCompactText;
             needsLocalReprocess = transliterationChanged || chineseModeConfigChanged || koreanChanged || chineseTonesChanged || cyrillicChanged;

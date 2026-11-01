@@ -75,12 +75,33 @@ public class ChineseRomanizerTest {
     public void ezaMandarinConvertsStructuredReadingsAndKeepsAuthoredTokens() {
         assertEquals("tà", EzaChineseRomanizer.mandarin("da4", true));
         assertEquals("thài", EzaChineseRomanizer.mandarin("tai4", true));
-        assertEquals("khơ", EzaChineseRomanizer.mandarin("ke4", false));
+        assertEquals("khưa", EzaChineseRomanizer.mandarin("ke4", false));
         assertEquals("khuếi", EzaChineseRomanizer.mandarin("kui2", true));
         assertEquals("BTS4 mp3 ma3", SpicyJapaneseChineseProcessor.romanizeChineseLine("BTS4 mp3 ma3", "pinyin-eza", true));
         assertEquals("nyủ", EzaChineseRomanizer.mandarin("nü3", true));
         assertEquals("mạ", EzaChineseRomanizer.mandarin("ma0", true));
         assertEquals("mà", EzaChineseRomanizer.mandarin("ma4", true));
+    }
+
+    @Test
+    public void ezaMandarinUsesUeaForOnlyTheOpenERow() {
+        String[] readings = {"e", "me", "de", "te", "ne", "le", "ge", "ke", "he",
+                "ze", "ce", "se", "zhe", "che", "she", "re"};
+        String[] expected = {"ưa", "mưa", "tưa", "thưa", "nưa", "lưa", "kưa", "khưa", "hưa",
+                "zưa", "tsưa", "sưa", "zhưa", "chưa", "shưa", "rưa"};
+        for (int i = 0; i < readings.length; i++) {
+            assertEquals(readings[i], expected[i], EzaChineseRomanizer.mandarin(readings[i], false));
+        }
+        assertEquals("m\u1ee9a", EzaChineseRomanizer.mandarin("me2", true));
+    }
+
+    @Test
+    public void ezaMandarinLeavesNeighboringERowFinalsUnchanged() {
+        assertEquals("ân", EzaChineseRomanizer.mandarin("en", false));
+        assertEquals("âng", EzaChineseRomanizer.mandarin("eng", false));
+        assertEquals("êi", EzaChineseRomanizer.mandarin("ei", false));
+        assertEquals("mie", EzaChineseRomanizer.mandarin("mie", false));
+        assertEquals("yue", EzaChineseRomanizer.mandarin("yue", false));
     }
 
     @Test

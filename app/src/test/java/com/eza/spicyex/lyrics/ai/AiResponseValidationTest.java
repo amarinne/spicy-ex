@@ -188,6 +188,67 @@ public class AiResponseValidationTest {
                         .get(0).text);
     }
 
+    // The wire class labels are request metadata too, and the same weak-model failure applies:
+    // the label came back as the row's translation instead of what the row says.
+    @Test
+    public void meaningMayNotCopyTheWireClassLabelAsLyricText() {
+        List<AiRequestItem> ordinary = Collections.singletonList(
+                item("S0", AiLineClass.ORDINARY, "Overdose 君とふたり"));
+        List<AiRequestItem> adlib = Collections.singletonList(
+                item("S0", AiLineClass.ADLIB, "Overdose 君とふたり"));
+
+        reject("{\"items\":[{\"id\":\"S0\",\"t\":\"ordinary\"}]}", ordinary,
+                "class_hint_echo:S0");
+        reject("{\"items\":[{\"id\":\"S0\",\"t\":\"adlib\"}]}", adlib,
+                "class_hint_echo:S0");
+    }
+
+    @Test
+    public void classLabelEchoFailsOnlyItsRow() {
+        List<AiRequestItem> requested = Arrays.asList(
+                item("S0", AiLineClass.ORDINARY, "Overdose 君とふたり"),
+                item("S1", AiLineClass.ORDINARY, "甘いハッタリ"));
+        AiResponseValidator.Partition partition = AiResponseValidator.partition(
+                AiResponseReader.readItems("{\"items\":["
+                        + "{\"id\":\"S0\",\"t\":\"ordinary\"},"
+                        + "{\"id\":\"S1\",\"t\":\"Sweet bluff\"}]}"),
+                requested, LayerKind.MEANING, "en");
+
+        assertEquals(1, partition.accepted.size());
+        assertEquals("S1", partition.accepted.get(0).id);
+        assertEquals(1, partition.failed.size());
+        assertEquals("S0", partition.failed.get(0).rowId);
+        assertEquals("class_hint_echo", partition.failed.get(0).token);
+    }
+
+    @Test
+    public void genuineSourceOrPreviousWordMatchingTheClassLabelRemainsValid() {
+        List<AiRequestItem> fromSource = Collections.singletonList(
+                item("S0", AiLineClass.ORDINARY, "ordinary"));
+        assertEquals("ordinary",
+                accept("{\"items\":[{\"id\":\"S0\",\"t\":\"ordinary\"}]}", fromSource)
+                        .get(0).text);
+
+        List<AiRequestItem> fromPrevious = Collections.singletonList(
+                new AiRequestItem("S0", AiLineClass.ADLIB, null, "Overdose 君とふたり", "adlib"));
+        assertEquals("adlib",
+                accept("{\"items\":[{\"id\":\"S0\",\"t\":\"adlib\"}]}", fromPrevious)
+                        .get(0).text);
+    }
+
+    @Test
+    public void classLabelEchoIsJudgedCaseAndWhitespaceInsensitivelyLikeTheVoiceHint() {
+        List<AiRequestItem> ordinary = Collections.singletonList(
+                item("S0", AiLineClass.ORDINARY, "Overdose 君とふたり"));
+        List<AiRequestItem> adlib = Collections.singletonList(
+                item("S0", AiLineClass.ADLIB, "Overdose 君とふたり"));
+
+        reject("{\"items\":[{\"id\":\"S0\",\"t\":\"  Ordinary \"}]}", ordinary,
+                "class_hint_echo:S0");
+        reject("{\"items\":[{\"id\":\"S0\",\"t\":\"ADLIB\"}]}", adlib,
+                "class_hint_echo:S0");
+    }
+
     @Test
     public void theSegmentCountMustSurviveTranslation() {
         List<AiRequestItem> requested =

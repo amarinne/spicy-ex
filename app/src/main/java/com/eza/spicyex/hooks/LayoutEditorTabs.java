@@ -4,7 +4,7 @@ import java.util.Locale;
 
 /**
  * The layout editor's two tab strips: the lyrics panel's Style/Animation/Effects and the
- * now-playing card's Text/Animation.
+ * now-playing card's Text/Motion.
  *
  * <p>The strip the user taps and the agent's {@code editor tab} command read the same tables here,
  * so a probe reaches exactly the tabs a user can reach, and a name that belongs to the other
@@ -36,10 +36,11 @@ final class LayoutEditorTabs {
             new Tab("effects", "tab_effects", "Effects"),
     };
 
-    /** The now-playing card's strip, in strip order: Text, Animation. */
+    /** The now-playing card's strip, in strip order: Text, Motion. The agent name stays
+     *  "animation" so existing editor routes keep working. */
     static final Tab[] CARD = {
             new Tab("text", "tab_text", "Text"),
-            new Tab("animation", "tab_animation", "Animation"),
+            new Tab("animation", "tab_motion", "Motion"),
     };
 
     private LayoutEditorTabs() {

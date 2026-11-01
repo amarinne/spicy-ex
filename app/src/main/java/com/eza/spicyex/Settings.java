@@ -67,6 +67,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Owns the settings schema: keys, types, defaults, sections, allowed values, and orientation scope.
@@ -1045,8 +1046,24 @@ public final class Settings {
     }
 
     public static final class StringSetting extends Setting<String> {
+        /**
+         * Retired labels that still mean a current value: raw label to current label. Applied
+         * before the allowed-value check so an older install keeps the choice it stored instead
+         * of silently falling back to the default.
+         */
+        private final Map<String, String> legacyLabels;
+
         StringSetting(boolean orientationSpecific, String key, Section section, String label, String defaultValue, List<String> allowedValues) {
+            this(orientationSpecific, key, section, label, defaultValue, allowedValues,
+                    Collections.<String, String>emptyMap());
+        }
+
+        StringSetting(boolean orientationSpecific, String key, Section section, String label,
+                      String defaultValue, List<String> allowedValues,
+                      Map<String, String> legacyLabels) {
             super(orientationSpecific, key, section, label, defaultValue, allowedValues);
+            this.legacyLabels = legacyLabels == null
+                    ? Collections.<String, String>emptyMap() : legacyLabels;
         }
 
         @Override
@@ -1058,7 +1075,10 @@ public final class Settings {
                 return KoreanDisplayMode.valueOfSetting(s);
             }
             if (LAST_KOREAN_CYCLE_MODE.key.equals(key)) return KoreanDisplayMode.valueOfSetting(s);
-            if (allowedValues != null && !allowedValues.contains(s)) return defaultValue;
+            if (allowedValues != null && !allowedValues.contains(s)) {
+                String current = legacyLabels.get(s);
+                return current == null ? defaultValue : current;
+            }
             return s;
         }
     }
@@ -1118,13 +1138,14 @@ public final class Settings {
     private static <E extends Enum<E> & StoredValue> Setting<String> enumSetting(boolean orientationSpecific,
             String key, Section section, String label, Class<E> type) {
         return new StringSetting(orientationSpecific, key, section, label,
-                StoredValues.defaultLabel(type), StoredValues.labels(type));
+                StoredValues.defaultLabel(type), StoredValues.labels(type),
+                StoredValues.aliases(type));
     }
 
     private static <E extends Enum<E> & StoredValue> Setting<String> enumSetting(boolean orientationSpecific,
             String key, Section section, String label, String defaultLabel, Class<E> type) {
         return new StringSetting(orientationSpecific, key, section, label,
-                defaultLabel, StoredValues.labels(type));
+                defaultLabel, StoredValues.labels(type), StoredValues.aliases(type));
     }
 
     private static Setting<String> stringSetting(boolean orientationSpecific, String key, Section section, String label, String defaultValue) {
@@ -1139,7 +1160,8 @@ public final class Settings {
     private static <E extends Enum<E> & StoredValue> Setting<String> internalEnumSetting(boolean orientationSpecific,
             String key, String label, Class<E> type) {
         return new StringSetting(orientationSpecific, key, INTERNAL, label,
-                StoredValues.defaultLabel(type), StoredValues.labels(type));
+                StoredValues.defaultLabel(type), StoredValues.labels(type),
+                StoredValues.aliases(type));
     }
 
     private static Setting<String> internalSetting(boolean orientationSpecific, String key, String label, String defaultValue) {

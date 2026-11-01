@@ -221,7 +221,7 @@ public class ControlRegistryTest {
     }
 
     /**
-     * The card keeps its two tabs: the Text tab's rows, then the Animation tab's rows. The
+     * The card keeps its two tabs: the Text tab's rows, then the Motion tab's rows. The
      * scroll scope appears only when the overflow scrolls with the lyric.
      */
     @Test public void cardTabsKeepTheirOrderAndTheirConditionalRow() {
@@ -241,6 +241,64 @@ public class ControlRegistryTest {
                 Settings.LIVE_CARD_SECONDARY_MODE.key, Settings.LIVE_CARD_OVERFLOW.key,
                 Settings.LIVE_CARD_SCROLL_SCOPE.key),
                 keys(ControlRegistry.tabControls(ControlSpec.Element.CARD, 0, scrollingContext)));
+    }
+
+    /**
+     * Glow and fill direction only change Karaoke fill. The renderer forces both off under
+     * Minimal and Spotlight word, so the registry does not offer them there.
+     */
+    @Test public void theCardHidesDeadMotionRowsOutsideKaraokeFill() {
+        for (String animation : Arrays.asList("Minimal", "Spotlight word")) {
+            Map<String, Object> settings = new HashMap<>();
+            settings.put(Settings.LIVE_CARD_ANIMATION.key, animation);
+            UiContext context = new UiContext(false, false, false,
+                    new SettingsSnapshot(settings), false);
+            assertEquals(animation,
+                    Arrays.asList(Settings.LIVE_CARD_ANIMATION.key, Settings.LIVE_CARD_TRANSITION.key),
+                    keys(ControlRegistry.tabControls(ControlSpec.Element.CARD, 1, context)));
+        }
+    }
+
+    /**
+     * The lyrics fill direction is a Gradient-wash control. Spotlight owns word emphasis and
+     * Apple owns its own stack, so the row would only claim an effect it cannot have.
+     */
+    @Test public void theLyricsFillDirectionOnlyExistsForGradientWash() {
+        for (String style : Arrays.asList("Spotlight", "Apple Music")) {
+            Map<String, Object> settings = new HashMap<>();
+            settings.put(Settings.ANIMATION_STYLE.key, style);
+            UiContext context = new UiContext(false, false, false,
+                    new SettingsSnapshot(settings), false);
+            assertFalse(style, keys(ControlRegistry.tabControls(ControlSpec.Element.LYRICS, 1, context))
+                    .contains(Settings.LINE_SYNC_FILL.key));
+        }
+        UiContext wash = new UiContext(false, false, false,
+                new SettingsSnapshot(Collections.emptyMap()), false);
+        assertTrue(keys(ControlRegistry.tabControls(ControlSpec.Element.LYRICS, 1, wash))
+                .contains(Settings.LINE_SYNC_FILL.key));
+    }
+
+    /** The card panel is three group cards, and every row names itself inside its group. */
+    @Test public void cardRowsShareThreeGroupCardsAndNameThemselves() {
+        UiContext context = new UiContext(false, false, false,
+                new SettingsSnapshot(Collections.emptyMap()), false);
+        List<ControlSpec> text = ControlRegistry.tabControls(ControlSpec.Element.CARD, 0, context);
+        assertEquals("settings_layout_editor_card_group_text", text.get(0).groupTitleKey);
+        assertEquals("settings_layout_editor_card_group_text", text.get(1).groupTitleKey);
+        assertEquals("settings_layout_editor_card_group_text", text.get(2).groupTitleKey);
+        assertEquals("settings_layout_editor_card_group_long_lines", text.get(3).groupTitleKey);
+        for (ControlSpec row : text) {
+            assertEquals("settings_label_" + row.setting.key, row.labelKey);
+            // The live preview is the description: no row repeats it in a hint line.
+            assertNull(row.hintKey);
+        }
+
+        List<ControlSpec> motion = ControlRegistry.tabControls(ControlSpec.Element.CARD, 1, context);
+        for (ControlSpec row : motion) {
+            assertEquals("settings_layout_editor_card_group_motion", row.groupTitleKey);
+            assertEquals("settings_label_" + row.setting.key, row.labelKey);
+            assertNull(row.hintKey);
+        }
     }
 
     /**

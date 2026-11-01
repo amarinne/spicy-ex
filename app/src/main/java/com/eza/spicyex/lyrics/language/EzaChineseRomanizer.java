@@ -56,7 +56,7 @@ public final class EzaChineseRomanizer {
         else if (fin.equals("wen")) fin = "wuân";
         else if (fin.equals("weng")) fin = "wuâng";
         else if (fin.equals("o") && "bpmf".contains(onset)) fin = "uo";
-        else if (fin.equals("e")) fin = "ơ";
+        else if (fin.equals("e")) fin = "ưa";
         else if (fin.equals("en")) fin = "ân";
         else if (fin.equals("eng")) fin = "âng";
         else if (fin.equals("ei")) fin = "êi";

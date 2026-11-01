@@ -4,6 +4,7 @@ import com.eza.spicyex.Settings;
 import com.eza.spicyex.lyrics.LyricsShellSettings;
 import com.eza.spicyex.settings.values.AiProviderChoice;
 import com.eza.spicyex.settings.values.AnimationStyle;
+import com.eza.spicyex.settings.values.LiveCardAnimation;
 import com.eza.spicyex.settings.values.LiveCardOverflow;
 import com.eza.spicyex.settings.values.LyricsFont;
 import com.eza.spicyex.settings.values.WordBounceMode;
@@ -54,6 +55,25 @@ public final class ControlRegistry {
     private static final Visibility APPLE = context ->
             context.settings.get(Settings.ANIMATION_STYLE, AnimationStyle.class).isApple();
     private static final Visibility OTHER_ANIMATION = context -> !APPLE.test(context);
+    /** The karaoke fill direction only exists for the gradient-wash style; Spotlight owns words. */
+    private static final Visibility GRADIENT_WASH = context ->
+            context.settings.get(Settings.ANIMATION_STYLE, AnimationStyle.class)
+                    == AnimationStyle.GRADIENT_WASH;
+
+    // The card editor's three group cards. Rows carry no hint: the live preview shows the
+    // effect as soon as the choice changes, so a sentence under the row would only repeat it.
+    private static final String CARD_GROUP_TEXT = "settings_layout_editor_card_group_text";
+    private static final String CARD_GROUP_LONG_LINES = "settings_layout_editor_card_group_long_lines";
+    private static final String CARD_GROUP_MOTION = "settings_layout_editor_card_group_motion";
+
+    /** Scroll scope only exists while the card scrolls with the lyric. */
+    private static final Visibility CARD_SCROLLS = context ->
+            context.settings.get(Settings.LIVE_CARD_OVERFLOW, LiveCardOverflow.class)
+                    == LiveCardOverflow.SCROLL_WITH_LYRIC;
+    /** Glow and fill direction only change the sweep; the other modes force them off. */
+    private static final Visibility CARD_SWEEP = context ->
+            context.settings.get(Settings.LIVE_CARD_ANIMATION, LiveCardAnimation.class)
+                    == LiveCardAnimation.KARAOKE_FILL;
 
     // Panel guards: the rules that decide whether a panel row shows. Each one names the state
     // it reads. They are declared before the panel inventory, which fills its rows with them.
@@ -249,7 +269,7 @@ public final class ControlRegistry {
                         && context.settings.get(Settings.WORD_BOUNCE, WordBounceMode.class)
                                 != WordBounceMode.OFF, REBUILD,
                 "Phrase zoom", "Word zoom", "Phrase lift", "Word lift", "Apple lift");
-        choice(rows, Settings.LINE_SYNC_FILL, LYRICS, 1, null, OTHER_ANIMATION, REBUILD,
+        choice(rows, Settings.LINE_SYNC_FILL, LYRICS, 1, null, GRADIENT_WASH, REBUILD,
                 "Top to bottom", "Left to right (block)", "Left to right (sentence)");
         choice(rows, Settings.INTERLUDE_ICON, LYRICS, 2, null, Visibility.ALWAYS, NONE, "dots", "note");
         toggle(rows, Settings.ENABLE_GLOW_BLUR, LYRICS, 2, null, Visibility.ALWAYS, NONE);
@@ -313,28 +333,27 @@ public final class ControlRegistry {
                 "settings_layout_editor_element_follow", label(Settings.FOLLOW_CHIP_ICON),
                 ControlSpec.Effect.CHIPS, "Adaptive arrow", "Static arrow", "Waveform");
 
-        // Navigation is shared by the Text and Animation tabs.
+        // Navigation is shared by the Text and Motion tabs. The Motion tab keeps the agent name
+        // "animation": only its visible label changes.
         composite(rows, null, null, CARD, null, null, "card_tabs", Visibility.ALWAYS, REBUILD, null);
-        modeSlider(rows, Settings.LIVE_CARD_TEXT_SIZE, Settings.LIVE_CARD_TEXT_SIZE_CUSTOM,
-                CARD, 0, "custom", Visibility.ALWAYS, ControlSpec.Effect.CARD);
-        choice(rows, Settings.LIVE_CARD_WEIGHT, CARD, 0, null, Visibility.ALWAYS, REBUILD,
+        cardModeSlider(rows, Settings.LIVE_CARD_TEXT_SIZE, Settings.LIVE_CARD_TEXT_SIZE_CUSTOM,
+                0, CARD_GROUP_TEXT, "custom", null, ControlSpec.Effect.CARD);
+        cardChoice(rows, Settings.LIVE_CARD_WEIGHT, 0, CARD_GROUP_TEXT, Visibility.ALWAYS, null,
                 "Regular", "Medium", "Bold");
-        choice(rows, Settings.LIVE_CARD_SECONDARY_MODE, CARD, 0, null, Visibility.ALWAYS, REBUILD,
-                "Main only", "Transliteration", "Translation", "Both");
-        choice(rows, Settings.LIVE_CARD_OVERFLOW, CARD, 0, null, Visibility.ALWAYS, REBUILD,
-                "Wrap", "Scroll with lyric", "Clip");
-        choice(rows, Settings.LIVE_CARD_SCROLL_SCOPE, CARD, 0, null,
-                context -> context.settings.get(Settings.LIVE_CARD_OVERFLOW, LiveCardOverflow.class)
-                        == LiveCardOverflow.SCROLL_WITH_LYRIC,
-                REBUILD, "Grouped", "Individual lines");
-        choice(rows, Settings.LIVE_CARD_ANIMATION, CARD, 1, null, Visibility.ALWAYS, REBUILD,
-                "Minimal", "Karaoke fill", "Spotlight word");
-        choice(rows, Settings.LIVE_CARD_GLOW, CARD, 1, null, Visibility.ALWAYS, REBUILD,
-                "Off", "Word only");
-        choice(rows, Settings.LIVE_CARD_LINE_SYNC_FILL, CARD, 1, null, Visibility.ALWAYS, REBUILD,
-                "Top to bottom", "Left to right (block)", "Left to right (sentence)");
-        choice(rows, Settings.LIVE_CARD_TRANSITION, CARD, 1, null, Visibility.ALWAYS, REBUILD,
-                "Fade up", "Crossfade", "None");
+        cardChoice(rows, Settings.LIVE_CARD_SECONDARY_MODE, 0, CARD_GROUP_TEXT, Visibility.ALWAYS,
+                null, "Main only", "Transliteration", "Translation", "Both");
+        cardChoice(rows, Settings.LIVE_CARD_OVERFLOW, 0, CARD_GROUP_LONG_LINES, Visibility.ALWAYS,
+                null, "Wrap", "Scroll with lyric", "Clip");
+        cardChoice(rows, Settings.LIVE_CARD_SCROLL_SCOPE, 0, CARD_GROUP_LONG_LINES, CARD_SCROLLS,
+                null, "Grouped", "Individual lines");
+        cardChoice(rows, Settings.LIVE_CARD_ANIMATION, 1, CARD_GROUP_MOTION, Visibility.ALWAYS,
+                null, "Minimal", "Karaoke fill", "Spotlight word");
+        cardChoice(rows, Settings.LIVE_CARD_GLOW, 1, CARD_GROUP_MOTION, CARD_SWEEP,
+                null, "Off", "Word only");
+        cardChoice(rows, Settings.LIVE_CARD_LINE_SYNC_FILL, 1, CARD_GROUP_MOTION, CARD_SWEEP,
+                null, "Top to bottom", "Left to right (block)", "Left to right (sentence)");
+        cardChoice(rows, Settings.LIVE_CARD_TRANSITION, 1, CARD_GROUP_MOTION, Visibility.ALWAYS,
+                null, "Fade up", "Crossfade", "None");
         return Collections.unmodifiableList(rows);
     }
 
@@ -519,6 +538,25 @@ public final class ControlRegistry {
             ControlSpec.Effect effect) {
         rows.add(spec(setting, element, tab, null, MODE_SLIDER, Collections.emptyList(), custom,
                 visibility, effect, null, null, SliderSpec.from(custom, "settings_unit_percent"), modeValue, null, null));
+    }
+
+    /**
+     * A card choice row. It always names itself because several rows share one group card, and
+     * its hint explains why the row is there or what the choices change.
+     */
+    private static void cardChoice(List<ControlSpec> rows, Settings.Setting<String> setting,
+            int tab, String group, Visibility visibility, String hint, String... values) {
+        rows.add(spec(setting, CARD, tab, group, CHOICE, Arrays.asList(values), null,
+                visibility, REBUILD, null, hint, null, null, label(setting), null));
+    }
+
+    /** The card's text size slider: writes the mode and its custom value, then marks the card. */
+    private static void cardModeSlider(List<ControlSpec> rows, Settings.Setting<String> setting,
+            Settings.IntegerSetting custom, int tab, String group, String modeValue, String hint,
+            ControlSpec.Effect effect) {
+        rows.add(spec(setting, CARD, tab, group, MODE_SLIDER, Collections.emptyList(), custom,
+                Visibility.ALWAYS, effect, null, hint,
+                SliderSpec.from(custom, "settings_unit_percent"), modeValue, label(setting), null));
     }
 
     private static void composite(List<ControlSpec> rows, Settings.Setting<?> setting,

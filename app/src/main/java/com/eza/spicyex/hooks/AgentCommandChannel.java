@@ -83,6 +83,8 @@ import java.util.function.Consumer;
  *   <li>{@code editor select <name>} — select one element: {@code artwork},
  *       {@code track_text}, {@code focus}, {@code lyrics}, {@code background}, {@code skip},
  *       {@code follow}, {@code top_bar}, {@code card}</li>
+ *   <li>{@code editor source demo|live} — switch the card preview's document source</li>
+ *   <li>{@code editor replay} — restart the card preview's current line</li>
  *   <li>{@code editor tab <name>} — switch the open editor's tab strip: the card editor takes
  *       {@code text} or {@code animation}, the lyrics editor {@code style}, {@code animation},
  *       or {@code effects}</li>
@@ -937,8 +939,15 @@ final class AgentCommandChannel {
                         reply("ok", "editor", "random action=" + request[0], correlation);
                         return;
                     }
+                    case "replay": {
+                        boolean accepted = shell.agentEditorAction("replay", "");
+                        reply(accepted ? "ok" : "error", "editor", "accepted=" + accepted,
+                                correlation);
+                        return;
+                    }
                     case "back":
                     case "demo":
+                    case "source":
                     case "options":
                     case "reveal":
                     case "reset": {
@@ -958,7 +967,7 @@ final class AgentCommandChannel {
                         return;
                     }
                     default:
-                        reply("error", "editor", "expected open, close, select, tap, back, demo, tab, mode, choose, random, options, reveal, or reset", correlation);
+                        reply("error", "editor", "expected open, close, select, tap, back, demo, source, replay, tab, mode, choose, random, options, reveal, or reset", correlation);
                 }
             } catch (Throwable t) {
                 reply("error", "editor", "threw " + t, correlation);

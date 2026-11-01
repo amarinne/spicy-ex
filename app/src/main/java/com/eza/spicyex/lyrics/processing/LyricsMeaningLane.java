@@ -320,6 +320,16 @@ public final class LyricsMeaningLane {
     }
 
     /**
+     * True when the lane may ask the run for a second, buying result.
+     *
+     * <p>Older-epoch output stays displayable. The second run replaces it with a current-epoch
+     * purchase when it may call the provider, and returns the older answer otherwise.
+     */
+    static boolean shouldRequestMeaning(boolean hasArtifact, boolean legacy) {
+        return !hasArtifact || legacy;
+    }
+
+    /**
      * The AI path for this layer.
      *
      * <p>Shaped like the Google path deliberately — same run guard, same coalescer, same completion
@@ -393,10 +403,16 @@ public final class LyricsMeaningLane {
                             }
                         });
                     }
-                    if (!result.hasArtifact()) {
-                        result = AiMeaningRun.run(context, settings, run.base,
-                                workerSnapshot, googleBaseline, refineGoogle, targetLang,
+                    if (shouldRequestMeaning(result != null && result.hasArtifact(),
+                            result != null && result.legacy)) {
+                        AiMeaningRun.Result requested = AiMeaningRun.run(context, settings,
+                                run.base, workerSnapshot, googleBaseline, refineGoogle, targetLang,
                                 allowProviderRequest, signal, monitor, explicitAiRequest);
+                        // A failed explicit request keeps the older answer on screen, but its
+                        // outcome still reports the failure; AiMeaningRun returns both together.
+                        boolean keepFirst = result != null && result.hasArtifact()
+                                && (requested == null || !requested.hasArtifact());
+                        if (!keepFirst) result = requested;
                     }
                     if (result != null && result.outcome != null
                             && result.outcome.kind == AiRunOutcome.Kind.FAILED) {

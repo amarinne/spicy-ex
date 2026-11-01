@@ -7,8 +7,9 @@ import java.util.List;
 /** The now-playing card animation (Settings.LIVE_CARD_ANIMATION). */
 public enum LiveCardAnimation implements StoredValue {
     MINIMAL("Minimal"),
-    KARAOKE_FILL("Karaoke fill"),
-    SPOTLIGHT_WORD("Spotlight word", "Full");
+    /** "Full" was the pre-2.x name of the card's normal full animation: same effect, same read. */
+    KARAOKE_FILL("Karaoke fill", "Full"),
+    SPOTLIGHT_WORD("Spotlight word");
 
     /** The value used when the stored label is unknown or absent. */
     public static final LiveCardAnimation DEFAULT = KARAOKE_FILL;

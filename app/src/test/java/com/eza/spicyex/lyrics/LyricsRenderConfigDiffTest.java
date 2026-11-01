@@ -88,6 +88,14 @@ public class LyricsRenderConfigDiffTest {
         assertTrue(diff.hasChanges);
     }
 
+    /** Spotlight asks for word spans itself, so entering it changes the row shape. */
+    @Test
+    public void switchingSpotlightRebuildsRows() throws Exception {
+        LyricsRenderConfig.Diff diff = base().diff(withField("spotlight", true));
+        assertTrue(diff.needsRowRemount);
+        assertTrue(diff.hasChanges);
+    }
+
     @Test
     public void bounceScopeInvalidates() throws Exception {
         WordBounceMode current = (WordBounceMode) fieldValue(base(), "wordBounceScope");

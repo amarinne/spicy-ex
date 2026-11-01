@@ -340,6 +340,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private String ambientImageId = "";
     private String loadingTrackId = "";
     private LyricsDocument document;
+    /** Last real document, kept while the lyrics editor's demo mode replaces {@link #document}. */
+    private LyricsDocument editorLiveSnapshot;
     private boolean running;
     private boolean chromeRevealAnimating;
     private boolean scrollWindowRenderScheduled;
@@ -501,6 +503,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         soundAiFeedback.reset();
         meaningAiFeedback.reset();
         document = null;
+        editorLiveSnapshot = null;
         String id = trackIdFromUri(snapshot.trackUri);
         loadingTrackId = id;
         pendingSourceSwap = null;
@@ -796,6 +799,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 })
                 .enableDemoData(this::enableDemoMode)
                 .disableDemoData(this::disableDemoMode)
+                .liveDocumentSupplier(this::editorLiveDocument)
                 .skipChip(skipChip)
                 .followChip(followChip)
                 .cardMode(cardMode)
@@ -1137,6 +1141,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void enableDemoMode() {
         if (demoModeActive) return;
         demoModeActive = true;
+        if (document != null) editorLiveSnapshot = document;
         if (demoTrack == null) demoTrack = DemoLyricsContent.demoTrack();
         if (demoArtBitmap == null) demoArtBitmap = DemoLyricsContent.demoArtBitmap();
         document = DemoLyricsContent.demoDocument();
@@ -1166,8 +1171,18 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         lastDisplayedArtist = "";
         lastDisplayedAlbum = "";
         document = null;
+        editorLiveSnapshot = null;
         lastUri = "";
         showLoading("Waiting for Spotify track…");
+    }
+
+    /**
+     * The last real document for the card editor's Live preview. Demo mode replaces
+     * {@link #document}, so the snapshot is read first; null means no real lyrics are available.
+     */
+    private LyricsDocument editorLiveDocument() {
+        if (editorLiveSnapshot != null) return editorLiveSnapshot;
+        return demoModeActive ? null : document;
     }
 
     private boolean isLandscape() {
@@ -2243,6 +2258,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         soundAiFeedback.reset();
         meaningAiFeedback.reset();
         document = null;
+        editorLiveSnapshot = null;
         String id = trackIdFromUri(uri);
         ambientImageId = safe(track.imageId);
         ambientController.updateForTrack(track, () -> running);
@@ -2749,6 +2765,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         cancelLoadEntranceAnimation();
         boolean firstMount = document == null;
         document = doc;
+        editorLiveSnapshot = doc;
         ambientController.updateForDocument(trackUri, doc);
         pendingLoadEntrance = firstMount;
         loadingTrackId = "";
@@ -2840,6 +2857,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         responseAttribution.bind(null);
         songChangeHadSkeleton = false;
         document = null;
+        editorLiveSnapshot = null;
         loadingTrackId = "";
         pendingSourceSwap = null;
         pendingSourceSwapUri = "";
