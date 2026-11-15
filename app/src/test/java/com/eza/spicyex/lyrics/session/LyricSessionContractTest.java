@@ -78,6 +78,19 @@ public class LyricSessionContractTest {
 
     // --- composition --------------------------------------------------------
 
+    @Test public void markerContaminatedMeaningDoesNotReachTheDisplayOrMutateTheArtifact() {
+        LyricSession session = session("hola", "adios");
+        String bad = "[SPX-8] Hello";
+        session = session.withMeaning(readyMeaning(session,
+                new MeaningEntry(session.base.rows.get(0).rowId, bad, "en"),
+                new MeaningEntry(session.base.rows.get(1).rowId, "Goodbye", "en")));
+        LyricsDocument projected = LegacyDocumentComposer.compose(document("hola", "adios"), session);
+        assertEquals("", projected.lines.get(0).translatedText);
+        assertEquals("Goodbye", projected.lines.get(1).translatedText);
+        assertEquals(bad, ((MeaningArtifact) session.meaning.artifact)
+                .meaning(session.base.rows.get(0).rowId).text);
+    }
+
     @Test
     public void soundAndMeaningComposeIndependentlyOntoOneSession() {
         LyricSession session = session("ichi", "ni");

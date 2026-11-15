@@ -196,10 +196,10 @@ public final class ReadingPlanFactory {
     }
 
     /**
-     * Alignment compares pronunciation shape, not tone-mark spelling. A whole-line phrase may
-     * correctly use a neutral tone while an isolated provider span uses its dictionary tone
-     * ({@code 记得 -> jì de}, but {@code 得 -> dé}). The full-line reading remains authoritative;
-     * this folded shape only decides whether its exact text can be projected over existing spans.
+     * Alignment compares pronunciation shape, not tone-mark spelling. Tone marks may legitimately
+     * differ between a phrase reading and an isolated provider span, so they are folded out of the
+     * comparison. The full-line reading remains authoritative; this folded shape only decides
+     * whether its exact text can be projected over existing spans.
      */
     private static String alignmentShape(String value) {
         String normalized = Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFD);

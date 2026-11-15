@@ -386,8 +386,8 @@ final class TrackInfoReadoutController {
         this.headerTitle = headerTitle;
         float density = activity.getResources().getDisplayMetrics().density;
         this.playIcon = new ActionIconDrawable(ActionIconDrawable.Kind.PLAY,
-                Color.rgb(232, 232, 238), density, true);
-        this.pauseIcon = new PauseBarsDrawable(Color.rgb(232, 232, 238));
+                NativeIconButtons.ICON_TINT, density, true);
+        this.pauseIcon = new PauseBarsDrawable(NativeIconButtons.ICON_TINT);
         this.panelMediaMode = readPanelMediaMode(config);
         android.view.ViewConfiguration vc = android.view.ViewConfiguration.get(activity);
         this.arbiter = new ArtGestureArbiter(vc.getScaledTouchSlop(),

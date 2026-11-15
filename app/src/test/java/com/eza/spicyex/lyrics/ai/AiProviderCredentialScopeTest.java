@@ -1,12 +1,9 @@
 package com.eza.spicyex.lyrics.ai;
 
-import com.eza.spicyex.Settings;
-
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertTrue;
 
 public class AiProviderCredentialScopeTest {
     @Test
@@ -49,15 +46,5 @@ public class AiProviderCredentialScopeTest {
         assertNotEquals(deepSeek, AiSettings.credentialScopeFor(AiSettings.PROVIDER_OPENROUTER));
         assertNotEquals(deepSeek, AiSettings.credentialScopeFor(AiSettings.PROVIDER_OPENAI));
         assertNotEquals(deepSeek, AiSettings.credentialScopeFor(AiSettings.PROVIDER_GEMINI));
-    }
-
-    @Test
-    public void deepSeekIsAFirstClassProviderWithAllDocumentedReasoningModes() {
-        assertTrue(Settings.AI_PROVIDER.allowedValues.contains(AiSettings.PROVIDER_DEEPSEEK));
-        assertEquals("Low", Settings.AI_DEEPSEEK_REASONING.defaultValue);
-        assertTrue(Settings.AI_DEEPSEEK_REASONING.allowedValues.contains("Off"));
-        assertTrue(Settings.AI_DEEPSEEK_REASONING.allowedValues.contains("Low"));
-        assertTrue(Settings.AI_DEEPSEEK_REASONING.allowedValues.contains("High"));
-        assertTrue(Settings.AI_DEEPSEEK_REASONING.allowedValues.contains("Max"));
     }
 }

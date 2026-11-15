@@ -42,11 +42,11 @@ public final class ScriptClassifier {
             if (!Character.isLetter(cp)) continue;
             // Scan the whole line: a single kana makes a kanji-heavy line Japanese, so the
             // first character must not decide the script.
-            if (isKana(cp)) japanese = true;
-            else if (isHangul(cp)) korean = true;
-            else if (isCjkIdeograph(cp)) chinese = true;
-            else if (isCyrillic(cp)) cyrillic = true;
-            else if (isGreek(cp)) greek = true;
+            if (SpicyTextDetection.isKana(cp)) japanese = true;
+            else if (SpicyTextDetection.isKorean(cp)) korean = true;
+            else if (SpicyTextDetection.isCjkIdeograph(cp)) chinese = true;
+            else if (SpicyTextDetection.isCyrillic(cp)) cyrillic = true;
+            else if (SpicyTextDetection.isGreek(cp)) greek = true;
             else if (isIndic(cp)) indic = true;
             else if (Character.UnicodeScript.of(cp) == Character.UnicodeScript.LATIN) latin = true;
         }
@@ -71,35 +71,9 @@ public final class ScriptClassifier {
         return SpicyTextDetection.hasKana(text);
     }
 
-    private static boolean isKana(int cp) {
-        return (cp >= 0x3040 && cp <= 0x30FF);
-    }
-
-    private static boolean isHangul(int cp) {
-        return (cp >= 0xAC00 && cp <= 0xD7AF)
-                || (cp >= 0x1100 && cp <= 0x11FF)
-                || (cp >= 0x3130 && cp <= 0x318F)
-                || (cp >= 0xA960 && cp <= 0xA97F)
-                || (cp >= 0xD7B0 && cp <= 0xD7FF);
-    }
-
-    private static boolean isCjkIdeograph(int cp) {
-        return Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN;
-    }
-
-    private static boolean isCyrillic(int cp) {
-        return (cp >= 0x0400 && cp <= 0x052F)
-                || (cp >= 0x2DE0 && cp <= 0x2DFF)
-                || (cp >= 0xA640 && cp <= 0xA69F);
-    }
-
-    private static boolean isGreek(int cp) {
-        return (cp >= 0x0370 && cp <= 0x03FF) || (cp >= 0x1F00 && cp <= 0x1FFF);
-    }
-
+    /** Any Indic script the detector's model family can serve. */
     private static boolean isIndic(int cp) {
-        Character.UnicodeScript script = Character.UnicodeScript.of(cp);
-        switch (script) {
+        switch (Character.UnicodeScript.of(cp)) {
             case DEVANAGARI:
             case GURMUKHI:
             case BENGALI:

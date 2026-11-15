@@ -74,16 +74,6 @@ public final class AiSignal {
         return true;
     }
 
-    /** A child that aborts when its parent does, and can be aborted alone for a call deadline. */
-    public static AiSignal child(AiSignal parent) {
-        final AiSignal child = new AiSignal();
-        if (parent != null) parent.onAbort(new Runnable() {
-            @Override public void run() {
-                child.abort(parent.reason());
-            }
-        });
-        return child;
-    }
 
     /** Links {@code parent} to {@code child} and returns the handle that unlinks them. */
     public static Registration link(AiSignal parent, final AiSignal child) {

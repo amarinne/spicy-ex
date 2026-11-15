@@ -25,6 +25,7 @@ public final class CatalogPickerModel {
     public enum RowKind {
         AUTO,
         SOURCE,
+        ACTION_IMPORT,
         ACTION_CHECK_ALL,
         ACTION_DELETE_TRACK
     }
@@ -35,12 +36,6 @@ public final class CatalogPickerModel {
         HAVE,
         EMPTY
     }
-
-    /** Source display order matches the automatic tie-break. */
-    static final SourceId[] SOURCE_ORDER = {
-            SourceId.SPICY_ORG, SourceId.APPLE, SourceId.SPOTIFY_NATIVE, SourceId.AMLL, SourceId.LRCLIB,
-            SourceId.QQ, SourceId.NETEASE,
-    };
 
     public static final class Row {
         public final RowKind kind;
@@ -123,8 +118,9 @@ public final class CatalogPickerModel {
                 bestBySource.put(pinned.sourceId, pinned);
             }
         }
-        for (SourceId source : SOURCE_ORDER) {
+        for (SourceId source : SourceId.values()) {
             CatalogCandidate best = bestBySource.get(source);
+            if (source == SourceId.LOCAL && best == null) continue;
             ProviderStatus status = stateFor(states, source);
             boolean selected = manual && selection != null && best != null
                     && selection.candidateId.equals(best.candidateId);
@@ -144,6 +140,8 @@ public final class CatalogPickerModel {
                         false, false, true, emptyMark(status), "", source));
             }
         }
+        rows.add(new Row(RowKind.ACTION_IMPORT, "Import lyrics", "",
+                false, false, false, DataMark.NONE, "", SourceId.LOCAL));
         StringBuilder enabled = new StringBuilder();
         if (policy != null) {
             for (SourceId source : policy.enabledOrder) {
@@ -195,17 +193,7 @@ public final class CatalogPickerModel {
     }
 
     public static String displaySource(SourceId source) {
-        if (source == null) return "Unknown";
-        switch (source) {
-            case SPICY_ORG: return "SpicyLyrics.org";
-            case APPLE: return "Apple Music";
-            case SPOTIFY_NATIVE: return "Spotify";
-            case AMLL: return "AMLL";
-            case LRCLIB: return "LRCLIB";
-            case QQ: return "QQ Music";
-            case NETEASE: return "NetEase";
-            default: return source.id;
-        }
+        return source == null ? "Unknown" : source.label;
     }
 
     static String displayTiming(CatalogCandidate candidate) {

@@ -42,6 +42,14 @@ public final class SettingsStore implements TypedStore {
         if (context != null) {
             com.eza.spicyex.lyrics.language.LanguageModelPack.attachContext(context);
         }
+        migrateAll(prefs);
+    }
+
+    /**
+     * Every legacy preference migration, in one place. Both the panel store and the hook reader
+     * run this, so a value stored by an older build is normalized on every path that reads it.
+     */
+    static void migrateAll(SharedPreferences prefs) {
         migrateLikedSongsButton(prefs);
         migratePanelMediaControls(prefs);
         migrateRemovedAppleCjkWrapFix(prefs);
@@ -75,6 +83,8 @@ public final class SettingsStore implements TypedStore {
      * landscape pair keeps its own value when the install stored one.
      */
     static synchronized void migrateBlurStrength(SharedPreferences prefs) {
+        if (prefs.contains(Settings.LYRICS_BLUR_STRENGTH.key)
+                && prefs.contains(Settings.LYRICS_BLUR_STRENGTH.key + "_ls")) return;
         Map<String, ?> values = prefs.getAll();
         SharedPreferences.Editor editor = null;
         if (!prefs.contains(Settings.LYRICS_BLUR_STRENGTH.key)) {
@@ -112,7 +122,14 @@ public final class SettingsStore implements TypedStore {
 
     /** The retired glow choice folds into the one that renders the same. */
     static synchronized void migrateLiveCardGlow(SharedPreferences prefs) {
-        Object stored = prefs.getAll().get(Settings.LIVE_CARD_GLOW.key);
+        if (!prefs.contains(Settings.LIVE_CARD_GLOW.key)) return;
+        Object stored;
+        try {
+            stored = prefs.getString(Settings.LIVE_CARD_GLOW.key, null);
+        } catch (ClassCastException wrongType) {
+            // A value stored by an older build with another type is left for the schema reader.
+            return;
+        }
         if (!LEGACY_LIVE_CARD_GLOW.equals(stored)) return;
         prefs.edit().putString(Settings.LIVE_CARD_GLOW.key, "Word only").apply();
     }

@@ -16,11 +16,11 @@ public class LyricsSessionTerminatedViewTest {
         Constructor<?> constructor = LyricsCatalog.View.class.getDeclaredConstructor(String.class,
                 CatalogState.class, CatalogPolicy.class, CatalogResolver.Resolution.class,
                 AcquisitionPlanner.Plan.class, LyricsDocument.class, int.class, boolean.class,
-                long.class, String.class);
+                boolean.class, long.class, String.class);
         constructor.setAccessible(true);
         CatalogPolicy oldPolicy = new CatalogPolicy(Collections.emptyList(), false);
         LyricsCatalog.View old = (LyricsCatalog.View) constructor.newInstance("track",
-                CatalogState.empty("track"), oldPolicy, null, null, null, 1, true, 1L, "");
+                CatalogState.empty("track"), oldPolicy, null, null, null, 1, true, true, 1L, "");
         assertTrue(SpicyOrgAccessState.terminate(context,
                 SpicyOrgAccessState.beginRequest(context, false), "key_revoked"));
         Method apply = LyricsSessionManager.class.getDeclaredMethod("applyView", LyricsCatalog.View.class);

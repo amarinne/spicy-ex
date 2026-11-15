@@ -27,6 +27,11 @@ import java.util.Set;
  * <p>Every track mutation goes through {@link #transact}: the track's state is read, one pure
  * {@link CatalogDecisions} function decides, and the whole write set lands in the same SQLite
  * transaction. There is no other writer for candidates, provider outcomes, rejections, or seats.
+ *
+ * <p>Snapshot reads are read-only: they never prune or repair storage. Expired Spicy.org rows are
+ * hidden from every snapshot immediately, but physical cleanup belongs to the explicit maintenance
+ * owner ({@link #pruneExpiredOrg} and its alarm). A read that cannot open or query the database
+ * reports {@link Read#readable} false instead of pretending the track has no catalog history.
  */
 public final class CatalogStore {
     private static volatile Helper helper;
@@ -42,6 +47,7 @@ public final class CatalogStore {
     /** Result of one transaction. {@link #committed} is false when storage failed or refused. */
     public static final class Committed {
         public final boolean committed;
+        /** Visible snapshot the decision saw; null only when the state could not be read. */
         public final CatalogState before;
         /** Null only when the state could not be read. */
         public final CatalogChange change;
@@ -55,6 +61,35 @@ public final class CatalogStore {
         public CatalogResolver.Resolution resolution() {
             return change == null ? null : change.resolution;
         }
+    }
+
+    /** One track snapshot, or the explicit fact that storage could not be read. */
+    public static final class Read {
+        /** Fully populated snapshot, or an empty placeholder when {@link #readable} is false. */
+        public final CatalogState state;
+        /** False means storage failed; never treat {@link #state} as a stored empty catalog. */
+        public final boolean readable;
+
+        private Read(CatalogState state, boolean readable) {
+            this.state = state;
+            this.readable = readable;
+        }
+
+        public static Read success(CatalogState state) {
+            return new Read(state == null ? CatalogState.empty("") : state, true);
+        }
+
+        public static Read unreadable(String trackId) {
+            return new Read(CatalogState.empty(trackId), false);
+        }
+    }
+
+    /**
+     * Storage read seam. Production uses SQLite; a failure-path test can inject the throw or an
+     * empty snapshot without opening a database.
+     */
+    interface SnapshotReader {
+        CatalogState read(Context context, String trackId);
     }
 
     private static Helper helper(Context context) {
@@ -84,7 +119,8 @@ public final class CatalogStore {
             SQLiteDatabase db = helper(context).getWritableDatabase();
             db.beginTransaction();
             try {
-                before = readState(db, trackId);
+                long now = System.currentTimeMillis();
+                before = visibleState(readState(db, trackId), now);
                 change = decision.decide(before);
                 if (change == null || !change.accepted) {
                     return new Committed(false, before, change);
@@ -102,30 +138,63 @@ public final class CatalogStore {
         }
     }
 
-    /** Read-only snapshot of one track; an empty state when storage is unreadable. */
-    public static CatalogState state(Context context, String trackId) {
-        if (context == null || trackId == null || trackId.isEmpty()) return CatalogState.empty(trackId);
+    /**
+     * Read-only snapshot of one track. Storage failure is reported as {@link Read#readable} false
+     * so callers never mistake an unreadable store for a durable empty catalog.
+     */
+    public static Read read(Context context, String trackId) {
+        return read(context, trackId, CatalogStore::readSqlite);
+    }
+
+    static Read read(Context context, String trackId, SnapshotReader reader) {
+        if (context == null || trackId == null || trackId.isEmpty()) {
+            return Read.success(CatalogState.empty(trackId));
+        }
         try {
-            SQLiteDatabase db = helper(context).getReadableDatabase();
-            // F10: one read transaction across every table. In WAL mode this snapshot cannot
-            // interleave with a concurrent commit, so a selection always references
-            // candidates from the same snapshot instead of a mix that never existed.
-            db.beginTransaction();
-            try {
-                CatalogState state = readState(db, trackId);
-                db.setTransactionSuccessful();
-                return state;
-            } finally {
-                db.endTransaction();
-            }
+            CatalogState stored = reader.read(context, trackId);
+            long now = System.currentTimeMillis();
+            return Read.success(visibleState(stored, now));
         } catch (Throwable t) {
-            Diagnostics.warn("CatalogStore", "state", t);
-            return CatalogState.empty(trackId);
+            Diagnostics.warn("CatalogStore", "read", t);
+            return Read.unreadable(trackId);
         }
     }
 
+    private static CatalogState readSqlite(Context context, String trackId) {
+        SQLiteDatabase db = helper(context).getReadableDatabase();
+        // F10: one read transaction across every table. In WAL mode this snapshot cannot
+        // interleave with a concurrent commit, so a selection always references
+        // candidates from the same snapshot instead of a mix that never existed.
+        db.beginTransaction();
+        try {
+            CatalogState state = readState(db, trackId);
+            db.setTransactionSuccessful();
+            return state;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /**
+     * The stored snapshot exactly as one decision or reader sees it. Expired Spicy.org rows stay
+     * on disk for the maintenance owner but never enter a snapshot, so removing read-time purges
+     * cannot re-expose an expired response. Derived state (candidates, provider status) is copied;
+     * the input is never mutated.
+     */
+    static CatalogState visibleState(CatalogState state, long nowMs) {
+        if (state == null) return CatalogState.empty("");
+        List<CatalogCandidate> visible = new ArrayList<>();
+        for (CatalogCandidate candidate : state.candidates) {
+            if (candidate == null) continue;
+            if (candidate.sourceId == SourceId.SPICY_ORG && visibleCandidate(candidate, nowMs) == null) {
+                continue;
+            }
+            visible.add(candidate);
+        }
+        return state.withVisible(visible);
+    }
+
     private static CatalogState readState(SQLiteDatabase db, String trackId) {
-        purgeExpiredSpicy(db, System.currentTimeMillis());
         List<CatalogCandidate> candidates = new ArrayList<>();
         try (Cursor cursor = db.query(CatalogSchema.TABLE_CANDIDATES, CANDIDATE_COLUMNS,
                 "track_id = ?", new String[]{trackId}, null, null, "fetched_at_ms ASC")) {
@@ -247,12 +316,10 @@ public final class CatalogStore {
      * deletion, artifacts go only when no stored candidate anywhere still has their digest.
      */
     private static void deleteOrphanArtifacts(SQLiteDatabase db, Set<String> digests) {
+        String orphan = "canonical_digest = ? AND NOT EXISTS (SELECT 1 FROM candidates WHERE canonical_digest = ?)";
         for (String digest : digests) {
             if (digest == null || digest.isEmpty()) continue;
-            db.delete(CatalogSchema.TABLE_ARTIFACTS, "canonical_digest = ? AND NOT EXISTS ("
-                            + "SELECT 1 FROM " + CatalogSchema.TABLE_CANDIDATES
-                            + " WHERE canonical_digest = ?)",
-                    new String[]{digest, digest});
+            db.delete(CatalogSchema.TABLE_ARTIFACTS, orphan, new String[]{digest, digest});
         }
     }
 
@@ -393,55 +460,16 @@ public final class CatalogStore {
     public static CatalogCandidate candidateById(Context context, String candidateId) {
         if (context == null || candidateId == null || candidateId.isEmpty()) return null;
         try {
-            SQLiteDatabase db = helper(context).getWritableDatabase();
-            purgeExpiredSpicy(db, System.currentTimeMillis());
+            SQLiteDatabase db = helper(context).getReadableDatabase();
             try (Cursor cursor = db.query(CatalogSchema.TABLE_CANDIDATES, CANDIDATE_COLUMNS,
                     "candidate_id = ?", new String[]{candidateId}, null, null, null)) {
-                return cursor.moveToFirst() ? candidate(cursor) : null;
+                return cursor.moveToFirst()
+                        ? visibleCandidate(candidate(cursor), System.currentTimeMillis()) : null;
             }
         } catch (Throwable t) {
             Diagnostics.warn("CatalogStore", "candidateById", t);
             return null;
         }
-    }
-
-    /** Every manual pin across tracks; corrupt rows skipped. */
-    public static List<CatalogSelection> manualSelections(Context context) {
-        List<CatalogSelection> out = new ArrayList<>();
-        if (context == null) return out;
-        try (Cursor cursor = helper(context).getReadableDatabase().query(
-                CatalogSchema.TABLE_SELECTION,
-                new String[]{"track_id", "candidate_id", "source_id", "provider_item_id",
-                        "last_accepted_digest"},
-                "mode = ?", new String[]{CatalogSource.SelectionMode.MANUAL.name()},
-                null, null, "track_id ASC")) {
-            while (cursor.moveToNext()) {
-                out.add(new CatalogSelection(cursor.getString(0),
-                        CatalogSource.SelectionMode.MANUAL, cursor.getString(1),
-                        SourceId.parse(cursor.getString(2)), cursor.getString(3),
-                        cursor.getString(4)));
-            }
-        } catch (Throwable t) {
-            Diagnostics.warn("CatalogStore", "manualSelections", t);
-        }
-        return out;
-    }
-
-    /** Stored track title for management rows; "" when the track row is absent. */
-    public static String trackTitle(Context context, String trackId) {
-        if (context == null || trackId == null || trackId.isEmpty()) return "";
-        try (Cursor cursor = helper(context).getReadableDatabase().query(
-                CatalogSchema.TABLE_TRACKS, new String[]{"title"},
-                "track_id = ?", new String[]{trackId}, null, null, null)) {
-            return cursor.moveToFirst() ? cursor.getString(0) : "";
-        } catch (Throwable t) {
-            Diagnostics.warn("CatalogStore", "trackTitle", t);
-            return "";
-        }
-    }
-
-    public static int trackCount(Context context) {
-        return count(context, CatalogSchema.TABLE_TRACKS, null, null);
     }
 
     public static int candidateCount(Context context) {
@@ -487,6 +515,13 @@ public final class CatalogStore {
             "has_provider_transliteration", "has_background_vocals", "has_duet", "has_credits",
             "canonical_digest", "normalized_document", "provider_transliteration", "raw_payload",
             "parser_revision", "adapter_revision", "fetched_at_ms"};
+
+    /** Direct reads obey the same hard-expiry boundary as track snapshots, without deleting. */
+    static CatalogCandidate visibleCandidate(CatalogCandidate candidate, long nowMs) {
+        return candidate != null && candidate.sourceId == SourceId.SPICY_ORG
+                && com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.expiredAt(
+                        candidate.fetchedAtMs, nowMs) ? null : candidate;
+    }
 
     private static CatalogCandidate candidate(Cursor cursor) {
         try {
@@ -584,7 +619,7 @@ public final class CatalogStore {
         }
     }
 
-    /** The alarm and CLI use the same bounded cleanup as normal catalog reads. */
+    /** The alarm and CLI use the same bounded cleanup; explicit maintenance is the only deleter. */
     public static int pruneExpiredOrg(Context context) {
         try {
             SQLiteDatabase db = helper(context).getWritableDatabase();
@@ -615,10 +650,8 @@ public final class CatalogStore {
     }
 
     private static final class Helper extends SQLiteOpenHelper {
-        private final Context context;
         Helper(Context context) {
             super(context, CatalogSchema.DATABASE, null, CatalogSchema.VERSION);
-            this.context = context;
             setWriteAheadLoggingEnabled(true);
         }
 
@@ -627,13 +660,6 @@ public final class CatalogStore {
             try (Cursor cursor = db.rawQuery("PRAGMA secure_delete=ON", null)) {
                 cursor.moveToFirst();
             }
-        }
-
-        @Override
-        public void onOpen(SQLiteDatabase db) {
-            super.onOpen(db);
-            purgeExpiredSpicy(db, System.currentTimeMillis());
-            com.eza.spicyex.lyrics.providers.SpicyOrgRetention.reschedule(context);
         }
 
         @Override

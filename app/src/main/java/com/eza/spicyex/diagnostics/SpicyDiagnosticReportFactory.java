@@ -362,17 +362,18 @@ public final class SpicyDiagnosticReportFactory {
             line.append(", last test=`").append(markdownText(ai.get("probe").getAsString()))
                     .append('`');
         }
-        appendLayerFailure(line, "meaning", ai);
-        appendLayerFailure(line, "pronunciation", ai);
+        appendLayerFailure(line, "meaning", "meaning", ai);
+        appendLayerFailure(line, "sound", "pronunciation", ai);
         return line.toString();
     }
 
-    private static void appendLayerFailure(StringBuilder line, String layer, JsonObject ai) {
-        JsonObject failure = ai.has(layer + "Failure")
-                && ai.get(layer + "Failure").isJsonObject()
-                ? ai.getAsJsonObject(layer + "Failure") : null;
+    private static void appendLayerFailure(StringBuilder line, String jsonLayer, String label,
+                                           JsonObject ai) {
+        JsonObject failure = ai.has(jsonLayer + "Failure")
+                && ai.get(jsonLayer + "Failure").isJsonObject()
+                ? ai.getAsJsonObject(jsonLayer + "Failure") : null;
         if (failure == null) return;
-        line.append(", ").append(layer).append(" last failed: `")
+        line.append(", ").append(label).append(" last failed: `")
                 .append(markdownText(failure.has("reason")
                         ? failure.get("reason").getAsString() : "unknown"));
         if (failure.has("status") && failure.get("status").getAsInt() > 0) {

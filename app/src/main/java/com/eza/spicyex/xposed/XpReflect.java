@@ -2,7 +2,6 @@ package com.eza.spicyex.xposed;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
-import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
@@ -186,11 +185,6 @@ public final class XpReflect {
         return Void.class;
     }
 
-    /** Exact-match method lookup that mirrors the legacy no-param-types failure mode. */
-    public static Method findMethodNoArgs(Class<?> clazz, String methodName) {
-        return findMethodExact(clazz, methodName);
-    }
-
     public static Constructor<?> findConstructorExact(Class<?> clazz, Class<?>... parameterTypes) {
         try {
             Constructor<?> constructor = clazz.getDeclaredConstructor(parameterTypes);
@@ -203,7 +197,4 @@ public final class XpReflect {
         }
     }
 
-    static String describe(Member member) {
-        return member == null ? "null" : member.toString();
-    }
 }

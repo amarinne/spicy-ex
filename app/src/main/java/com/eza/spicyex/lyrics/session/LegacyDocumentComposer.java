@@ -111,7 +111,10 @@ public final class LegacyDocumentComposer {
         if (line == null || entry == null) return false;
         if (kind == LayerKind.MEANING) {
             if (!(entry instanceof MeaningEntry)) return false;
-            line.translatedText = ((MeaningEntry) entry).text;
+            String translated = com.eza.spicyex.lyrics.processing.GoogleEnhancer
+                    .sanitizeTranslation(((MeaningEntry) entry).text);
+            if (translated.isEmpty()) return false;
+            line.translatedText = translated;
             return true;
         }
         if (!(entry instanceof SoundEntry)) return false;

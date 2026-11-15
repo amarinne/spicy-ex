@@ -265,6 +265,11 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     }
 
     @Override
+    public void importLocalLyrics(String expectedTrackUri, android.net.Uri file, CatalogActionCallback callback) {
+        lyricsSessionManager.importLocalLyrics(expectedTrackUri, file, callback);
+    }
+
+    @Override
     public void selectCatalogCandidate(String candidateId, CatalogActionCallback callback) {
         lyricsSessionManager.selectCatalogCandidate(candidateId, callback);
     }

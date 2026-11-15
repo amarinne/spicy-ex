@@ -1,14 +1,18 @@
 package com.eza.spicyex.lyrics.providers;
 
+import com.eza.spicyex.lyrics.LyricResponseReader;
+
 import android.content.Context;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricUtils;
 import com.eza.spicyex.lyrics.catalog.CatalogAdapters;
+import com.eza.spicyex.lyrics.catalog.ProviderFailure;
 import com.eza.spicyex.lyrics.catalog.CatalogSource;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import okhttp3.*;
+import static com.eza.spicyex.lyrics.catalog.ProviderFailure.*;
 
 /** One personal client key, one v1 request, and one catalog outcome. */
 final class SpicyOrgAdapter {
@@ -44,7 +48,7 @@ final class SpicyOrgAdapter {
             ticket = SpicyOrgAccessState.beginRequest(context, explicitRecovery);
         }
         if (ticket == null) {
-            fail(context, track, callback, SpicyOrgProtocol.error(403));
+            fail(context, track, callback, transientError(SpicyOrgProtocol.error(403)));
             return;
         }
         String trackId = LyricUtils.trackIdFromUri(track == null ? "" : track.uri);
@@ -52,16 +56,16 @@ final class SpicyOrgAdapter {
         try {
             request = SpicyOrgProtocol.request(trackId, key);
         } catch (IllegalArgumentException error) {
-            fail(context, track, callback, error.getMessage());
+            fail(context, track, callback, transientError(error.getMessage()));
             return;
         }
         if (cooldownActive(epoch, System.currentTimeMillis())) {
-            fail(context, track, callback, "Spicy Lyrics rate limited; retry later");
+            fail(context, track, callback, transientError("Spicy Lyrics rate limited; retry later"));
             return;
         }
         http.newCall(request).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException error) {
-                fail(context, track, callback, "Spicy Lyrics network unavailable");
+                fail(context, track, callback, transientError("Spicy Lyrics network unavailable"));
             }
 
             @Override public void onResponse(Call call, Response response) {
@@ -78,11 +82,11 @@ final class SpicyOrgAdapter {
                     if (seconds > 0) {
                         recordCooldown(context, epoch, seconds, System.currentTimeMillis());
                     }
-                    String raw = response.body() == null ? "" : response.body().string();
+                    String raw = response.body() == null ? "" : LyricResponseReader.read(response.body(), LyricResponseReader.LYRIC_BYTES);
                     if (!response.isSuccessful() || response.body() == null) {
                         SpicyOrgAccessState.terminate(context, ticket,
                                 SpicyOrgProtocol.terminationCode(response.code(), raw));
-                        fail(context, track, callback, SpicyOrgProtocol.error(response.code()));
+                        fail(context, track, callback, httpError(response.code(), SpicyOrgProtocol.error(response.code())));
                         return;
                     }
                     SpicyOrgProtocol.body(raw, trackId);
@@ -94,7 +98,7 @@ final class SpicyOrgAdapter {
                     // A rotation retires an old key's result before it can enter the cache.
                     synchronized (SpicyOrgKeyStore.class) {
                         if (!SpicyOrgAccessState.acceptValidatedResponse(context, ticket)) {
-                            fail(context, track, callback, "Spicy Lyrics key changed; retry");
+                            fail(context, track, callback, transientError("Spicy Lyrics key changed; retry"));
                             return;
                         }
                         document.selectedSource = "Spicy Lyrics";
@@ -105,7 +109,7 @@ final class SpicyOrgAdapter {
                                 trackId, raw, 1);
                     }
                 } catch (Exception error) {
-                    fail(context, track, callback, "Spicy Lyrics invalid response");
+                    fail(context, track, callback, transientError("Spicy Lyrics invalid response"));
                     return;
                 }
                 callback.onSuccess(document);
@@ -130,8 +134,8 @@ final class SpicyOrgAdapter {
     }
 
     private static void fail(Context context, SpotifyTrack track,
-                             LyricsRepository.ResultCallback callback, String error) {
-        CatalogAdapters.recordError(context, CatalogSource.SourceId.SPICY_ORG, track, error);
-        callback.onError(error);
+                             LyricsRepository.ResultCallback callback, ProviderFailure failure) {
+        CatalogAdapters.recordError(context, CatalogSource.SourceId.SPICY_ORG, track, failure);
+        callback.onFailure(failure);
     }
 }

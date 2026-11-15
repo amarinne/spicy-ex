@@ -1,0 +1,43 @@
+Mandarin g2pM reading pack
+===========================
+
+This directory is the shared offline Mandarin reading pack used by the eza式
+reader and the Standard Pinyin plain projection. Nothing is downloaded at run
+time. The manifest records source pins, file SHA-256 receipts, model tensor
+layouts, and attribution. The same directory is loadable by the pinned
+TypeScript engine and by the Android Java reader.
+
+Sources
+-------
+
+- g2pM 0.1.2.5 (Apache License 2.0), Copyright (c) 2020 Kakao Brain Corp.
+  Model weights, character vocabulary, output classes, and the character-reading
+  digest. The digest was derived upstream from CC-CEDICT and is distributed by
+  the g2pM package under Apache-2.0. CC-CEDICT is CC BY-SA 4.0:
+  https://creativecommons.org/licenses/by-sa/4.0/
+- phrase-pinyin-data v0.20.0 (MIT), Copyright (c) 2018 mozillazg.
+  `large_pinyin.txt` composes cc_cedict, zdic_cibs, zdic_cybs, pinyin, di, and
+  overwrite data; CC-CEDICT rows retain CC BY-SA 4.0 attribution.
+- pinyin-data v0.16.0 (MIT), Copyright (c) 2018 mozillazg.
+  `kMandarin_8105.txt` and `pinyin.txt` supply character defaults and
+  candidate readings.
+- OpenCC traditional-to-simplified character table from opencc-js 1.4.2
+  (MIT AND Apache-2.0), Copyright (c) 2020-2021 The nk2028 Project. Only
+  one-code-point replacements are kept.
+- The jieba dictionary and HMM as embedded by jieba-rs (MIT),
+  Copyright (c) 2018-2019 messense and Copyright (c) 2019 Paul Meng.
+  Segmentation, tags, and search subwords only; no readings come from jieba.
+
+The owner approved offline bundling of the CC-CEDICT-derived tables under
+CC BY-SA 4.0 on 2026-11-13. The derived data stays available under those
+licences; the full licence texts travel beside this notice. The application
+adds no technical measures that restrict reuse of that data. The data and the
+application code remain under their respective licences.
+
+Integrity
+---------
+
+manifest.json records the SHA-256 and byte length of every pack member. The
+runtime verifies every member before constructing the reader. A missing or
+modified file makes Mandarin readings unavailable; there is no fallback
+dictionary.

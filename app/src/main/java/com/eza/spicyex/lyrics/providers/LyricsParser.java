@@ -1,6 +1,9 @@
 package com.eza.spicyex.lyrics.providers;
 
+import com.eza.spicyex.lyrics.LyricResponseReader;
+
 import android.content.Context;
+import com.eza.spicyex.lyrics.catalog.ProviderFailure;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -153,7 +156,7 @@ public final class LyricsParser implements LyricsRepository.Parser {
     LyricsDocument parseLrclibCandidates(Context context, SpotifyTrack track, List<JsonObject> candidates) {
         double trackDurationSec = track == null || track.duration <= 0 ? -1d : track.duration / 1000d;
         int best = LrclibQueryPlanner.pickBest(candidates, trackDurationSec);
-        if (best < 0) throw new IllegalStateException("no LRCLIB result");
+        if (best < 0) throw ProviderFailure.notFound("no LRCLIB result");
         JsonObject chosen = candidates.get(best);
 
         LyricsDocument doc = new LyricsDocument();
@@ -807,7 +810,16 @@ public final class LyricsParser implements LyricsRepository.Parser {
         JsonObject object = root.getAsJsonObject();
         JsonObject lrcObject = Json.optObject(object, "lrc");
         String synced = lrcObject == null ? "" : Json.optString(lrcObject, "lyric");
-        if (isBlank(synced)) throw new IllegalStateException("NetEase lyric empty");
+        if (isBlank(synced)) {
+            boolean successful = (int) Json.optDouble(object, 200d, "code") == 200;
+            JsonElement lyric = lrcObject == null ? null : lrcObject.get("lyric");
+            if (successful && ((object.has("nolyric") && object.get("nolyric").getAsBoolean())
+                    || (lyric != null && lyric.isJsonPrimitive()
+                    && lyric.getAsJsonPrimitive().isString()))) {
+                throw ProviderFailure.notFound("NetEase lyric empty");
+            }
+            throw new IllegalStateException("Invalid NetEase lyric response");
+        }
 
         LyricsDocument doc = new LyricsDocument();
         doc.trackId = trackIdFromUri(track == null ? "" : track.uri);
@@ -963,7 +975,14 @@ public final class LyricsParser implements LyricsRepository.Parser {
                         java.nio.charset.StandardCharsets.UTF_8);
             }
         } catch (Throwable ignored) { }
-        if (isBlank(synced)) throw new IllegalStateException("QQ Music lyric empty");
+        if (isBlank(synced)) {
+            JsonElement lyric = obj.get("lyric");
+            if (lyric != null && lyric.isJsonPrimitive() && lyric.getAsJsonPrimitive().isString()
+                    && isBlank(lyricB64) && (int) Json.optDouble(obj, 0d, "code") == 0) {
+                throw ProviderFailure.notFound("QQ Music lyric empty");
+            }
+            throw new IllegalStateException("Invalid QQ Music lyric response");
+        }
 
         LyricsDocument doc = new LyricsDocument();
         doc.trackId = trackIdFromUri(track == null ? "" : track.uri);
@@ -1454,18 +1473,26 @@ public final class LyricsParser implements LyricsRepository.Parser {
 
     private static byte[] zlibInflate(byte[] data) throws Exception {
         java.util.zip.Inflater inflater = new java.util.zip.Inflater();
-        inflater.setInput(data);
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(Math.max(64, data.length * 4));
-        byte[] buffer = new byte[4096];
-        while (!inflater.finished()) {
-            int count = inflater.inflate(buffer);
-            if (count == 0) {
-                if (inflater.needsInput() || inflater.needsDictionary()) break;
+        try {
+            inflater.setInput(data);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(4096);
+            byte[] buffer = new byte[4096];
+            while (!inflater.finished()) {
+                int remaining = inflater.getRemaining();
+                int count = inflater.inflate(buffer);
+                if (out.size() + count > LyricResponseReader.LYRIC_BYTES) {
+                    throw new java.io.IOException("Decoded QRC exceeds byte budget");
+                }
+                if (count == 0 && !inflater.finished() && (inflater.needsInput()
+                        || inflater.needsDictionary() || inflater.getRemaining() == remaining)) {
+                    throw new java.io.IOException("Incomplete QRC compressed stream");
+                }
+                out.write(buffer, 0, count);
             }
-            out.write(buffer, 0, count);
+            return out.toByteArray();
+        } finally {
+            inflater.end();
         }
-        inflater.end();
-        return out.toByteArray();
     }
 
     private static String unescapeXmlEntities(String value) {

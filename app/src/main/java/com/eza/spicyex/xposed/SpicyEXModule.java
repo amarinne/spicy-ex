@@ -8,6 +8,7 @@ import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 
+import com.eza.spicyex.BuildStamp;
 import com.eza.spicyex.Diagnostics;
 import com.eza.spicyex.References;
 import com.eza.spicyex.SpotifyPlusConfig;
@@ -61,7 +62,8 @@ public final class SpicyEXModule extends XposedModule {
         }
         if (!TARGET_PACKAGE.equals(param.getPackageName())) return;
         Diagnostics.markHookRuntimeActive();
-        XpLog.log(TAG + " Loading SpotifyPlus");
+        // Deploy matches this CLUE to prove the restarted process loaded the new module snapshot.
+        XpLog.log(TAG + " Loading SpotifyPlus " + BuildStamp.CLUE);
 
         ClassLoader classLoader = param.getClassLoader();
         final XpPackage xpPackage = new XpPackage(param.getPackageName(), classLoader);

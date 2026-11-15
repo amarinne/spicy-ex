@@ -27,8 +27,7 @@ public final class SpotifyPlusConfig implements SettingsReader {
     private SpotifyPlusConfig(SharedPreferences hostPrefs, Context appContext) {
         this.hostPrefs = hostPrefs;
         this.appContext = appContext;
-        SettingsStore.migrateLikedSongsButton(hostPrefs);
-        SettingsStore.migrateFullscreenControls(hostPrefs);
+        SettingsStore.migrateAll(hostPrefs);
     }
 
     public static SpotifyPlusConfig from(Context context) {
@@ -73,14 +72,6 @@ public final class SpotifyPlusConfig implements SettingsReader {
         }
     }
 
-    public boolean getBoolean(String key, boolean defaultValue) {
-        return hostPrefs.getBoolean(key, defaultValue);
-    }
-
-    public String getString(String key, String defaultValue) {
-        return hostPrefs.getString(key, defaultValue);
-    }
-
     public boolean contains(Settings.Setting<?> setting) {
         return setting != null && hostPrefs.contains(setting.key);
     }
@@ -91,12 +82,5 @@ public final class SpotifyPlusConfig implements SettingsReader {
         return get(Settings.DISPLAY_MODE);
     }
 
-    public boolean showTranslationLyrics() {
-        // "original_translation" / "original_romanized_translation" — the translation-bearing
-        // members of Settings.DISPLAY_MODE's allowed values.
-        String mode = lyricsDisplayMode();
-        return "original_translation".equals(mode)
-                || "original_romanized_translation".equals(mode);
-    }
 
 }

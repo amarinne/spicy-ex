@@ -30,6 +30,7 @@ import com.eza.spicyex.lyrics.session.SoundArtifact;
 import com.eza.spicyex.lyrics.session.SoundEntry;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.lyrics.providers.LyricsParser;
+import com.eza.spicyex.lyrics.processing.GoogleEnhancer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,6 +57,20 @@ public final class ProcessedLyricsCache {
     /**
      * Reading-plan/cache identity.
      *
+     * <p>v12 drops Mandarin eza readings cached under revision 2 ({@code eza-2026-11-12.2}).
+     * Revision 3 ({@code eza-2026-11-15.3}) normalizes 一/不 at layer 1, keeps a neutral's real
+     * tone, applies the tone-4 pass across the whole line, and emits neutral pitch classes 0/6/7
+     * before layer 4 spells them. Cached eza lines would otherwise keep revision-2 marks.
+     *
+     * <p>v11 drops readings cached before digest eligibility moved to the source character. A
+     * traditional-only character no longer borrows its simplified shadow's polyphone coverage, so
+     * readings such as 為 wei4 and 乾 qian2 change and older artifacts must be recomputed.
+     *
+     * <p>v10 dropped Mandarin readings cached under the CC-CEDICT word matcher. The shared g2pM
+     * pack changes the reading provider and the evidence ranges.
+     *
+     * <p>v9 dropped readings cached under the earlier run-wide longest-match algorithm.
+     *
      * <p>v8 drops Sound artifacts cached while JapaneseReadingEngine skipped the downloaded
      * UniDic pack (null application context at Application#attach), storing provider-ruby-only
      * fallback readings. The tokenizer now keeps the supplied context, so those rows must be
@@ -72,7 +87,7 @@ public final class ProcessedLyricsCache {
      * v3 stored both as {@code line-fallback}, so keeping it would let cached Russian/Greek local
      * readings be billed and overwritten by Sound AI after upgrade.
      */
-    public static final int READING_SCHEMA_VERSION = 8;
+    public static final int READING_SCHEMA_VERSION = 12;
     private static final int RECORD_SCHEMA_VERSION = 1;
     private static final Gson GSON = new Gson();
 
@@ -207,16 +222,19 @@ public final class ProcessedLyricsCache {
         if (!artifact.canonicalDigest.equals(base.digest)) return false;
         try {
             JsonObject rows = new JsonObject();
+            boolean complete = !artifact.partial;
             for (CanonicalRow row : base.rows) {
                 MeaningEntry entry = artifact.meaning(row.rowId);
                 if (entry == null || isBlank(entry.text)) continue;
+                String translated = GoogleEnhancer.sanitizeTranslation(entry.text);
+                if (translated.isEmpty()) { complete = false; continue; }
                 JsonObject item = new JsonObject();
                 item.addProperty("text", row.text);
-                item.addProperty("translatedText", entry.text);
+                item.addProperty("translatedText", translated);
                 rows.add(row.rowId, item);
             }
             if (rows.size() == 0) return false;
-            JsonObject record = newRecordHeader("MEANING", base.digest, artifact.configId, !artifact.partial);
+            JsonObject record = newRecordHeader("MEANING", base.digest, artifact.configId, complete);
             record.add("rows", rows);
             if (isPaid(artifact)) return true;
             return LyricCaches.putMeaningArtifact(context,
@@ -232,23 +250,28 @@ public final class ProcessedLyricsCache {
     public static Applied applyMeaning(Context context, LyricsDocument doc, CanonicalBase base,
                                        String meaningConfigId) {
         JsonObject record = read(context, false, base, meaningConfigId);
+        return applyMeaningRecord(doc, base, record);
+    }
+
+    static Applied applyMeaningRecord(LyricsDocument doc, CanonicalBase base, JsonObject record) {
         if (record == null) return Applied.NONE;
         JsonObject rows = Json.optObject(record, "rows");
         if (rows == null) return Applied.NONE;
         int applied = 0;
+        boolean complete = Json.optBoolean(record, false, "complete");
         for (CanonicalRow row : base.rows) {
             LyricsLine line = lineFor(doc, row);
             if (line == null) continue;
             JsonObject item = Json.optObject(rows, row.rowId);
             if (item == null || !safe(line.text).equals(Json.optString(item, "text"))) continue;
-            String translated = Json.optString(item, "translatedText");
-            if (isBlank(translated)) continue;
+            String translated = GoogleEnhancer.sanitizeTranslation(Json.optString(item, "translatedText"));
+            if (isBlank(translated)) { complete = false; continue; }
             line.translatedText = translated;
             applied++;
         }
         XpLog.log(TAG + " meaning applied rows=" + applied + "/" + base.rows.size()
-                + " complete=" + Json.optBoolean(record, false, "complete"));
-        return new Applied(applied > 0, Json.optBoolean(record, false, "complete"), applied);
+                + " complete=" + complete);
+        return new Applied(applied > 0, complete, applied);
     }
 
     public static boolean saveMeaning(Context context, LyricsDocument doc, CanonicalBase base,
@@ -260,9 +283,11 @@ public final class ProcessedLyricsCache {
             for (CanonicalRow row : base.rows) {
                 LyricsLine line = lineFor(doc, row);
                 if (line == null || isBlank(line.translatedText)) continue;
+                String translated = GoogleEnhancer.sanitizeTranslation(line.translatedText);
+                if (translated.isEmpty()) { complete = false; continue; }
                 JsonObject item = new JsonObject();
                 item.addProperty("text", safe(line.text));
-                item.addProperty("translatedText", line.translatedText);
+                item.addProperty("translatedText", translated);
                 rows.add(row.rowId, item);
             }
             if (rows.size() == 0) return false;

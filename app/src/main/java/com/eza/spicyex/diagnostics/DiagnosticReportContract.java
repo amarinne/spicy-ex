@@ -6,6 +6,7 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /** Shared intake bounds and Spicy EX category policy. */
@@ -25,11 +26,14 @@ public final class DiagnosticReportContract {
             "https://github.com/amarinne/spicy-ex/blob/main/DIAGNOSTIC_DATA_POLICY.md";
     private static final String ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     private static final SecureRandom RANDOM = new SecureRandom();
-    private static final Set<String> CATEGORIES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+    /** Wire ids in picker order; the dialog's label array stays aligned with this list. */
+    public static final List<String> CATEGORIES = Collections.unmodifiableList(Arrays.asList(
             "missing_wrong_lyrics", "timing", "translation", "ai_features",
             "transliteration_romanization",
             "fullscreen_renderer", "now_playing_card", "hyperglow_bridge", "crash_restart", "other"
-    )));
+    ));
+    private static final Set<String> CATEGORY_SET =
+            Collections.unmodifiableSet(new HashSet<>(CATEGORIES));
 
     private DiagnosticReportContract() {
     }
@@ -63,7 +67,7 @@ public final class DiagnosticReportContract {
     }
 
     public static boolean validCategory(String value) {
-        return CATEGORIES.contains(value);
+        return CATEGORY_SET.contains(value);
     }
 
     public static boolean validDescription(String value) {

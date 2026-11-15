@@ -553,6 +553,7 @@
         "ai/ai_enabled|TOGGLE|",
         "android_auto/auto_enabled|TOGGLE|",
         "android_auto/auto_secondary_text|CHOICE|Main only;Transliteration;Translation;Both",
+        "android_auto/auto_duet|TOGGLE|",
         "pip/lyrics_pip_enabled|TOGGLE|"
       ]
     },
@@ -622,6 +623,7 @@
         "ai/ai_button_behavior|CHOICE|Generate AI output, then toggle;Toggle display only",
         "android_auto/auto_enabled|TOGGLE|",
         "android_auto/auto_secondary_text|CHOICE|Main only;Transliteration;Translation;Both",
+        "android_auto/auto_duet|TOGGLE|",
         "pip/lyrics_pip_enabled|TOGGLE|",
         "pip/lyrics_pip_shape|CHOICE|Portrait;Square;Tall;Landscape;Wide",
         "pip/lyrics_pip_controls|TOGGLE|",

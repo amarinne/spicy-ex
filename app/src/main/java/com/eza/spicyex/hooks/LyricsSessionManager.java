@@ -155,6 +155,7 @@ final class LyricsSessionManager {
     private String noLyricsReason = "";
     /** Hard cap on automatic fetches per visit, whatever the stored outcomes say. */
     static final int MAX_AUTO_ATTEMPTS = CatalogSource.SourceId.values().length;
+    private boolean importingLocalLyrics;
     private String canonicalLoadingUri = "";
     /** Last completed detection for the current base, for diagnostics and status. */
     private DetectionArtifact detectionArtifact;
@@ -386,6 +387,11 @@ final class LyricsSessionManager {
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.STALE_RESULT_REJECTED);
             return;
         }
+        if (view != null && !view.readable) {
+            // A failed read is not an empty catalog: keep the current seat and use the same
+            // no-snapshot fallback as an unreadable record, never an empty-state plan.
+            view = null;
+        }
         if (view != null && !applyView(view)) {
             // A delivery (a native capture, usually) committed and published while this load was
             // reading; plan from the newer state instead of this snapshot.
@@ -426,9 +432,12 @@ final class LyricsSessionManager {
         return "Lyrics unavailable (cached no-result)";
     }
 
-    /** Drops catalog views read before one already applied: IO threads can post out of order. */
+    /**
+     * Drops catalog views read before one already applied, and any view whose storage read failed.
+     * An unreadable snapshot must not replace the session's policy or its published order.
+     */
     private boolean applyView(LyricsCatalog.View view) {
-        if (view == null || view.sequence < appliedViewSequence) return false;
+        if (view == null || !view.readable || view.sequence < appliedViewSequence) return false;
         if (view.policy != null && !view.policy.hasCurrentOrgAccess(context)) {
             loadedPolicy = null;
             replan();
@@ -447,7 +456,9 @@ final class LyricsSessionManager {
      */
     private void schedule(LyricsCatalog.View view, boolean afterAttempt) {
         long now = snapshotClock.getAsLong();
-        if (view == null) {
+        if (view == null || !view.readable) {
+            // No usable snapshot: use the designed owner-fallback walk instead of planning from
+            // placeholder state, which would look like a durable catalog absence.
             pendingPlan = afterAttempt || localTried ? null
                     : AcquisitionPlanner.refreshAllInOrder(CatalogPolicy.read(context));
             nextFetchAtMs = now;
@@ -597,6 +608,12 @@ final class LyricsSessionManager {
                 if (!policy.accepts(requestedGeneration, requestedUri)) return;
                 if (planned == null) {
                     pendingPlan = null;
+                    return;
+                }
+                if (!planned.readable) {
+                    // Keep the last plan and retry the read later: a failed snapshot is not a
+                    // settled, empty catalog.
+                    nextFetchAtMs = snapshotClock.getAsLong() + RETRY_MS;
                     return;
                 }
                 if (!applyView(planned)) {
@@ -800,6 +817,11 @@ final class LyricsSessionManager {
             return;
         }
         if (attemptId != 0L && attemptId == automaticAttemptId && requestedUri.equals(loadingUri)) loadingUri = "";
+        if (seated != null && !seated.readable) {
+            // No snapshot to apply: keep the delivery fallback policy and never clear or replace
+            // the displayed base from an unreadable state.
+            seated = null;
+        }
         if (seated != null && !applyView(seated)) {
             replan();
             completeCatalogAction(callback, durable || document != null, "Source checked; newer state retained");
@@ -842,7 +864,9 @@ final class LyricsSessionManager {
         NativeRuntime.LYRICS_IO.execute(() -> {
             try {
                 String bare = CatalogSource.bareTrackId(uri);
-                CatalogState state = CatalogStore.state(context, bare);
+                // Read-only picker: an unreadable store shows no rows and changes nothing. It must
+                // not stand in for an empty catalog or write an outcome.
+                CatalogState state = CatalogStore.read(context, bare).state;
                 CatalogPolicy sources = CatalogPolicy.read(context);
                 CatalogResolver.Resolution auto = state.candidates.isEmpty() ? null
                         : CatalogDecisions.autoResolution(state, sources);
@@ -876,6 +900,48 @@ final class LyricsSessionManager {
     /** The acquisition fetch owns {@code loadingUri} from launch until its outcome is accepted. */
     boolean catalogFetchInFlight() {
         return !loadingUri.isEmpty() && loadingUri.equals(policy.trackUri());
+    }
+
+    /** Reads before writing; a failed or stale import leaves every saved candidate and pin intact. */
+    void importLocalLyrics(String expectedTrackUri, android.net.Uri file,
+                           LyricsHost.CatalogActionCallback callback) {
+        SpotifyTrack current = track;
+        String uri = policy.trackUri();
+        int generation = policy.generation();
+        if (!uri.equals(expectedTrackUri)) {
+            completeCatalogAction(callback, false, "Track changed");
+            return;
+        }
+        if (current == null || file == null || CatalogSource.bareTrackId(uri).isEmpty()) {
+            completeCatalogAction(callback, false, "Unsupported track or file");
+            return;
+        }
+        if (importingLocalLyrics) {
+            completeCatalogAction(callback, false, "Import already running");
+            return;
+        }
+        importingLocalLyrics = true;
+        LyricsHost.CatalogActionCallback completion = (ok, detail) -> {
+            importingLocalLyrics = false;
+            completeCatalogAction(callback, ok, detail);
+        };
+        NativeRuntime.LYRICS_IO.execute(() -> {
+            com.eza.spicyex.lyrics.catalog.CatalogCandidate candidate;
+            try {
+                candidate = com.eza.spicyex.lyrics.catalog.LocalLyricsImport.read(current,
+                        context.getContentResolver().openInputStream(file), System.currentTimeMillis());
+            } catch (Exception error) {
+                completeCatalogAction(completion, false, "Could not read a supported TTML file (maximum 4 MiB)");
+                return;
+            }
+            handler.post(() -> {
+                if (!policy.accepts(generation, uri)) {
+                    completeCatalogAction(completion, false, "Track changed");
+                    return;
+                }
+                runCatalogCommand(LyricsCatalog.importLocal(candidate, current), completion, "Lyrics imported");
+            });
+        });
     }
 
     /** Pins one stored candidate as this track's manual selection and renders it. */
@@ -961,6 +1027,7 @@ final class LyricsSessionManager {
 
     private static String commandFailure(LyricsCatalog.View view) {
         if (view == null) return "Unsupported track";
+        if (!view.readable) return "Could not read saved source selection";
         switch (view.outcome) {
             case "missing-candidate":
                 return "Saved source is unavailable";
@@ -977,7 +1044,7 @@ final class LyricsSessionManager {
         SpotifyTrack current = track;
         String uri = policy.trackUri();
         int generation = policy.generation();
-        if (current == null || uri.isEmpty() || source == null) {
+        if (current == null || uri.isEmpty() || source == null || source == CatalogSource.SourceId.LOCAL) {
             completeCatalogAction(callback, false, "No current track or source");
             return;
         }

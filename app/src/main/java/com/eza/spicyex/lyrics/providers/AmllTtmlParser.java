@@ -40,19 +40,41 @@ public final class AmllTtmlParser {
 
     /** Parses one AMLL TTML document; throws on malformed XML or lyric-less content. */
     public static LyricsDocument parse(String ttml, String trackId, long durationMs) throws Exception {
+        return parse(ttml, trackId, durationMs, DocumentBuilderFactory.newInstance());
+    }
+
+    /** Local files reject unsupported timing instead of silently changing authored timestamps. */
+    public static LyricsDocument parseLocal(String ttml, String trackId, long durationMs) throws Exception {
+        return parse(ttml, trackId, durationMs, DocumentBuilderFactory.newInstance(), true);
+    }
+
+    static LyricsDocument parse(String ttml, String trackId, long durationMs,
+                                DocumentBuilderFactory factory) throws Exception {
+        return parse(ttml, trackId, durationMs, factory, false);
+    }
+
+    private static LyricsDocument parse(String ttml, String trackId, long durationMs,
+                                        DocumentBuilderFactory factory, boolean local) throws Exception {
         if (isBlank(ttml)) throw new IllegalStateException("empty TTML");
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        rejectDeclarations(ttml);
+        factory.setValidating(false);
         factory.setNamespaceAware(false);
         factory.setExpandEntityReferences(false);
-        // Local fixed-schema community payloads: no external entities or DTD fetching.
+        // Android XML factories do not all expose Xerces features. The lexical guard above
+        // rejects DTDs before builder creation on every factory; the resolver below independently
+        // refuses external resolution. Feature support is an extra defense, not the fallback.
         try {
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        } catch (Exception ignored) {
-            // Parser without the feature still honors the narrow element walk below.
+        } catch (javax.xml.parsers.ParserConfigurationException unsupported) {
+            // Safe without this feature: no document declaration can reach the parser.
         }
-        Element root = factory.newDocumentBuilder()
-                .parse(new InputSource(new StringReader(ttml))).getDocumentElement();
+        javax.xml.parsers.DocumentBuilder builder = factory.newDocumentBuilder();
+        builder.setEntityResolver((publicId, systemId) -> {
+            throw new org.xml.sax.SAXException("External XML entities are forbidden");
+        });
+        Element root = builder.parse(new InputSource(new StringReader(ttml))).getDocumentElement();
         if (!"tt".equals(root.getTagName())) throw new IllegalStateException("not TTML");
+        if (local) validateLocal(root);
 
         LyricsDocument doc = new LyricsDocument();
         doc.trackId = safe(trackId);
@@ -74,6 +96,72 @@ public final class AmllTtmlParser {
         doc.type = anyTimedWords ? "Word" : doc.lines.get(0).startMs > 0 || doc.lines.get(0).endMs > 0
                 ? "Line" : "Static";
         return doc;
+    }
+
+    /** Iterative traversal bounds nesting before getTextContent can recurse through a file. */
+    private static void validateLocal(Element root) {
+        Node node = root;
+        int depth = 0;
+        int elements = 0;
+        while (node != null) {
+            if (node instanceof Element) {
+                if (++elements > 100000) throw new IllegalArgumentException("TTML has too many elements");
+                Element element = (Element) node;
+                for (String attribute : new String[]{"begin", "end"}) {
+                    if (element.hasAttribute(attribute)
+                            && parseTime(element.getAttribute(attribute), -1) < 0) {
+                        throw new IllegalArgumentException("Unsupported TTML timing");
+                    }
+                }
+                if (!"p".equals(element.getTagName()) && !"span".equals(element.getTagName())
+                        && (parseTime(element.getAttribute("begin"), 0) > 0
+                        || parseTime(element.getAttribute("end"), 0) > 0)) {
+                    throw new IllegalArgumentException("Unsupported TTML parent timing");
+                }
+                if (element.hasAttribute("dur") || element.hasAttribute("timeContainer")
+                        && !"par".equals(element.getAttribute("timeContainer"))) {
+                    throw new IllegalArgumentException("Unsupported TTML timing mode");
+                }
+                if (element.hasAttribute("begin") && element.hasAttribute("end")
+                        && parseTime(element.getAttribute("end"), -1)
+                        <= parseTime(element.getAttribute("begin"), -1)) {
+                    throw new IllegalArgumentException("Invalid TTML time range");
+                }
+            }
+            if (node.getFirstChild() != null) {
+                if (++depth > 64) throw new IllegalArgumentException("TTML nesting exceeds limit");
+                node = node.getFirstChild();
+                continue;
+            }
+            while (node != root && node.getNextSibling() == null) {
+                node = node.getParentNode();
+                depth--;
+            }
+            if (node == root) break;
+            node = node.getNextSibling();
+        }
+    }
+
+    /** XML markup declarations are case-sensitive. Only comments, CDATA and processing instructions
+     * may hide declaration-like text; all other <! markup (including every DTD) is forbidden. */
+    private static void rejectDeclarations(String xml) throws org.xml.sax.SAXException {
+        int at = 0;
+        while ((at = xml.indexOf('<', at)) >= 0) {
+            String end;
+            if (xml.startsWith("<!--", at)) end = "-->";
+            else if (xml.startsWith("<![CDATA[", at)) end = "]]>";
+            else if (xml.startsWith("<?", at)) end = "?>";
+            else {
+                if (xml.startsWith("<!", at)) {
+                    throw new org.xml.sax.SAXException("DTD and markup declarations are forbidden");
+                }
+                at++;
+                continue;
+            }
+            int close = xml.indexOf(end, at + 2);
+            if (close < 0) throw new org.xml.sax.SAXException("Unclosed XML markup");
+            at = close + end.length();
+        }
     }
 
     private static LyricsLine parseParagraph(Element p, int index) {

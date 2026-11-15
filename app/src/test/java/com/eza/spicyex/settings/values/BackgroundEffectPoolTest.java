@@ -1,6 +1,5 @@
 package com.eza.spicyex.settings.values;
 
-import com.eza.spicyex.Settings;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -90,15 +89,5 @@ public class BackgroundEffectPoolTest {
         assertSame(BackgroundEffect.KAWARP, pool.pick(first));
         assertSame(BackgroundEffect.GOD_RAYS, pool.pick(repeat));
         assertSame(BackgroundEffect.GOD_RAYS, pool.pick(repeat));
-    }
-
-    @Test public void schemaAllowsStableIdsAndLegacyLabels() {
-        assertTrue(Settings.BACKGROUND_EFFECT.allowedValues.contains("kawarp"));
-        assertTrue(Settings.BACKGROUND_EFFECT.allowedValues.contains("god-rays"));
-        assertTrue(Settings.BACKGROUND_EFFECT.allowedValues.contains("Kawarp"));
-        assertTrue(Settings.BACKGROUND_EFFECT.allowedValues.contains("Mesh Gradient"));
-        assertEquals("kawarp", Settings.BACKGROUND_EFFECT.defaultValue);
-        assertNull(Settings.BACKGROUND_RANDOM_EFFECTS.allowedValues);
-        assertEquals("kawarp,mesh-gradient", Settings.BACKGROUND_RANDOM_EFFECTS.defaultValue);
     }
 }

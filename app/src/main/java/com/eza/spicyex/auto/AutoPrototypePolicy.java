@@ -8,6 +8,13 @@ public final class AutoPrototypePolicy {
     public static boolean suppressFullProgress(boolean takeover, boolean spotify, float contentHeightDp) {
         return takeover && spotify && contentHeightDp > 0 && contentHeightDp <= 400;
     }
+    /**
+     * The extra line, not the screen height, decides whether the full player gives up its
+     * native title/artist row. Main only keeps the size-based host layout.
+     */
+    public static boolean suppressFullSongInfo(boolean takeover, boolean spotify, boolean extraLine) {
+        return takeover && spotify && extraLine;
+    }
     public static boolean fullPlayerTakeover(boolean ready, boolean hasSyncedLyrics, boolean stress, boolean nativeWithoutLyrics) {
         return ready && (hasSyncedLyrics || stress || !nativeWithoutLyrics);
     }

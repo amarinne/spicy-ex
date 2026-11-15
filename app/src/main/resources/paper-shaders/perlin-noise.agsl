@@ -349,7 +349,13 @@ float pn_maxAmp(float persistence, float octaveCount) {
 vec4 paperMain(vec2 fragCoord) {
   vec2 uv = ps_patternUV(fragCoord);
   uv *= 0.5;
-  float t = 0.2 * u_time;
+  // Keep the temporal coordinate on a closed path. Feeding an ever-increasing value into
+  // the 3D lattice makes the effect visibly jump when the renderer clock is restarted (and
+  // makes a captured loop impossible). A sine path has identical position and velocity at
+  // both ends, so the loop closes without a seam while retaining continuous motion.
+  const float LOOP_SECONDS = 31.4159265;
+  float loopAngle = TWO_PI * fract(u_time / LOOP_SECONDS);
+  float t = sin(loopAngle);
 
   float octCount = floor(u_octaveCount);
   float noise = pn_noise(vec3(uv, t), int(octCount), u_persistence, u_lacunarity);

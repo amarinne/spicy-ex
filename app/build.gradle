@@ -27,7 +27,7 @@ android {
                     'com.eza.spicyex.lyrics.JapaneseRubyGeometryTest',
                     'com.eza.spicyex.lyrics.language.JyutpingRomanizerTest',
                     'com.eza.spicyex.lyrics.language.KoreanPronunciationTest',
-                    'com.eza.spicyex.lyrics.KoreanReadingProcessorTest',
+                    'com.eza.spicyex.lyrics.reading.KoreanReadingProcessorTest',
                     'com.eza.spicyex.lyrics.KoreanRomanizerTest'
             ]
     ]
@@ -95,17 +95,17 @@ android {
         applicationId "com.eza.spicyex"
         minSdk 27
         targetSdk 35
-        versionCode 1152
-        versionName "2.2.0+B1152-20261101T0630Z"
+        versionCode 1180
+        versionName "2.3.0+B1180-20261115T1205Z"
         def diagnosticIntakeUrl = providers.gradleProperty("DIAGNOSTIC_INTAKE_URL")
                 .orElse("https://reports.eza.dpdns.org/v1/reports")
                 .get()
         buildConfigField "String", "DIAGNOSTIC_INTAKE_URL", "\"${diagnosticIntakeUrl}\""
         def modelPackUrl = providers.gradleProperty("LANGUAGE_MODEL_PACK_URL")
-            .orElse("https://github.com/amarinne/spicy-ex/releases/download/v1/spicyex-language-models-v1.zip")
+            .orElse("https://github.com/amarinne/spicy-ex/releases/download/v2/spicyex-language-models-v2.zip")
             .get()
         def modelPackSha256 = providers.gradleProperty("LANGUAGE_MODEL_PACK_SHA256")
-            .orElse("fab585db878657fb124e49722f4579aaeb994b902b1dbf288b4b17700f90eb37")
+            .orElse("05559ca728078eada8d60d525c041647e5bcc33db64ef900ad813f746881e8b2")
             .get()
         buildConfigField "String", "LANGUAGE_MODEL_PACK_URL", "\"${modelPackUrl}\""
         buildConfigField "String", "LANGUAGE_MODEL_PACK_SHA256", "\"${modelPackSha256}\""
@@ -119,7 +119,8 @@ android {
 
     sourceSets {
         // Model files are delivered only through the language model pack, never inside the APK.
-        // JVM tests still read the JMdict tables straight from the pack's source folder.
+        // JVM tests still read the JMdict and Mandarin g2pM tables straight from the pack's
+        // source folder.
         test {
             resources.srcDirs += 'language-models'
         }
@@ -137,6 +138,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Xiaomi Android 16 can crash in ART's JDWP thread before app initialization.
+            // Keep the owner diagnostic channel without starting the native debugger.
+            debuggable providers.gradleProperty('androidDebugger').orElse('false').get().toBoolean()
+            buildConfigField 'boolean', 'DEBUG', 'true'
+        }
         release {
             if (releaseKeystoreValid) signingConfig signingConfigs.release
             minifyEnabled true
@@ -163,6 +170,14 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // AGP otherwise adds a dependency block to the APK signing block, encrypted with a fresh
+    // random key on each packaging run, so the same source and version gave different APK bytes
+    // (PC-0304). Only Google Play reads that block. check_repo_invariants.py guards this setting.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     packaging {
@@ -204,7 +219,10 @@ dependencies {
 // Creates the ZIP consumed by LanguageModelPack. Publish it from a trusted HTTPS
 // release location and pass its SHA-256 when building the external-model APK.
 tasks.register("packageLanguageModelPack", Zip) {
-    archiveFileName = "spicyex-language-models-v1.zip"
+    archiveFileName = "spicyex-language-models-v2.zip"
+    // Byte-identical rebuilds keep the pinned SHA-256 reproducible from source.
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
     destinationDirectory = layout.buildDirectory.dir("language-models")
     from("language-models")
     from(configurations.debugRuntimeClasspath.collect { zipTree(it) }) {

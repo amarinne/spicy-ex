@@ -106,6 +106,9 @@ public final class Settings {
             "auto_enabled", ANDROID_AUTO, "Enable Android Auto lyrics", false);
     public static final Setting<String> AUTO_SECONDARY_TEXT = enumSetting(false,
             "auto_secondary_text", ANDROID_AUTO, "Secondary text", SecondaryTextMode.class);
+    /** Stacks the primary line and its overlapping duet line as two sections. */
+    public static final Setting<Boolean> AUTO_DUET = boolSetting(false,
+            "auto_duet", ANDROID_AUTO, "Show duet lines", false);
 
     // --- Lyrics ---
     public static final Setting<String> UI_LANGUAGE = stringSetting(false,

@@ -91,6 +91,7 @@ public final class AiRecoveryInstrumentation {
         identity.providerVersion = provider.providerVersion; identity.modelName = provider.model.name;
         identity.targetLang = target; identity.promptVersion = provider.promptVersion;
         identity.instructions = settings.instructions(layer);
+        identity.harnessEpoch = AiHarnessEpoch.forLayer(layer);
         if (layer == LayerKind.SOUND) {
             identity.endpoint = provider.endpoint; identity.targetOrthography = target;
             identity.sourceLanguage = base.language; identity.soundMode = "whole_line_v1";
@@ -99,7 +100,8 @@ public final class AiRecoveryInstrumentation {
         AiLayerRunner.Args args = new AiLayerRunner.Args();
         args.config = new AiRunConfig(layer, AiIdentity.buildDocDigest(rows, AiLyricContext.EMPTY, false),
                 AiIdentity.buildConfigId(identity), settings.providerId(), AiLyricContext.EMPTY,
-                provider, identity.instructions, layer == LayerKind.SOUND ? base.language : null, null);
+                provider, identity.instructions, layer == LayerKind.SOUND ? base.language : null, null,
+                identity.harnessEpoch);
         args.rows = rows; args.store = new AiPaidRecords(context); args.useBaseline = false;
         return args;
     }

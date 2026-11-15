@@ -22,33 +22,6 @@ public final class LyricsToggleSpinnerController {
         translationSpinner.setFailed(translationFailed);
     }
 
-    public void update(boolean enabled, boolean romanPending, boolean translationPending) {
-        update(enabled, romanPending, translationPending, false, false);
-    }
-
-    /**
-     * @param romanFromAi       the reading on screen came from a model
-     * @param translationFromAi the translation on screen came from a model
-     */
-    public void update(boolean enabled, boolean romanPending, boolean translationPending,
-                       boolean romanFromAi, boolean translationFromAi) {
-        update(enabled, romanPending, translationPending, romanFromAi, translationFromAi,
-                false, false);
-    }
-
-    /**
-     * AI work is immediate and visually distinct; ordinary processing keeps the delayed ring.
-     * Precedence per chip: running AI, then failed AI (red), then accepted AI output (green).
-     * A failure flag is only honored while no request is pending, so starting a retry clears
-     * red into the running state without waiting for the next publication.
-     */
-    public void update(boolean enabled, boolean romanPending, boolean translationPending,
-                       boolean romanFromAi, boolean translationFromAi,
-                       boolean romanAiPending, boolean translationAiPending) {
-        update(enabled, romanPending, translationPending, romanFromAi, translationFromAi,
-                romanAiPending, translationAiPending, false, false);
-    }
-
     public void update(boolean enabled, boolean romanPending, boolean translationPending,
                        boolean romanFromAi, boolean translationFromAi,
                        boolean romanAiPending, boolean translationAiPending,

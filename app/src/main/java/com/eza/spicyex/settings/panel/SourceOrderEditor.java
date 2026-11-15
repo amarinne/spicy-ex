@@ -11,6 +11,7 @@ import com.eza.spicyex.ui.GlossyToggle;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.settings.SettingsWriter;
+import com.eza.spicyex.settings.values.LyricsSourceMode;
 import com.eza.spicyex.settings.SourcePreferencesAdapter;
 import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
@@ -41,9 +42,9 @@ import java.util.List;
 
  */
 public final class SourceOrderEditor {
-    /** The two persisted ranking tokens. They are values, not labels; do not localize them. */
-    private static final String MODE_AUTO = "Auto";
-    private static final String MODE_SOURCE_ORDER = "Source order";
+    /** The two persisted ranking tokens; the setting's own values, never localized here. */
+    private static final String MODE_AUTO = LyricsSourceMode.AUTO.storedLabel();
+    private static final String MODE_SOURCE_ORDER = LyricsSourceMode.SOURCE_ORDER.storedLabel();
 
     /** What the editor needs from the panel. */
     public interface Host {

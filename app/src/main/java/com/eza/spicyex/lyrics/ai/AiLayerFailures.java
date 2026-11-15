@@ -66,13 +66,4 @@ public final class AiLayerFailures {
         }
     }
 
-    /**
-     * True when the failure leaves it genuinely unknown whether the owner was charged.
-     *
-     * <p>The one case where a retry must be an explicit, warned, owner-authorized action rather
-     * than anything automatic.
-     */
-    public static boolean mayHaveBilled(AiFailureReason reason) {
-        return reason == AiFailureReason.DELIVERY_UNKNOWN;
-    }
 }

@@ -168,8 +168,8 @@ public final class JapaneseReadingEngine {
                     parseJmdictSpanSpec(line.substring(second + 1));
             if (segments.isEmpty()) return;
             // Builder.add keeps the first entry for a key.
-            out.add(kataToHira(line.substring(0, first)) + "|"
-                    + kataToHira(line.substring(first + 1, second)), segments);
+            out.add(Kana.toHiragana(line.substring(0, first)) + "|"
+                    + Kana.toHiragana(line.substring(first + 1, second)), segments);
         });
         return out.build();
     }
@@ -179,8 +179,8 @@ public final class JapaneseReadingEngine {
         readJmdict("JmdictPreferredReadings.txt.gz", line -> {
             int separator = line.indexOf('|');
             if (separator <= 0 || separator >= line.length() - 1) return;
-            out.put(kataToHira(line.substring(0, separator)),
-                    kataToHira(line.substring(separator + 1)));
+            out.put(Kana.toHiragana(line.substring(0, separator)),
+                    Kana.toHiragana(line.substring(separator + 1)));
         });
         return out;
     }
@@ -211,7 +211,7 @@ public final class JapaneseReadingEngine {
             int colon = part.indexOf(':');
             if (colon <= 0 || colon >= part.length() - 1) continue;
             String range = part.substring(0, colon);
-            String reading = kataToHira(part.substring(colon + 1));
+            String reading = Kana.toHiragana(part.substring(colon + 1));
             int dash = range.indexOf('-');
             try {
                 int start;
@@ -232,14 +232,4 @@ public final class JapaneseReadingEngine {
         return segments;
     }
 
-    private static String kataToHira(String text) {
-        String input = text == null ? "" : text;
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c >= 'ァ' && c <= 'ヶ') out.append((char) (c - 0x60));
-            else out.append(c);
-        }
-        return out.toString();
-    }
 }

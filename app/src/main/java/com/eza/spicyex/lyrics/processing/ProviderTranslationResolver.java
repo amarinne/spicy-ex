@@ -157,16 +157,6 @@ public final class ProviderTranslationResolver {
         return "";
     }
 
-    private static boolean containsLatinLetter(String text) {
-        if (text == null) return false;
-        for (int i = 0; i < text.length(); ) {
-            int cp = text.codePointAt(i);
-            if (Character.isLetter(cp) && Character.UnicodeScript.of(cp) == Character.UnicodeScript.LATIN) return true;
-            i += Character.charCount(cp);
-        }
-        return false;
-    }
-
     private static boolean containsRange(String text, int start, int end) {
         if (text == null) return false;
         for (int i = 0; i < text.length(); ) {

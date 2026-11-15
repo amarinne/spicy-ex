@@ -22,6 +22,38 @@ public class GoogleEnhancerTest {
         assertEquals("Second translated", parsed.get(1));
     }
 
+    @Test public void translatedMarkerShapesKeepTheirOwnRow() {
+        for (String marker : Arrays.asList("[[SPX\u00a0_\u30001]]", "[SPX-1]", "【S PX_1】")) {
+            String body = new com.google.gson.Gson().toJson(new String[][][]{
+                    {{"[[SPX_000]] First translated " + marker + " Second translated"}}});
+            Map<Integer, String> parsed = GoogleEnhancer.parseBatchTranslation(body);
+            assertEquals(marker, "First translated", parsed.get(0));
+            assertEquals(marker, "Second translated", parsed.get(1));
+        }
+    }
+
+    @Test public void translationWithUnrecoverableMarkerIsNotDisplayable() {
+        for (String marker : Arrays.asList("[[SPX_008]]", "[SPX-8]", "【SPX_八】", "SPX_008]]")) {
+            assertFalse(marker, GoogleEnhancer.shouldDisplayTranslation("Hello", marker + " Bonjour"));
+        }
+        assertTrue(GoogleEnhancer.shouldDisplayTranslation("Hello", "SPX 500 options"));
+        assertTrue(GoogleEnhancer.shouldDisplayTranslation("Hello", "[Chorus] Bonjour"));
+    }
+
+    @Test public void pollutedCachedReadingsAreRequestedAgain() {
+        java.util.List<GoogleEnhancer.BatchLine> lines = Arrays.asList(new GoogleEnhancer.BatchLine(7, "Привет"));
+        Map<Integer, String> cached = new java.util.LinkedHashMap<>();
+        assertEquals(lines, GoogleEnhancer.romanizePending("track", "ru", lines,
+                key -> "[SPX-8] Privet", cached));
+        assertTrue(cached.isEmpty());
+        Map<Integer, String> writes = new java.util.LinkedHashMap<>();
+        Map<String, String> cacheWrites = new java.util.LinkedHashMap<>();
+        assertEquals(lines, GoogleEnhancer.applyRomanized(lines,
+                java.util.Collections.singletonMap(0, "[SPX-8] Privet"), "track", "ru", writes, cacheWrites));
+        assertTrue(writes.isEmpty());
+        assertTrue(cacheWrites.isEmpty());
+    }
+
     @Test
     public void batchResultStartsAsPrivacySafeEmptyEvidence() {
         GoogleEnhancer.BatchResult result = new GoogleEnhancer.BatchResult();

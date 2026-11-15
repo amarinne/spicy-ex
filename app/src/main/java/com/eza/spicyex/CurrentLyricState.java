@@ -94,48 +94,6 @@ public final class CurrentLyricState {
         );
     }
 
-    public static void updatePosition(long positionMs, boolean playing) {
-        CurrentLyricState old = current;
-        current = new CurrentLyricState(
-                old.trackUri,
-                old.title,
-                old.artist,
-                old.album,
-                old.backend,
-                old.language,
-                old.originalLine,
-                old.romanizedLine,
-                old.translatedLine,
-                positionMs,
-                old.durationMs,
-                old.lineIndex,
-                playing,
-                System.currentTimeMillis(),
-                old.status,
-                old.error
-        );
-    }
-
-    public static void updateStatus(SpotifyTrack track, String backend, String status, String error) {
-        current = new CurrentLyricState(
-                track == null ? "" : track.uri,
-                track == null ? "" : track.title,
-                track == null ? "" : track.artist,
-                track == null ? "" : track.album,
-                safe(backend),
-                "",
-                "",
-                "",
-                "",
-                track == null ? 0 : track.position,
-                track == null ? 0 : track.duration,
-                -1,
-                false,
-                System.currentTimeMillis(),
-                safe(status),
-                safe(error)
-        );
-    }
 
     private static CurrentLyricState empty() {
         return new CurrentLyricState("", "", "", "", "", "", "", "", "", 0, 0, -1, false, 0, "idle", "");

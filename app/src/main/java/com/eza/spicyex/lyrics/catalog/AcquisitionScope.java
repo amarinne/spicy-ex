@@ -30,7 +30,7 @@ public final class AcquisitionScope {
         List<SourceId> copy = new ArrayList<>();
         if (sources != null) {
             for (SourceId source : sources) {
-                if (source != null && !copy.contains(source)) copy.add(source);
+                if (source != null && source != SourceId.LOCAL && !copy.contains(source)) copy.add(source);
             }
         }
         this.sources = Collections.unmodifiableList(copy);

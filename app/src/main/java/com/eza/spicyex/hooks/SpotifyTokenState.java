@@ -1,5 +1,7 @@
 package com.eza.spicyex.hooks;
 
+import com.eza.spicyex.lyrics.LyricUtils;
+
 /**
  * Pure JVM owner for the captured Spotify access-token lifecycle state.
  *
@@ -57,7 +59,7 @@ final class SpotifyTokenState {
      * @return true only when the capture advanced the generation (new usable state)
      */
     synchronized boolean capture(String tokenText, long capturedAtMillis, long expiresAtMillis) {
-        if (isBlank(tokenText)) return false;
+        if (LyricUtils.isBlank(tokenText)) return false;
         if (token.equals(tokenText)) {
             if (invalidated) return false;
             // Same usable epoch: refresh freshness metadata only; no generation advance.
@@ -85,7 +87,7 @@ final class SpotifyTokenState {
      * Blank input is rejected with no state change.
      */
     synchronized void restore(String tokenText, long capturedAtMillis, long expiresAtMillis, int generation) {
-        if (isBlank(tokenText)) return;
+        if (LyricUtils.isBlank(tokenText)) return;
         this.token = tokenText.trim();
         this.capturedAtMillis = capturedAtMillis;
         this.expiresAtMillis = Math.max(0L, expiresAtMillis);
@@ -148,10 +150,6 @@ final class SpotifyTokenState {
     private synchronized boolean isExpiredAt(long nowMillis) {
         return expiresAtMillis > 0
                 && nowMillis >= expiresAtMillis - EXPIRY_SAFETY_MARGIN_MILLIS;
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
     }
 
     /** Immutable snapshot binding token text to its generation for one authorized request. */

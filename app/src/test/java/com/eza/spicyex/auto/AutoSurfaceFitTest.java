@@ -14,6 +14,15 @@ public class AutoSurfaceFitTest {
         assertFalse(AutoSurfaceFit.secondaryAllowed(null));
     }
 
+    @Test public void duetFitsBothLyricSurfacesAndCapsEachSection() {
+        assertTrue(AutoSurfaceFit.duetAllowed("player"));
+        assertTrue(AutoSurfaceFit.duetAllowed("player-full"));
+        assertFalse(AutoSurfaceFit.duetAllowed("weather"));
+        assertFalse(AutoSurfaceFit.duetAllowed(null));
+        assertEquals(1, AutoSurfaceFit.secondaryLineCap(true));
+        assertEquals(2, AutoSurfaceFit.secondaryLineCap(false));
+    }
+
     @Test public void dotsFollowThreeCalculatedStepsAndStayLitInsteadOfRepeating() {
         AppliedLine gap = com.eza.spicyex.lyrics.LyricTimeline.createAppliedDotRow(1000, 10550, false);
         assertEquals(4000, gap.words.get(0).endMs);
@@ -91,6 +100,29 @@ public class AutoSurfaceFitTest {
                 (start, end) -> end - start <= 2);
         assertEquals(2, pages.size());
         assertEquals(0, pages.get(0)[0]); assertEquals(3, pages.get(1)[1]);
+    }
+    @Test public void pageBreakAvoidsLeavingOneWordAloneOnTheNextPage() {
+        String text = "alpha beta gamma delta";
+        List<int[]> pages = AutoSurfaceFit.pages(text, (start, end) -> wordsIn(text, start, end) <= 3);
+        assertEquals(2, pages.size());
+        assertEquals(2, wordsIn(text, pages.get(0)[0], pages.get(0)[1]));
+        assertEquals(2, wordsIn(text, pages.get(1)[0], pages.get(1)[1]));
+    }
+    @Test public void pageBreakKeepsTheLargestFitWhenTheNextPageHasCompany() {
+        String text = "alpha beta gamma delta epsilon";
+        List<int[]> pages = AutoSurfaceFit.pages(text, (start, end) -> wordsIn(text, start, end) <= 3);
+        assertEquals(2, pages.size());
+        assertEquals(3, wordsIn(text, pages.get(0)[0], pages.get(0)[1]));
+        assertEquals(2, wordsIn(text, pages.get(1)[0], pages.get(1)[1]));
+    }
+    @Test public void strayWordRuleSkipsUnspacedScriptsAndUnavoidableOneWordLines() {
+        String mixed = "hello world 世界";
+        List<int[]> mixedPages = AutoSurfaceFit.pages(mixed, (start, end) -> end - start <= 12);
+        assertEquals("hello world", mixed.substring(mixedPages.get(0)[0], mixedPages.get(0)[1]).trim());
+        String pair = "alpha beta";
+        List<int[]> pairPages = AutoSurfaceFit.pages(pair, (start, end) -> wordsIn(pair, start, end) <= 1);
+        assertEquals(2, pairPages.size());
+        assertEquals(1, wordsIn(pair, pairPages.get(0)[0], pairPages.get(0)[1]));
     }
     @Test public void bridgeRejectsOverlappingOutOfRangeAndSurrogateSplitGroups() {
         AutoSurfaceFit.validateGroups("🎵繋いだ", new int[]{0, 2, 2, 5});
@@ -190,6 +222,11 @@ public class AutoSurfaceFitTest {
             }
         }
         return constants[0];
+    }
+
+    private static int wordsIn(String text, int start, int end) {
+        String page = text.substring(start, end).trim();
+        return page.isEmpty() ? 0 : page.split("\\s+").length;
     }
 
     private static SyllableSegment word(int start, int end, long from, long to) {

@@ -14,6 +14,8 @@ import java.util.concurrent.RejectedExecutionHandler;
 import okhttp3.OkHttpClient;
 
 public final class NativeRuntime {
+    /** Cadence of the idle frame probe that resumes a paused render loop on both surfaces. */
+    static final long IDLE_FRAME_PROBE_MS = 250L;
     // W5 / D4: set our OWN client timeouts so a hung/slow Spicy upstream fails over promptly to
     // the native -> LRCLIB cascade instead of waiting indefinitely. This HTTP client is shared by
     // every lyrics call (Spicy /query, Spotify color-lyrics, LRCLIB, Google translate) - all are

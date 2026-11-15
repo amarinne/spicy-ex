@@ -25,9 +25,6 @@ import java.util.Locale;
  */
 public final class NeteaseSongRanker {
 
-    /** How many distinct hits the caller should be willing to try word-level lyrics on. */
-    public static final int MAX_WORD_LYRIC_ATTEMPTS = 3;
-
     private NeteaseSongRanker() {
     }
 

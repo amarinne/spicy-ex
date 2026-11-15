@@ -10,7 +10,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -274,11 +273,6 @@ final class AiPaidRecordCodec {
     private static boolean boolOf(JsonObject source, String key) {
         JsonElement value = source.get(key);
         return value != null && value.isJsonPrimitive() && value.getAsBoolean();
-    }
-
-    static String describe(AiPaidRecord record) {
-        return record == null ? "none"
-                : record.layer.name().toLowerCase(Locale.ROOT) + "/" + record.status.name();
     }
 
     /**

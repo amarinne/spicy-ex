@@ -60,6 +60,36 @@ public final class CatalogState {
         return record == null ? ProviderRecord.notChecked(source) : record;
     }
 
+    /**
+     * Snapshot over the candidates a reader can use. A source that is still stored but has no
+     * usable candidate is downgraded from {@code AVAILABLE} to {@code NEEDS_REFRESH}, so provider
+     * status can never claim a source is usable when its rows are expired or undecodable.
+     */
+    public CatalogState withVisible(List<CatalogCandidate> visible) {
+        List<CatalogCandidate> next = visible == null
+                ? new ArrayList<CatalogCandidate>() : visible;
+        Map<SourceId, ProviderRecord> downgraded = null;
+        for (SourceId source : SourceId.values()) {
+            boolean stored = false;
+            boolean usable = false;
+            for (CatalogCandidate candidate : candidates) {
+                if (candidate != null && candidate.sourceId == source) { stored = true; break; }
+            }
+            for (CatalogCandidate candidate : next) {
+                if (candidate != null && candidate.sourceId == source) { usable = true; break; }
+            }
+            ProviderRecord record = provider(source);
+            if (stored && !usable && record.status == ProviderStatus.AVAILABLE) {
+                if (downgraded == null) downgraded = new EnumMap<>(providers);
+                downgraded.put(source, new ProviderRecord(source, ProviderStatus.NEEDS_REFRESH,
+                        record.updatedAtMs, record.lastAttemptMs, record.lastSuccessMs,
+                        record.attemptCount));
+            }
+        }
+        return new CatalogState(trackId, next, downgraded == null ? providers : downgraded,
+                selection, rejections, known);
+    }
+
     /** Status view for the picker: absent sources are omitted, meaning not checked. */
     public Map<SourceId, ProviderStatus> statuses() {
         Map<SourceId, ProviderStatus> out = new LinkedHashMap<>();

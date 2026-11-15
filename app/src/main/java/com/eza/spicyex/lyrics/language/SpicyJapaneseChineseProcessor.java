@@ -4,6 +4,10 @@ import com.atilika.kuromoji.unidic.Token;
 import com.atilika.kuromoji.unidic.Tokenizer;
 import com.atilika.kuromoji.viterbi.ViterbiNode;
 
+import com.eza.spicyex.lyrics.language.mandarin.MandarinEza;
+import com.eza.spicyex.lyrics.language.mandarin.MandarinReadingLine;
+import com.eza.spicyex.lyrics.language.mandarin.MandarinSandhi;
+import com.eza.spicyex.lyrics.language.mandarin.MandarinToken;
 import net.sourceforge.pinyin4j.PinyinHelper;
 import net.sourceforge.pinyin4j.format.HanyuPinyinCaseType;
 import net.sourceforge.pinyin4j.format.HanyuPinyinOutputFormat;
@@ -528,7 +532,7 @@ public final class SpicyJapaneseChineseProcessor {
             entry.end = entry.analysisEnd;
             entry.sourceText = sourceText;
             entry.surface = part;
-            entry.readingKana = kataToHira(part);
+            entry.readingKana = Kana.toHiragana(part);
             entry.dictionaryReadingKana = entry.readingKana;
             entry.dictionaryReadingSource = "authored-kana";
             entry.readingReason = "authored-kana";
@@ -626,14 +630,14 @@ public final class SpicyJapaneseChineseProcessor {
             if (isKanjiChar(ch) && segment != null && segment.start >= start && segment.end <= end
                     && segment.start <= pos && segment.end > pos) {
                 if (pos == segment.start) {
-                    reading.append(kataToHira(segment.reading));
+                    reading.append(Kana.toHiragana(segment.reading));
                     usedProvider = true;
                 }
                 pos = Math.min(end, segment.end);
                 continue;
             }
             if (isKanjiChar(ch)) return null;
-            if (isKanaChar(ch)) reading.append(kataToHira(ch));
+            if (isKanaChar(ch)) reading.append(Kana.toHiragana(ch));
             pos += cpLen;
         }
         return usedProvider ? reading.toString() : null;
@@ -793,35 +797,9 @@ public final class SpicyJapaneseChineseProcessor {
 
     private static String convertPinyinSegments(String text, boolean tones) {
         if (isBlank(text)) return text;
-        PinyinTrieNode phrases = pinyinPhraseTrie();
-        StringBuilder out = new StringBuilder();
-        boolean lastReading = false;
-        for (int i = 0; i < text.length();) {
-            PinyinPhraseMatch phrase = matchPinyinPhrase(phrases, text, i);
-            if (phrase != null) {
-                if (out.length() > 0 && lastReading) out.append(' ');
-                out.append(EzaChineseRomanizer.mandarin(phrase.reading, tones));
-                lastReading = true;
-                i = phrase.endIndex;
-                continue;
-            }
-            int cp = text.codePointAt(i);
-            String[] values = null;
-            if (Character.charCount(cp) == 1) {
-                try { values = PinyinHelper.toHanyuPinyinStringArray((char) cp, PINYIN_FORMAT_NUMBERED); }
-                catch (Throwable ignored) { }
-            }
-            if (values != null && values.length > 0) {
-                if (out.length() > 0 && lastReading) out.append(' ');
-                out.append(EzaChineseRomanizer.mandarin(values[0], tones));
-                lastReading = true;
-            } else {
-                out.appendCodePoint(cp);
-                lastReading = false;
-            }
-            i += Character.charCount(cp);
-        }
-        return Normalizer.normalize(normalizeSpaces(out.toString()), Normalizer.Form.NFC);
+        MandarinReadingLine line = MandarinReadings.read(text);
+        if (line == null) return text;
+        return MandarinEza.render(line, tones);
     }
 
     private static String convertJyutpingSegments(String text, boolean tones) {
@@ -1138,7 +1116,7 @@ public final class SpicyJapaneseChineseProcessor {
                     token == null ? null : safe(token.getLemma()),
                     token == null ? null : safe(token.getWrittenBaseForm()),
                     null,
-                    token == null ? null : kataToHira(safe(token.getLemmaReadingForm())),
+                    token == null ? null : Kana.toHiragana(safe(token.getLemmaReadingForm())),
                     token == null ? null : safe(token.getPronunciation()),
                     token == null ? null : safe(token.getConjugationType()),
                     token == null ? null : safe(token.getConjugationForm()), candidates));
@@ -1200,7 +1178,7 @@ public final class SpicyJapaneseChineseProcessor {
                         new JapaneseReadingPolicyModels.CodePointRange(
                                 sourceText.codePointCount(0, safeStart), sourceText.codePointCount(0, safeEnd)),
                         accepted && owner != null ? tokenId(owner) + ":provider" : null,
-                        kataToHira(segment.reading), accepted ? "accepted" : "rejected",
+                        Kana.toHiragana(segment.reading), accepted ? "accepted" : "rejected",
                         accepted ? "provider-ruby-validated"
                                 : matched ? "higher-priority-policy-decision"
                                 : "invalid-partial-or-reading-mismatch"));
@@ -1351,7 +1329,7 @@ public final class SpicyJapaneseChineseProcessor {
         String pron = safe(token.getPronunciation());
         String lemmaYomi = safe(token.getLemmaReadingForm());
         if (isKanaOnly(surface) && (!surface.contains("ー") || isBlank(pron) || "*".equals(pron))) {
-            return new ReadingOfRecord(kataToHira(surface), "authored-kana");
+            return new ReadingOfRecord(Kana.toHiragana(surface), "authored-kana");
         }
         if (isBlank(pron) || "*".equals(pron)) {
             return new ReadingOfRecord(null, "passthrough");
@@ -1370,7 +1348,7 @@ public final class SpicyJapaneseChineseProcessor {
             if (resolved == 0) resolved = orthographicLongVowel(i > 0 ? pron.charAt(i - 1) : 0);
             out.append(resolved == 0 ? c : resolved);
         }
-        return new ReadingOfRecord(kataToHira(out.toString()), "analyzer-pronunciation");
+        return new ReadingOfRecord(Kana.toHiragana(out.toString()), "analyzer-pronunciation");
     }
 
     private static String readingOfRecord(Token token, String surface) {
@@ -1378,7 +1356,7 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static char orthographicLongVowel(char prevKatakana) {
-        char hira = prevKatakana >= 'ァ' && prevKatakana <= 'ヶ' ? (char) (prevKatakana - 0x60) : prevKatakana;
+        char hira = Kana.hiragana(prevKatakana);
         String mapped = KANA.get(String.valueOf(hira));
         if (mapped == null || mapped.isEmpty()) return 0;
         switch (mapped.charAt(mapped.length() - 1)) {
@@ -1576,7 +1554,7 @@ public final class SpicyJapaneseChineseProcessor {
                     && entry.token != null && isAllKanjiCommonNoun(entry)
                     && !compoundLeft
                     ? JapaneseReadingEngine.shared().jmdictPreferredReadings()
-                            .get(kataToHira(entry.surface))
+                            .get(Kana.toHiragana(entry.surface))
                     : null;
             if (!isBlank(preferred) && !preferred.equals(entry.readingKana)
                     && jmdictFuriganaSegments(entry.surface, preferred) != null) {
@@ -2158,7 +2136,7 @@ public final class SpicyJapaneseChineseProcessor {
             if (entry.providerValidated && provider != null) {
                 for (FuriganaSegment segment : provider) {
                     if (segment != null && segment.start >= entry.start && segment.end <= entry.end) {
-                        out.add(new FuriganaSegment(segment.start, segment.end, kataToHira(segment.reading)));
+                        out.add(new FuriganaSegment(segment.start, segment.end, Kana.toHiragana(segment.reading)));
                     }
                 }
                 continue;
@@ -2223,7 +2201,7 @@ public final class SpicyJapaneseChineseProcessor {
         List<TokenFuriganaReading> dictionary = jmdictFuriganaSegments(surface, kana);
         if (dictionary != null) return dictionary;
 
-        String normalizedSurface = kataToHira(surface);
+        String normalizedSurface = Kana.toHiragana(surface);
         List<String> chars = codePoints(normalizedSurface);
 
         int kanaCursor = 0;
@@ -2266,7 +2244,7 @@ public final class SpicyJapaneseChineseProcessor {
     private static List<TokenFuriganaReading> jmdictFuriganaSegments(String surface, String kana) {
         FuriganaTable data = JapaneseReadingEngine.shared().jmdictFurigana();
         if (data.isEmpty()) return null;
-        List<FuriganaSegment> segments = data.lookup(kataToHira(surface) + "|" + kataToHira(kana));
+        List<FuriganaSegment> segments = data.lookup(Kana.toHiragana(surface) + "|" + Kana.toHiragana(kana));
         if (segments == null) return null;
         ArrayList<TokenFuriganaReading> out = new ArrayList<>(segments.size());
         for (FuriganaSegment segment : segments) {
@@ -2331,7 +2309,7 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static List<String> perCharKanaApproximation(String surface, String kana) {
-        List<String> chars = codePoints(kataToHira(surface));
+        List<String> chars = codePoints(Kana.toHiragana(surface));
         ArrayList<String> out = new ArrayList<>();
         for (int i = 0; i < chars.size(); i++) out.add("");
         List<TokenFuriganaReading> segments = kanaReadingSegments(surface, kana);
@@ -2555,16 +2533,6 @@ public final class SpicyJapaneseChineseProcessor {
         JapaneseReadingEngine.shared().trimMemory();
     }
 
-    private static String kataToHira(String text) {
-        String input = safe(text);
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c >= 'ァ' && c <= 'ヶ') out.append((char) (c - 0x60));
-            else out.append(c);
-        }
-        return out.toString();
-    }
 
     private static List<String> splitKanaEvenly(String kana, int count) {
         List<String> morae = splitKanaMorae(kana);
@@ -2645,8 +2613,7 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     private static char normalizeKana(char c) {
-        if (c >= 'ァ' && c <= 'ヶ') return (char) (c - 0x60);
-        return c;
+        return Kana.hiragana(c);
     }
 
     private static void appendLongVowel(StringBuilder out) {

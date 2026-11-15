@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics.language;
 
+import com.eza.spicyex.lyrics.LyricUtils;
 import com.eza.spicyex.lyrics.cache.ProcessedLyricsCache;
 
 import android.content.Context;
@@ -37,7 +38,7 @@ public final class ProviderTextDetectionStore {
 
     /** Memory first, then the durable record. A miss means the text simply has no detection yet. */
     public static DetectionResult get(Context context, String text) {
-        if (isBlank(text)) return null;
+        if (LyricUtils.isBlank(text)) return null;
         synchronized (LOCK) {
             DetectionResult known = MEMORY.get(text);
             if (known != null) return known;
@@ -49,7 +50,7 @@ public final class ProviderTextDetectionStore {
 
     /** Persists one auxiliary detection; called only by the detection session. */
     public static void put(Context context, String text, DetectionResult result) {
-        if (isBlank(text) || result == null) return;
+        if (LyricUtils.isBlank(text) || result == null) return;
         remember(text, result);
         ProcessedLyricsCache.saveProviderDetection(context, text, result);
     }
@@ -67,7 +68,4 @@ public final class ProviderTextDetectionStore {
         }
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
 }

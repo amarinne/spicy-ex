@@ -1,6 +1,7 @@
 package com.eza.spicyex.settings;
 
 import com.eza.spicyex.Settings;
+import com.eza.spicyex.settings.values.LyricsSourceOverride;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source;
@@ -55,7 +56,7 @@ public final class SourcePreferencesAdapter {
     }
 
     public void commit(SettingsWriter writer, Commit commit) {
-        writer.put(Settings.LYRICS_SOURCE_OVERRIDE, "Auto");
+        writer.put(Settings.LYRICS_SOURCE_OVERRIDE, LyricsSourceOverride.AUTO.storedLabel());
         writer.put(Settings.LYRICS_SOURCE_MODE, commit.rankingLabel);
         sink.setRankingMode(RankingMode.parse(commit.rankingLabel));
         sink.setSourceOrder(commit.order);

@@ -19,7 +19,7 @@ import org.junit.Test;
 
 /**
  * Golden corpus for Mandarin pinyin output (docs/ROMANIZATION_AUDIT_BACKLOG.md CN-T1/CN-2).
- * Phrase dictionary covers common polyphones before pinyin4j per-character fallback.
+ * The bundled reader resolves phrase readings before per-character readings.
  */
 public class ChineseRomanizerTest {
     private static String pinyin(String line) {
@@ -79,19 +79,26 @@ public class ChineseRomanizerTest {
         assertEquals("khuếi", EzaChineseRomanizer.mandarin("kui2", true));
         assertEquals("BTS4 mp3 ma3", SpicyJapaneseChineseProcessor.romanizeChineseLine("BTS4 mp3 ma3", "pinyin-eza", true));
         assertEquals("nyủ", EzaChineseRomanizer.mandarin("nü3", true));
-        assertEquals("mạ", EzaChineseRomanizer.mandarin("ma0", true));
+        assertEquals("ma", EzaChineseRomanizer.mandarin("ma0", true));
         assertEquals("mà", EzaChineseRomanizer.mandarin("ma4", true));
     }
 
     @Test
-    public void ezaMandarinUsesUeaForOnlyTheOpenERow() {
-        String[] readings = {"e", "me", "de", "te", "ne", "le", "ge", "ke", "he",
-                "ze", "ce", "se", "zhe", "che", "she", "re"};
-        String[] expected = {"ưa", "mưa", "tưa", "thưa", "nưa", "lưa", "kưa", "khưa", "hưa",
-                "zưa", "tsưa", "sưa", "zhưa", "chưa", "shưa", "rưa"};
-        for (int i = 0; i < readings.length; i++) {
-            assertEquals(readings[i], expected[i], EzaChineseRomanizer.mandarin(readings[i], false));
+    public void ezaMandarinUsesSchwaForNeutralOpenEAndOpenAForFullTones() {
+        String[] neutral = {"e5", "me5", "de5", "te5", "ne5", "le5", "ze5", "ce5", "se5",
+                "zhe5", "che5", "she5", "re5"};
+        String[] schwa = {"ơ", "mơ", "tơ", "thơ", "nơ", "lơ", "zơ", "tsơ", "sơ",
+                "zhơ", "chơ", "shơ", "rơ"};
+        for (int i = 0; i < neutral.length; i++) {
+            assertEquals(neutral[i], schwa[i], EzaChineseRomanizer.mandarin(neutral[i], false));
         }
+        // A neutral open e after a velar onset keeps the full-tone value.
+        assertEquals("kưa", EzaChineseRomanizer.mandarin("ge5", false));
+        assertEquals("khưa", EzaChineseRomanizer.mandarin("ke5", false));
+        assertEquals("hưa", EzaChineseRomanizer.mandarin("he5", false));
+        // No tone digit is the neutral 5, so the open e is the schwa unless a velar precedes it.
+        assertEquals("tơ", EzaChineseRomanizer.mandarin("de", false));
+        assertEquals("kưa", EzaChineseRomanizer.mandarin("ge", false));
         assertEquals("m\u1ee9a", EzaChineseRomanizer.mandarin("me2", true));
     }
 
@@ -114,11 +121,16 @@ public class ChineseRomanizerTest {
     }
 
     @Test
-    public void cantoneseNucleusRevisionRetiresOnlyCantoneseEzaSound() {
-        assertEquals("cn=jyutping|kr=Off|cnStyle=eza@eza-2026-10-25.1|tn=1|cy=Off|cs=0",
+    public void ezaRevisionIsSharedAcrossMandarinAndCantoneseButNotKorean() {
+        // Revision 3 changes Mandarin only; Cantonese output is unchanged but shares the revision
+        // string, so both Chinese eza sound keys rebuild. Korean keeps its own revision.
+        assertEquals("cn=jyutping|kr=Off|cnStyle=eza@eza-2026-11-15.3|tn=1|cy=Off|cs=0",
                 new RomanizationOptions("jyutping-eza", "Off", true, "Off", false).cacheKey());
-        assertEquals("cn=pinyin|kr=Off|cnStyle=eza@eza-2026-10-08.1|tn=1|cy=Off|cs=0",
+        assertEquals("cn=pinyin|kr=Off|cnStyle=eza@eza-2026-11-15.3|tn=1|cy=Off|cs=0",
                 new RomanizationOptions("pinyin-eza", "Off", true, "Off", false).cacheKey());
+        assertEquals("cn=pinyin|kr=vnPronunciation|cnStyle=canonical"
+                        + "|krStyle=eza@eza-2026-10-08.1|tn=1|cy=Off|cs=0",
+                new RomanizationOptions("pinyin", "vnPronunciation", true, "Off", false).cacheKey());
         assertEquals("cn=jyutping|kr=Off|cnStyle=canonical|tn=1|cy=Off|cs=0",
                 new RomanizationOptions("jyutping", "Off", true, "Off", false).cacheKey());
     }

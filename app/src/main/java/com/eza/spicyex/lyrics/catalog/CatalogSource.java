@@ -38,18 +38,30 @@ public final class CatalogSource {
      * native, AMLL, LRCLIB, QQ, NetEase.
      */
     public enum SourceId {
-        SPICY_ORG("spicy_org"),
-        APPLE("apple"),
-        SPOTIFY_NATIVE("spotify_native"),
-        AMLL("amll"),
-        LRCLIB("lrclib"),
-        QQ("qq"),
-        NETEASE("netease");
+        SPICY_ORG("spicy_org", "SpicyLyrics.org"),
+        APPLE("apple", "Apple Music"),
+        SPOTIFY_NATIVE("spotify_native", "Spotify"),
+        AMLL("amll", "AMLL"),
+        LRCLIB("lrclib", "LRCLIB"),
+        QQ("qq", "QQ Music"),
+        NETEASE("netease", "NetEase"),
+        LOCAL("local", "Local");
 
         public final String id;
+        /** User-facing provider name; the picker and session messages read this. */
+        public final String label;
 
-        SourceId(String id) {
+        SourceId(String id, String label) {
             this.id = id;
+            this.label = label;
+        }
+
+        /**
+         * Sources queried first in Auto and matched by exact track identity. The declaration order
+         * is also the automatic tie-break order, so the picker and planner iterate {@link #values()}.
+         */
+        public boolean isPrimary() {
+            return this == SPICY_ORG || this == APPLE || this == SPOTIFY_NATIVE;
         }
 
         public static SourceId parse(String value) {
@@ -109,7 +121,9 @@ public final class CatalogSource {
         KARAOKE_SUBSTITUTION,
         STRONG_SEARCH,
         /** Weak matches are rejected by the resolver, never stored as playable. */
-        WEAK;
+        WEAK,
+        /** The owner explicitly associated a local file with this song. */
+        USER_IMPORT;
     }
 
     /**
@@ -177,6 +191,7 @@ public final class CatalogSource {
         // Parsers tag deliveries with a route suffix (apple_music_cache, amll_ttml,
         // spotify_native_model:tag, qq_music); the prefix names the source.
         if (v.startsWith("spicy_org")) return SourceId.SPICY_ORG;
+        if (v.startsWith("local")) return SourceId.LOCAL;
         if (v.startsWith("amll")) return SourceId.AMLL;
         if (v.startsWith("apple") || v.equals("aml") || v.startsWith("lenerd")
                 || v.startsWith("spicy")) {

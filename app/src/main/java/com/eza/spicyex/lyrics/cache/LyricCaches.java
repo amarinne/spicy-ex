@@ -16,17 +16,6 @@ import com.eza.spicyex.lyrics.processing.SpicyProcessing;
 
 /** Preference-backed caches used by native Spicy lyrics processing. */
 public final class LyricCaches {
-    private static final String PREFS_GOOGLE_CACHE = "SpotifyPlusNativeSpicyGoogleCache";
-    private static final String PREFS_GOOGLE_CACHE_ORDER_KEY = "__cache_order";
-    private static final String PREFS_PROCESSED_CACHE = "SpotifyPlusNativeSpicyProcessedCache";
-    /** Sound artifacts. Separate store so Meaning eviction can never drop a reading artifact. */
-    private static final String PREFS_SOUND_CACHE = "SpotifyPlusSoundArtifactCache";
-    /** Meaning artifacts. Separate store so a Sound contract bump never discards paid-for work. */
-    private static final String PREFS_MEANING_CACHE = "SpotifyPlusMeaningArtifactCache";
-    /** Language detection rows. Its own store and its own schema: a detector or gate change here
-     * never discards readings or translations. */
-    private static final String PREFS_DETECTION_CACHE = "SpotifyPlusDetectionArtifactCache";
-    private static final String PREFS_PROCESSED_CACHE_ORDER_KEY = "__cache_order";
     private static final Object GOOGLE_CACHE_LOCK = new Object();
     private static final Object PROCESSED_CACHE_LOCK = new Object();
 
@@ -40,35 +29,15 @@ public final class LyricCaches {
         return CacheStoragePolicy.googleQuota(CacheStoragePolicy.totalBudget(context));
     }
 
-    public static int googleStoreEntryCount(Context context) {
-        return preferenceStoreEntryCount(context, PREFS_GOOGLE_CACHE, PREFS_GOOGLE_CACHE_ORDER_KEY);
-    }
-
-    public static int soundStoreEntryCount(Context context) {
-        return preferenceStoreEntryCount(context, PREFS_SOUND_CACHE, PREFS_PROCESSED_CACHE_ORDER_KEY);
-    }
-
-    public static int meaningStoreEntryCount(Context context) {
-        return preferenceStoreEntryCount(context, PREFS_MEANING_CACHE, PREFS_PROCESSED_CACHE_ORDER_KEY);
-    }
-
-    public static int detectionStoreEntryCount(Context context) {
-        return preferenceStoreEntryCount(context, PREFS_DETECTION_CACHE, PREFS_PROCESSED_CACHE_ORDER_KEY);
-    }
-
-    private static int preferenceStoreEntryCount(Context context, String prefsName, String orderKey) {
-        return SpicyCacheStore.entryCount(context, prefsName);
-    }
-
     public static void clearGoogle(Context context) {
-        SpicyCacheStore.clear(context, PREFS_GOOGLE_CACHE);
+        SpicyCacheStore.clear(context, SpicyCacheStore.GOOGLE);
     }
 
     public static void clearProcessed(Context context) {
-        SpicyCacheStore.clear(context, PREFS_PROCESSED_CACHE);
-        SpicyCacheStore.clear(context, PREFS_SOUND_CACHE);
-        SpicyCacheStore.clear(context, PREFS_MEANING_CACHE);
-        SpicyCacheStore.clear(context, PREFS_DETECTION_CACHE);
+        SpicyCacheStore.clear(context, SpicyCacheStore.PROCESSED);
+        SpicyCacheStore.clear(context, SpicyCacheStore.SOUND);
+        SpicyCacheStore.clear(context, SpicyCacheStore.MEANING);
+        SpicyCacheStore.clear(context, SpicyCacheStore.DETECTION);
     }
 
     /**
@@ -78,19 +47,19 @@ public final class LyricCaches {
     public static void clearDetectionArtifacts(Context context) {
         CatalogStore.deleteArtifacts(context, ArtifactKind.DETECTION);
         CatalogStore.deleteArtifacts(context, ArtifactKind.DETECTION_TEXT);
-        SpicyCacheStore.clear(context, PREFS_DETECTION_CACHE);
+        SpicyCacheStore.clear(context, SpicyCacheStore.DETECTION);
     }
 
     /** Explicit settings action: deletes stored Sound artifacts only; Meaning is untouched. */
     public static void clearSoundArtifacts(Context context) {
         CatalogStore.deleteArtifacts(context, ArtifactKind.SOUND);
-        SpicyCacheStore.clear(context, PREFS_SOUND_CACHE);
+        SpicyCacheStore.clear(context, SpicyCacheStore.SOUND);
     }
 
     /** Explicit settings action: deletes stored Meaning artifacts only; Sound is untouched. */
     public static void clearMeaningArtifacts(Context context) {
         CatalogStore.deleteArtifacts(context, ArtifactKind.MEANING);
-        SpicyCacheStore.clear(context, PREFS_MEANING_CACHE);
+        SpicyCacheStore.clear(context, SpicyCacheStore.MEANING);
     }
 
     // Sound, Meaning, and detection artifacts are durable song data owned by the catalog. The
@@ -98,7 +67,7 @@ public final class LyricCaches {
     // written again.
 
     public static String getSoundArtifact(Context context, String key) {
-        return catalogArtifact(context, key, ArtifactKind.SOUND, PREFS_SOUND_CACHE);
+        return catalogArtifact(context, key, ArtifactKind.SOUND, SpicyCacheStore.SOUND);
     }
 
     public static boolean putSoundArtifact(Context context, String key, String value) {
@@ -106,7 +75,7 @@ public final class LyricCaches {
     }
 
     public static String getMeaningArtifact(Context context, String key) {
-        return catalogArtifact(context, key, ArtifactKind.MEANING, PREFS_MEANING_CACHE);
+        return catalogArtifact(context, key, ArtifactKind.MEANING, SpicyCacheStore.MEANING);
     }
 
     public static boolean putMeaningArtifact(Context context, String key, String value) {
@@ -114,7 +83,7 @@ public final class LyricCaches {
     }
 
     public static String getDetectionArtifact(Context context, String key) {
-        return catalogArtifact(context, key, detectionKind(key), PREFS_DETECTION_CACHE);
+        return catalogArtifact(context, key, detectionKind(key), SpicyCacheStore.DETECTION);
     }
 
     public static boolean putDetectionArtifact(Context context, String key, String value) {
@@ -250,7 +219,7 @@ public final class LyricCaches {
     private static String getGoogleValue(Context context, String key) {
         if (context == null) return null;
         try {
-            return SpicyCacheStore.get(context, PREFS_GOOGLE_CACHE, Digests.sha256(key));
+            return SpicyCacheStore.get(context, SpicyCacheStore.GOOGLE, Digests.sha256(key));
         } catch (Throwable t) {
             Diagnostics.warn("LyricCaches", "getGoogleValue", t);
             return null;
@@ -270,7 +239,7 @@ public final class LyricCaches {
             synchronized (GOOGLE_CACHE_LOCK) {
                 for (Map.Entry<String, String> entry : values.entrySet()) {
                     if (entry == null || isBlank(entry.getValue())) continue;
-                    SpicyCacheStore.put(context, PREFS_GOOGLE_CACHE,
+                    SpicyCacheStore.put(context, SpicyCacheStore.GOOGLE,
                             Digests.sha256(entry.getKey()), entry.getValue(), quota);
                 }
             }
@@ -281,21 +250,21 @@ public final class LyricCaches {
 
     /** Combined logical-payload usage of the Google processing store, for the settings panel. */
     public static long googleStoreUsageBytes(Context context) {
-        return SpicyCacheStore.usageBytes(context, PREFS_GOOGLE_CACHE);
+        return SpicyCacheStore.usageBytes(context, SpicyCacheStore.GOOGLE);
     }
 
     /** Combined logical-payload usage of the Sound artifact store, for the settings panel. */
     public static long soundStoreUsageBytes(Context context) {
-        return SpicyCacheStore.usageBytes(context, PREFS_SOUND_CACHE);
+        return SpicyCacheStore.usageBytes(context, SpicyCacheStore.SOUND);
     }
 
     /** Combined logical-payload usage of the Meaning artifact store, for the settings panel. */
     public static long meaningStoreUsageBytes(Context context) {
-        return SpicyCacheStore.usageBytes(context, PREFS_MEANING_CACHE);
+        return SpicyCacheStore.usageBytes(context, SpicyCacheStore.MEANING);
     }
 
     /** Combined logical-payload usage of the detection artifact store, for the settings panel. */
     public static long detectionStoreUsageBytes(Context context) {
-        return SpicyCacheStore.usageBytes(context, PREFS_DETECTION_CACHE);
+        return SpicyCacheStore.usageBytes(context, SpicyCacheStore.DETECTION);
     }
 }

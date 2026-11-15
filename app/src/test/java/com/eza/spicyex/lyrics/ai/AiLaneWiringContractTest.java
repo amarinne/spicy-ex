@@ -10,15 +10,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Source contracts for wiring a JVM test cannot reach.
- *
- * <p>Every contract this file once held now has a home a JVM test can run: the lanes in
- * {@link com.eza.spicyex.lyrics.LyricsMeaningLaneBehaviorTest} and
- * {@link com.eza.spicyex.lyrics.LyricsSoundLaneBehaviorTest}, the host rules in
- * {@link com.eza.spicyex.hooks.SoundToggleHostDecisionTest} and
- * {@link com.eza.spicyex.hooks.TranslationVisibilityHostDecisionTest}, and the key row in
- * {@link com.eza.spicyex.ApiKeyRowStateTest}. What remains is the wiring those tests deliberately
- * do not execute: a secure dialog cannot be constructed off-device, so that one guard stays.
+ * Pins the API-key reveal's secure-dialog wiring until the Android harness can exercise it.
+ * Pure key-row state tests do not construct the dialog or verify its window protection.
  */
 public final class AiLaneWiringContractTest {
 

@@ -16,6 +16,15 @@ final class AutoSurfaceFit {
 
     static boolean secondaryAllowed(String target) { return "player-full".equals(target); }
 
+    /** Duet scenes need room for two sung lines; the weather card stays single-line by design. */
+    static boolean duetAllowed(String target) { return "player".equals(target) || "player-full".equals(target); }
+
+    /**
+     * A duet caps each section's extra rows at one line so the pair fits without shrinking the
+     * lyrics; a solo line keeps its legacy two-line secondaries.
+     */
+    static int secondaryLineCap(boolean duet) { return duet ? 1 : 2; }
+
     static float dotAlpha(com.eza.spicyex.lyrics.AppliedLine timing, long positionMs, int dot) {
         if (timing == null || dot < 0 || dot >= timing.words.size()) return .35f;
         com.eza.spicyex.lyrics.SyllableSegment step = timing.words.get(dot);
@@ -82,10 +91,56 @@ final class AutoSurfaceFit {
                 int fitted = largestSize(0, graphemes.size(), n -> n == 0 || fits.test(from, graphemes.get(n - 1)));
                 if (fitted == 0) return new ArrayList<>();
                 end = graphemes.get(fitted - 1);
-            } else end = available.get(count - 1);
+            } else {
+                int chosen = count - 1;
+                // A page break that leaves one word alone on the next page reads as a
+                // stray fragment. Step back to the largest break that keeps a real word
+                // pair on the following page, as long as this page still holds two words.
+                while (chosen > 0 && isolatedWord(text, available.get(chosen))
+                        && wordCount(text, from, available.get(chosen - 1)) > 1) chosen--;
+                end = available.get(chosen);
+            }
             result.add(new int[]{start, end}); start = end;
         }
         return result;
+    }
+
+    /** True when the text after {@code end} is one unspaced word, so the next page is a stray fragment. */
+    private static boolean isolatedWord(String text, int end) {
+        int from = end;
+        while (from < text.length() && space(text.charAt(from))) from++;
+        if (from >= text.length()) return false;
+        boolean word = false;
+        for (int i = from; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (space(c) || unspacedScript(c)) return false;
+            if (Character.isLetterOrDigit(c)) word = true;
+        }
+        return word;
+    }
+
+    /** Space-delimited words in one candidate page; unspaced scripts stay on the raw boundary. */
+    private static int wordCount(String text, int start, int end) {
+        int words = 0;
+        boolean inside = false;
+        for (int i = start; i < end; i++) {
+            boolean boundary = space(text.charAt(i)) || unspacedScript(text.charAt(i));
+            if (!boundary && !inside) words++;
+            inside = !boundary;
+        }
+        return words;
+    }
+
+    private static boolean space(char c) {
+        return Character.isWhitespace(c) || Character.isSpaceChar(c);
+    }
+
+    /** Scripts that do not separate words with spaces, where an orphan-word rule would misfire. */
+    private static boolean unspacedScript(char c) {
+        return c >= 0x0E00 && c <= 0x0EFF || c >= 0x1000 && c <= 0x109F
+                || c >= 0x1780 && c <= 0x17FF || c >= 0x2E80 && c <= 0x9FFF
+                || c >= 0xA960 && c <= 0xA97F || c >= 0xAC00 && c <= 0xD7FF
+                || c >= 0xF900 && c <= 0xFAFF || c >= 0xFF65 && c <= 0xFF9F;
     }
 
     private static boolean safeBoundary(int offset, List<DisplayLayoutGroup> groups) {

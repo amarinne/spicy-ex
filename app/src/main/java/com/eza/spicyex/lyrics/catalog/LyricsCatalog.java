@@ -27,13 +27,19 @@ public final class LyricsCatalog {
         public final CatalogState state;
         public final CatalogPolicy policy;
         public final Resolution resolution;
+        /** Null when the snapshot was unreadable; never a durable-absence plan. */
         public final AcquisitionPlanner.Plan plan;
         /** Decoded seat document, or null when nothing renders or the payload is unreadable. */
         public final LyricsDocument document;
         /** Source revision recorded with the seat document, for the session's base revision. */
         public final int sourceRevision;
-        /** False when the transaction that produced this view failed. */
+        /**
+         * False when the transaction that produced this view failed or the snapshot could not be
+         * read. A false value is not evidence that the track has no stored lyrics.
+         */
         public final boolean durable;
+        /** False when the catalog storage read failed; {@link #state} is an empty placeholder. */
+        public final boolean readable;
         /** Read order; a view with a lower sequence than one already applied is stale. */
         public final long sequence;
         /** Outcome of the command that produced this view, e.g. {@code missing-candidate}. */
@@ -41,7 +47,7 @@ public final class LyricsCatalog {
 
         View(String trackId, CatalogState state, CatalogPolicy policy, Resolution resolution,
              AcquisitionPlanner.Plan plan, LyricsDocument document, int sourceRevision,
-             boolean durable, long sequence, String outcome) {
+             boolean durable, boolean readable, long sequence, String outcome) {
             this.trackId = trackId;
             this.state = state;
             this.policy = policy;
@@ -50,6 +56,7 @@ public final class LyricsCatalog {
             this.document = document;
             this.sourceRevision = sourceRevision;
             this.durable = durable;
+            this.readable = readable;
             this.sequence = sequence;
             this.outcome = outcome == null ? "" : outcome;
         }
@@ -104,6 +111,11 @@ public final class LyricsCatalog {
         CatalogChange decide(CatalogState state, CatalogPolicy policy, long nowMs);
     }
 
+    public static Command importLocal(CatalogCandidate candidate, SpotifyTrack track) {
+        return (state, policy, now) -> CatalogDecisions.importLocal(state, policy, candidate,
+                CatalogTrack.of(track, now));
+    }
+
     public static Command select(String candidateId) {
         return (state, policy, now) -> CatalogDecisions.selectManual(state, policy, candidateId);
     }
@@ -144,15 +156,28 @@ public final class LyricsCatalog {
                                  boolean durable, String outcome, long durationMs) {
         return READS.read(sequence -> {
             CatalogPolicy policy = CatalogPolicy.read(context);
-            CatalogState state = CatalogStore.state(context, trackId);
-            return view(trackId, state, policy, System.currentTimeMillis(), includeLocal,
-                    durable, sequence, outcome, durationMs);
+            CatalogStore.Read read = CatalogStore.read(context, trackId);
+            return view(trackId, read.state, policy, System.currentTimeMillis(), includeLocal,
+                    durable, read.readable, sequence, outcome, durationMs);
         });
     }
 
     static View view(String trackId, CatalogState state, CatalogPolicy policy,
                              long now, boolean includeLocal, boolean durable, long sequence,
                              String outcome, long durationMs) {
+        return view(trackId, state, policy, now, includeLocal, durable, true, sequence, outcome,
+                durationMs);
+    }
+
+    static View view(String trackId, CatalogState state, CatalogPolicy policy,
+                             long now, boolean includeLocal, boolean durable, boolean readable,
+                             long sequence, String outcome, long durationMs) {
+        if (!readable) {
+            // No snapshot means no seat and no plan. Callers must never read this placeholder as
+            // a durable empty catalog or plan acquisition from it.
+            return new View(trackId, CatalogState.empty(trackId), policy, null, null, null, 1,
+                    false, false, sequence, outcome);
+        }
         state = readableState(state);
         Resolution resolution = CatalogDecisions.render(state, policy);
         CanonicalSourceCodec.Record record = decode(resolution.winner);
@@ -160,46 +185,29 @@ public final class LyricsCatalog {
                 record == null ? null : resolution, now, includeLocal);
         return new View(trackId, state, policy, resolution, plan,
                 record == null ? null : record.document,
-                record == null ? 1 : Math.max(1, record.sourceRevision), durable, sequence,
+                record == null ? 1 : Math.max(1, record.sourceRevision), durable, true, sequence,
                 outcome);
     }
 
     /** Corrupt payloads remain stored, but cannot mask a usable fallback or prevent refresh. */
     static CatalogState readableState(CatalogState state) {
         java.util.List<CatalogCandidate> readable = new java.util.ArrayList<>();
-        java.util.Map<CatalogSource.SourceId, ProviderRecord> providers =
-                new java.util.EnumMap<>(CatalogSource.SourceId.class);
-        providers.putAll(state.providers);
         for (CatalogCandidate candidate : state.candidates) {
             if (decode(candidate) != null) readable.add(candidate);
         }
-        for (CatalogSource.SourceId source : CatalogSource.SourceId.values()) {
-            boolean available = false;
-            boolean stored = false;
-            for (CatalogCandidate candidate : state.candidates) {
-                if (candidate.sourceId == source) stored = true;
-            }
-            for (CatalogCandidate candidate : readable) {
-                if (candidate.sourceId == source) available = true;
-            }
-            ProviderRecord record = state.provider(source);
-            if (stored && !available && record.status == CatalogSource.ProviderStatus.AVAILABLE) {
-                providers.put(source, new ProviderRecord(source, CatalogSource.ProviderStatus.NEEDS_REFRESH,
-                        record.updatedAtMs, record.lastAttemptMs, record.lastSuccessMs, record.attemptCount));
-            }
-        }
-        return new CatalogState(state.trackId, readable, providers, state.selection,
-                state.rejections, state.known);
+        return state.withVisible(readable);
     }
 
     /**
      * The public release kept one winner per track plus an optional per-track source override.
      * Both become catalog records the first time the track loads; the old store is only read.
+     * An unreadable catalog is never treated as an empty one, so a failed read cannot trigger a
+     * legacy import over state that may already exist.
      */
     private static void importPublicRelease(Context context, SpotifyTrack track, String trackId,
                                             CatalogPolicy policy, CatalogTrack row, long now) {
         try {
-            if (CatalogStore.state(context, trackId).hasHistory()) return;
+            if (!importEligible(CatalogStore.read(context, trackId))) return;
             CanonicalSourceCodec.Record legacy = CanonicalSourceCache.load(context, track.uri);
             LyricsSourcePreferences.Source override =
                     LyricsSourcePreferences.trackOverride(context, trackId);
@@ -214,5 +222,10 @@ public final class LyricsCatalog {
         } catch (Throwable ignored) {
             // A bad legacy record must never strand the track: the catalog path continues.
         }
+    }
+
+    /** Import only when the catalog was read successfully and the track has no history yet. */
+    static boolean importEligible(CatalogStore.Read read) {
+        return read != null && read.readable && !read.state.hasHistory();
     }
 }

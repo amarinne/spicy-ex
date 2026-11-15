@@ -5,7 +5,7 @@ import android.content.Context;
 import java.util.Map;
 
 public final class LyricsResponseCache {
-    private static final String PREFS_CACHE = "SpotifyPlusLyricsResponseCache";
+    private static final String PREFS_CACHE = com.eza.spicyex.lyrics.cache.SpicyCacheStore.RESPONSES;
     private static final String UPDATED_SUFFIX = ":updated";
 
     private LyricsResponseCache() {

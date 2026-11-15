@@ -2,10 +2,12 @@ package com.eza.spicyex.auto;
 
 import android.content.ComponentName;
 import android.content.Context;
+import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.Display;
 import com.eza.spicyex.xposed.XpHooks;
 import com.eza.spicyex.xposed.XpLog;
 import java.lang.ref.WeakReference;
@@ -21,6 +23,8 @@ public final class AndroidAutoPrototype {
     private static final Handler main = new Handler(Looper.getMainLooper());
     private static final List<WeakReference<AutoLyricsView>> canvases = new ArrayList<>();
     private static final AutoSurfaceReadiness surfaceReadiness = new AutoSurfaceReadiness();
+    private static final AutoCompactArtwork compactArtwork = new AutoCompactArtwork();
+    private static volatile AutoCompositionRecovery weatherBootstrap;
     private static final List<WeakReference<Object>> scopes = new ArrayList<>();
     private static boolean lastReady, lastWeather, lastSpotify, lastEnabled, lastFullReady, lastPlayerReady;
     private static final AutoArtworkRelease artworkRelease = new AutoArtworkRelease();
@@ -43,6 +47,12 @@ public final class AndroidAutoPrototype {
     private static boolean started;
     private static int weatherCallersDeoptimized;
     private static long weatherCalls, mediaCalls, contentCalls, artSuppressed;
+    private static volatile long connectionWeatherEmissions;
+    private static long weatherDispatchCalls;
+    private static boolean weatherInstalled, weatherDeoptimized;
+    private static final List<WeakReference<Object>> weatherOwners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static volatile long installCompletedAtMs, firstWeatherCallAtMs, firstWeatherDispatchAtMs;
     private static Object weatherFactory, playerFactory, fullFactory, update, lyricSlot, lyricTextSlot, emptySlot, unit;
     private static Object weatherSizeObserver, weatherObserverCheck;
     private static AutoWeatherSizeObserver weatherObserverAttachment;
@@ -57,8 +67,9 @@ public final class AndroidAutoPrototype {
     private static final AutoFullBadgeOwnership fullBadgeOwnership = new AutoFullBadgeOwnership();
     private static long fullOwnedBadgeCalls;
     private static final ThreadLocal<Integer> fullMetadataDepth = new ThreadLocal<>();
+    private static final ThreadLocal<Integer> fullMetadataReplaced = new ThreadLocal<>();
     private static int explicitBadgeId;
-    private static long badgesSuppressed, fullBadgeCalls, fullBadgeMatches;
+    private static long badgesSuppressed, fullBadgeCalls, fullBadgeMatches, songInfoSuppressed;
     private static long progressSuppressed, thumbnailsSuppressed, navigationSuppressed;
     private static float backgroundAlpha = 1f;
     private static Object backgroundOpacity;
@@ -78,11 +89,12 @@ public final class AndroidAutoPrototype {
     public static synchronized void install(Context context, ClassLoader loader) {
         if (started || !android.app.Application.getProcessName().endsWith(":projection")) return;
         started = true;
-        Executors.newSingleThreadExecutor().execute(() -> {
+        new Thread(() -> {
             sharedCoreInstalled = installStage("shared-core", () -> {
                 int id = context.getResources().getIdentifier("temperature_unavailable", "string", context.getPackageName());
                 explicitBadgeId = context.getResources().getIdentifier("gs_explicit_fill1_vd_theme_24", "drawable", context.getPackageName());
-                symbols = AndroidAutoResolver.resolve(context.getApplicationInfo().sourceDir, loader, id, explicitBadgeId);
+                symbols = AndroidAutoResolver.resolve(context.getApplicationInfo().sourceDir, loader, id, explicitBadgeId,
+                        AndroidAutoPrototype::installWeatherEarly);
                 XpLog.log("[SpicyAuto] discovery " + symbols.diagnostics);
                 if (symbols.androidViewEmitter == null || symbols.androidViewNoOp == null
                         || symbols.emptyModifier == null || symbols.currentScope == null
@@ -111,7 +123,10 @@ public final class AndroidAutoPrototype {
             if (sharedCoreInstalled) {
                 installStage("navigation", () -> {
                     if (symbols.dashboardCardsRead == null || symbols.dashboardLayout == null) throw new IllegalStateException("navigation unresolved");
-                    XpHooks.hookBefore(symbols.dashboardLayout, "auto:dashboard-layout", p -> rememberScope(p.args[6]));
+                    XpHooks.hookBefore(symbols.dashboardLayout, "auto:dashboard-layout", p -> {
+                        rememberWeatherOwner(p.args[6]);
+                        rememberScope(p.args[6]);
+                    });
                     XpHooks.hookAfter(symbols.dashboardCardsRead, "auto:navigation-suggestions", p -> {
                         if (!enabled
                                 || !(p.getResult() instanceof List)) return;
@@ -142,13 +157,32 @@ public final class AndroidAutoPrototype {
                 installStage("full-metadata", () -> {
                     if (symbols.fullMediaContent.length == 0) throw new IllegalStateException("full-metadata unresolved");
                     for (Method method : symbols.fullMediaContent) XpHooks.hook(method, "auto:full-badge-scope", p -> {
-                        rememberScope(p.args[p.args.length - 2]);
+                        Object composer = p.args[p.args.length - 2];
+                        rememberScope(composer);
+                        if (AutoPrototypePolicy.suppressFullSongInfo(fullInstalled && fullReady(),
+                                isSpotifySelected(), AutoDisplaySettings.extraLine(state))) {
+                            // The extra line takes the whole media body. Replacing its parent
+                            // removes the artwork and the native title/artist row together.
+                            songInfoSuppressed++;
+                            contentCalls++;
+                            Integer replaced = fullMetadataReplaced.get();
+                            fullMetadataReplaced.set(replaced == null ? 1 : replaced + 1);
+                            emit(fullFactory, symbols.fillContentModifier.invoke(null,
+                                    p.args[1] == null ? symbols.emptyModifier : p.args[1], 1.0f), composer);
+                            p.setResult(null);
+                            return;
+                        }
                         if (fullInstalled && !fullReady() && nativeAlpha < 1f && isSpotifySelected()) {
                             p.args[1] = nativeFadeModifier(p.args[1]);
                             p.args[3] = ((Integer) p.args[3]) & ~112;
                         }
                         Integer depth = fullMetadataDepth.get(); fullMetadataDepth.set(depth == null ? 1 : depth + 1);
                     }, p -> {
+                        Integer replaced = fullMetadataReplaced.get();
+                        if (replaced != null) {
+                            if (replaced <= 1) fullMetadataReplaced.remove(); else fullMetadataReplaced.set(replaced - 1);
+                            return;
+                        }
                         Integer depth = fullMetadataDepth.get();
                         if (depth == null || depth <= 1) fullMetadataDepth.remove(); else fullMetadataDepth.set(depth - 1);
                     });
@@ -173,19 +207,31 @@ public final class AndroidAutoPrototype {
                     });
                 });
                 installStage("compact-badge", () -> {
-                    if (explicitBadgeId == 0 || symbols.mediaBadgeContent == null || symbols.mediaBadgeListRead == null) throw new IllegalStateException("compact-badge unresolved");
-                    XpHooks.hook(symbols.mediaBadgeContent, "auto:badge-scope", p -> {
-                        if (!symbols.mediaBadgeTextScope.isInstance(p.args[0])) return;
-                        rememberScope(p.args[1]);
-                        Integer depth = badgeDepth.get();
-                        badgeDepth.set(depth == null ? 1 : depth + 1);
-                    }, p -> {
-                        if (!symbols.mediaBadgeTextScope.isInstance(p.args[0])) return;
-                        Integer depth = badgeDepth.get();
-                        if (depth == null || depth <= 1) badgeDepth.remove(); else badgeDepth.set(depth - 1);
-                    });
-                    XpHooks.hookAfter(symbols.mediaBadgeListRead, "auto:explicit-badge", p -> {
-                        if (!compactInstalled || badgeDepth.get() == null || !AutoPrototypePolicy.suppressCompactBadge(surfaceReady("player"), isSpotifySelected(), weatherVisible()) || !(p.getResult() instanceof List)) return;
+                    if (explicitBadgeId == 0) throw new IllegalStateException("compact-badge unresolved");
+                    if (symbols.mediaBadgeContent != null && symbols.mediaBadgeListRead != null && symbols.mediaBadgeTextScope != null) {
+                        XpHooks.hook(symbols.mediaBadgeContent, "auto:badge-scope", p -> {
+                            if (!symbols.mediaBadgeTextScope.isInstance(p.args[0])) return;
+                            rememberScope(p.args[1]);
+                            Integer depth = badgeDepth.get();
+                            badgeDepth.set(depth == null ? 1 : depth + 1);
+                        }, p -> {
+                            if (!symbols.mediaBadgeTextScope.isInstance(p.args[0])) return;
+                            Integer depth = badgeDepth.get();
+                            if (depth == null || depth <= 1) badgeDepth.remove(); else badgeDepth.set(depth - 1);
+                        });
+                        XpHooks.hookAfter(symbols.mediaBadgeListRead, "auto:explicit-badge", p -> {
+                            if (!compactInstalled || badgeDepth.get() == null || !AutoPrototypePolicy.suppressCompactBadge(surfaceReady("player"), isSpotifySelected(), weatherVisible()) || !(p.getResult() instanceof List)) return;
+                            List<?> original = (List<?>) p.getResult();
+                            List<?> filtered = AutoMetadataBadges.withoutExplicit(original, explicitBadgeId);
+                            if (filtered != original) { badgesSuppressed++; p.setResult(filtered); }
+                        });
+                        return;
+                    }
+                    // The compact composable signature changes between host releases. The
+                    // metadata badge producer is the stable source of the same transient list.
+                    if (symbols.explicitBadgeProducer == null) throw new IllegalStateException("compact-badge unresolved");
+                    XpHooks.hookAfter(symbols.explicitBadgeProducer, "auto:explicit-badge-producer", p -> {
+                        if (!compactInstalled || !AutoPrototypePolicy.suppressCompactBadge(surfaceReady("player"), isSpotifySelected(), weatherVisible()) || !(p.getResult() instanceof List)) return;
                         List<?> original = (List<?>) p.getResult();
                         List<?> filtered = AutoMetadataBadges.withoutExplicit(original, explicitBadgeId);
                         if (filtered != original) { badgesSuppressed++; p.setResult(filtered); }
@@ -294,39 +340,132 @@ public final class AndroidAutoPrototype {
                         if (compactInstalled && surfaceReady("player") && isSpotifySelected() && !weatherVisible()) { artSuppressed++; p.setResult(null); }
                     });
                 });
-                if (symbols.weatherMapped()) installStage("weather-modern",
-                        () -> installWeatherSlot(symbols.weatherRenderer, 2, "auto:weather-slot"));
-                if (symbols.legacyWeatherRenderer != null)
-                    installStage("weather-legacy",
-                            () -> installWeatherSlot(symbols.legacyWeatherRenderer, 4, "auto:legacy-weather-slot"));
-                // Do this after installing the hook so compiled direct and restart calls
-                // cannot continue through an inlined copy of the original weather subtree.
-                for (Method caller : symbols.weatherCallers) {
-                    try {
-                        if (XpHooks.deoptimize(caller)) weatherCallersDeoptimized++;
-                        else XpLog.log("[SpicyAuto] weather caller deoptimization rejected " + caller);
-                    } catch (Throwable error) {
-                        XpLog.log("[SpicyAuto] weather caller deoptimization failed " + error);
+                // The weather hook usually installs from the resolver callback, before the
+                // unrelated families delay it. Retry here if that earlier stage failed.
+                if (!weatherInstalled) installWeatherEarly(symbols);
+            }
+            installCompletedAtMs = android.os.SystemClock.elapsedRealtime();
+            if (symbols.compositionSlots != null && sharedCoreInstalled
+                    && "installed".equals(installation.error("weather-modern"))) {
+                weatherBootstrap = new AutoCompositionRecovery(symbols.compositionTables,
+                        symbols.compositionSlots, symbols.invalidateScope);
+                // Owners observed before the bootstrap existed still deserve one refresh.
+                for (WeakReference<Object> ref : weatherOwners) weatherBootstrap.remember(ref.get());
+            }
+            XpLog.log("[SpicyAuto] install complete after "
+                    + (installCompletedAtMs - android.os.Process.getStartElapsedRealtime()) + "ms");
+            if (!sharedCoreInstalled || (!weatherInstalled && !compactInstalled && !fullInstalled)) return;
+            AutoPrototypeClient client = new AutoPrototypeClient(context);
+            java.util.concurrent.ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor(
+                    task -> new Thread(task, "SpicyAutoHost"));
+            DisplayManager displays = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
+            DisplayManager.DisplayListener connection = new DisplayManager.DisplayListener() {
+                private java.util.concurrent.ScheduledFuture<?> polling;
+                private volatile int generation;
+                private void changed() {
+                    boolean connected = false;
+                    for (Display display : displays.getDisplays())
+                        if (display.getDisplayId() > 0 && display.getState() == Display.STATE_ON) connected = true;
+                    if (connected == (polling != null)) return;
+                    int version = ++generation;
+                    if (connected) {
+                        onConnection();
+                        polling = worker.scheduleWithFixedDelay(() -> poll(version), 0, 100, TimeUnit.MILLISECONDS);
+                    } else {
+                        polling.cancel(false);
+                        polling = null;
+                        worker.execute(() -> {
+                            try { client.callIfConnected("host", new Bundle()); }
+                            catch (android.os.RemoteException ignored) { }
+                            finally { client.close(); }
+                        });
+                        enabled = false; state = null; refresh();
                     }
                 }
-                XpLog.log("[SpicyAuto] weather callers deoptimized " + weatherCallersDeoptimized
-                        + "/" + symbols.weatherCallers.length);
-            }
-            AutoPrototypeClient client = new AutoPrototypeClient(context);
-            Executors.newSingleThreadScheduledExecutor().scheduleWithFixedDelay(() -> {
-                try {
-                    Bundle reply = client.call("state", null);
-                    Bundle next = reply == null ? null : reply.getBundle("state");
-                    if (next != null) next.putBoolean("stress", reply.getBoolean("stress"));
-                    main.post(() -> {
-                        enabled = reply != null && reply.getBoolean("enabled");
-                        state = next;
-                        refresh();
+                private void poll(int version) {
+                    if (version != generation) return;
+                    try {
+                        Bundle status = new Bundle(hostStatus);
+                        status.putBoolean("connected", true);
+                        client.call("host", status);
+                        Bundle reply = client.call("state", null);
+                        Bundle next = reply == null ? null : reply.getBundle("state");
+                        if (next != null) next.putBoolean("stress", reply.getBoolean("stress"));
+                        main.post(() -> {
+                            if (version != generation) return;
+                            enabled = reply != null && reply.getBoolean("enabled");
+                            state = next;
+                            refresh();
+                        });
+                    } catch (Throwable error) { main.post(() -> {
+                        if (version != generation) return;
+                        enabled = false; state = null; refresh();
+                    }); }
+                }
+                @Override public void onDisplayAdded(int id) { changed(); }
+                @Override public void onDisplayChanged(int id) { changed(); }
+                @Override public void onDisplayRemoved(int id) { changed(); }
+            };
+            main.post(() -> {
+                displays.registerDisplayListener(connection, main);
+                connection.onDisplayChanged(Display.DEFAULT_DISPLAY);
+            });
+        }, "SpicyAutoDiscovery").start();
+    }
+
+    /**
+     * Hook and deoptimize the weather entry as soon as its own symbols resolve. The native card
+     * can compose during the remaining multi-family scan; every second of that window is a
+     * window where the host draws weather itself and the module never sees it.
+     */
+    private static void installWeatherEarly(AndroidAutoResolver.Results resolved) {
+        if (resolved == null || !resolved.weatherMapped() || resolved.weatherRenderer == null) return;
+        if (!weatherInstalled) {
+            weatherInstalled = installStage("weather-modern",
+                    () -> installWeatherSlot(resolved.weatherRenderer, 2, "auto:weather-slot"));
+            if (!weatherInstalled) return;
+            if (resolved.legacyWeatherRenderer != null) installStage("weather-legacy",
+                    () -> installWeatherSlot(resolved.legacyWeatherRenderer, 4, "auto:legacy-weather-slot"));
+            // A dispatcher call without a renderer call proves the entry is bypassed rather
+            // than merely late; both counters appear in the provider status.
+            if (resolved.dashboardDispatcher != null) XpHooks.hookBefore(resolved.dashboardDispatcher,
+                    "auto:weather-dispatch", p -> {
+                        weatherDispatchCalls++;
+                        if (firstWeatherDispatchAtMs != 0) return;
+                        firstWeatherDispatchAtMs = android.os.SystemClock.elapsedRealtime();
+                        XpLog.log("[SpicyAuto] first weather dispatch after "
+                                + (firstWeatherDispatchAtMs - android.os.Process.getStartElapsedRealtime()) + "ms");
                     });
-                    client.call("host", hostStatus);
-                } catch (Throwable error) { main.post(() -> { enabled = false; state = null; refresh(); }); }
-            }, 0, 100, TimeUnit.MILLISECONDS);
-        });
+        }
+        deoptimizeWeatherCallers(resolved);
+    }
+
+    /** Run only after the hook exists: compiled direct and restart calls must land in it. */
+    private static void deoptimizeWeatherCallers(AndroidAutoResolver.Results resolved) {
+        if (weatherDeoptimized) return;
+        weatherDeoptimized = true;
+        for (Method caller : resolved.weatherCallers) {
+            try {
+                if (XpHooks.deoptimize(caller)) weatherCallersDeoptimized++;
+                else XpLog.log("[SpicyAuto] weather caller deoptimization rejected " + caller);
+            } catch (Throwable error) {
+                XpLog.log("[SpicyAuto] weather caller deoptimization failed " + error);
+            }
+        }
+        XpLog.log("[SpicyAuto] weather callers deoptimized " + weatherCallersDeoptimized
+                + "/" + resolved.weatherCallers.length);
+    }
+
+    /**
+     * Remember compositions that can own the native weather subtree. Media and full-player
+     * composers are excluded: invalidating them only recomposes unrelated content.
+     */
+    private static void rememberWeatherOwner(Object composer) {
+        if (composer == null) return;
+        AutoCompositionRecovery bootstrap = weatherBootstrap;
+        if (bootstrap != null) { bootstrap.remember(composer); return; }
+        for (WeakReference<Object> ref : weatherOwners) if (ref.get() == composer) return;
+        if (weatherOwners.size() < 8) weatherOwners.add(new WeakReference<>(composer));
     }
 
     private static boolean installStage(String role, AutoHookInstallation.Action action) {
@@ -338,9 +477,18 @@ public final class AndroidAutoPrototype {
     private static void installWeatherSlot(Method renderer, int composerIndex, String id) {
         boolean legacy = composerIndex == 4;
         XpHooks.hookBefore(renderer, id, p -> {
+            if (firstWeatherCallAtMs == 0) {
+                firstWeatherCallAtMs = android.os.SystemClock.elapsedRealtime();
+                XpLog.log("[SpicyAuto] first weather call after "
+                        + (firstWeatherCallAtMs - android.os.Process.getStartElapsedRealtime()) + "ms");
+            }
             weatherCalls++;
             if (legacy) legacyWeatherCalls++; else modernWeatherCalls++;
             try {
+                rememberWeatherOwner(p.args[composerIndex]);
+                // The hook installs before the shared Compose core finishes resolving. Until the
+                // factory exists the module cannot emit, so the native card must draw instead.
+                if (weatherFactory == null || update == null) return;
                 rememberScope(p.args[composerIndex]);
                 if (symbols.weatherSizeModifier != null) {
                     if (weatherSizeObserver == null) {
@@ -372,6 +520,7 @@ public final class AndroidAutoPrototype {
                 }
                 emit(weatherFactory, p.args[0], p.args[composerIndex]);
                 if (legacy) legacyWeatherEmissions++; else modernWeatherEmissions++;
+                connectionWeatherEmissions++;
                 p.setResult(null);
             } catch (Throwable error) {
                 if (legacy) legacyWeatherErrors++; else modernWeatherErrors++;
@@ -440,14 +589,25 @@ public final class AndroidAutoPrototype {
             catch (ReflectiveOperationException error) { XpLog.log("[SpicyAuto] invalidation failed " + error); }
         }
     }
-    static void rejectSurface(String target, String row) {
-        if (!surfaceReadiness.reject(target, row)) return;
+    /** A new car connection starts a fresh, bounded recovery chance. */
+    private static void onConnection() {
+        connectionWeatherEmissions = 0;
+        AutoCompositionRecovery bootstrap = weatherBootstrap;
+        if (bootstrap != null) bootstrap.reset();
+    }
+    static void rejectSurface(String target, String row, int width, int height, boolean credit) {
+        // An unpaged credit can exceed a box that still fits ordinary lyric pages.
+        boolean changed = credit ? surfaceReadiness.reject(target, row)
+                : surfaceReadiness.reject(target, row, width, height);
+        if (!changed) return;
         // Measurement can happen inside composition. Defer invalidation until it returns.
         main.post(() -> { refresh(); recompose(); });
     }
-    static void surfaceLayoutChanged(String target) {
+    /** A resized lyric box may now fit a page that the previous size could not. */
+    static void surfaceMeasured(String target, int width, int height) {
         if ("weather".equals(target) && symbols.weatherSizeModifier != null) return;
-        surfaceReadiness.layoutChanged(target);
+        if (!surfaceReadiness.measured(target, width, height)) return;
+        main.post(() -> { refresh(); recompose(); });
     }
     private static boolean surfaceReady(String target) {
         return ready() && surfaceReadiness.allows(target, AutoLyricsView.sampleKey(state));
@@ -520,15 +680,31 @@ public final class AndroidAutoPrototype {
         boolean spotify = isSpotifySelected();
         Bundle sample = state;
         long now = android.os.SystemClock.elapsedRealtime();
+        boolean fresh = sample != null && AutoPrototypePolicy.fresh(sample.getLong("sampledAt"), now);
+        boolean creditAllowed = sample != null && AutoResponseCredit.packetAllowed(
+                sample.getBoolean("orgSource"), sample.getLong("creditFetchedAtMs"), System.currentTimeMillis());
+        long position = sample == null ? 0 : AutoPrototypePolicy.position(sample.getLong("positionMs"),
+                sample.getLong("sampledAt"), sample.getBoolean("playing"), sample.getDouble("playbackRate", 1d), now);
+        long lastVocalEnd = sample == null ? 0 : sample.getLong("lastVocalEndMs");
+        boolean hasCredit = sample != null && AutoResponseCredit.hasCredit(
+                sample.getString("creditWriters"), sample.getStringArrayList("creditLabels"));
+        boolean creditWindowOpen = sample != null && AutoResponseCredit.outroWindow(
+                sample.getBoolean("hasSyncedLyrics"), lastVocalEnd, position, hasCredit);
         boolean valid = enabled && spotify && sample != null && !sample.getString("trackUri", "").isEmpty()
-                && AutoPrototypePolicy.fresh(sample.getLong("sampledAt"), now)
-                && AutoResponseCredit.packetAllowed(sample.getBoolean("orgSource"), sample.getLong("creditFetchedAtMs"), System.currentTimeMillis());
-        takeover = playbackHold.update(valid, sample != null && (sample.getBoolean("playing") || sample.getBoolean("stress")), now, AutoDisplaySettings.pauseSeconds(sample) * 1000L);
+                && (creditWindowOpen || (fresh && creditAllowed));
+        boolean connected = playbackHold.update(valid, sample != null
+                && (sample.getBoolean("playing") || sample.getBoolean("stress") || creditWindowOpen),
+                now, AutoDisplaySettings.pauseSeconds() * 1000L);
+        takeover = connected;
         String session = sample == null ? null : sample.getInt("generation") + ":" + sample.getString("trackUri", "");
         boolean creditVisible = creditWindow.update(session, valid, sample != null && takeover && !sample.getBoolean("stress"),
                 sample != null && sample.getBoolean("hasSyncedLyrics"), sample == null ? 0 : sample.getLong("lastVocalEndMs"),
-                sample == null ? 0 : AutoPrototypePolicy.position(sample.getLong("positionMs"), sample.getLong("sampledAt"), sample.getBoolean("playing"), sample.getDouble("playbackRate", 1d), now),
+                position,
                 sample != null && AutoResponseCredit.hasCredit(sample.getString("creditWriters"), sample.getStringArrayList("creditLabels")), creditPresented(sample), now);
+        boolean nativeArtwork = sample != null && AutoLyricPresentation.nativeArtwork(
+                sample.getBoolean("documentResolved"), sample.getBoolean("hasSyncedLyrics"),
+                sample.getLong("firstVocalStartMs", Long.MAX_VALUE), sample.getLong("lastVocalEndMs"),
+                position, sample.getBoolean("stress"), creditVisible);
         if (sample != null) {
             // Keep an outgoing view's sample intact while the host fades its credit away.
             sample = new Bundle(sample);
@@ -542,6 +718,14 @@ public final class AndroidAutoPrototype {
         main.removeCallbacks(releaseFrame);
         if (artworkRelease.running()) main.postDelayed(releaseFrame, 32);
         boolean active = ready(), weather = weatherVisible(), fullActive = fullReady(), playerActive = surfaceReady("player");
+        AutoCompositionRecovery bootstrap = weatherBootstrap;
+        if (bootstrap != null && connectionWeatherEmissions == 0 && active && spotify) {
+            long before = bootstrap.compositions;
+            bootstrap.recover();
+            if (bootstrap.compositions != before) XpLog.log("[SpicyAuto] weather bootstrap compositions="
+                    + bootstrap.compositions + " scopeInvalidations=" + bootstrap.scopes + " errors=" + bootstrap.errors);
+        }
+        boolean compactEntering = compactArtwork.update(playerActive, spotify, weather);
         boolean weatherReadyChanged = surfaceReadiness.changed("weather", AutoLyricsView.sampleKey(sample), active);
         if (!playerActive) {
             main.removeCallbacks(backgroundFrame); backgroundFadeStarted = 0;
@@ -554,12 +738,15 @@ public final class AndroidAutoPrototype {
                     AutoPrototypePolicy.position(sample.getLong("positionMs"), sample.getLong("sampledAt"),
                             sample.getBoolean("playing"), sample.getDouble("playbackRate", 1d), now));
             if (active && !lastReady && spotify && !immediate) AutoArtworkTransition.capture();
-            main.removeCallbacks(backgroundFrame);
-            if (surfaceReady("player") && spotify && !weather) {
+            if (compactEntering) {
+                main.removeCallbacks(backgroundFrame);
                 backgroundFadeStarted = -1; backgroundFades++; backgroundFadeSamples = "";
                 backgroundAlpha = com.eza.spicyex.ui.Motion.animationsEnabled() && !immediate ? 1f : 0f;
                 if (backgroundAlpha == 0f) backgroundFadeStarted = 0;
-            } else { backgroundAlpha = nativeAlpha; backgroundFadeStarted = 0; }
+            } else if (!compactArtwork.owned()) {
+                main.removeCallbacks(backgroundFrame);
+                backgroundAlpha = nativeAlpha; backgroundFadeStarted = 0;
+            }
             writeBackgroundOpacity();
             lastReady = active; lastWeather = weather; lastSpotify = spotify; lastEnabled = enabled;
             lastFullReady = fullActive; lastPlayerReady = playerActive;
@@ -585,18 +772,36 @@ public final class AndroidAutoPrototype {
         status.putLong("legacyWeatherErrors", legacyWeatherErrors);
         status.putString("lastWeatherError", lastWeatherError);
         status.putBoolean("ready", active);
+        status.putBoolean("fresh", fresh);
+        status.putBoolean("creditAllowed", creditAllowed);
+        status.putBoolean("nativeArtwork", nativeArtwork);
+        status.putLong("stateAgeMs", sample == null ? -1 : Math.max(0, now - sample.getLong("sampledAt")));
+        status.putLong("positionMs", position);
+        status.putLong("installCompletedAgeMs", installCompletedAtMs == 0 ? -1 : now - installCompletedAtMs);
+        status.putLong("firstWeatherCallAgeMs", firstWeatherCallAtMs == 0 ? -1 : now - firstWeatherCallAtMs);
+        status.putLong("weatherDispatchCalls", weatherDispatchCalls);
+        status.putLong("firstWeatherDispatchAgeMs", firstWeatherDispatchAtMs == 0 ? -1 : now - firstWeatherDispatchAtMs);
+        status.putLong("connectionWeatherEmissions", connectionWeatherEmissions);
+        status.putInt("weatherOwners", weatherOwners.size());
+        status.putBoolean("weatherBootstrapResolved", bootstrap != null);
+        status.putLong("weatherBootstrapCompositions", bootstrap == null ? 0 : bootstrap.compositions);
+        status.putLong("weatherBootstrapScopeInvalidations", bootstrap == null ? 0 : bootstrap.scopes);
+        status.putLong("weatherBootstrapErrors", bootstrap == null ? 0 : bootstrap.errors);
         status.putBoolean("documentResolved", sample != null && sample.getBoolean("documentResolved"));
         status.putLong("firstVocalStartMs", sample == null ? Long.MAX_VALUE : sample.getLong("firstVocalStartMs", Long.MAX_VALUE));
         status.putLong("lastVocalEndMs", sample == null ? 0 : sample.getLong("lastVocalEndMs"));
         status.putBoolean("creditOutroVisible", creditVisible);
+        status.putBoolean("creditWindowOpen", creditWindowOpen);
         status.putLong("creditRemainingMs", creditWindow.remainingMs(now));
         status.putBoolean("takeover", takeover);
         status.putBoolean("fullTakeover", fullActive);
         status.putBoolean("artworkRelease", artworkRelease.running());
         status.putFloat("nativeAlpha", nativeAlpha);
         status.putFloat("lyricAlpha", artworkRelease.lyricAlpha(now));
-        status.putInt("pauseHoldSeconds", AutoDisplaySettings.pauseSeconds(sample));
+        status.putInt("pauseHoldSeconds", AutoDisplaySettings.pauseSeconds());
         status.putBoolean("showProgress", !AutoPrototypePolicy.suppressFullProgress(fullActive, spotify, fullContentHeightDp));
+        status.putBoolean("suppressSongInfo", AutoPrototypePolicy.suppressFullSongInfo(fullActive, spotify,
+                AutoDisplaySettings.extraLine(sample)));
         status.putFloat("fullContentHeightDp", fullContentHeightDp);
         status.putBoolean("hasSyncedLyrics", sample != null && sample.getBoolean("hasSyncedLyrics"));
         status.putBoolean("interlude", active && !sample.getBoolean("stress") && sample.getString("line", "").isEmpty());
@@ -616,8 +821,10 @@ public final class AndroidAutoPrototype {
         status.putInt("weatherCallersDeoptimized", weatherCallersDeoptimized);
         status.putLong("weatherCalls", weatherCalls); status.putLong("mediaCalls", mediaCalls);
         status.putLong("contentCalls", contentCalls); status.putLong("artSuppressed", artSuppressed);
-        status.putBoolean("badgesResolved", symbols.mediaBadgeListRead != null && explicitBadgeId != 0);
+        status.putBoolean("badgesResolved", explicitBadgeId != 0
+                && (symbols.mediaBadgeListRead != null || symbols.explicitBadgeProducer != null));
         status.putLong("badgesSuppressed", badgesSuppressed);
+        status.putLong("songInfoSuppressed", songInfoSuppressed);
         status.putLong("fullOwnedBadgeCalls", fullOwnedBadgeCalls);
         status.putLong("fullBadgeCalls", fullBadgeCalls); status.putLong("fullBadgeMatches", fullBadgeMatches);
         status.putBoolean("progressResolved", symbols.fullMediaProgress != null);

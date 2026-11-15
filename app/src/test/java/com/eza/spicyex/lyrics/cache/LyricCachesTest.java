@@ -14,7 +14,7 @@ import static org.junit.Assert.assertTrue;
 public class LyricCachesTest {
     @Test
     public void localWholeLineAuthorityBumpsTheReadingCacheIdentity() {
-        assertEquals(8, ProcessedLyricsCache.READING_SCHEMA_VERSION);
+        assertEquals(12, ProcessedLyricsCache.READING_SCHEMA_VERSION);
         String options = RomanizationOptions.DEFAULTS.cacheKey();
         String old = LayerConfigIds.sound(true, options, "ru", 3);
         String current = LayerConfigIds.sound(true, options, "ru",

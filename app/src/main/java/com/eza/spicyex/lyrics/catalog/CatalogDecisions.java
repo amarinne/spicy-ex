@@ -72,6 +72,27 @@ public final class CatalogDecisions {
                 state.selection, "reconciled");
     }
 
+    /** Replaces this song's local file and pins it in the same transaction. */
+    public static CatalogChange importLocal(CatalogState state, CatalogPolicy policy,
+                                           CatalogCandidate candidate, CatalogTrack track) {
+        if (candidate == null || candidate.sourceId != SourceId.LOCAL
+                || !state.trackId.equals(candidate.trackId) || LyricsCatalog.decode(candidate) == null) {
+            return CatalogChange.refused(render(state, policy), "invalid-local-lyrics");
+        }
+        List<CatalogCandidate> next = new ArrayList<>();
+        List<String> deleted = new ArrayList<>();
+        for (CatalogCandidate old : state.candidates) {
+            if (old.sourceId != SourceId.LOCAL) next.add(old);
+            else if (!old.candidateId.equals(candidate.candidateId)) deleted.add(old.candidateId);
+        }
+        next.add(candidate);
+        CatalogSelection pin = new CatalogSelection(state.trackId, SelectionMode.MANUAL,
+                candidate.candidateId, SourceId.LOCAL, candidate.providerItemId, candidate.canonicalDigest);
+        return change(state, policy, track, next, Collections.singletonList(candidate),
+                Collections.singletonList(state.provider(SourceId.LOCAL).succeeded(candidate.fetchedAtMs)),
+                deleted, pin, "imported-local");
+    }
+
     /** A provider returned a usable candidate. A rejected provider item is refused, not stored. */
     public static CatalogChange providerSuccess(CatalogState state, CatalogPolicy policy,
                                                 CatalogCandidate candidate, CatalogTrack track,

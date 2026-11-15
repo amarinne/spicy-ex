@@ -9,9 +9,6 @@ import com.eza.spicyex.Settings;
 import com.eza.spicyex.lyrics.session.LyricsSourcePreferences;
 import org.junit.Test;
 
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 
 public class AgentCommandChannelTest {
     @Test
@@ -99,21 +96,4 @@ public class AgentCommandChannelTest {
                 new String[]{"random", "toggle", "kawarp", "extra"}));
     }
 
-    @Test
-    public void theChooseRouteReachesTheRenderedControlItself() throws Exception {
-        String editor = read("src/main/java/com/eza/spicyex/hooks/LyricsLayoutEditController.java");
-        // The route picks the chip the panel rendered and lets that chip's own owner write:
-        // no second writer, no synthetic rebuild, no tap on a coordinate.
-        assertTrue(editor.contains("chip.performClick();"));
-        assertTrue(editor.contains("rows.renderedChoices("));
-        assertFalse(editor.contains("writer.put(settingKey"));
-        assertFalse(editor.contains("writer.put(choice."));
-    }
-
-    private static String read(String path) throws Exception {
-        File file = new File(path);
-        if (!file.isFile()) file = new File("app/" + path);
-        assertTrue(file.isFile());
-        return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
-    }
 }

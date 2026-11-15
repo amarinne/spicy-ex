@@ -49,11 +49,8 @@ public final class DiagnosticReportingDialog {
     private static final int COL_TITLE = 0xFFFFFFFF;
     private static final int COL_SUMMARY = 0xA6FFFFFF;
     private static final int COL_ACCENT = 0xFF1ED760;
-    private static final String[] CATEGORY_WIRES = {
-            "missing_wrong_lyrics", "timing", "translation", "ai_features",
-            "transliteration_romanization",
-            "fullscreen_renderer", "now_playing_card", "hyperglow_bridge", "crash_restart", "other"
-    };
+    private static final String[] CATEGORY_WIRES =
+            DiagnosticReportContract.CATEGORIES.toArray(new String[0]);
     private static final int[] CATEGORY_LABELS = {
             R.string.diagnostic_category_missing_wrong,
             R.string.diagnostic_category_timing,

@@ -26,11 +26,11 @@ public class LyricsSessionProviderViewTest {
                 CatalogState.class, CatalogPolicy.class,
                 com.eza.spicyex.lyrics.catalog.CatalogResolver.Resolution.class,
                 com.eza.spicyex.lyrics.catalog.AcquisitionPlanner.Plan.class, LyricsDocument.class,
-                int.class, boolean.class, long.class, String.class);
+                int.class, boolean.class, boolean.class, long.class, String.class);
         constructor.setAccessible(true);
         LyricsCatalog.View old = (LyricsCatalog.View) constructor.newInstance("test",
                 CatalogState.empty("test"), new CatalogPolicy(Collections.emptyList(), false),
-                null, null, null, 1, false, 1L, "storage-failed");
+                null, null, null, 1, false, true, 1L, "storage-failed");
 
         // The empty payload isolates settlement from rendering. Both use this same acceptance
         // boundary after the real provider's nonempty-payload check and dispatcher post.

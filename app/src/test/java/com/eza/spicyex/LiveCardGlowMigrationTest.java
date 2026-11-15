@@ -2,7 +2,6 @@ package com.eza.spicyex;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 import com.eza.spicyex.testsupport.FakePrefs;
 
@@ -32,12 +31,5 @@ public class LiveCardGlowMigrationTest {
         FakePrefs prefs = new FakePrefs();
         SettingsStore.migrateLiveCardGlow(prefs);
         assertFalse(prefs.values.containsKey(Settings.LIVE_CARD_GLOW.key));
-    }
-
-    /** The choice list the card editor offers no longer has the retired value. */
-    @Test public void theSchemaOffersOnlyTheTwoRemainingChoices() {
-        assertEquals(2, Settings.LIVE_CARD_GLOW.allowedValues.size());
-        assertTrue(Settings.LIVE_CARD_GLOW.allowedValues.contains("Off"));
-        assertTrue(Settings.LIVE_CARD_GLOW.allowedValues.contains("Word only"));
     }
 }

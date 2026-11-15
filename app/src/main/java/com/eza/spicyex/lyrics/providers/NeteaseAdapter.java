@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics.providers;
 
+import com.eza.spicyex.lyrics.LyricResponseReader;
+
 import android.content.Context;
 import android.net.Uri;
 
@@ -7,6 +9,7 @@ import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.Json;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.catalog.CatalogAdapters;
+import com.eza.spicyex.lyrics.catalog.ProviderFailure;
 import com.eza.spicyex.lyrics.catalog.CatalogSource;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -23,6 +26,7 @@ import okhttp3.Callback;
 import okhttp3.Request;
 import okhttp3.Response;
 
+import static com.eza.spicyex.lyrics.catalog.ProviderFailure.*;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /**
@@ -69,7 +73,7 @@ public final class NeteaseAdapter {
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                fail(context, track, callback, "NetEase search failed: " + safe(e.getMessage()));
+                fail(context, track, callback, transientError("NetEase search failed: " + safe(e.getMessage())));
             }
 
             @Override
@@ -77,20 +81,27 @@ public final class NeteaseAdapter {
                 try (Response ignored = response) {
                     if (!response.isSuccessful() || response.body() == null) {
                         fail(context, track, callback,
-                                "NetEase search HTTP " + response.code());
+                                httpError(response.code(), "NetEase search HTTP " + response.code()));
                         return;
                     }
-                    List<NeteaseSongRanker.Candidate> songs =
-                            rankSongs(response.body().string(), queryTrack);
+                    String body = LyricResponseReader.read(response.body(), LyricResponseReader.SEARCH_BYTES);
+                    JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+                    JsonObject result = Json.optObject(root, "result");
+                    if ((root.has("code") && root.get("code").getAsInt() != 200)
+                            || result == null || (Json.optArray(result, "songs") == null
+                            && (int) Json.optDouble(result, -1d, "songCount") != 0)) {
+                        throw new IllegalArgumentException("Invalid NetEase search response");
+                    }
+                    List<NeteaseSongRanker.Candidate> songs = rankSongs(body, queryTrack);
                     if (songs.isEmpty()) {
-                        fail(context, track, callback, "NetEase empty");
+                        fail(context, track, callback, notFound("NetEase empty"));
                         return;
                     }
                     fetchLyric(context, track, queryTrack, substituted, generation, songs,
                             callback);
                 } catch (Throwable t) {
                     fail(context, track, callback,
-                            "NetEase search parse failed: " + safe(t.getMessage()));
+                            transientError("NetEase search parse failed: " + safe(t.getMessage())));
                 }
             }
         });
@@ -104,7 +115,7 @@ public final class NeteaseAdapter {
         for (NeteaseSongRanker.Candidate candidate : songs) {
             if (!candidate.supportsWordLyrics()) continue;
             if (!ids.contains(candidate.id)) ids.add(candidate.id);
-            if (ids.size() >= NeteaseSongRanker.MAX_WORD_LYRIC_ATTEMPTS) break;
+            if (ids.size() >= WordLyricChain.MAX_ATTEMPTS) break;
         }
         String lineId = String.valueOf(songs.get(0).id);
         Runnable lineFallback = () -> fetchLyricById(context, track, queryTrack, substituted,
@@ -113,20 +124,10 @@ public final class NeteaseAdapter {
             lineFallback.run();
             return;
         }
-        tryWordChain(context, track, queryTrack, substituted, generation, ids, 0, callback,
+        WordLyricChain.run(ids,
+                (songId, next) -> fetchWordLyric(context, track, queryTrack, substituted,
+                        generation, songId, callback, next),
                 lineFallback);
-    }
-
-    private void tryWordChain(Context context, SpotifyTrack track, SpotifyTrack queryTrack,
-                              boolean substituted, int generation, List<Long> ids, int index,
-                              LyricsRepository.ResultCallback callback, Runnable lineFallback) {
-        if (index >= ids.size()) {
-            lineFallback.run();
-            return;
-        }
-        fetchWordLyric(context, track, queryTrack, substituted, generation, ids.get(index),
-                callback, () -> tryWordChain(context, track, queryTrack, substituted, generation,
-                        ids, index + 1, callback, lineFallback));
     }
 
     private void fetchWordLyric(Context context, SpotifyTrack track, SpotifyTrack queryTrack,
@@ -159,7 +160,7 @@ public final class NeteaseAdapter {
                         fallback.run();
                         return;
                     }
-                    String raw = response.body().string();
+                    String raw = LyricResponseReader.read(response.body(), LyricResponseReader.LYRIC_BYTES);
                     LyricsDocument doc =
                             parser.parseNeteaseWordLyrics(context, queryTrack, raw);
                     if (doc == null || doc.lines.isEmpty()) {
@@ -190,7 +191,7 @@ public final class NeteaseAdapter {
         http.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                fail(context, track, callback, "NetEase lyric failed: " + safe(e.getMessage()));
+                fail(context, track, callback, transientError("NetEase lyric failed: " + safe(e.getMessage())));
             }
 
             @Override
@@ -198,21 +199,21 @@ public final class NeteaseAdapter {
                 try (Response ignored = response) {
                     if (!response.isSuccessful() || response.body() == null) {
                         fail(context, track, callback,
-                                "NetEase lyric HTTP " + response.code());
+                                httpError(response.code(), "NetEase lyric HTTP " + response.code()));
                         return;
                     }
-                    String raw = response.body().string();
+                    String raw = LyricResponseReader.read(response.body(), LyricResponseReader.LYRIC_BYTES);
                     LyricsDocument doc =
                             parser.parseNeteaseLyrics(context, queryTrack, raw);
                     doc.generation = generation;
                     if (doc.lines.isEmpty()) {
-                        fail(context, track, callback, "NetEase empty");
+                        fail(context, track, callback, notFound("NetEase empty"));
                         return;
                     }
                     succeed(context, track, doc, substituted, songId, raw, callback);
                 } catch (Throwable t) {
                     fail(context, track, callback,
-                            "NetEase parse failed: " + safe(t.getMessage()));
+                            ProviderFailure.from(t, "NetEase parse failed: " + safe(t.getMessage())));
                 }
             }
         });
@@ -233,9 +234,9 @@ public final class NeteaseAdapter {
     }
 
     private void fail(Context context, SpotifyTrack track,
-                      LyricsRepository.ResultCallback callback, String error) {
-        CatalogAdapters.recordError(context, CatalogSource.SourceId.NETEASE, track, error);
-        callback.onError(error);
+                      LyricsRepository.ResultCallback callback, ProviderFailure failure) {
+        CatalogAdapters.recordError(context, CatalogSource.SourceId.NETEASE, track, failure);
+        callback.onFailure(failure);
     }
 
     static List<NeteaseSongRanker.Candidate> rankSongs(String body, SpotifyTrack track) {

@@ -6,8 +6,6 @@ import static com.eza.spicyex.hooks.NativeLyricsUtils.safe;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.graphics.Color;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -26,13 +24,11 @@ import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.ui.UiLanguage;
 import com.eza.spicyex.xposed.XpLog;
 
-/** Builds transient loading and error rows for the fullscreen lyric surface. */
+/** Builds loading rows and quiet empty states for the fullscreen lyric surface. */
 final class LyricsShellEmptyStateController {
     private final Activity activity;
     private final SpotifyPlusConfig config;
     private final LyricsTextFactory textFactory;
-    private final Handler main = new Handler(Looper.getMainLooper());
-    private static final long NO_MATCH_NOTE_DELAY_MS = 15_000L;
 
     LyricsShellEmptyStateController(
             Activity activity,
@@ -55,7 +51,6 @@ final class LyricsShellEmptyStateController {
      */
     void showLoading(ScrollView lyricsScroll, LinearLayout lyricsColumn, String message,
                      float anchorFraction, int sideInsetPx) {
-        cancelNoMatchNote();
         lyricsColumn.removeAllViews();
         if (config.get(Settings.SHOW_SKELETON)) {
             LyricsSkeletonView skeleton = new LyricsSkeletonView(activity);
@@ -121,16 +116,15 @@ final class LyricsShellEmptyStateController {
         return Math.max(0, Math.round(viewportHeightPx * fraction) - Math.max(0, paddingTopPx));
     }
 
-    /**
-     * An instrumental track: a quiet note and its label in place of "No lyrics found", so a
-     * deliberate no-lyrics track does not read as a lookup failure.
-     */
+    /** Shows the instrumental label only when the track has instrumental evidence. */
     void showInstrumental(LinearLayout lyricsColumn) {
-        cancelNoMatchNote();
-        lyricsColumn.removeAllViews();
         SettingsUiStrings strings = UiLanguage.strings(activity,
                 config.get(Settings.UI_LANGUAGE));
+        showMusicNote(lyricsColumn, strings.get("lyrics_instrumental", "Instrumental"));
+    }
 
+    private void showMusicNote(LinearLayout lyricsColumn, String label) {
+        lyricsColumn.removeAllViews();
         LinearLayout box = new LinearLayout(activity);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -140,13 +134,14 @@ final class LyricsShellEmptyStateController {
         note.setPadding(dp(16), dp(72), dp(16), dp(4));
         box.addView(note, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView title = textFactory.createText(activity,
-                strings.get("lyrics_instrumental", "Instrumental"), 22, Color.WHITE,
-                textFactory.resolveTypeface(true));
-        title.setGravity(Gravity.CENTER);
-        title.setAlpha(0.85f);
-        box.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        if (label != null) {
+            TextView title = textFactory.createText(activity, label, 22, Color.WHITE,
+                    textFactory.resolveTypeface(true));
+            title.setGravity(Gravity.CENTER);
+            title.setAlpha(0.85f);
+            box.addView(title, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
         lyricsColumn.addView(box, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -171,16 +166,8 @@ final class LyricsShellEmptyStateController {
         if (note.isAttachedToWindow()) breathe.start();
     }
 
-    /**
-     * A terminal fetch failure: one or two short lines, what happened and, when useful, what to
-     * do next. The box stays until the state changes (new track, retry, lyrics arrive). The raw
-     * verdict chain is logged and reduced to a diagnostics token, never printed on the surface.
-     */
+    /** Keeps fetch failures in diagnostics and shows a music note without a track classification. */
     void showError(LinearLayout lyricsColumn, String error) {
-        cancelNoMatchNote();
-        lyricsColumn.removeAllViews();
-        SettingsUiStrings strings = UiLanguage.strings(activity,
-                config.get(Settings.UI_LANGUAGE));
         LyricsErrorSentences.Report report = LyricsErrorSentences.describe(error);
         XpLog.log("[SpotifyPlusDiagnostics] lyrics_fetch error_surface verdict="
                 + report.verdict.token() + " chain=" + safe(error));
@@ -188,51 +175,6 @@ final class LyricsShellEmptyStateController {
                 Diagnostics.context("result", report.verdict.token(),
                         "reason", LyricsErrorSentences.diagnosticToken(error)));
 
-        LinearLayout errorBox = new LinearLayout(activity);
-        errorBox.setOrientation(LinearLayout.VERTICAL);
-        addErrorLine(errorBox, strings, report.title, 24, Color.WHITE, true, dp(80), dp(8));
-        addErrorLine(errorBox, strings, report.detail, 14, Color.rgb(179, 179, 179), false,
-                dp(4), dp(10));
-        addErrorLine(errorBox, strings, report.action, 14, Color.rgb(179, 179, 179), false,
-                0, dp(16));
-        lyricsColumn.addView(errorBox, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        errorBox.setAlpha(1f);
-        if (report.verdict == LyricsErrorSentences.Verdict.NO_MATCH) {
-            // A confirmed miss is a normal song state. Keep the first report concise, then let it
-            // settle into the same quiet music-note presentation used for instrumental tracks.
-            main.postDelayed(() -> {
-                if (errorBox.getParent() == lyricsColumn) showInstrumental(lyricsColumn);
-            }, NO_MATCH_NOTE_DELAY_MS);
-        }
-    }
-
-    private void cancelNoMatchNote() {
-        main.removeCallbacksAndMessages(null);
-    }
-
-    /** Adds one sentence line, or nothing when the verdict omits that line. */
-    private void addErrorLine(
-            LinearLayout errorBox,
-            SettingsUiStrings strings,
-            LyricsErrorSentences.Line line,
-            int sizeSp,
-            int color,
-            boolean bold,
-            int topPaddingPx,
-            int bottomPaddingPx
-    ) {
-        if (line == null) return;
-        TextView view = textFactory.createText(
-                activity,
-                strings.get(line.resource, line.fallback),
-                sizeSp,
-                color,
-                textFactory.resolveTypeface(bold));
-        view.setGravity(Gravity.CENTER);
-        view.setPadding(dp(16), topPaddingPx, dp(16), bottomPaddingPx);
-        errorBox.addView(view, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        showMusicNote(lyricsColumn, null);
     }
 }

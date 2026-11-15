@@ -37,4 +37,13 @@ public class AutoResponseCreditTest {
         assertFalse(AutoResponseCredit.outro(true, 0, 8700, true));
         assertFalse(AutoResponseCredit.outro(true, 8000, 8700, false));
     }
+
+    @Test public void creditWindowStaysBoundedWithoutExtendingPastItsVisibleEpisode() {
+        assertFalse(AutoResponseCredit.outroWindow(true, 8000, 8699, true));
+        assertTrue(AutoResponseCredit.outroWindow(true, 8000, 8700, true));
+        assertTrue(AutoResponseCredit.outroWindow(true, 8000, 18699, true));
+        assertFalse(AutoResponseCredit.outroWindow(true, 8000, 18700, true));
+        assertFalse(AutoResponseCredit.outroWindow(true, 8000, 8700, false));
+        assertFalse(AutoResponseCredit.outroWindow(false, 8000, 8700, true));
+    }
 }

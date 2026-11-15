@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics.processing;
 
+import com.eza.spicyex.lyrics.LyricResponseReader;
+
 import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
 import com.eza.spicyex.lyrics.language.SpicyKoreanG2P;
 import com.eza.spicyex.lyrics.language.SpicyRomanizer;
@@ -52,13 +54,21 @@ public final class GoogleEnhancer {
      * not care who asked.
      */
     private static final GoogleCooldown COOLDOWN = new GoogleCooldown();
-    /**
-     * A batch marker as Google may hand it back, not only as sent: its Japanese romanization
-     * spaces it out ("[ [SPX _ 000] ]"), and CJK output can turn brackets, underscore and digits
-     * full-width. The number is what matters.
-     */
+    // Endpoints can change brackets, padding, token spacing, and Unicode whitespace in markers.
+    private static final String MARKER_SPACE = "[\\s\\p{Z}\\uFEFF]*";
+    private static final String MARKER_TOKEN = "[SＳ]" + MARKER_SPACE + "[PＰ]"
+            + MARKER_SPACE + "[XＸ]" + MARKER_SPACE + "[_＿\\-‐‑‒–—]?" + MARKER_SPACE;
+    private static final String MARKER_PREFIX = "[\\[［【〖〔]" + MARKER_SPACE
+            + "(?:[\\[［【〖〔]" + MARKER_SPACE + ")?" + MARKER_TOKEN;
+    private static final String MARKER_END = MARKER_SPACE + "[\\]］】〗〕]?"
+            + MARKER_SPACE + "[\\]］】〗〕]?";
     private static final Pattern BATCH_MARKER_PATTERN = Pattern.compile(
-            "[\\[［]\\s*[\\[［]\\s*(?:SPX|ＳＰＸ)\\s*[_＿]?\\s*([0-9０-９]{3})\\s*[\\]］]\\s*[\\]］]",
+            MARKER_PREFIX + "([0-9０-９]{1,4})(?![0-9０-９])" + MARKER_END,
+            Pattern.CASE_INSENSITIVE);
+    // Unreadable numbers and lost opening brackets cannot be assigned safely to any row.
+    private static final Pattern MARKER_RESIDUE_PATTERN = Pattern.compile(
+            MARKER_PREFIX + "[0-9０-９零〇一二三四五六七八九十百千]*" + MARKER_END
+                    + "|" + MARKER_TOKEN + "[0-9０-９]+" + MARKER_SPACE + "[\\]］】〗〕]",
             Pattern.CASE_INSENSITIVE);
 
     private GoogleEnhancer() {
@@ -82,8 +92,8 @@ public final class GoogleEnhancer {
         for (BatchLine line : lines) {
             if (line == null || isBlank(line.text)) continue;
             result.requestedCount++;
-            String cached = LyricCaches.getProcessingValue(context, processingVersion,
-                    LyricCaches.translationKey(trackId, sourceLang, target, line.text));
+            String cached = sanitizeTranslation(LyricCaches.getProcessingValue(context, processingVersion,
+                    LyricCaches.translationKey(trackId, sourceLang, target, line.text)));
             if (!isBlank(cached) && shouldDisplayTranslation(line.text, cached)) {
                 result.translations.put(line.index, cached);
                 result.cachedIndices.add(line.index);
@@ -109,9 +119,8 @@ public final class GoogleEnhancer {
         Map<String, String> cacheWrites = new LinkedHashMap<>();
         for (int i = 0; i < pending.size(); i++) {
             BatchLine line = pending.get(i);
-            String translated = parsed.get(i);
+            String translated = sanitizeTranslation(parsed.get(i));
             if (isBlank(translated)) continue;
-            translated = stripMarkerEcho(translated, i).trim();
             if (!shouldDisplayTranslation(line.text, translated)) continue;
             result.translations.put(line.index, translated);
             result.networkTranslatedCount++;
@@ -185,7 +194,7 @@ public final class GoogleEnhancer {
         for (BatchLine line : lines) {
             if (line == null || isBlank(line.text)) continue;
             String key = LyricCaches.romanizationKey(trackId, sourceLang, line.text);
-            String cached = cacheRead == null ? null : cacheRead.apply(key);
+            String cached = sanitizeTranslation(cacheRead == null ? null : cacheRead.apply(key));
             if (!isBlank(cached) && !SpicyTextDetection.hasRomanizableScript(cached)) {
                 if (cachedInto != null) cachedInto.put(line.index, cached);
                 continue;
@@ -223,7 +232,7 @@ public final class GoogleEnhancer {
         List<BatchLine> missing = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) {
             BatchLine line = lines.get(i);
-            String romanized = parsed.get(i);
+            String romanized = sanitizeTranslation(parsed.get(i));
             if (isBlank(romanized) || SpicyTextDetection.hasRomanizableScript(romanized)) {
                 missing.add(line);
                 continue;
@@ -310,14 +319,14 @@ public final class GoogleEnhancer {
         int textStart = -1;
         while (matcher.find()) {
             if (current >= 0 && textStart >= 0) {
-                String value = text.substring(textStart, matcher.start()).trim();
+                String value = sanitizeTranslation(text.substring(textStart, matcher.start()));
                 if (!isBlank(value)) result.put(current, value);
             }
             current = markerNumber(matcher.group(1));
             textStart = matcher.end();
         }
         if (current >= 0 && textStart >= 0) {
-            String value = text.substring(textStart).trim();
+            String value = sanitizeTranslation(text.substring(textStart));
             if (!isBlank(value)) result.put(current, value);
         }
         return result;
@@ -431,7 +440,7 @@ public final class GoogleEnhancer {
                 result.status = response.code();
                 if (response.isSuccessful() && response.body() != null) {
                     COOLDOWN.onSuccess();
-                    result.body = response.body().string();
+                    result.body = LyricResponseReader.read(response.body(), LyricResponseReader.GOOGLE_BYTES);
                     if (isBlank(result.body)) result.failureReason = "empty_body";
                     return result;
                 }
@@ -510,14 +519,9 @@ public final class GoogleEnhancer {
         return String.format(java.util.Locale.US, "[[SPX_%03d]]", index);
     }
 
-    /**
-     * Google's echo of the marker it was handed, in whatever shape it romanized or translated it.
-     * The line's own reading is what must survive, so every marker shape is dropped, not just the
-     * one that was sent.
-     */
-    private static String stripMarkerEcho(String text, int index) {
-        if (text == null) return "";
-        return BATCH_MARKER_PATTERN.matcher(text).replaceAll("").trim();
+    /** Reject wire text rather than guessing which row a contaminated value belongs to. */
+    public static String sanitizeTranslation(String text) {
+        return text == null || MARKER_RESIDUE_PATTERN.matcher(text).find() ? "" : text.trim();
     }
 
     public static boolean sameText(String a, String b) {
@@ -526,6 +530,7 @@ public final class GoogleEnhancer {
 
     public static boolean shouldDisplayTranslation(String source, String translated) {
         return !isBlank(translated)
+                && !MARKER_RESIDUE_PATTERN.matcher(translated).find()
                 && !sameText(source, translated)
                 && !looksLikeRomanizationEcho(source, translated);
     }

@@ -1,0 +1,572 @@
+{
+  "schema": "cjk-labs.eza-rev3-parity.v1",
+  "policy": "eza-2026-11-15.3",
+  "generatedFrom": "cjk-labs cjkv/mandarin-rev3 Mandarin provider (g2pM reader, layer 2–4 revision 3), 2026-11-15",
+  "notes": [
+    "`eza` is the full provider output and is asserted by tests/eza-rev3-parity.test.ts.",
+    "`pinyin` stays the plain package output (pinyin-pro) and never uses the eza layers.",
+    "Line breaks in `source` are hard sandhi boundaries; `eza` keeps them."
+  ],
+  "cases": [
+    {
+      "source": "你好",
+      "pinyin": "nǐ hǎo",
+      "eza": "ní hảo"
+    },
+    {
+      "source": "我很好",
+      "pinyin": "wǒ hěn hǎo",
+      "eza": "wỏ hấn hảo"
+    },
+    {
+      "source": "我想你",
+      "pinyin": "wǒ xiǎng nǐ",
+      "eza": "wỏ shiáng nỉ"
+    },
+    {
+      "source": "我买酒",
+      "pinyin": "wǒ mǎi jiǔ",
+      "eza": "wỏ mái ziỏu"
+    },
+    {
+      "source": "我也想你",
+      "pinyin": "wǒ yě xiǎng nǐ",
+      "eza": "wó yẻ shiáng nỉ"
+    },
+    {
+      "source": "我也想你好",
+      "pinyin": "wǒ yě xiǎng nǐ hǎo",
+      "eza": "wó yẻ shiáng ní hảo"
+    },
+    {
+      "source": "老总很好",
+      "pinyin": "lǎo zǒng hěn hǎo",
+      "eza": "láo zỏng hấn hảo"
+    },
+    {
+      "source": "老总好看",
+      "pinyin": "lǎo zǒng hǎo kàn",
+      "eza": "láo zóng hảo khàn"
+    },
+    {
+      "source": "展览馆",
+      "pinyin": "zhǎn lǎn guǎn",
+      "eza": "zhán lán kuản"
+    },
+    {
+      "source": "纸老虎",
+      "pinyin": "zhǐ lǎo hǔ",
+      "eza": "zhử láo hủ"
+    },
+    {
+      "source": "蒙古包",
+      "pinyin": "měng gǔ bāo",
+      "eza": "mấng kủ bao"
+    },
+    {
+      "source": "你好你好你好",
+      "pinyin": "nǐ hǎo nǐ hǎo nǐ hǎo",
+      "eza": "ní hảo ní hảo ní hảo"
+    },
+    {
+      "source": "请你指导我",
+      "pinyin": "qǐng nǐ zhǐ dǎo wǒ",
+      "eza": "chíng nỉ zhứ táo wỏ"
+    },
+    {
+      "source": "我有两把雨伞",
+      "pinyin": "wǒ yǒu liǎng bǎ yǔ sǎn",
+      "eza": "wó yỏu liáng bả yú sản"
+    },
+    {
+      "source": "小老虎",
+      "pinyin": "xiǎo lǎo hǔ",
+      "eza": "shiảo láo hủ"
+    },
+    {
+      "source": "好想你",
+      "pinyin": "hǎo xiǎng nǐ",
+      "eza": "hảo shiáng nỉ"
+    },
+    {
+      "source": "哈哈哈",
+      "pinyin": "hā hā hā",
+      "eza": "ha ha ha"
+    },
+    {
+      "source": "好好好",
+      "pinyin": "hǎo hǎo hǎo",
+      "eza": "háo háo hảo"
+    },
+    {
+      "source": "试试",
+      "pinyin": "shì shì",
+      "eza": "shư shừ"
+    },
+    {
+      "source": "看看",
+      "pinyin": "kàn kàn",
+      "eza": "khan khàn"
+    },
+    {
+      "source": "说说",
+      "pinyin": "shuō shuō",
+      "eza": "shuo shuò"
+    },
+    {
+      "source": "看一看",
+      "pinyin": "kàn yī kàn",
+      "eza": "khan yì khàn"
+    },
+    {
+      "source": "不对",
+      "pinyin": "bù duì",
+      "eza": "bú tuềi"
+    },
+    {
+      "source": "不是",
+      "pinyin": "bù shì",
+      "eza": "bú shừ"
+    },
+    {
+      "source": "不好",
+      "pinyin": "bù hǎo",
+      "eza": "bù hảo"
+    },
+    {
+      "source": "一个人",
+      "pinyin": "yī gè rén",
+      "eza": "yí kừa rấn"
+    },
+    {
+      "source": "一起",
+      "pinyin": "yī qǐ",
+      "eza": "yì chỉ"
+    },
+    {
+      "source": "一定",
+      "pinyin": "yī dìng",
+      "eza": "yí tìng"
+    },
+    {
+      "source": "统一",
+      "pinyin": "tǒng yī",
+      "eza": "thỏng yi"
+    },
+    {
+      "source": "第一",
+      "pinyin": "dì yī",
+      "eza": "tì yi"
+    },
+    {
+      "source": "看不懂",
+      "pinyin": "kàn bù dǒng",
+      "eza": "khan bù tỏng"
+    },
+    {
+      "source": "他的书",
+      "pinyin": "tā de shū",
+      "eza": "tha tờ shu"
+    },
+    {
+      "source": "我的书",
+      "pinyin": "wǒ de shū",
+      "eza": "wỏ tơ shu"
+    },
+    {
+      "source": "来的人",
+      "pinyin": "lái de rén",
+      "eza": "lái tơ rấn"
+    },
+    {
+      "source": "是的",
+      "pinyin": "shì de",
+      "eza": "shư tờ"
+    },
+    {
+      "source": "喝了",
+      "pinyin": "hē le",
+      "eza": "hưa lờ"
+    },
+    {
+      "source": "热了",
+      "pinyin": "rè le",
+      "eza": "rưa lờ"
+    },
+    {
+      "source": "这个",
+      "pinyin": "zhè ge",
+      "eza": "zhưa kừa"
+    },
+    {
+      "source": "那个",
+      "pinyin": "nà ge",
+      "eza": "na kừa"
+    },
+    {
+      "source": "这么",
+      "pinyin": "zhè me",
+      "eza": "zhưa mờ"
+    },
+    {
+      "source": "什么",
+      "pinyin": "shén me",
+      "eza": "shấn mơ"
+    },
+    {
+      "source": "多么",
+      "pinyin": "duō me",
+      "eza": "tuo mờ"
+    },
+    {
+      "source": "哥哥",
+      "pinyin": "gē ge",
+      "eza": "kưa kừa"
+    },
+    {
+      "source": "吆喝",
+      "pinyin": "yāo he",
+      "eza": "yao hưa"
+    },
+    {
+      "source": "妹妹",
+      "pinyin": "mèi mei",
+      "eza": "mêi mềi"
+    },
+    {
+      "source": "妈妈",
+      "pinyin": "mā ma",
+      "eza": "ma mà"
+    },
+    {
+      "source": "爸爸",
+      "pinyin": "bà ba",
+      "eza": "ba bà"
+    },
+    {
+      "source": "弟弟",
+      "pinyin": "dì di",
+      "eza": "ti tì"
+    },
+    {
+      "source": "朋友",
+      "pinyin": "péng yǒu",
+      "eza": "pấng yỏu"
+    },
+    {
+      "source": "值得",
+      "pinyin": "zhí dé",
+      "eza": "zhứ tơ"
+    },
+    {
+      "source": "桌子",
+      "pinyin": "zhuō zi",
+      "eza": "zhuo zừ"
+    },
+    {
+      "source": "孩子",
+      "pinyin": "hái zi",
+      "eza": "hái zư"
+    },
+    {
+      "source": "喜欢",
+      "pinyin": "xǐ huan",
+      "eza": "shỉ huan"
+    },
+    {
+      "source": "东西",
+      "pinyin": "dōng xī",
+      "eza": "tong shi"
+    },
+    {
+      "source": "可以",
+      "pinyin": "kě yǐ",
+      "eza": "khứa yỉ"
+    },
+    {
+      "source": "你可以",
+      "pinyin": "nǐ kě yǐ",
+      "eza": "nỉ khứa yỉ"
+    },
+    {
+      "source": "可爱",
+      "pinyin": "kě ài",
+      "eza": "khửa ài"
+    },
+    {
+      "source": "热",
+      "pinyin": "rè",
+      "eza": "rừa"
+    },
+    {
+      "source": "车",
+      "pinyin": "chē",
+      "eza": "chưa"
+    },
+    {
+      "source": "哥",
+      "pinyin": "gē",
+      "eza": "kưa"
+    },
+    {
+      "source": "河",
+      "pinyin": "hé",
+      "eza": "hứa"
+    },
+    {
+      "source": "饿",
+      "pinyin": "è",
+      "eza": "ừa"
+    },
+    {
+      "source": "这",
+      "pinyin": "zhè",
+      "eza": "zhừa"
+    },
+    {
+      "source": "我想你\n你好吗",
+      "pinyin": "wǒ xiǎng nǐ\nnǐ hǎo ma",
+      "eza": "wỏ shiáng nỉ\nní hảo ma"
+    },
+    {
+      "source": "我想你，你好",
+      "pinyin": "wǒ xiǎng nǐ，nǐ hǎo",
+      "eza": "wỏ shiáng nỉ，ní hảo"
+    },
+    {
+      "source": "我也想你\n你也想我。",
+      "pinyin": "wǒ yě xiǎng nǐ\nnǐ yě xiǎng wǒ。",
+      "eza": "wó yẻ shiáng nỉ\nní yẻ shiáng wỏ。"
+    },
+    {
+      "source": "你好，你好吗？\n我很好。",
+      "pinyin": "nǐ hǎo，nǐ hǎo ma？\nwǒ hěn hǎo。",
+      "eza": "ní hảo，ní hảo ma？\nwỏ hấn hảo。"
+    },
+    {
+      "source": "代价",
+      "pinyin": "dài jià",
+      "eza": "tai zià"
+    },
+    {
+      "source": "再见",
+      "pinyin": "zài jiàn",
+      "eza": "zai zièn"
+    },
+    {
+      "source": "爱过",
+      "pinyin": "ài guò",
+      "eza": "ai kuò"
+    },
+    {
+      "source": "现在是",
+      "pinyin": "xiàn zài shì",
+      "eza": "shien zai shừ"
+    },
+    {
+      "source": "对不对",
+      "pinyin": "duì bù duì",
+      "eza": "tuêi bù tuềi"
+    },
+    {
+      "source": "要不要",
+      "pinyin": "yào bù yào",
+      "eza": "yao bù yào"
+    },
+    {
+      "source": "能不能",
+      "pinyin": "néng bù néng",
+      "eza": "nấng bu nấng"
+    },
+    {
+      "source": "走不走",
+      "pinyin": "zǒu bù zǒu",
+      "eza": "zỏu bu zỏu"
+    },
+    {
+      "source": "吃不吃",
+      "pinyin": "chī bù chī",
+      "eza": "chư bù chư"
+    },
+    {
+      "source": "是不是",
+      "pinyin": "shì bù shì",
+      "eza": "shư bù shừ"
+    },
+    {
+      "source": "好不好",
+      "pinyin": "hǎo bù hǎo",
+      "eza": "hảo bu hảo"
+    },
+    {
+      "source": "我不是",
+      "pinyin": "wǒ bù shì",
+      "eza": "wỏ bú shừ"
+    },
+    {
+      "source": "一万种解答",
+      "pinyin": "yī wàn zhǒng jiě dá",
+      "eza": "yí wàn zhóng ziẻ tá"
+    },
+    {
+      "source": "不再",
+      "pinyin": "bù zài",
+      "eza": "bú zài"
+    },
+    {
+      "source": "慢慢地走",
+      "pinyin": "màn màn dì zǒu",
+      "eza": "man man tờ zỏu"
+    },
+    {
+      "source": "轻轻地唱",
+      "pinyin": "qīng qīng dì chàng",
+      "eza": "ching ching ti chàng"
+    },
+    {
+      "source": "开心得不得了",
+      "pinyin": "kāi xīn dé bù dé liǎo",
+      "eza": "khai shin tứa bù tứa lơ"
+    },
+    {
+      "source": "想得睡不着",
+      "pinyin": "xiǎng dé shuì bù zhe",
+      "eza": "shiảng tứa shuêi bù zhơ"
+    },
+    {
+      "source": "吃了饭再走",
+      "pinyin": "chī le fàn zài zǒu",
+      "eza": "chư lờ fan zài zỏu"
+    },
+    {
+      "source": "说着话",
+      "pinyin": "shuō zhe huà",
+      "eza": "shuo zhờ huà"
+    },
+    {
+      "source": "去过哪里",
+      "pinyin": "qù guò nǎ lǐ",
+      "eza": "chyu kuò ná lỉ"
+    },
+    {
+      "source": "爱过恨过",
+      "pinyin": "ài guò hèn guò",
+      "eza": "ai kuo hân kuò"
+    },
+    {
+      "source": "你们的故事",
+      "pinyin": "nǐ men de gù shì",
+      "eza": "nỉ mân tơ ku shừ"
+    },
+    {
+      "source": "朋友们",
+      "pinyin": "péng yǒu men",
+      "eza": "pấng yỏu mân"
+    },
+    {
+      "source": "你说呢",
+      "pinyin": "nǐ shuō ne",
+      "eza": "nỉ shuo nờ"
+    },
+    {
+      "source": "好吗",
+      "pinyin": "hǎo ma",
+      "eza": "hảo ma"
+    },
+    {
+      "source": "走吧",
+      "pinyin": "zǒu ba",
+      "eza": "zỏu ba"
+    },
+    {
+      "source": "哇好美",
+      "pinyin": "wā hǎo měi",
+      "eza": "wa háo mểi"
+    },
+    {
+      "source": "啦啦啦啦",
+      "pinyin": "lā lā lā lā",
+      "eza": "la la la la"
+    },
+    {
+      "source": "一二三四",
+      "pinyin": "yī èr sān sì",
+      "eza": "yi èr san sừ"
+    },
+    {
+      "source": "十一月",
+      "pinyin": "shí yī yuè",
+      "eza": "shứ yi yuè"
+    },
+    {
+      "source": "二十一",
+      "pinyin": "èr shí yī",
+      "eza": "èr shứ yi"
+    },
+    {
+      "source": "不是不是",
+      "pinyin": "bù shì bù shì",
+      "eza": "bú shừ bú shừ"
+    },
+    {
+      "source": "想不想我",
+      "pinyin": "xiǎng bù xiǎng wǒ",
+      "eza": "shiảng bu shiáng wỏ"
+    },
+    {
+      "source": "我们",
+      "pinyin": "wǒ men",
+      "eza": "wỏ mân"
+    },
+    {
+      "source": "来了吗",
+      "pinyin": "lái le ma",
+      "eza": "lái lơ ma"
+    },
+    {
+      "source": "喜欢着你",
+      "pinyin": "xǐ huan zhe nǐ",
+      "eza": "shỉ huan zhơ nỉ"
+    },
+    {
+      "source": "快乐",
+      "pinyin": "kuài lè",
+      "eza": "khuai lừa"
+    },
+    {
+      "source": "生日快乐",
+      "pinyin": "shēng rì kuài lè",
+      "eza": "shâng rư khuai lừa"
+    },
+    {
+      "source": "只不过",
+      "pinyin": "zhī bù guò",
+      "eza": "zhử bú kuò"
+    },
+    {
+      "source": "差不多",
+      "pinyin": "chà bù duō",
+      "eza": "cha bù tuo"
+    },
+    {
+      "source": "对不起",
+      "pinyin": "duì bù qǐ",
+      "eza": "tuêi bù chỉ"
+    },
+    {
+      "source": "妳的美",
+      "pinyin": "nǎi de měi",
+      "eza": "nỉ tơ mểi"
+    },
+    {
+      "source": "妳眼帶笑意",
+      "pinyin": "nǎi yǎn dài xiào yì",
+      "eza": "ní yiẻn tai shiao yì"
+    },
+    {
+      "source": "换种生活 让自己变得快乐",
+      "pinyin": "huàn zhǒng shēng huó ràng zì jǐ biàn de kuài lè",
+      "eza": "huàn zhỏng shâng huó rang zừ zỉ bien tờ khuai lừa"
+    }
+  ]
+}

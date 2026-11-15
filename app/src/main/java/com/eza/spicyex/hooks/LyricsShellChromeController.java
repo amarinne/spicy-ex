@@ -104,7 +104,7 @@ final class LyricsShellChromeController {
         translationToggle.setOnClickListener(v -> onTranslationToggle.run());
 
         float density = activity.getResources().getDisplayMetrics().density;
-        int iconColor = Color.rgb(232, 232, 238);
+        int iconColor = NativeIconButtons.ICON_TINT;
         ImageButton settingsButton = createRoundIconButton(activity,
                 new ActionIconDrawable(ActionIconDrawable.Kind.SETTINGS, iconColor, density),
                 "Spicy EX settings", chromeButtonDp, landscape ? 11 : 12);

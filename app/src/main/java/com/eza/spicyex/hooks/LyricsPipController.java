@@ -132,13 +132,7 @@ final class LyricsPipController {
         // pushes its own window params. For our host: its PiP callback doesn't run at all, it
         // is told it isn't in PiP, and only our params reach the window.
         try {
-            XpHooks.findBefore(PIP_HOST_ACTIVITY, loader, "onPictureInPictureModeChanged",
-                    "pip:NowPlayingActivity#onPictureInPictureModeChanged", param -> {
-                        Activity activity = (Activity) param.thisObject;
-                        if (!hosts.containsKey(activity)) return;
-                        param.setResult(null);
-                        onModeChanged(activity, (boolean) param.args[0]);
-                    }, boolean.class, Configuration.class);
+            hookHostPipCallbacks(XpReflect.findClass(PIP_HOST_ACTIVITY, loader));
             // Spotify's playback subscriber can also close a non-video host directly.
             // Suppress its override before cleanup; our exit paths release ownership first.
             XpHooks.findBefore(PIP_HOST_ACTIVITY, loader, "finish",
@@ -177,6 +171,24 @@ final class LyricsPipController {
 
     void beforeHostFinish(XpHooks.XpParam param) {
         if (hosts.containsKey(param.thisObject)) param.setResult(null);
+    }
+
+    void hookHostPipCallbacks(Class<?> hostClass) {
+        XpHooks.hookAllMethods(hostClass, "onPictureInPictureModeChanged",
+                "pip:NowPlayingActivity#onPictureInPictureModeChanged", (XpHooks.Before) param -> {
+                    Activity activity = (Activity) param.thisObject;
+                    if (!hosts.containsKey(activity)) return;
+                    param.setResult(null);
+                    if (param.args.length > 0 && param.args[0] instanceof Boolean) {
+                        onModeChanged(activity, (boolean) param.args[0]);
+                    }
+                });
+        // Newer Spotify builds enter their video page during this callback, before the mode
+        // changes. Suppress that page without treating a UI-state notification as entry or exit.
+        XpHooks.hookAllMethods(hostClass, "onPictureInPictureUiStateChanged",
+                "pip:NowPlayingActivity#onPictureInPictureUiStateChanged", (XpHooks.Before) param -> {
+                    if (hosts.containsKey(param.thisObject)) param.setResult(null);
+                });
     }
 
     /** An explicit button opens PiP; a normal close or back press keeps its old behavior. */

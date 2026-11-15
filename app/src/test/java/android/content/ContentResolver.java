@@ -23,6 +23,18 @@ public class ContentResolver {
         Bundle call(Uri uri, String method, String arg, Bundle extras);
     }
 
+    public interface InputOpener {
+        java.io.InputStream open(Uri uri) throws java.io.FileNotFoundException;
+    }
+
+    public static volatile InputOpener testInputOpener;
+
+    public java.io.InputStream openInputStream(Uri uri) throws java.io.FileNotFoundException {
+        InputOpener opener = testInputOpener;
+        if (opener == null) throw new java.io.FileNotFoundException("No test document");
+        return opener.open(uri);
+    }
+
     public ContentResolver() {
     }
 

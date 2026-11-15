@@ -25,10 +25,11 @@ import java.util.concurrent.TimeUnit;
 /** Shares the existing session's current timed row; it does not fetch or process another document. */
 final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
     private final AutoPrototypeClient client;
+    private final Context context;
     private final com.eza.spicyex.SettingsStore settings;
     private final LyricsSessionManager manager;
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
+    private final ScheduledExecutorService worker;
     private LyricsSessionManager.SessionSubscription subscription;
     private LyricsSessionManager.PollingDemandLease lease;
     private LyricsDocument document;
@@ -37,20 +38,34 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
     private String trackUri = "";
     private volatile Bundle latest;
     private boolean enabled;
+    private boolean observingHost;
     private final SharedPreferences preferences;
     private ScheduledFuture<?> heartbeat;
     private volatile int lifecycle;
+    private volatile int configurationRevision;
+    private int sentConfigurationRevision = -1;
+    private final android.content.BroadcastReceiver hostObserver = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(Context context, android.content.Intent intent) { beginPublication(); }
+    };
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
             (preferences, key) -> {
                 if (com.eza.spicyex.Settings.AUTO_ENABLED.key.equals(key))
                     main.post(this::readEnabled);
                 if (com.eza.spicyex.Settings.CHINESE_CHARACTER_FORM.key.equals(key))
                     main.post(this::refreshCharacterForm);
+                if (key != null && key.startsWith("auto_")) main.post(() -> configurationRevision++);
                 // The enabled heartbeat reads the secondary-text choice before publication.
             };
 
     AutoPrototypePublisher(Context context, LyricsSessionManager manager) {
-        this.client = new AutoPrototypeClient(context);
+        this(context, manager, new AutoPrototypeClient(context), Executors.newSingleThreadScheduledExecutor(
+                task -> new Thread(task, "SpicyAutoPublisher")));
+    }
+    AutoPrototypePublisher(Context context, LyricsSessionManager manager, AutoPrototypeClient client,
+            ScheduledExecutorService worker) {
+        this.client = client;
+        this.worker = worker;
+        this.context = context;
         this.manager = manager;
         this.settings = new com.eza.spicyex.SettingsStore(context);
         preferences = context.getSharedPreferences(com.eza.spicyex.SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE);
@@ -84,20 +99,48 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
         com.eza.spicyex.auto.AutoDisplaySettings.write(desired, settings);
         return desired;
     }
-    private void heartbeat(int version) {
+    private void beginPublication() {
+        if (!enabled || heartbeat != null) return;
+        int version = ++lifecycle;
+        worker.execute(() -> sentConfigurationRevision = -1);
+        long deadline = SystemClock.elapsedRealtime() + 4000;
+        heartbeat = worker.scheduleWithFixedDelay(() -> heartbeat(version, deadline), 0, 100, TimeUnit.MILLISECONDS);
+    }
+    private void heartbeat(int version, long deadline) {
         if (version != lifecycle) return;
         try {
-            Bundle config = client.call("configure", configuration(true));
+            Bundle reply;
+            int revision = configurationRevision;
             Bundle value = latest;
-            if (version == lifecycle && config != null && config.getBoolean("enabled") && value != null) {
+            if (sentConfigurationRevision != revision) {
+                reply = client.call("configure", configuration(true));
+                if (reply != null) sentConfigurationRevision = revision;
+            } else if (value != null) {
                 Bundle packet = new Bundle(value);
                 com.eza.spicyex.auto.AutoDisplaySettings.write(packet, settings);
-                client.call("publish", packet);
-            }
+                reply = client.call("publish", packet);
+            } else reply = client.call("status", null);
+            if (reply != null && reply.getBoolean("hostActive")) {
+                main.post(() -> {
+                    if (version != lifecycle || lease != null) return;
+                    lease = manager.acquirePollingDemand();
+                    subscription = manager.subscribe(this);
+                });
+            } else if (reply != null || SystemClock.elapsedRealtime() >= deadline)
+                main.post(() -> { if (version == lifecycle) stopPublication(); });
         } catch (Throwable error) {
-            // Keep the current session while the next heartbeat reconnects the transport.
-            com.eza.spicyex.xposed.XpLog.log("[SpicyAuto] publish " + error.getClass().getSimpleName());
+            // Fail closed once. A fresh host notification is the only reconnect demand.
+            main.post(() -> { if (version == lifecycle) stopPublication(); });
         }
+    }
+    private void stopPublication() {
+        ++lifecycle;
+        if (heartbeat != null) heartbeat.cancel(false);
+        heartbeat = null;
+        if (subscription != null) subscription.close();
+        if (lease != null) lease.close();
+        subscription = null; lease = null; document = null; lastSnapshot = null; latest = null; generation = -1; trackUri = "";
+        worker.execute(client::close);
     }
     private void disable(int version, long deadline) {
         if (version != lifecycle) return;
@@ -113,30 +156,45 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
     private void setEnabled(boolean on) {
         if (enabled == on) return;
         enabled = on;
-        int version = ++lifecycle;
         if (on) {
-            lease = manager.acquirePollingDemand();
-            subscription = manager.subscribe(this);
-            heartbeat = worker.scheduleWithFixedDelay(() -> heartbeat(version), 0, 100, TimeUnit.MILLISECONDS);
+            observeHost();
         } else {
-            if (heartbeat != null) heartbeat.cancel(false);
-            heartbeat = null;
-            if (subscription != null) subscription.close();
-            if (lease != null) lease.close();
-            subscription = null; lease = null; document = null; lastSnapshot = null; latest = null; generation = -1; trackUri = "";
+            if (observingHost) context.unregisterReceiver(hostObserver);
+            observingHost = false;
+            stopPublication();
+            int version = lifecycle;
             long deadline = SystemClock.elapsedRealtime() + 4000;
             worker.execute(() -> disable(version, deadline));
         }
     }
+    private boolean observeHost() {
+        if (observingHost) return true;
+        try {
+            android.content.IntentFilter filter = new android.content.IntentFilter(
+                    com.eza.spicyex.auto.AutoPrototypeProvider.HOST_ACTION);
+            filter.addDataScheme("content");
+            // The module's signature permission authenticates the sender. The URI grant in its
+            // notice makes the provider visible before Spotify binds, even on a cold start.
+            if (android.os.Build.VERSION.SDK_INT >= 33)
+                context.registerReceiver(hostObserver, filter,
+                        com.eza.spicyex.auto.AutoPrototypeProvider.HOST_PERMISSION, main, Context.RECEIVER_EXPORTED);
+            else context.registerReceiver(hostObserver, filter,
+                    com.eza.spicyex.auto.AutoPrototypeProvider.HOST_PERMISSION, main);
+            observingHost = true;
+        } catch (RuntimeException unavailable) {
+            // Auto is optional. Receiver registration must never crash Spotify.
+        }
+        return observingHost;
+    }
     @Override public void onSessionChanged(LyricsSessionManager.Snapshot s) {
-        if (!enabled || s.generation < generation) return;
+        if (!enabled || lease == null || s.generation < generation) return;
         if (!AutoPrototypePolicy.sameSession(generation, trackUri, s.generation, s.trackUri)) { generation = s.generation; document = null; }
         trackUri = s.trackUri;
         lastSnapshot = s;
         publish(s);
     }
     @Override public void onDocumentChanged(LyricsSessionManager.Snapshot s, LyricsDocument d) {
-        if (!enabled || !AutoPrototypePolicy.sameSession(generation, trackUri, s.generation, s.trackUri)) return;
+        if (!enabled || lease == null || !AutoPrototypePolicy.sameSession(generation, trackUri, s.generation, s.trackUri)) return;
         document = com.eza.spicyex.auto.AutoResponseCredit.documentAllowed(d, System.currentTimeMillis())
                 ? projectDocument(d, characterForm()) : null;
         lastSnapshot = s;
@@ -177,6 +235,16 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
         int index = AutoLyricPresentation.rowAt(document, s.positionMs);
         AppliedLine line = index < 0 ? null : document.appliedLines.get(index);
         encodeRow(b, line, index);
+        if (document != null && index >= 0) {
+            int duet = com.eza.spicyex.auto.AutoDuetLayout.concurrentRowAt(
+                    document.appliedLines, index, s.positionMs);
+            if (duet >= 0) {
+                Bundle companion = new Bundle();
+                encodeRow(companion, document.appliedLines.get(duet), duet);
+                companion.putString("presentation", AutoLyricPresentation.mode(document, duet));
+                b.putBundle("duet", companion);
+            }
+        }
         b.putBoolean("vocalActive", AutoLyricPresentation.vocalActiveAt(document, s.positionMs));
         b.putString("presentation", AutoLyricPresentation.mode(document, index));
         if (document != null) {
@@ -190,10 +258,21 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
                     encodeRow(next, document.appliedLines.get(nextIndex), nextIndex);
                     next.putBoolean("vocalActive", AutoLyricPresentation.vocalActiveAt(document, nextAt));
                     next.putString("presentation", AutoLyricPresentation.mode(document, nextIndex));
+                    int nextDuet = com.eza.spicyex.auto.AutoDuetLayout.concurrentRowAt(
+                            document.appliedLines, nextIndex, nextAt);
+                    if (nextDuet >= 0) {
+                        Bundle companion = new Bundle();
+                        encodeRow(companion, document.appliedLines.get(nextDuet), nextDuet);
+                        companion.putString("presentation", AutoLyricPresentation.mode(document, nextDuet));
+                        next.putBundle("duet", companion);
+                    }
                     b.putBundle("next", next); b.putLong("nextAtMs", nextAt);
                 }
             }
         }
+        // Every row update carries the current selection; the provider keeps the old one when a
+        // packet omits it, but sending it keeps the display settings current without the heartbeat.
+        com.eza.spicyex.auto.AutoDisplaySettings.write(b, settings);
         latest = b;
     }
     private static void encodeRow(Bundle b, AppliedLine line, int index) {

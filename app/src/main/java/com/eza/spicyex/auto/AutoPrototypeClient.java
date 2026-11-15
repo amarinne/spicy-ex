@@ -46,6 +46,10 @@ public final class AutoPrototypeClient {
         attempted = 0;
     }
     public AutoPrototypeClient(Context context) { this.context = context; }
+    /** Disconnect notices must never create a new service process. */
+    public synchronized Bundle callIfConnected(String method, Bundle extras) throws android.os.RemoteException {
+        return service == null ? null : service.call(method, extras);
+    }
     public synchronized Bundle call(String method, Bundle extras) throws android.os.RemoteException {
         if (service != null) {
             try { return service.call(method, extras); }

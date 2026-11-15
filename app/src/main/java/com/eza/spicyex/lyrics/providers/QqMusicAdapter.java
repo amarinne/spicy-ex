@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics.providers;
 
+import com.eza.spicyex.lyrics.LyricResponseReader;
+
 import android.content.Context;
 import android.net.Uri;
 
@@ -7,6 +9,7 @@ import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.lyrics.Json;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.catalog.CatalogAdapters;
+import com.eza.spicyex.lyrics.catalog.ProviderFailure;
 import com.eza.spicyex.lyrics.catalog.CatalogSource;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -27,6 +30,7 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.MediaType;
 
+import static com.eza.spicyex.lyrics.catalog.ProviderFailure.*;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
 
 /**
@@ -85,18 +89,27 @@ public final class QqMusicAdapter {
         SpotifyTrack queryTrack = searchTrack;
         http.newCall(request).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException e) {
-                fail(context, track, callback, "QQ Music search failed: " + safe(e.getMessage()));
+                fail(context, track, callback, transientError("QQ Music search failed: " + safe(e.getMessage())));
             }
 
             @Override public void onResponse(Call call, Response response) throws IOException {
                 try (Response ignored = response) {
                     if (!response.isSuccessful() || response.body() == null) {
                         fail(context, track, callback,
-                                "QQ Music search HTTP " + response.code());
+                                httpError(response.code(), "QQ Music search HTTP " + response.code()));
                         return;
                     }
-                    String body = response.body().string();
-                    int searchCode = searchServiceCode(body);
+                    String body = LyricResponseReader.read(response.body(), LyricResponseReader.SEARCH_BYTES);
+                    JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+                    JsonObject service = root.getAsJsonObject("music.search.SearchCgiService");
+                    if (service == null || !service.has("code")) {
+                        throw new IllegalArgumentException("Invalid QQ search response");
+                    }
+                    int searchCode = service.get("code").getAsInt();
+                    if (searchCode == 0) {
+                        service.getAsJsonObject("data").getAsJsonObject("body")
+                                .getAsJsonObject("song").getAsJsonArray("list").size();
+                    }
                     List<QqSongRanker.Candidate> songs = searchCode == 0
                             ? rankSongs(body, queryTrack) : Collections.emptyList();
                     if (songs.isEmpty()) {
@@ -109,15 +122,15 @@ public final class QqMusicAdapter {
                                     SEARCH_RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
                             return;
                         }
-                        fail(context, track, callback, "QQ Music empty"
-                                + (searchCode != 0 ? " (code " + searchCode + ")" : ""));
+                        fail(context, track, callback, searchCode == 0 ? notFound("QQ Music empty")
+                                : transientError("QQ Music empty (code " + searchCode + ")"));
                         return;
                     }
                     fetchLyric(context, track, queryTrack, substituted, generation, songs,
                             callback);
                 } catch (Throwable t) {
                     fail(context, track, callback,
-                            "QQ Music search parse failed: " + safe(t.getMessage()));
+                            transientError("QQ Music search parse failed: " + safe(t.getMessage())));
                 }
             }
         });
@@ -131,7 +144,7 @@ public final class QqMusicAdapter {
         for (QqSongRanker.Candidate candidate : songs) {
             if (!candidate.supportsWordLyrics()) continue;
             if (!wordIds.contains(candidate.id)) wordIds.add(candidate.id);
-            if (wordIds.size() >= QqSongRanker.MAX_WORD_LYRIC_ATTEMPTS) break;
+            if (wordIds.size() >= WordLyricChain.MAX_ATTEMPTS) break;
         }
         String lineMid = songs.get(0).mid;
         Runnable lineFallback =
@@ -141,20 +154,10 @@ public final class QqMusicAdapter {
             lineFallback.run();
             return;
         }
-        tryWordChain(context, track, queryTrack, substituted, generation, wordIds, 0, callback,
+        WordLyricChain.run(wordIds,
+                (songId, next) -> fetchWordLyric(context, track, queryTrack, substituted,
+                        generation, songId, callback, next),
                 lineFallback);
-    }
-
-    private void tryWordChain(Context context, SpotifyTrack track, SpotifyTrack queryTrack,
-                              boolean substituted, int generation, List<Long> ids, int index,
-                              LyricsRepository.ResultCallback callback, Runnable lineFallback) {
-        if (index >= ids.size()) {
-            lineFallback.run();
-            return;
-        }
-        fetchWordLyric(context, track, queryTrack, substituted, generation, ids.get(index),
-                callback, () -> tryWordChain(context, track, queryTrack, substituted, generation,
-                        ids, index + 1, callback, lineFallback));
     }
 
     private void fetchWordLyric(Context context, SpotifyTrack track, SpotifyTrack queryTrack,
@@ -183,7 +186,7 @@ public final class QqMusicAdapter {
                         fallback.run();
                         return;
                     }
-                    String raw = response.body().string();
+                    String raw = LyricResponseReader.read(response.body(), LyricResponseReader.LYRIC_BYTES);
                     LyricsDocument doc = parser.parseQqWordLyrics(context, queryTrack, raw);
                     if (doc == null || doc.lines.isEmpty()) {
                         fallback.run();
@@ -219,17 +222,17 @@ public final class QqMusicAdapter {
                 .build();
         http.newCall(request).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException e) {
-                fail(context, track, callback, "QQ Music lyric failed: " + safe(e.getMessage()));
+                fail(context, track, callback, transientError("QQ Music lyric failed: " + safe(e.getMessage())));
             }
 
             @Override public void onResponse(Call call, Response response) throws IOException {
                 try (Response ignored = response) {
                     if (!response.isSuccessful() || response.body() == null) {
                         fail(context, track, callback,
-                                "QQ Music lyric HTTP " + response.code());
+                                httpError(response.code(), "QQ Music lyric HTTP " + response.code()));
                         return;
                     }
-                    String raw = response.body().string();
+                    String raw = LyricResponseReader.read(response.body(), LyricResponseReader.LYRIC_BYTES);
                     if (raw.startsWith(callbackName + "(")) {
                         raw = raw.substring(callbackName.length() + 1);
                         if (raw.endsWith(")")) raw = raw.substring(0, raw.length() - 1);
@@ -237,13 +240,13 @@ public final class QqMusicAdapter {
                     LyricsDocument doc = parser.parseQqMusicLyrics(context, queryTrack, raw);
                     doc.generation = generation;
                     if (doc.lines.isEmpty()) {
-                        fail(context, track, callback, "QQ Music empty");
+                        fail(context, track, callback, notFound("QQ Music empty"));
                         return;
                     }
                     succeed(context, track, doc, substituted, songMid, raw, callback);
                 } catch (Throwable t) {
                     fail(context, track, callback,
-                            "QQ Music lyric parse failed: " + safe(t.getMessage()));
+                            ProviderFailure.from(t, "QQ Music lyric parse failed: " + safe(t.getMessage())));
                 }
             }
         });
@@ -264,21 +267,9 @@ public final class QqMusicAdapter {
     }
 
     private void fail(Context context, SpotifyTrack track,
-                      LyricsRepository.ResultCallback callback, String error) {
-        CatalogAdapters.recordError(context, CatalogSource.SourceId.QQ, track, error);
-        callback.onError(error);
-    }
-
-    static int searchServiceCode(String body) {
-        try {
-            JsonElement root = JsonParser.parseString(body);
-            if (!root.isJsonObject()) return 0;
-            JsonObject service = Json.optObject(root.getAsJsonObject(),
-                    "music.search.SearchCgiService");
-            return service == null ? 0 : (int) Json.optDouble(service, 0d, "code");
-        } catch (Throwable t) {
-            return 0;
-        }
+                      LyricsRepository.ResultCallback callback, ProviderFailure failure) {
+        CatalogAdapters.recordError(context, CatalogSource.SourceId.QQ, track, failure);
+        callback.onFailure(failure);
     }
 
     static List<QqSongRanker.Candidate> rankSongs(String body, SpotifyTrack track) {

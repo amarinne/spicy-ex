@@ -75,6 +75,28 @@ public final class FakeAndroidContext extends ContextWrapper {
 
     private android.os.IBinder bridgeBinder;
 
+    /** Registered host receivers, including the sender permission required by the platform. */
+    public final List<android.content.BroadcastReceiver> receivers = new ArrayList<>();
+    public String receiverPermission;
+    public RuntimeException receiverRegistrationError;
+
+    @Override public android.content.Intent registerReceiver(android.content.BroadcastReceiver receiver,
+            android.content.IntentFilter filter, String permission, android.os.Handler scheduler) {
+        return registerReceiver(receiver, filter, permission, scheduler, 0);
+    }
+
+    @Override public android.content.Intent registerReceiver(android.content.BroadcastReceiver receiver,
+            android.content.IntentFilter filter, String permission, android.os.Handler scheduler, int flags) {
+        if (receiverRegistrationError != null) throw receiverRegistrationError;
+        receivers.add(receiver);
+        receiverPermission = permission;
+        return null;
+    }
+
+    @Override public void unregisterReceiver(android.content.BroadcastReceiver receiver) {
+        receivers.remove(receiver);
+    }
+
     public FakeAndroidContext() {
         super(null);
     }

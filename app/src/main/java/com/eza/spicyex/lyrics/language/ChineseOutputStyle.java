@@ -7,8 +7,10 @@ public enum ChineseOutputStyle {
     CANONICAL("canonical"),
     EZA("eza");
 
-    public static final String REVISION = "eza-2026-10-08.1";
-    public static final String CANTONESE_REVISION = "eza-2026-10-25.1";
+    /** Shared Mandarin/Cantonese eza式 policy revision. Cantonese rules stay unchanged. */
+    public static final String REVISION = "eza-2026-11-15.3";
+    /** Korean VN pronunciation has its own eza revision and does not follow the Chinese one. */
+    public static final String KOREAN_REVISION = "eza-2026-10-08.1";
     public final String value;
 
     ChineseOutputStyle(String value) {

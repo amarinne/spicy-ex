@@ -2,8 +2,9 @@
 
 ## Offline coverage
 
-Spicy EX supports offline, deterministic readings for these languages and scripts. Japanese requires
-one language-model download in Settings. The other offline engines listed below are bundled.
+Spicy EX supports offline, deterministic readings for these languages and scripts. Japanese and
+Mandarin eza式 require one language-pack download in Settings. The other offline engines listed
+below are bundled.
 
 | Language or script | Output | Example |
 |---|---|---|
@@ -36,6 +37,10 @@ eza式 (eza shiki) is my personal customized system for Mandarin, Cantonese, and
 <details>
 <summary>Mandarin</summary>
 
+Mandarin eza式 follows revision 3. It needs the language pack from Settings.
+Each Chinese character gets one syllable. The reading comes from a small offline model and
+phrase tables, so a character with several readings takes the one that fits the line.
+
 | Pinyin | eza式 |
 |---|---|
 | `d` · `t` | `t` · `th` |
@@ -43,15 +48,19 @@ eza式 (eza shiki) is my personal customized system for Mandarin, Cantonese, and
 | `c` · `j` · `q` · `x` | `ts` · `z` · `ch` · `sh` |
 | `zi` · `ci` · `si` | `zư` · `tsư` · `sư` |
 | `zhi` · `chi` · `shi` · `ri` | `zhư` · `chư` · `shư` · `rư` |
-| `e` · `en` · `eng` · `ei` | `ơ` · `ân` · `âng` · `êi` |
+| `e` | `ưa`; `ơ` in a neutral tone, except after `g` · `k` · `h` |
+| `en` · `eng` · `ei` | `ân` · `âng` · `êi` |
 | `ü` · `ju` · `qu` · `xu` | `yu` · `zyu` · `chyu` · `shyu` |
+| `yuan` · `juan` | `yuen` · `zyuen` |
 | `bo` · `po` · `mo` · `fo` | `buo` · `puo` · `muo` · `fuo` |
 | `iu` · `ui` · `un` | `iou` · `uêi` · `uân` |
-| `ian` | `ien` |
+| `ian` · `yan` | `ien` · `yien` |
 | `wei` · `wen` · `weng` | `wêi` · `wuân` · `wuâng` |
 | `ueng` | `uâng` |
 
 #### Tones
+
+eza式 writes the tone that is spoken, after the tone changes below.
 
 | Tone | Pinyin | eza式 |
 |---|---|---|
@@ -59,7 +68,28 @@ eza式 (eza shiki) is my personal customized system for Mandarin, Cantonese, and
 | 2 | `á` | `á` |
 | 3 | `ǎ` | `ả` |
 | 4 | `à` | `à` |
-| Neutral | `a` | `ạ` |
+
+A neutral tone takes its mark from the syllable before it:
+
+| Before | Neutral | Example |
+|---|---|---|
+| Tone 1 or 4 | `à` | 妈妈 `ma mà` · 谢谢 `shie shiè` |
+| Tone 2 | `ả`, or no mark on `ơ` · `i` · `u` · `ü` | 朋友 `pấng yỏu` · 什么 `shấn mơ` |
+| Tone 3 | no mark | 姐姐 `ziẻ zie` · 喜欢 `shỉ huan` |
+
+#### Tone changes
+
+| Rule | Example |
+|---|---|
+| Two third tones: the first becomes tone 2 | 你好 `ní hảo` |
+| A run of third tones pairs from the left; an odd run ends in three syllables | 我也想你 `wó yẻ shiáng nỉ` · 展览馆 `zhán lán kuản` |
+| Tone 4 before tone 4 is written flat | 这样 `zhưa yàng` |
+| Tone 4 before a neutral is written flat, and the neutral takes `à` | 爸爸 `ba bà` · 漂亮 `piao liàng` |
+| 一 before tone 4 is tone 2; before tones 1-3 it is tone 4 | 一样 `yí yàng` · 一天 `yì thien` |
+| 一 stays tone 1 as a number or ordinal | 第一 `tì yi` · 十一 `shứ yi` |
+| 一 is neutral in 看一看 and in verb + 一 + measure word | 看一看 `khan yì khàn` · 走一趟 `zỏu yi thàng` |
+| 不 before tone 4 is tone 2 | 不是 `bú shừ` |
+| 不 is neutral in 看不懂 and 对不对 | 看不懂 `khan bù tỏng` · 对不对 `tuêi bù tuềi` |
 
 </details>
 

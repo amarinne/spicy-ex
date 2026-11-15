@@ -64,7 +64,6 @@ public final class LyricsMeaningLane {
     private static final int TRANSLATION_BATCH_MAX_CHARS = 4500;
     private static final int TRANSLATION_RETRY_MAX_LINES = 12;
     private static final int TRANSLATION_RETRY_MAX_CHARS = 1200;
-    private static final int TRANSLATION_SINGLE_RESCUE_MAX_ROWS = 8;
 
     /**
      * A machine Meaning backend. Google is one peer behind this contract; nothing above the lane
@@ -282,13 +281,9 @@ public final class LyricsMeaningLane {
                     translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, retry,
                             entries, translated, changed, false, run.tag, run, googleStats);
                 }
-                List<Integer> rescue = untranslated(work, translated);
-                if (!rescue.isEmpty() && rescue.size() <= TRANSLATION_SINGLE_RESCUE_MAX_ROWS
-                        && run.accepts(currentGuard, id, generation, snapshot)) {
-                    translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, rescue,
-                            entries, translated, changed, false, run.tag, run, googleStats,
-                            1, 512);
-                }
+                retryMissingRows(id, effectiveSourceLang, targetLang, workerSnapshot, work,
+                        entries, translated, changed, run, googleStats,
+                        () -> run.accepts(currentGuard, id, generation, snapshot));
             } catch (Throwable t) {
                 XpLog.log(TAG + " translation pass failed: " + t.getClass().getSimpleName());
             } finally {
@@ -773,12 +768,8 @@ public final class LyricsMeaningLane {
                     translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, retry,
                             entries, translated, changed, false, run.tag, run, stats);
                 }
-                List<Integer> rescue = untranslated(missing, translated);
-                if (!rescue.isEmpty() && rescue.size() <= TRANSLATION_SINGLE_RESCUE_MAX_ROWS
-                        && run.isNewest()) {
-                    translateBatchPass(id, effectiveSourceLang, targetLang, workerSnapshot, rescue,
-                            entries, translated, changed, false, run.tag, run, stats, 1, 512);
-                }
+                retryMissingRows(id, effectiveSourceLang, targetLang, workerSnapshot, missing,
+                        entries, translated, changed, run, stats, run::isNewest);
             } catch (Throwable failure) {
                 XpLog.log(TAG + " google fallback failed: "
                         + failure.getClass().getSimpleName());
@@ -836,7 +827,8 @@ public final class LyricsMeaningLane {
             GoogleRunStats stats, int maxLines, int maxChars
     ) {
         List<Integer> retry = new ArrayList<>();
-        if (workerSnapshot == null || work == null || work.isEmpty()) return retry;
+        if (workerSnapshot == null || work == null || work.isEmpty()
+                || (stats != null && stats.lastStatus == 429)) return retry;
         for (List<GoogleEnhancer.BatchLine> batch
                 : translationBatches(workerSnapshot, work, maxLines, maxChars)) {
             if (batch.isEmpty()) continue;
@@ -876,6 +868,22 @@ public final class LyricsMeaningLane {
     static boolean translationPassComplete(boolean requested, List<Integer> work, Set<Integer> translatedIndices) {
         return !requested || work == null || work.isEmpty()
                 || (translatedIndices != null && translatedIndices.containsAll(work));
+    }
+
+    /** Rescue rows individually; stop when a pass makes no progress or the run cannot continue. */
+    private void retryMissingRows(String id, String sourceLang, String targetLang,
+                                  LyricsDocument snapshot, List<Integer> requested,
+                                  List<MeaningEntry> entries, Set<Integer> translated,
+                                  AtomicInteger changed, DerivedLayerRun run, GoogleRunStats stats,
+                                  java.util.function.BooleanSupplier stillCurrent) {
+        List<Integer> missing = untranslated(requested, translated);
+        while (!missing.isEmpty() && stats.lastStatus != 429 && stillCurrent.getAsBoolean()) {
+            translateBatchPass(id, sourceLang, targetLang, snapshot, missing, entries, translated,
+                    changed, false, run.tag, run, stats, 1, 512);
+            List<Integer> next = untranslated(missing, translated);
+            if (next.size() >= missing.size()) break;
+            missing = next;
+        }
     }
 
     private List<List<GoogleEnhancer.BatchLine>> translationBatches(

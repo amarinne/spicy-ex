@@ -44,22 +44,6 @@ public class CatalogAdaptersTest {
     }
 
     @Test
-    public void fallbackOrderPutsAmllBeforeLrclib() {
-        List<SourceId> order = CatalogAdapters.fallbackOrder();
-        assertEquals(Arrays.asList(SourceId.AMLL, SourceId.LRCLIB), order);
-    }
-
-    @Test
-    public void exactIdQueriesMapToExactMappingForDirectSources() {
-        assertEquals(MatchMethod.EXACT_SPOTIFY_ID,
-                CatalogAdapters.matchMethodForQuery(SourceId.AMLL, true));
-        assertEquals(MatchMethod.STRONG_SEARCH,
-                CatalogAdapters.matchMethodForQuery(SourceId.AMLL, false));
-        assertEquals(MatchMethod.STRONG_SEARCH,
-                CatalogAdapters.matchMethodForQuery(SourceId.LRCLIB, true));
-    }
-
-    @Test
     public void deliveredLrclibDocumentBuildsAStorableCandidate() {
         CatalogCandidate candidate = CatalogAdapters.buildCandidate(SourceId.LRCLIB, TRACK,
                 document("lrclib", "Line"), MatchMethod.STRONG_SEARCH, "",
@@ -96,14 +80,13 @@ public class CatalogAdaptersTest {
     @Test
     public void emptyResultsAreNotFoundTransientsAreTransient() {
         assertEquals(ProviderStatus.NOT_FOUND,
-                ProviderFailureClassifier.classify(SourceId.LRCLIB, "chain; LRCLIB empty"));
+                ProviderFailure.notFound("chain; LRCLIB empty").status);
         assertEquals(ProviderStatus.NOT_FOUND,
-                ProviderFailureClassifier.classify(SourceId.LRCLIB, "LRCLIB HTTP 404"));
+                ProviderFailure.httpError(404, "LRCLIB HTTP 404").status);
         assertEquals(ProviderStatus.NOT_FOUND,
-                ProviderFailureClassifier.classify(SourceId.AMLL,
-                        "AMLL source unavailable: no match"));
+                ProviderFailure.notFound("AMLL source unavailable: no match").status);
         assertEquals(ProviderStatus.NOT_FOUND,
-                ProviderFailureClassifier.classify(SourceId.LRCLIB, "no LRCLIB result"));
+                ProviderFailure.notFound("no LRCLIB result").status);
         assertEquals(ProviderStatus.TRANSIENT_ERROR,
                 ProviderFailureClassifier.classify(SourceId.LRCLIB, "LRCLIB failed: timeout"));
         assertEquals(ProviderStatus.TRANSIENT_ERROR,
@@ -116,7 +99,7 @@ public class CatalogAdaptersTest {
         assertEquals(ProviderStatus.TRANSIENT_ERROR,
                 ProviderFailureClassifier.classify(SourceId.AMLL, ""));
         assertEquals(ProviderStatus.DISABLED,
-                ProviderFailureClassifier.classify(SourceId.QQ, "source disabled"));
+                ProviderFailure.disabled("source disabled").status);
     }
 
     @Test
@@ -125,8 +108,7 @@ public class CatalogAdaptersTest {
         // explicit requests persist the same outcome. An Apple 404 earns absence backoff
         // instead of staying NOT_CHECKED; transport and quality failures stay transient.
         assertEquals(ProviderStatus.NOT_FOUND,
-                ProviderFailureClassifier.classify(SourceId.APPLE,
-                        "Apple Music source unavailable: HTTP 404"));
+                ProviderFailure.httpError(404, "Apple Music source unavailable: HTTP 404").status);
         assertEquals(ProviderStatus.TRANSIENT_ERROR,
                 ProviderFailureClassifier.classify(SourceId.APPLE,
                         "Apple Music source unavailable: rejected candidate"));

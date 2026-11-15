@@ -17,11 +17,13 @@ public final class SpicyKoreanG2P {
     }
 
     // Onset (초성) romanization, index 0..18.
-    private static final String[] ONSET = {
+    /** Revised-Romanization onset table; the spelling path shares it. */
+    static final String[] ONSET = {
             "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h"
     };
     // Nucleus (중성) romanization, index 0..20.
-    private static final String[] VOWEL = {
+    /** Revised-Romanization nucleus table; the spelling path shares it. */
+    static final String[] VOWEL = {
             "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"
     };
     // Final realization of the 7 representative codas, by coda index used internally.

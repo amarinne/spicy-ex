@@ -96,12 +96,10 @@ public class SpicyOrgProtocolTest {
     @Test public void quotaHeadersAreRelativeAndOnly404IsDurableAbsence() {
         assertEquals(50, SpicyOrgProtocol.seconds("50"));
         assertEquals(0, SpicyOrgProtocol.seconds("invalid"));
-        assertEquals(CatalogSource.ProviderStatus.NOT_FOUND, ProviderFailureClassifier.classify(
-                CatalogSource.SourceId.SPICY_ORG, SpicyOrgProtocol.error(404)));
+        assertEquals(CatalogSource.ProviderStatus.NOT_FOUND, ProviderFailureClassifier.httpStatus(404));
         for (int status : new int[]{401, 403, 429, 500, 502, 503}) {
             assertEquals(CatalogSource.ProviderStatus.TRANSIENT_ERROR,
-                    ProviderFailureClassifier.classify(CatalogSource.SourceId.SPICY_ORG,
-                            SpicyOrgProtocol.error(status)));
+                    ProviderFailureClassifier.httpStatus(status));
         }
         assertEquals(CatalogSource.SourceId.SPICY_ORG,
                 CatalogSource.inferSourceId("spicy_org", "Apple Music"));

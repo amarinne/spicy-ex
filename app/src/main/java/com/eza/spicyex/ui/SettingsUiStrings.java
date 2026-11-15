@@ -23,7 +23,6 @@ public final class SettingsUiStrings {
 
     private final Context hostContext;
     private final Resources moduleResources;
-    private final Resources englishResources;
     private final Resources resources;
     private final String selectedLanguage;
     private final Map<String, Integer> ids = new HashMap<>();
@@ -32,7 +31,6 @@ public final class SettingsUiStrings {
         this.hostContext = hostContext;
         selectedLanguage = resolveLanguage(hostContext, language);
         moduleResources = localizedModuleResources(hostContext, "en");
-        englishResources = localizedModuleResources(hostContext, "en");
         resources = localizedModuleResources(hostContext, selectedLanguage);
     }
 
@@ -52,7 +50,7 @@ public final class SettingsUiStrings {
     public String setting(Settings.Setting<?> setting) {
         String name = SettingsUiResourceNames.setting(setting);
         String fallback = setting == null ? "" : setting.label;
-        if (setting == Settings.UI_LANGUAGE) return stringFrom(englishResources, name, fallback);
+        if (setting == Settings.UI_LANGUAGE) return stringFrom(moduleResources, name, fallback);
         return get(name, fallback);
     }
 

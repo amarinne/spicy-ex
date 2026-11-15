@@ -14,6 +14,73 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class PipMarkedAdoptionTest {
+    @Test public void hostUiStateCallbackCannotOpenSpotifysVideoPipPage() throws Throwable {
+        assertHostCallback("onPictureInPictureUiStateChanged",
+                new Class<?>[]{android.app.PictureInPictureUiState.class}, new Object[]{null}, false);
+    }
+
+    @Test public void hostModeOverloadStillPublishesTheActualMode() throws Throwable {
+        assertHostCallback("onPictureInPictureModeChanged", new Class<?>[]{boolean.class},
+                new Object[]{true}, true);
+        assertHostCallback("onPictureInPictureModeChanged",
+                new Class<?>[]{boolean.class, android.content.res.Configuration.class},
+                new Object[]{true, null}, true);
+    }
+
+    private void assertHostCallback(String name, Class<?>[] types, Object[] args,
+                                    boolean modeChanged) throws Throwable {
+        LyricsPipController controller = controller();
+        java.util.Map<Executable, io.github.libxposed.api.XposedInterface.Hooker> hooks = new java.util.HashMap<>();
+        Class<io.github.libxposed.api.XposedInterface> api = io.github.libxposed.api.XposedInterface.class;
+        XpHooks.attach(api.cast(proxy(api, (p, method, values) -> {
+            Executable target = (Executable) values[0];
+            return proxy(io.github.libxposed.api.XposedInterface.HookBuilder.class, (builder, operation, params) -> {
+                if ("intercept".equals(operation.getName())) {
+                    hooks.put(target, (io.github.libxposed.api.XposedInterface.Hooker) params[0]);
+                    return proxy(io.github.libxposed.api.XposedInterface.HookHandle.class, (h, m, a) -> null);
+                }
+                return builder;
+            });
+        })));
+        try {
+            controller.hookHostPipCallbacks(CallbackActivity.class);
+            Method callback = CallbackActivity.class.getDeclaredMethod(name, types);
+            io.github.libxposed.api.XposedInterface.Hooker installed = hooks.get(callback);
+            assertNotNull("Spotify callback must be intercepted: " + name, installed);
+            for (boolean owned : new boolean[]{true, false}) {
+                CallbackActivity activity = allocate(CallbackActivity.class);
+                if (owned) map(controller, "hosts").put(activity, false);
+                installed.intercept((io.github.libxposed.api.XposedInterface.Chain) proxy(
+                        io.github.libxposed.api.XposedInterface.Chain.class, (p, operation, params) -> {
+                            switch (operation.getName()) {
+                                case "getExecutable": return callback;
+                                case "getThisObject": return activity;
+                                case "getArgs": return java.util.Arrays.asList(args);
+                                case "proceed": return callback.invoke(activity, args);
+                                default: throw new AssertionError(operation);
+                            }
+                        }));
+                assertEquals("ordinary Spotify callbacks must continue", owned ? 0 : 1, activity.callbacks);
+                if (owned) assertEquals("UI state must not mark the host as entered",
+                        modeChanged, map(controller, "hosts").get(activity));
+            }
+        } finally {
+            XpHooks.unhookAll();
+            XpHooks.attach(null);
+        }
+    }
+
+    private Object proxy(Class<?> type, java.lang.reflect.InvocationHandler handler) {
+        return java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[]{type}, handler);
+    }
+
+    public static class CallbackActivity extends RecordingActivity {
+        int callbacks;
+        @Override public void onPictureInPictureUiStateChanged(android.app.PictureInPictureUiState state) { callbacks++; }
+        @Override public void onPictureInPictureModeChanged(boolean inPip) { callbacks++; }
+        @Override public void onPictureInPictureModeChanged(boolean inPip, android.content.res.Configuration config) { callbacks++; }
+    }
+
     @Test public void spotifyCannotFinishAnAdoptedOrEnteredLyricsHost() throws Exception {
         LyricsPipController controller = controller();
         RecordingActivity activity = allocate(RecordingActivity.class);

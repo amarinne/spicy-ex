@@ -25,10 +25,12 @@ public final class TimedWordSpacingInstrumentation extends Instrumentation {
     private boolean aiRecoverySuite;
     private boolean receiptSuite;
     private boolean unknownSuite;
+    private boolean autoPerfSuite;
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         sentenceSuite = arguments != null && "sentence".equals(arguments.getString("suite"));
         autoSuite = arguments != null && "auto".equals(arguments.getString("suite"));
+        autoPerfSuite = arguments != null && "auto-perf".equals(arguments.getString("suite"));
         chineseSuite = arguments != null && "chinese".equals(arguments.getString("suite"));
         paidLinkageSuite = arguments != null && "paid-linkage".equals(arguments.getString("suite"));
         layoutProbeSuite = arguments != null && "layout-probe".equals(arguments.getString("suite"));
@@ -36,12 +38,16 @@ public final class TimedWordSpacingInstrumentation extends Instrumentation {
         aiRecoverySuite = arguments != null && "ai-recovery".equals(arguments.getString("suite"));
         receiptSuite = arguments != null && "diagnostic-receipt".equals(arguments.getString("suite"));
         String suite = arguments == null ? null : arguments.getString("suite");
-        unknownSuite = suite != null && !suite.isEmpty() && !sentenceSuite && !autoSuite && !chineseSuite && !paidLinkageSuite && !layoutProbeSuite && !aiStatusSuite && !aiRecoverySuite && !receiptSuite
+        unknownSuite = suite != null && !suite.isEmpty() && !sentenceSuite && !autoSuite && !autoPerfSuite && !chineseSuite && !paidLinkageSuite && !layoutProbeSuite && !aiStatusSuite && !aiRecoverySuite && !receiptSuite
                 && !"spacing".equals(suite);
         start();
     }
 
     @Override public void onStart() {
+        if (autoPerfSuite) {
+            com.eza.spicyex.auto.AutoPerformanceInstrumentation.run(this);
+            return;
+        }
         if (receiptSuite) {
             com.eza.spicyex.diagnostics.DiagnosticReceiptInstrumentation.run(this);
             return;

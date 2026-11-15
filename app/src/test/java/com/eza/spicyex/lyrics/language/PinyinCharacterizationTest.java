@@ -10,6 +10,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.Normalizer;
 
+/**
+ * Standard Pinyin characterization against the plain pinyin4j package path.
+ *
+ * <p>Standard Pinyin never reads the bundled g2pM pack: it uses the pinned pinyin4j formats plus
+ * the frozen display phrase table. The eza式 path is characterized separately by the mandarin
+ * reader tests.
+ */
 public class PinyinCharacterizationTest {
     private static final char[] HEX = "0123456789abcdef".toCharArray();
 
@@ -20,10 +27,6 @@ public class PinyinCharacterizationTest {
             "d8182bd4192b4870529463301d0e8d87f25c3b77289a3ed64eb94e9979890522";
     private static final String CANONICAL_TONE_DIGEST =
             "cda00046c7e42c515a712ecb321fffdaa778e55222c330fbcac98df7d9421208";
-    private static final String EZA_NO_TONE_DIGEST =
-            "3dc0582986713d1ad70dca43c467f698894a366cda0c20afaed9c98e62f60d24";
-    private static final String EZA_TONE_DIGEST =
-            "9c53d930ef70af9005348ffc12a95fa75afac7592f569f5a47008045fc8a933d";
 
     private static final String PHRASE_DATA_DIGEST =
             "f055da03094b63ad65ed4b74de94be328d7fbc0d4367548797fe81b45fb5c2c1";
@@ -77,11 +80,7 @@ public class PinyinCharacterizationTest {
         return SpicyJapaneseChineseProcessor.romanizeChinesePinyinLine(text, tones);
     }
 
-    private static String eza(String text, boolean tones) {
-        return SpicyJapaneseChineseProcessor.romanizeChineseLine(text, "pinyin-eza", tones);
-    }
-
-    private static Sweep sweep(boolean ezaStyle, boolean tones) {
+    private static Sweep sweep(boolean tones) {
         StringBuilder serialized = new StringBuilder();
         int entries = 0;
         int mapped = 0;
@@ -89,7 +88,7 @@ public class PinyinCharacterizationTest {
             if (cp > 0x3007 && cp < 0x4E00) continue;
             if (Character.charCount(cp) != 1) continue;
             String raw = new String(Character.toChars(cp));
-            String output = ezaStyle ? eza(raw, tones) : canonical(raw, tones);
+            String output = canonical(raw, tones);
             serialized.append(Integer.toHexString(cp)).append('=').append(output).append('\n');
             entries++;
             if (!output.equals(raw)) mapped++;
@@ -114,13 +113,11 @@ public class PinyinCharacterizationTest {
     private static void assertAllVariants(String text, String expected) {
         assertEquals("canonical no-tone: " + text, expected, canonical(text, false));
         assertEquals("canonical tone-marked: " + text, expected, canonical(text, true));
-        assertEquals("eza no-tone: " + text, expected, eza(text, false));
-        assertEquals("eza tone-marked: " + text, expected, eza(text, true));
     }
 
     @Test
     public void fullRangeCanonicalNoToneDigest() {
-        Sweep sweep = sweep(false, false);
+        Sweep sweep = sweep(false);
         assertEquals(SWEEP_ENTRIES, sweep.entries);
         assertEquals(SWEEP_MAPPED, sweep.mapped);
         assertEquals(CANONICAL_NO_TONE_DIGEST, sweep.digest);
@@ -128,26 +125,10 @@ public class PinyinCharacterizationTest {
 
     @Test
     public void fullRangeCanonicalToneMarkedDigest() {
-        Sweep sweep = sweep(false, true);
+        Sweep sweep = sweep(true);
         assertEquals(SWEEP_ENTRIES, sweep.entries);
         assertEquals(SWEEP_MAPPED, sweep.mapped);
         assertEquals(CANONICAL_TONE_DIGEST, sweep.digest);
-    }
-
-    @Test
-    public void fullRangeEzaNoToneDigest() {
-        Sweep sweep = sweep(true, false);
-        assertEquals(SWEEP_ENTRIES, sweep.entries);
-        assertEquals(SWEEP_MAPPED, sweep.mapped);
-        assertEquals(EZA_NO_TONE_DIGEST, sweep.digest);
-    }
-
-    @Test
-    public void fullRangeEzaToneMarkedDigest() {
-        Sweep sweep = sweep(true, true);
-        assertEquals(SWEEP_ENTRIES, sweep.entries);
-        assertEquals(SWEEP_MAPPED, sweep.mapped);
-        assertEquals(EZA_TONE_DIGEST, sweep.digest);
     }
 
     @Test
@@ -192,16 +173,12 @@ public class PinyinCharacterizationTest {
     public void uUmlautAndVOutputIsLocked() {
         assertEquals("nv", canonical("\u5973", false));
         assertEquals("n\u01da", canonical("\u5973", true));
-        assertEquals("nyu", eza("\u5973", false));
-        assertEquals("ny\u1ee7", eza("\u5973", true));
     }
 
     @Test
     public void neutralToneIsLocked() {
         assertEquals("de", canonical("\u7684", false));
         assertEquals("de", canonical("\u7684", true));
-        assertEquals("t\u01b0a", eza("\u7684", false));
-        assertEquals("t\u1ef1a", eza("\u7684", true));
     }
 
     @Test
@@ -223,20 +200,12 @@ public class PinyinCharacterizationTest {
         assertAllVariants("Hello, world! 123", "Hello, world! 123");
         assertEquals("Azhong guo", canonical("A\u4e2d\u56fd", false));
         assertEquals("Azh\u014dng gu\u00f3", canonical("A\u4e2d\u56fd", true));
-        assertEquals("Azhong kuo", eza("A\u4e2d\u56fd", false));
-        assertEquals("Azhong ku\u00f3", eza("A\u4e2d\u56fd", true));
         assertEquals("2024nian", canonical("2024\u5e74", false));
         assertEquals("2024ni\u00e1n", canonical("2024\u5e74", true));
-        assertEquals("2024nien", eza("2024\u5e74", false));
-        assertEquals("2024ni\u00e9n", eza("2024\u5e74", true));
         assertEquals("zhong guo rock'n'roll", canonical("\u4e2d\u56fd rock'n'roll", false));
         assertEquals("zh\u014dng gu\u00f3 rock'n'roll", canonical("\u4e2d\u56fd rock'n'roll", true));
-        assertEquals("zhong kuo rock'n'roll", eza("\u4e2d\u56fd rock'n'roll", false));
-        assertEquals("zhong ku\u00f3 rock'n'roll", eza("\u4e2d\u56fd rock'n'roll", true));
         assertEquals("3.14-zhong guo\uff01", canonical("3.14-\u4e2d\u56fd\uff01", false));
         assertEquals("3.14-zh\u014dng gu\u00f3\uff01", canonical("3.14-\u4e2d\u56fd\uff01", true));
-        assertEquals("3.14-zhong kuo\uff01", eza("3.14-\u4e2d\u56fd\uff01", false));
-        assertEquals("3.14-zhong ku\u00f3\uff01", eza("3.14-\u4e2d\u56fd\uff01", true));
     }
 
     @Test
@@ -258,7 +227,6 @@ public class PinyinCharacterizationTest {
         for (String[] row : CORPUS) {
             assertEquals("canonical no-tone: " + row[0], row[1], canonical(row[0], false));
             assertEquals("canonical tone-marked: " + row[0], row[2], canonical(row[0], true));
-            assertEquals("eza tone-marked: " + row[0], row[3], eza(row[0], true));
         }
     }
 }

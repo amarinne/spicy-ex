@@ -1,5 +1,6 @@
 package com.eza.spicyex.hooks;
 
+import com.eza.spicyex.lyrics.LyricUtils;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -45,18 +46,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * advances and a mounted surface still projects something new: the card or the expanded artwork
  * overlay is on screen with a timed document that has not run past its last sung row, or a canvas
  * handoff is settling. Otherwise the loop drops to one re-check per
- * {@link #IDLE_FRAME_PROBE_MS}; that probe is what resumes it after a pause, a re-attach, or any
+ * {@link NativeRuntime#IDLE_FRAME_PROBE_MS}; that probe is what resumes it after a pause, a re-attach, or any
  * change that arrives without a callback.
  */
 final class NowPlayingLyricController {
     private static final long CANVAS_TRANSFER_SETTLE_MS = 400L;
-    /**
-     * Idle re-check cadence. This controller has no playback-state callback, so an idle loop still
-     * needs to look once in a while to notice that playback started. It is already faster than the
-     * throttles the frame pass itself uses for the track query (400 ms) and the artwork target
-     * check (250 ms), so nothing that was throttled gets slower.
-     */
-    private static final long IDLE_FRAME_PROBE_MS = 250L;
     /** No rendered position in the current frame pass. */
     static final long NO_POSITION_MS = Long.MIN_VALUE;
     interface ArtworkTargetHost {
@@ -205,7 +199,7 @@ final class NowPlayingLyricController {
         public void run() {
             if (!running) return;
             requestFrame();
-            handler.postDelayed(this, IDLE_FRAME_PROBE_MS);
+            handler.postDelayed(this, NativeRuntime.IDLE_FRAME_PROBE_MS);
         }
     };
 
@@ -319,7 +313,7 @@ final class NowPlayingLyricController {
             // invalidation, a track change). The gate is the authority: drop it.
             cancelPendingFrame();
             handler.removeCallbacks(idleFrameProbe);
-            handler.postDelayed(idleFrameProbe, IDLE_FRAME_PROBE_MS);
+            handler.postDelayed(idleFrameProbe, NativeRuntime.IDLE_FRAME_PROBE_MS);
             return;
         }
         if (!frameLoopContinuous) {
@@ -554,13 +548,13 @@ final class NowPlayingLyricController {
         if (document == null || lead == null || lead.sourceLine == null) return rows;
         for (AppliedLine row : document.appliedLines) {
             if (row != null && row.bgLine && row.sourceLine == lead.sourceLine
-                    && LyricTimeline.isRowActiveAt(row, positionMs) && !isBlank(row.text)) rows.add(row);
+                    && LyricTimeline.isRowActiveAt(row, positionMs) && !LyricUtils.isBlank(row.text)) rows.add(row);
         }
         return rows;
     }
 
     private static void appendMiniPart(StringBuilder target, String value) {
-        if (isBlank(value)) return;
+        if (LyricUtils.isBlank(value)) return;
         if (target.length() > 0) target.append('\n');
         target.append(value);
     }
@@ -943,18 +937,18 @@ final class NowPlayingLyricController {
         if (config == null || !enabled || doc == null || doc.lines == null) return;
         String fullText = LyricsDocumentProcessor.collectText(doc);
         for (LyricsLine line : doc.lines) {
-            if (line == null || line.interlude || isBlank(line.text)) continue;
+            if (line == null || line.interlude || LyricUtils.isBlank(line.text)) continue;
             boolean japanese = SpicyJapaneseChineseProcessor.canRomanizeJapanese(line.text);
             boolean missingJapaneseReading = japanese && (line.japaneseReading == null
                     || line.japaneseReading.furigana == null
                     || line.japaneseReading.furigana.isEmpty());
             boolean finalizedNonJapanesePlan = !japanese && line.readingRenderPlan != null
-                    && !isBlank(line.readingRenderPlan.joinedDisplayText);
+                    && !LyricUtils.isBlank(line.readingRenderPlan.joinedDisplayText);
             if (finalizedNonJapanesePlan) continue;
-            if (!missingJapaneseReading && !japanese && !isBlank(line.romanizedText)
+            if (!missingJapaneseReading && !japanese && !LyricUtils.isBlank(line.romanizedText)
                     && !SpicyTextDetection.hasRomanizableScript(line.romanizedText)) continue;
             String local = LyricsLocalRomanizer.romanizeLine(opts, doc, line, fullText);
-            if (!isBlank(local) && !local.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
+            if (!LyricUtils.isBlank(local) && !local.equals(line.text) && !SpicyTextDetection.hasRomanizableScript(local)) {
                 line.romanizedText = line.readingRenderPlan == null ? local : "";
             }
         }
@@ -977,10 +971,6 @@ final class NowPlayingLyricController {
 
     private boolean isUnsyncedDocument(LyricsDocument doc) {
         return LyricsRenderMode.isStatic(doc);
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
     }
 
 }

@@ -28,9 +28,7 @@ import com.eza.spicyex.settings.values.FollowChipIcon;
 /** Owns the floating "jump back to active lyric" affordance. */
 final class LyricsJumpToCurrentController {
     private static final int MOTION_OFFSET_DP = 8;
-    private static final long COLLAPSE_DELAY_MS = 3200L;
     private static final int SIDE_MARGIN_DP = NativeLyricsUtils.EDGE_BUTTON_MARGIN_DP;
-    private static final int CHIP_HEIGHT_DP = 44;
     private static final int ICON_DP = 18;
     private static final long COLLAPSE_DURATION_MS = 320L;
 
@@ -77,7 +75,7 @@ final class LyricsJumpToCurrentController {
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                dp(CHIP_HEIGHT_DP),
+                dp(FloatingChipMetrics.HEIGHT_DP),
                 Gravity.BOTTOM | Gravity.END);
         lp.setMargins(0, 0, dp(SIDE_MARGIN_DP), dp(24));
         parent.addView(view, lp);
@@ -179,7 +177,7 @@ final class LyricsJumpToCurrentController {
         } else {
             applyCollapsed(false);
             if (style != ChipStyle.LABEL) {
-                button.postDelayed(collapse, appearing ? COLLAPSE_DELAY_MS : COLLAPSE_DELAY_MS / 2);
+                button.postDelayed(collapse, appearing ? FloatingChipMetrics.COLLAPSE_DELAY_MS : FloatingChipMetrics.COLLAPSE_DELAY_MS / 2);
             }
         }
     }
@@ -194,7 +192,7 @@ final class LyricsJumpToCurrentController {
             button.setCompoundDrawablesRelative(waveIcon, null, null, null);
             button.setCompoundDrawablePadding(collapsed ? 0 : dp(8));
             // With no text the glyph sits at the start edge, not centred: the padding centres it.
-            int iconInset = (dp(CHIP_HEIGHT_DP) - dp(ICON_DP)) / 2;
+            int iconInset = (dp(FloatingChipMetrics.HEIGHT_DP) - dp(ICON_DP)) / 2;
             button.setPaddingRelative(collapsed ? iconInset : dp(16), 0, collapsed ? 0 : dp(18), 0);
         } else {
             // Arrow modes reuse the old down glyph ("↓") as text; adaptive adds its "↑" pair.
@@ -211,8 +209,8 @@ final class LyricsJumpToCurrentController {
         }
         ViewGroup.LayoutParams lp = button.getLayoutParams();
         if (lp != null) {
-            lp.width = collapsed ? dp(CHIP_HEIGHT_DP) : ViewGroup.LayoutParams.WRAP_CONTENT;
-            lp.height = dp(CHIP_HEIGHT_DP);
+            lp.width = collapsed ? dp(FloatingChipMetrics.HEIGHT_DP) : ViewGroup.LayoutParams.WRAP_CONTENT;
+            lp.height = dp(FloatingChipMetrics.HEIGHT_DP);
             button.setLayoutParams(lp);
         }
     }
@@ -221,7 +219,7 @@ final class LyricsJumpToCurrentController {
     private void collapseToIcon() {
         if (button.getVisibility() != View.VISIBLE) return;
         int startWidth = button.getWidth();
-        int endWidth = dp(CHIP_HEIGHT_DP);
+        int endWidth = dp(FloatingChipMetrics.HEIGHT_DP);
         if (startWidth <= endWidth || widthAnimator != null) {
             applyCollapsed(true);
             return;

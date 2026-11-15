@@ -497,6 +497,10 @@
     <string name="lyrics_ai_refined_google">AI refined the Google Translate version.</string>
     <string name="lyrics_ai_from_source">AI translated from the original lyrics.</string>
     <string name="lyrics_ai_model_used">Model: %1$s</string>
+    <string name="source_picker_import">Import lyrics</string>
+    <string name="source_picker_importing">Importing…</string>
+    <string name="source_picker_imported">Lyrics imported</string>
+    <string name="source_picker_import_failed">Choose a supported TTML file up to 4 MiB</string>
     <string name="source_picker_title">Choose lyrics source</string>
     <string name="source_picker_delete">Clear saved lyrics</string>
     <string name="source_picker_confirm_delete">Tap again to delete</string>
@@ -684,6 +688,7 @@
     <string name="settings_label_auto_enabled">Enable Android Auto lyrics</string>
     <string name="settings_auto_root_requirement">Requires root and LSPosed/Vector. Scope Spotify and Android Auto.</string>
     <string name="settings_label_auto_secondary_text">Secondary text</string>
+    <string name="settings_label_auto_duet">Show duet lines</string>
     <string name="settings_label_lyrics_spicy_org_client_key">SpicyLyrics.org client key</string>
     <string name="settings_spicy_key_edit">Add or change key</string>
     <string name="settings_spicy_key_delete">Remove key</string>

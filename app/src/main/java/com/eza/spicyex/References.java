@@ -1,8 +1,6 @@
 package com.eza.spicyex;
 
 import android.app.Activity;
-import android.content.Context;
-import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.graphics.Typeface;
 import android.os.Bundle;
@@ -11,14 +9,10 @@ import android.util.Pair;
 import com.eza.spicyex.xposed.XpLog;
 import com.eza.spicyex.xposed.SpotifySymbolResolver;
 import com.eza.spicyex.xposed.XpReflect;
-import org.luckypray.dexkit.DexKitBridge;
-import org.luckypray.dexkit.query.FindField;
-import org.luckypray.dexkit.query.matchers.FieldMatcher;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -166,7 +160,6 @@ public class References {
         }
     }
 
-    private static long previousMs;
     /**
      * Full artist credit line. Spotify's player metadata carries the main artist in
      * "artist_name" and any further credited artists in 1-based indexed keys
@@ -202,50 +195,5 @@ public class References {
     }
 
     private static final int MAX_INDEXED_ARTISTS = 32;
-    public static long getCurrentPlaybackPosition(DexKitBridge bridge, ClassLoader classLoader) {
-        Object wrapper = playerStateWrapperStrong != null
-                ? playerStateWrapperStrong
-                : (References.playerStateWrapper == null ? null : References.playerStateWrapper.get());
-        if (wrapper == null) return -1;
-
-        Object state;
-        try {
-            state = XpReflect.callMethod(wrapper, "getState");
-
-            if (state == null) return -1;
-        } catch (Throwable t) {
-            return -1;
-        }
-
-        try {
-            var progressList = bridge.findField(FindField.create().searchInClass(Arrays.asList(bridge.getClassData(state.getClass()))).matcher(FieldMatcher.create().type(long.class)));
-            if(progressList.isEmpty()) {
-                XpLog.log("[SpotifyPlus] Failed to get progress: " + state.getClass().getName());
-                return -1;
-            }
-
-            return progressList.get(0).getFieldInstance(classLoader).getLong(state);
-        } catch(Exception e) {
-            XpLog.log(e);
-        }
-
-        return -1;
-    }
-
-    public static SharedPreferences getPreferences() {
-        Activity activity = currentActivity();
-        if(activity == null) return null;
-
-        return activity.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE);
-    }
-
-    public static SharedPreferences getScriptPreferences(String name, Context activity) {
-        if(activity == null) {
-            XpLog.log("[SpotifyPlus] No activity found");
-            return null;
-        }
-
-        return activity.getSharedPreferences(name, Context.MODE_PRIVATE);
-    }
 
 }

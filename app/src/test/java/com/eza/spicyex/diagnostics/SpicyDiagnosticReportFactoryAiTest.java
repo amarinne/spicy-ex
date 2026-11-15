@@ -166,6 +166,18 @@ public class SpicyDiagnosticReportFactoryAiTest {
     }
 
     @Test
+    public void theIssueLineIncludesSoundFailuresUnderThePronunciationLabel() {
+        AiRequestLiveState.begin(LayerKind.SOUND, "digest", "sound1");
+        AiRequestLiveState.fail(LayerKind.SOUND, "digest", "sound1",
+                "provider:request_rejected", 429, "");
+
+        String line = SpicyDiagnosticReportFactory.aiIssueLine(block("", null));
+
+        assertTrue(line.contains("pronunciation last failed: `provider:request_rejected (HTTP 429)`"));
+        assertFalse(line.contains("meaning last failed:"));
+    }
+
+    @Test
     public void theIssueLineIsAbsentWhenThereIsNoAiBlock() {
         assertEquals("", SpicyDiagnosticReportFactory.aiIssueLine(null));
     }

@@ -6,7 +6,7 @@ on:
       version:
         description: 'Version tag (e.g., v1, v2)'
         required: true
-        default: 'v1'
+        default: 'v2'
       release_name:
         description: 'Release name'
         required: false
@@ -40,7 +40,7 @@ jobs:
       - name: Compute SHA256
         id: sha256
         run: |
-          ZIP_PATH=$(find app/build/language-models -name "spicyex-language-models-v1.zip" | head -1)
+          ZIP_PATH=$(find app/build/language-models -name "spicyex-language-models-v2.zip" | head -1)
           echo "zip_path=$ZIP_PATH" >> $GITHUB_OUTPUT
           SHA256=$(sha256sum "$ZIP_PATH" | cut -d' ' -f1)
           echo "sha256=$SHA256" >> $GITHUB_OUTPUT
@@ -59,13 +59,14 @@ jobs:
             - jmdict/JmdictPreferredReadings.txt.gz
             - tika/langdetect-20260320.bin
             - kuromoji/*.bin (8 files)
+            - mandarin-g2pm/* (Mandarin eza式 reader data and licences)
 
             **SHA256:** ${{ steps.sha256.outputs.sha256 }}
 
             **Usage:**
             ```bash
             ./gradlew :app:assembleDebug \
-              -PLANGUAGE_MODEL_PACK_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/spicyex-language-models-v1.zip" \
+              -PLANGUAGE_MODEL_PACK_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/spicyex-language-models-v2.zip" \
               -PLANGUAGE_MODEL_PACK_SHA256="${{ steps.sha256.outputs.sha256 }}"
             ```
           files: ${{ steps.sha256.outputs.zip_path }}
@@ -75,5 +76,5 @@ jobs:
       - name: Output release URL
         run: |
           echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.version }}"
-          echo "Download URL: https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/spicyex-language-models-v1.zip"
+          echo "Download URL: https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/spicyex-language-models-v2.zip"
           echo "SHA256: ${{ steps.sha256.outputs.sha256 }}"

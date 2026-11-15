@@ -25,6 +25,7 @@ import com.eza.spicyex.lyrics.session.LyricsSourcePreferences.RankingMode;
 import com.eza.spicyex.lyrics.cache.CacheClearKind;
 import com.eza.spicyex.settings.SourcePreferencesAdapter;
 import com.eza.spicyex.settings.SettingsWriter;
+import com.eza.spicyex.settings.values.LyricsSourceMode;
 import com.eza.spicyex.settings.values.BackgroundEffect;
 import com.eza.spicyex.settings.values.BackgroundEffectPool;
 import com.eza.spicyex.settings.values.StoredValues;
@@ -337,6 +338,18 @@ final class AgentCommandChannel {
                             (ok, detail) -> reply(ok ? "ok" : "error", verb,
                                     explain(ok, detail, track), correlation));
                     return;
+                case "import-lyrics":
+                    onMain(verb, correlation, () -> {
+                        File payload = new File(dir, "local-lyrics.ttml");
+                        host.importLocalLyrics(commandArgument, android.net.Uri.fromFile(payload), (ok, detail) -> {
+                            if (payload.exists() && !payload.delete()) {
+                                reply("error", verb, "import payload cleanup failed", correlation);
+                                return;
+                            }
+                            reply(ok ? "ok" : "error", verb, detail, correlation);
+                        });
+                    });
+                    return;
                 case "check-other":
                     host.checkOtherCatalogSources((ok, detail) -> reply(ok ? "ok" : "error", verb,
                             explain(ok, detail, track), correlation));
@@ -569,8 +582,14 @@ final class AgentCommandChannel {
                 reply("ok", "picker", "closed", correlation);
                 return;
             }
+            if ("import".equals(action)) {
+                boolean requested = picker != null && picker.isShowing() && picker.importForAgent();
+                reply(requested ? "ok" : "error", "picker",
+                        requested ? "file picker requested" : "open an idle source picker first", correlation);
+                return;
+            }
             if (!"open".equals(action)) {
-                reply("error", "picker", "expected open, close, or status", correlation);
+                reply("error", "picker", "expected open, close, status, or import", correlation);
                 return;
             }
             Activity activity = References.currentActivity();
@@ -779,7 +798,8 @@ final class AgentCommandChannel {
             adapter.commit(new SettingsWriter(new SettingsStore(activity)),
                     new SourcePreferencesAdapter.Commit(
                             mode == RankingMode.AUTO
-                                    ? "Auto" : "Source order", order, enabled));
+                                    ? LyricsSourceMode.AUTO.storedLabel()
+                                    : LyricsSourceMode.SOURCE_ORDER.storedLabel(), order, enabled));
             host.reconcileLyricsSources();
             reply("ok", "sources", "old={" + before + "} new={mode=" + mode.id
                     + " order=" + LyricsSourcePreferences.sourceOrder(activity)

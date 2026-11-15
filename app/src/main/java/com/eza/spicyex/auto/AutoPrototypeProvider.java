@@ -13,8 +13,11 @@ import com.eza.spicyex.BuildConfig;
 public final class AutoPrototypeProvider extends ContentProvider {
     static AutoPrototypeProvider instance;
     public static final Uri URI = Uri.parse("content://com.eza.spicyex.autoprototype/session");
+    public static final String HOST_ACTION = "com.eza.spicyex.AUTO_HOST_CHANGED";
+    public static final String HOST_PERMISSION = "com.eza.spicyex.permission.AUTO_HOST";
     private Bundle state = new Bundle();
     private Bundle host = new Bundle();
+    private final AutoHostDemand hostDemand = new AutoHostDemand();
     private boolean enabled, stress;
 
     @Override public boolean onCreate() {
@@ -23,6 +26,12 @@ public final class AutoPrototypeProvider extends ContentProvider {
         getContext().grantUriPermission("com.google.android.projection.gearhead", URI, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
         enabled = getContext().getSharedPreferences("auto-prototype", 0).getBoolean("enabled", false);
         return true;
+    }
+
+    private void notifyHost() {
+        getContext().sendBroadcast(new android.content.Intent(HOST_ACTION)
+                .setPackage("com.spotify.music").setData(URI)
+                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION));
     }
 
     private boolean caller(String name) {
@@ -53,21 +62,28 @@ public final class AutoPrototypeProvider extends ContentProvider {
         } else if ("stress".equals(method)) {
             if (!BuildConfig.DEBUG || !shell) throw new SecurityException("Debug owner shell required");
             stress = "true".equals(arg);
+        } else if ("notify".equals(method)) {
+            if (!BuildConfig.DEBUG || !shell) throw new SecurityException("Debug owner shell required");
+            notifyHost();
         } else if ("publish".equals(method)) {
             if (!spotify) throw new SecurityException("Spotify producer required");
             if (enabled && extras != null) {
-                Bundle clean = sanitize(extras);
+                Bundle clean = sanitize(extras, state);
                 Bundle next = extras.getBundle("next");
                 if (next != null) {
                     clean.putBundle("next", sanitizeRow(next));
                     clean.putLong("nextAtMs", extras.getLong("nextAtMs"));
                 }
+                Bundle duet = extras.getBundle("duet");
+                if (duet != null) clean.putBundle("duet", sanitizeRow(duet));
                 state = clean;
                 state.putLong("receivedAt", SystemClock.elapsedRealtime());
             }
         } else if ("host".equals(method)) {
             if (!auto) throw new SecurityException("Android Auto host required");
             host = extras == null ? new Bundle() : new Bundle(extras);
+            if (hostDemand.update(host.getBoolean("connected"), SystemClock.elapsedRealtime()))
+                notifyHost();
         } else if (!"state".equals(method) && !"status".equals(method)) {
             throw new IllegalArgumentException("Unknown command");
         }
@@ -80,6 +96,7 @@ public final class AutoPrototypeProvider extends ContentProvider {
         reply.putLong("positionMs", AutoPrototypePolicy.position(state.getLong("positionMs"),
                 state.getLong("sampledAt"), state.getBoolean("playing"), state.getDouble("playbackRate", 1d), SystemClock.elapsedRealtime()));
         reply.putBoolean("enabled", enabled);
+        reply.putBoolean("hostActive", hostDemand.active(SystemClock.elapsedRealtime()));
         reply.putBoolean("stress", stress);
         Bundle displaySettings = new Bundle();
         AutoDisplaySettings.sanitize(state, displaySettings);
@@ -99,7 +116,15 @@ public final class AutoPrototypeProvider extends ContentProvider {
     }
     /** Prefetched rows may replace row content, never session metadata or display settings. */
     static Bundle sanitizeRow(Bundle extras) {
-        Bundle clean = sanitize(extras);
+        Bundle clean = sanitizeRowShallow(extras);
+        // One duet companion level travels with its row; deeper nesting is stripped.
+        Bundle duet = extras.getBundle("duet");
+        if (duet != null) clean.putBundle("duet", sanitizeRowShallow(duet));
+        return clean;
+    }
+
+    private static Bundle sanitizeRowShallow(Bundle extras) {
+        Bundle clean = sanitize(extras, null);
         for (String key : new java.util.ArrayList<>(clean.keySet())) {
             if (!isRowKey(key)) clean.remove(key);
         }
@@ -115,7 +140,9 @@ public final class AutoPrototypeProvider extends ContentProvider {
         }
     }
 
-    private static Bundle sanitize(Bundle extras) {
+    static Bundle sanitize(Bundle extras) { return sanitize(extras, null); }
+
+    private static Bundle sanitize(Bundle extras, Bundle previous) {
         Bundle clean = new Bundle();
         if (extras.containsKey("creditLabels")) {
             java.util.ArrayList<String> labels = extras.getStringArrayList("creditLabels");
@@ -159,7 +186,7 @@ public final class AutoPrototypeProvider extends ContentProvider {
         clean.putLong("nextVocalStartMs", extras.getLong("nextVocalStartMs", Long.MAX_VALUE));
         clean.putLong("firstVocalStartMs", extras.getLong("firstVocalStartMs", Long.MAX_VALUE));
         clean.putLong("lastVocalEndMs", extras.getLong("lastVocalEndMs"));
-        AutoDisplaySettings.sanitize(extras, clean);
+        AutoDisplaySettings.sanitize(extras, previous, clean);
         clean.putLong("sampledAt", extras.getLong("sampledAt"));
         clean.putLong("positionMs", extras.getLong("positionMs"));
         clean.putLong("lineStartMs", extras.getLong("lineStartMs"));

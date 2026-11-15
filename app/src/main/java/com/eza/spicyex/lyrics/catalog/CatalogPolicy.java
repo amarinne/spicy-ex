@@ -44,7 +44,7 @@ public final class CatalogPolicy {
         List<SourceId> order = new ArrayList<>();
         if (enabledOrder != null) {
             for (SourceId source : enabledOrder) {
-                if (source != null && !order.contains(source)) order.add(source);
+                if (source != null && source != SourceId.LOCAL && !order.contains(source)) order.add(source);
             }
         }
         this.enabledOrder = Collections.unmodifiableList(order);
@@ -99,17 +99,11 @@ public final class CatalogPolicy {
     public List<SourceId> automaticOrder() {
         if (sourceOrderMode) return enabledOrder;
         List<SourceId> order = new ArrayList<>();
-        for (SourceId source : new SourceId[]{SourceId.SPICY_ORG, SourceId.APPLE,
-                SourceId.SPOTIFY_NATIVE}) {
-            if (enabled(source)) order.add(source);
+        for (SourceId source : SourceId.values()) {
+            if (source.isPrimary() && enabled(source)) order.add(source);
         }
         for (SourceId source : enabledOrder) if (!order.contains(source)) order.add(source);
         return Collections.unmodifiableList(order);
-    }
-
-    public static boolean primary(SourceId source) {
-        return source == SourceId.SPICY_ORG || source == SourceId.APPLE
-                || source == SourceId.SPOTIFY_NATIVE;
     }
 
     /** Settings-level source to catalog acquisition identity. */

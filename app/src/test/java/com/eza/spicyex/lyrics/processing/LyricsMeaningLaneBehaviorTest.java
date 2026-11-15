@@ -136,6 +136,98 @@ public final class LyricsMeaningLaneBehaviorTest {
         assertEquals("one refused request, not a run's worth of them", 1, provider.translateCalls());
     }
 
+    @Test public void recoversMoreThanEightRowsLeftAfterTheRetryPass() throws Exception {
+        assertMissingRowsRecovered(24);
+    }
+
+    @Test public void smallDocumentRetainsSingleRowRescue() throws Exception {
+        assertMissingRowsRecovered(8);
+    }
+
+    @Test public void aiGoogleFallbackAlsoRecoversMoreThanEightMissingRows() throws Exception {
+        configureAi(AiSettings.TRANSLATION_PIPELINE_GOOGLE_DRAFT, true);
+        aiExecutor.openGate();
+        assertMissingRowsRecovered(24);
+    }
+
+    private void assertMissingRowsRecovered(int rows) throws Exception {
+        provider.batchResponse = batch -> {
+            GoogleEnhancer.BatchResult result = new GoogleEnhancer.BatchResult();
+            for (GoogleEnhancer.BatchLine line : batch) {
+                if (line.index < 4 || batch.size() == 1) {
+                    result.translations.put(line.index, "T:" + line.text);
+                }
+            }
+            return result;
+        };
+        Recorder callback = new Recorder("recovered");
+        assertTrue(newLane().start("missing-rows", 1, longPendingDocument(rows), BACKEND,
+                "en", "ko", "ko", false, alwaysCurrent(), callback));
+        assertTrue(events.await("recovered:complete", WAIT_MS));
+        assertEquals(rows, callback.changed);
+        assertEquals(rows, callback.artifact.size());
+        assertFalse(callback.artifact.partial);
+    }
+
+    @Test public void missingRowRecoveryStopsWhenNoRowImproves() throws Exception {
+        provider.batchResponse = batch -> new GoogleEnhancer.BatchResult();
+        Recorder callback = new Recorder("empty");
+        assertTrue(newLane().start("empty-rows", 1, longPendingDocument(24), BACKEND,
+                "en", "ko", "ko", false, alwaysCurrent(), callback));
+        assertTrue(events.await("empty:complete", WAIT_MS));
+        assertEquals(0, callback.changed);
+        assertEquals("one initial batch, two retries, then one attempt per row", 27, provider.translateCalls());
+    }
+
+    @Test public void rateLimitDuringSingleRowRescueStopsRemainingRows() throws Exception {
+        provider.batchResponse = batch -> {
+            GoogleEnhancer.BatchResult result = new GoogleEnhancer.BatchResult();
+            if (batch.size() == 1) result.httpStatus = 429;
+            return result;
+        };
+        Recorder callback = new Recorder("rescue-limited");
+        assertTrue(newLane().start("rescue-limited", 1, longPendingDocument(24), BACKEND,
+                "en", "ko", "ko", false, alwaysCurrent(), callback));
+        assertTrue(events.await("rescue-limited:complete", WAIT_MS));
+        assertEquals("stop after the first refused rescue row", 4, provider.translateCalls());
+        assertEquals(0, callback.changed);
+    }
+
+    @Test public void retirementDuringSingleRowRescueStopsRemainingRows() throws Exception {
+        LyricsMeaningLane lane = newLane();
+        provider.batchResponse = batch -> {
+            if (batch.size() == 1) lane.cancelActive();
+            return new GoogleEnhancer.BatchResult();
+        };
+        assertTrue(lane.start("rescue-cancelled", 1, longPendingDocument(24), BACKEND,
+                "en", "ko", "ko", false, alwaysCurrent(), new Recorder("rescue-cancelled")));
+        laneExecutor.submit(() -> {}).get(WAIT_MS, TimeUnit.MILLISECONDS);
+        assertEquals(4, provider.translateCalls());
+        assertEquals(-1, events.index("rescue-cancelled:complete"));
+    }
+
+    @Test public void smallRateLimitedDocumentDoesNotEnterRescue() throws Exception {
+        provider.rateLimited = true;
+        Recorder callback = new Recorder("small-limited");
+        assertTrue(newLane().start("small-limited", 1, longPendingDocument(4), BACKEND,
+                "en", "ko", "ko", false, alwaysCurrent(), callback));
+        assertTrue(events.await("small-limited:complete", WAIT_MS));
+        assertEquals(1, provider.translateCalls());
+    }
+
+    @Test public void retiredRunDoesNotRetryItsMissingRows() throws Exception {
+        LyricsMeaningLane lane = newLane();
+        provider.batchResponse = batch -> {
+            lane.cancelActive();
+            return new GoogleEnhancer.BatchResult();
+        };
+        assertTrue(lane.start("cancelled", 1, longPendingDocument(24), BACKEND,
+                "en", "ko", "ko", false, alwaysCurrent(), new Recorder("cancelled")));
+        laneExecutor.submit(() -> {}).get(WAIT_MS, TimeUnit.MILLISECONDS);
+        assertEquals(1, provider.translateCalls());
+        assertEquals(-1, events.index("cancelled:complete"));
+    }
+
     // --- Coalescer contracts ---------------------------------------------
 
     /**
@@ -649,6 +741,8 @@ public final class LyricsMeaningLaneBehaviorTest {
 
     private final class Recorder implements LyricsSecondaryProcessor.Callback {
         private final String tag;
+        DerivedLayerArtifact artifact;
+        int changed;
 
         Recorder(String tag) {
             this.tag = tag;
@@ -665,6 +759,8 @@ public final class LyricsMeaningLaneBehaviorTest {
 
         @Override public void complete(LayerKind layer, DerivedLayerArtifact artifact,
                                        LayerFailure failure, String message, int changed) {
+            this.artifact = artifact;
+            this.changed = changed;
             events.add(tag + ":complete");
         }
     }
@@ -710,6 +806,7 @@ public final class LyricsMeaningLaneBehaviorTest {
         /** Answers 429 the way the endpoint does when the address is rate limited. */
         private volatile boolean rateLimited;
         private final AtomicInteger translateCalls = new AtomicInteger();
+        private java.util.function.Function<List<GoogleEnhancer.BatchLine>, GoogleEnhancer.BatchResult> batchResponse;
         /** Holds one track's worker after the global gate opens, so a settlement can land first. */
         private volatile String parkedTrack;
         private final CountDownLatch parkRelease = new CountDownLatch(1);
@@ -767,6 +864,7 @@ public final class LyricsMeaningLaneBehaviorTest {
                 result.failureReason = "http_429";
                 return result;
             }
+            if (batchResponse != null) return batchResponse.apply(batch);
             for (GoogleEnhancer.BatchLine line : batch) {
                 result.translations.put(line.index, "T:" + line.text);
             }

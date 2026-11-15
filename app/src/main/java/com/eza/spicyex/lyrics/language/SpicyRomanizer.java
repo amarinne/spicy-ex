@@ -41,8 +41,6 @@ public final class SpicyRomanizer {
     private static final Map<Integer, String> BGN_PCGN = new HashMap<>();
     private static final Map<Integer, String> GREEK = new HashMap<>();
 
-    private static final String[] HANGUL_INITIAL = {"g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h"};
-    private static final String[] HANGUL_VOWEL = {"a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"};
     private static final String[] HANGUL_VOWEL_VN = {"a", "ê", "ya", "yê", "o", "ê", "yo", "yê", "ô", "wa", "wê", "wê", "yô", "u", "wo", "wê", "wi", "yu", "ư", "ưi", "i"};
     private static final String[] HANGUL_FINAL = {"", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk", "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "t", "t", "ng", "t", "t", "k", "t", "p", "t"};
     private static final String[] HANGUL_FINAL_LIAISON = {"", "g", "kk", "ks", "n", "nj", "nh", "d", "r", "lg", "lm", "lb", "ls", "lt", "lp", "lh", "m", "b", "bs", "s", "ss", "ng", "j", "ch", "k", "t", "p", "h"};
@@ -329,12 +327,6 @@ public final class SpicyRomanizer {
     /** Legacy "Pronunciation" (sound-based) Korean mode value. */
     public static final String KOREAN_PRONUNCIATION = "Pronunciation";
 
-    public static boolean koreanFollowSound(String koreanMode) {
-        return KoreanDisplayMode.RR_PRONUNCIATION.value.equals(koreanMode)
-                || KoreanDisplayMode.VN_PRONUNCIATION.value.equals(koreanMode)
-                || KOREAN_PRONUNCIATION.equalsIgnoreCase(koreanMode);
-    }
-
     public static final class KoreanRomanizeResult {
         public final String source;
         public final String display;
@@ -444,11 +436,11 @@ public final class SpicyRomanizer {
             }
             int[] next = i + 1 < cps.length ? decompose(cps[i + 1]) : null;
             if (syl[2] != 0 && next != null && next[0] == 11) {
-                out.add(HANGUL_INITIAL[syl[0]] + HANGUL_VOWEL[syl[1]]);
-                out.add(HANGUL_FINAL_LIAISON[syl[2]] + HANGUL_VOWEL[next[1]] + HANGUL_FINAL[next[2]]);
+                out.add(SpicyKoreanG2P.ONSET[syl[0]] + SpicyKoreanG2P.VOWEL[syl[1]]);
+                out.add(HANGUL_FINAL_LIAISON[syl[2]] + SpicyKoreanG2P.VOWEL[next[1]] + HANGUL_FINAL[next[2]]);
                 i++;
             } else {
-                out.add(HANGUL_INITIAL[syl[0]] + HANGUL_VOWEL[syl[1]] + HANGUL_FINAL[syl[2]]);
+                out.add(SpicyKoreanG2P.ONSET[syl[0]] + SpicyKoreanG2P.VOWEL[syl[1]] + HANGUL_FINAL[syl[2]]);
             }
         }
         return out;
@@ -466,7 +458,7 @@ public final class SpicyRomanizer {
                 int nextIndex = i + Character.charCount(cp);
                 int[] next = nextIndex < text.length() ? decompose(text.codePointAt(nextIndex)) : null;
                 String suffix = next == null ? "" : "-";
-                out.add(HANGUL_INITIAL[syl[0]] + vowel(syl[1], vn) + HANGUL_FINAL[syl[2]] + suffix);
+                out.add(SpicyKoreanG2P.ONSET[syl[0]] + vowel(syl[1], vn) + HANGUL_FINAL[syl[2]] + suffix);
             }
             i += Character.charCount(cp);
         }
@@ -500,12 +492,12 @@ public final class SpicyRomanizer {
             int[] syl = decompose(cp);
             int[] next = i + 1 < cps.length ? decompose(cps[i + 1]) : null;
             if (syl[2] != 0 && next != null && next[0] == 11) {
-                out.append(HANGUL_INITIAL[syl[0]]).append(HANGUL_VOWEL[syl[1]])
+                out.append(SpicyKoreanG2P.ONSET[syl[0]]).append(SpicyKoreanG2P.VOWEL[syl[1]])
                         .append(HANGUL_FINAL_LIAISON[syl[2]])
-                        .append(HANGUL_VOWEL[next[1]]).append(HANGUL_FINAL[next[2]]);
+                        .append(SpicyKoreanG2P.VOWEL[next[1]]).append(HANGUL_FINAL[next[2]]);
                 i++;
             } else {
-                out.append(HANGUL_INITIAL[syl[0]]).append(HANGUL_VOWEL[syl[1]]).append(HANGUL_FINAL[syl[2]]);
+                out.append(SpicyKoreanG2P.ONSET[syl[0]]).append(SpicyKoreanG2P.VOWEL[syl[1]]).append(HANGUL_FINAL[syl[2]]);
             }
         }
         return out.toString();
@@ -519,7 +511,7 @@ public final class SpicyRomanizer {
             int[] syl = decompose(cp);
             if (syl != null) {
                 if (pendingDash) out.append('-');
-                out.append(HANGUL_INITIAL[syl[0]]).append(vowel(syl[1], vn)).append(HANGUL_FINAL[syl[2]]);
+                out.append(SpicyKoreanG2P.ONSET[syl[0]]).append(vowel(syl[1], vn)).append(HANGUL_FINAL[syl[2]]);
                 pendingDash = true;
             } else {
                 out.appendCodePoint(cp);
@@ -631,7 +623,7 @@ public final class SpicyRomanizer {
             int[] soundedSyl = decompose(sounded[i]);
             if (soundedSyl == null) return romanizePronouncedHangul(pronounced, vn);
             applyKoreanUiPronunciation(soundedSyl, i);
-            String onset = soundedSyl[0] == 5 && prevCoda == 8 ? "l" : HANGUL_INITIAL[soundedSyl[0]];
+            String onset = soundedSyl[0] == 5 && prevCoda == 8 ? "l" : SpicyKoreanG2P.ONSET[soundedSyl[0]];
             String syllable = onset + vowel(soundedSyl[1], vn) + SpicyKoreanG2P.codaRoman(soundedSyl[2]);
             if (previous != null && koreanJunctionNeedsHyphen(previous, syllable, vn)) out.append('-');
             out.append(syllable);
@@ -695,9 +687,6 @@ public final class SpicyRomanizer {
         return onset;
     }
 
-    private static boolean isKoreanTenseOnset(int onset) {
-        return onset == 1 || onset == 4 || onset == 8 || onset == 10 || onset == 13;
-    }
 
     private static int composeHangul(int onset, int vowel, int coda) {
         return 0xAC00 + (onset * 588) + (vowel * 28) + coda;
@@ -718,7 +707,7 @@ public final class SpicyRomanizer {
                 }
             } else {
                 applyKoreanUiPronunciation(syl, runIndex);
-                String onset = syl[0] == 5 && prevCoda == 8 ? "l" : HANGUL_INITIAL[syl[0]];
+                String onset = syl[0] == 5 && prevCoda == 8 ? "l" : SpicyKoreanG2P.ONSET[syl[0]];
                 out.append(onset).append(vowel(syl[1], vn)).append(SpicyKoreanG2P.codaRoman(syl[2]));
                 prevCoda = syl[2];
                 runIndex++;
@@ -750,7 +739,7 @@ public final class SpicyRomanizer {
     }
 
     private static String vowel(int nucleus, boolean vn) {
-        return vn ? HANGUL_VOWEL_VN[nucleus] : HANGUL_VOWEL[nucleus];
+        return vn ? HANGUL_VOWEL_VN[nucleus] : SpicyKoreanG2P.VOWEL[nucleus];
     }
 
     static String koreanDisplayVowel(int nucleus, boolean vn) {
@@ -780,7 +769,7 @@ public final class SpicyRomanizer {
                 int initial = s / 588;
                 int vowel = (s % 588) / 28;
                 int fin = s % 28;
-                out.append(HANGUL_INITIAL[initial]).append(HANGUL_VOWEL[vowel]).append(HANGUL_FINAL[fin]);
+                out.append(SpicyKoreanG2P.ONSET[initial]).append(SpicyKoreanG2P.VOWEL[vowel]).append(HANGUL_FINAL[fin]);
             } else {
                 out.appendCodePoint(cp);
             }

@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics.catalog;
 
+import com.eza.spicyex.lyrics.LyricUtils;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.catalog.CatalogSource.MatchMethod;
 import com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId;
@@ -72,7 +73,7 @@ public final class CatalogLegacyImport {
         return new CatalogCandidate(candidateId, bareId, source, "legacy-winner",
                 MatchMethod.STRONG_SEARCH, 0.5, 0L, timing, complete, timingHealthy,
                 hasProviderTranslation(doc), false, hasBackgroundVocals(doc), false,
-                !isBlank(doc.songWriters), digest, normalized,
+                !LyricUtils.isBlank(doc.songWriters), digest, normalized,
                 CatalogCandidate.emptyTransliteration(doc.lines.size()), new byte[0],
                 record.sourceRevision, 0, importedAtMs);
     }
@@ -88,7 +89,7 @@ public final class CatalogLegacyImport {
     private static boolean hasProviderTranslation(LyricsDocument doc) {
         if (doc == null) return false;
         for (com.eza.spicyex.lyrics.LyricsLine line : doc.lines) {
-            if (line != null && !isBlank(line.providerTranslatedText)) return true;
+            if (line != null && !LyricUtils.isBlank(line.providerTranslatedText)) return true;
         }
         return false;
     }
@@ -101,7 +102,4 @@ public final class CatalogLegacyImport {
         return false;
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
 }

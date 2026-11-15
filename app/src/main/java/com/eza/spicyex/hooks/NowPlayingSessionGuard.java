@@ -1,13 +1,15 @@
 package com.eza.spicyex.hooks;
 
+import com.eza.spicyex.lyrics.LyricUtils;
+
 /** Pure stale-delivery guard for Now Playing session document commits. */
 final class NowPlayingSessionGuard {
     private NowPlayingSessionGuard() {
     }
 
     static boolean matchesCurrentTrack(String sessionTrackId, String liveTrackId, String displayedTrackId) {
-        if (isBlank(sessionTrackId) || !sessionTrackId.equals(liveTrackId)) return false;
-        return isBlank(displayedTrackId) || sessionTrackId.equals(displayedTrackId);
+        if (LyricUtils.isBlank(sessionTrackId) || !sessionTrackId.equals(liveTrackId)) return false;
+        return LyricUtils.isBlank(displayedTrackId) || sessionTrackId.equals(displayedTrackId);
     }
 
     static boolean projectionIsStale(
@@ -35,7 +37,4 @@ final class NowPlayingSessionGuard {
                 && artworkMounted;
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
 }

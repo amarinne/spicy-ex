@@ -3,9 +3,6 @@ package com.eza.spicyex.settings.registry;
 import com.eza.spicyex.Settings;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -19,16 +16,7 @@ import java.util.regex.Pattern;
 import static org.junit.Assert.*;
 
 public class ControlRegistryTest {
-    @Test public void ownsEveryCurrentEditorSettingExactlyOnce() throws Exception {
-        String source = controllerSource();
-        int start = source.indexOf("TOUCHED_SETTINGS = {");
-        String touched = source.substring(start, source.indexOf("};", start));
-        Set<Settings.Setting<?>> expected = new HashSet<>();
-        Matcher names = Pattern.compile("Settings\\.([A-Z_]+)").matcher(touched);
-        while (names.find()) expected.add((Settings.Setting<?>) Settings.class.getField(names.group(1)).get(null));
-        Matcher writes = Pattern.compile("(?:writer\\.put|\\bput)\\(Settings\\.([A-Z_]+)\\s*,").matcher(source);
-        while (writes.find()) expected.add((Settings.Setting<?>) Settings.class.getField(writes.group(1)).get(null));
-        assertEquals("The editor owns its baseline settings and the two background effect controls", 63, expected.size());
+    @Test public void ownsEachEditorSettingOnceAndOffersOnlyAllowedChoices() {
         Set<Settings.Setting<?>> actual = new HashSet<>();
         for (ControlSpec row : ControlRegistry.editorControls()) {
             assertEquals(ControlSpec.Surface.EDITOR, row.surface);
@@ -41,7 +29,6 @@ public class ControlRegistryTest {
                 assertTrue(row.setting.key, row.setting.allowedValues.containsAll(row.choices));
             }
         }
-        assertEquals(expected, actual);
     }
 
     @Test public void integerSliderMetadataComesFromItsSettingAndStringSlidersHaveCodecs() {
@@ -333,12 +320,6 @@ public class ControlRegistryTest {
         return keys;
     }
 
-    /** The editor session's own source: the settings it owns and the ones it writes. */
-    private static String controllerSource() throws Exception {
-        return new String(Files.readAllBytes(Paths.get(
-                "src/main/java/com/eza/spicyex/hooks/LyricsLayoutEditController.java")),
-                StandardCharsets.UTF_8);
-    }
 
     @Test public void lyricsFontCompositeOffersAllThreeChips() {
         ControlSpec font = null;

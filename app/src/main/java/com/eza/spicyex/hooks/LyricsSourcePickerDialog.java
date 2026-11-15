@@ -41,6 +41,7 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
     private static final String TAG = "[SpotifyPlusSourcePicker]";
     /** How long a delete stays armed before it reverts on its own. */
     private static final long ARM_EXPIRY_MS = 4000L;
+    private static final int IMPORT_REQUEST = 0x5372;
     /** A climb that shows no fetch within this window is treated as never started. */
     private static final long CLIMB_SETTLE_MS = 3000L;
     private static final String KEY_CHECK_ALL = CatalogPickerModel.RowKind.ACTION_CHECK_ALL.name();
@@ -304,6 +305,10 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
 
     private void patch(RowView view, CatalogPickerState.Shown shown) {
         CatalogPickerModel.Row row = shown.row;
+        if (row.kind == CatalogPickerModel.RowKind.ACTION_IMPORT) {
+            row = row.withTitle(text(strings, "source_picker_import", "Import lyrics"));
+            if (shown.pending) row = row.withSubtitle(text(strings, "source_picker_importing", "Importing…"));
+        }
         view.title.setText((row.selected ? "✓ " : "") + row.title);
         view.title.setTextColor(row.selected ? PanelDialog.COL_ACCENT : PanelDialog.COL_TITLE);
         String subtitle = row.kind == CatalogPickerModel.RowKind.SOURCE && !shown.pending && !row.stored
@@ -403,6 +408,9 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
                                 text(strings, "source_picker_checked", "Source checked"));
                     }
                     break;
+                case ACTION_IMPORT:
+                    pickLocalFile(key);
+                    break;
                 case ACTION_CHECK_ALL:
                     run(key, host::refreshAllCatalogSourcesInOrder,
                             text(strings, "source_picker_checked", "Source checked"));
@@ -413,6 +421,36 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
         } catch (Throwable t) {
             XpLog.log(TAG + " picker action failed: " + t);
         }
+    }
+
+    /** Uses the same action owner as the Import lyrics row. */
+    boolean importForAgent() {
+        return pickLocalFile(CatalogPickerModel.RowKind.ACTION_IMPORT.name());
+    }
+
+    private boolean pickLocalFile(String key) {
+        if (closed || !state.canStart(key)) return false;
+        final String uri = state.trackUri;
+        if (!uri.equals(host.catalogTrackUri())) {
+            status(text(strings, "source_picker_track_changed", "Track changed"));
+            return false;
+        }
+        dispatch(state.started(key));
+        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+        // Many document providers report .ttml as XML or generic binary data.
+        intent.setType("*/*");
+        ActivityResultBridge.start(activity, intent, IMPORT_REQUEST, data -> {
+            android.net.Uri file = data == null ? null : data.getData();
+            if (file == null) {
+                dispatch(state.finished(key, false));
+                load();
+                return;
+            }
+            host.importLocalLyrics(uri, file, (ok, detail) -> complete(key, ok, detail,
+                    text(strings, "source_picker_imported", "Lyrics imported")));
+        });
+        return true;
     }
 
     /**
@@ -457,8 +495,14 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
             // diagnostic, so it goes to the log instead of a toast.
             if (!success) XpLog.log(TAG + " action failed: " + (detail == null ? "" : detail));
             // The outcome is reported even after the picker closed; only the rows stop updating.
-            status(success ? successMessage
-                    : text(strings, "source_picker_failed", "Could not update source"));
+            String failure = text(strings, "source_picker_failed", "Could not update source");
+            if ("Track changed".equals(detail)) {
+                failure = text(strings, "source_picker_track_changed", "Track changed");
+            } else if (CatalogPickerModel.RowKind.ACTION_IMPORT.name().equals(key)
+                    && detail != null && detail.startsWith("Could not read a supported TTML")) {
+                failure = text(strings, "source_picker_import_failed", "Choose a supported TTML file up to 4 MiB");
+            }
+            status(success ? successMessage : failure);
             if (closed) return;
             dispatch(state.finished(key, success));
             load();
@@ -498,12 +542,14 @@ public final class LyricsSourcePickerDialog implements LyricsSessionManager.List
             final String key = CatalogPickerState.key(row);
             final String candidateId = row.candidateId;
             PanelDialog menu = new PanelDialog(activity, row.title);
-            menu.add(menuRow(text(strings, "source_picker_reject_wrong_match",
-                    "Reject wrong match"), () -> {
-                menu.dismiss();
-                run(key, callback -> host.rejectCatalogCandidate(candidateId, callback),
-                        text(strings, "source_picker_rejected", "Rejected match"));
-            }));
+            if (row.sourceId != com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId.LOCAL) {
+                menu.add(menuRow(text(strings, "source_picker_reject_wrong_match",
+                        "Reject wrong match"), () -> {
+                    menu.dismiss();
+                    run(key, callback -> host.rejectCatalogCandidate(candidateId, callback),
+                            text(strings, "source_picker_rejected", "Rejected match"));
+                }));
+            }
             menu.add(menuRow(text(strings, "source_picker_remove_saved_candidate",
                     "Remove saved candidate"), () -> {
                 menu.dismiss();

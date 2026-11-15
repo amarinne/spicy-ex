@@ -407,10 +407,6 @@ public final class LyricsShellSettings {
         return lineSyncFillMode() == LineSyncFill.TOP_TO_BOTTOM;
     }
 
-    public boolean lineSyncFillWord() {
-        return false;
-    }
-
     public boolean lineSyncFillSentence() {
         return lineSyncFillMode() == LineSyncFill.SENTENCE;
     }

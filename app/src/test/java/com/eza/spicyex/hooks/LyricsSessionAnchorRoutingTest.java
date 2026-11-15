@@ -173,10 +173,10 @@ public class LyricsSessionAnchorRoutingTest {
     private static LyricsCatalog.View view(CatalogState state, CatalogPolicy policy, LyricsDocument document, long sequence) throws Exception {
         Constructor<LyricsCatalog.View> constructor = LyricsCatalog.View.class.getDeclaredConstructor(String.class,
                 CatalogState.class, CatalogPolicy.class, CatalogResolver.Resolution.class, AcquisitionPlanner.Plan.class,
-                LyricsDocument.class, int.class, boolean.class, long.class, String.class);
+                LyricsDocument.class, int.class, boolean.class, boolean.class, long.class, String.class);
         constructor.setAccessible(true);
         return constructor.newInstance("test", state, policy, null,
-                AcquisitionPlanner.plan(state, policy, null, System.currentTimeMillis(), true), document, 1, true, sequence, "");
+                AcquisitionPlanner.plan(state, policy, null, System.currentTimeMillis(), true), document, 1, true, true, sequence, "");
     }
     private static Object call(Object owner, String name, Class<?>[] parameters, Object... values) throws Exception {
         Method method = owner.getClass().getDeclaredMethod(name, parameters);

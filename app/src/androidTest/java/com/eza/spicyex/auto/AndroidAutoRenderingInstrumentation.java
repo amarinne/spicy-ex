@@ -8,7 +8,6 @@ import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
-import com.eza.spicyex.lyrics.LyricAnimations;
 import com.eza.spicyex.lyrics.SpicyAnimatedTextView;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,10 +41,14 @@ public final class AndroidAutoRenderingInstrumentation {
             check(failures, surface + ".word_fill", () -> checkTimedFill(surface, true));
             check(failures, surface + ".syllable_fill", () -> checkTimedFill(surface, false));
         }
+        check(failures, "duet.two_sections", this::checkDuet);
+        check(failures, "duet.off_and_weather", this::checkDuetSurfaces);
+        check(failures, "duet.survivor_size", () -> AutoDuetTransitionChecks.replacement(host.getTargetContext()));
+        check(failures, "duet.reserved_fade", () -> AutoDuetTransitionChecks.deferred(host.getTargetContext()));
         host.runOnMainSync(() -> activity.finish());
         Bundle result = new Bundle();
-        result.putInt("expectedCases", 24); result.putInt("completedCases", completed);
-        result.putString("stream", failures.isEmpty() ? "PASS: 24 Android Auto rendering cases\n"
+        result.putInt("expectedCases", 28); result.putInt("completedCases", completed);
+        result.putString("stream", failures.isEmpty() ? "PASS: 28 Android Auto rendering cases\n"
                 : "FAIL: " + String.join("\n", failures) + "\n");
         host.finish(failures.isEmpty() ? -1 : 0, result);
     }
@@ -130,6 +133,57 @@ public final class AndroidAutoRenderingInstrumentation {
         } finally { view.stop(); }
     }
 
+    /** A duet mounts both overlapping rows, caps each secondary to one line, and stays in bounds. */
+    private void checkDuet() {
+        AutoLyricsView view = newView("player-full");
+        try {
+            view.update(duetPacket(true)); layout(view, view.getWidth(), view.getHeight());
+            Bundle metrics = view.metrics();
+            if (!metrics.getBoolean("duet")) throw new AssertionError("duet did not mount");
+            if (metrics.getInt("duetSections") != 2) throw new AssertionError("expected two sections");
+            if (metrics.getInt("secondaryLineCap") != 1)
+                throw new AssertionError("duet must cap secondary rows at one line");
+            List<int[]> rows = rows(view);
+            if (rows.size() < 2) throw new AssertionError("expected two drawn sections: " + rows.size());
+            for (int[] row : rows) if (row[0] < view.getPaddingTop()
+                    || row[1] > view.getHeight() - view.getPaddingBottom())
+                throw new AssertionError("duet rows exceed the surface");
+            List<TextView> secondary = new ArrayList<>(); collectSecondary(view, secondary);
+            if (secondary.size() != 4)
+                throw new AssertionError("expected reading and translation per section: " + secondary.size());
+            for (TextView text : secondary) if (text.getMaxLines() != 1)
+                throw new AssertionError("duet secondary rows must keep one line");
+        } finally { view.stop(); }
+    }
+
+    private void checkDuetSurfaces() {
+        AutoLyricsView solo = newView("player-full");
+        try {
+            solo.update(duetPacket(false)); layout(solo, solo.getWidth(), solo.getHeight());
+            if (solo.metrics().getBoolean("duet") || solo.metrics().getInt("duetSections") != 1)
+                throw new AssertionError("duet mounted while the toggle was off");
+        } finally { solo.stop(); }
+        AutoLyricsView weather = newView("weather");
+        try {
+            weather.update(duetPacket(true)); layout(weather, weather.getWidth(), weather.getHeight());
+            if (weather.metrics().getBoolean("duet") || weather.metrics().getInt("duetSections") != 1)
+                throw new AssertionError("weather admitted a second section");
+        } finally { weather.stop(); }
+    }
+
+    private static Bundle duetPacket(boolean duet) {
+        Bundle packet = sample(800, 6, 80);
+        packet.putBoolean("auto_duet", duet);
+        packet.putString("auto_secondary_text", "Both");
+        packet.putString("romanized", "ai ai"); packet.putString("secondary", "love love");
+        Bundle companion = sample(800, 5, 80);
+        companion.putInt("lineIndex", 1);
+        companion.putLong("lineStartMs", 400); companion.putLong("lineEndMs", 1800);
+        companion.putString("romanized", "ai ai"); companion.putString("secondary", "love love");
+        packet.putBundle("duet", companion);
+        return packet;
+    }
+
     /** Select geometry with production font metrics, while keeping the pixel oracle independent. */
     private static int wordsForRows(AutoLyricsView view, int expected) {
         for (int words = 3; words <= 48; words++) {
@@ -197,9 +251,54 @@ public final class AndroidAutoRenderingInstrumentation {
             view.update(packet); layout(view, view.getWidth(), view.getHeight());
             if (view.metrics().getBoolean("creditVisible")) throw new AssertionError("credit persisted after seek");
         } finally { view.stop(); }
+        checkUnfitCreditRecovery(surface);
     }
 
-    /** A broad-only wave follows source timing smoothly across words, gaps, and seeks. */
+    private void checkUnfitCreditRecovery(String surface) {
+        AutoSurfaceReadiness readiness;
+        try {
+            java.lang.reflect.Field field = AndroidAutoPrototype.class.getDeclaredField("surfaceReadiness");
+            field.setAccessible(true);
+            readiness = (AutoSurfaceReadiness) field.get(null);
+        } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+        readiness.layoutChanged(surface);
+        AutoLyricsView view = newView(surface);
+        AutoLyricsView replacement = null;
+        try {
+            float density = view.getResources().getDisplayMetrics().density;
+            int width = Math.round(320 * density), height = Math.round(100 * density);
+            Bundle packet = sample(400, 4, 61);
+            packet.putBoolean("creditOutroVisible", true);
+            ArrayList<String> labels = new ArrayList<>();
+            for (int i = 0; i < 10; i++) labels.add("Credit contributor " + i);
+            packet.putStringArrayList("creditLabels", labels);
+            layout(view, width, height);
+            view.update(packet); layout(view, width, height);
+            String creditKey = AutoLyricsView.sampleKey(packet);
+            if (view.metrics().getInt("pages") != 0 || readiness.allows(surface, creditKey))
+                throw new AssertionError("oversized credit must keep native content");
+            replacement = new AutoLyricsView(host.getTargetContext());
+            replacement.setTag(surface);
+            layout(replacement, width, height);
+            if (readiness.allows(surface, creditKey))
+                throw new AssertionError("same-size remount retried rejected credit");
+            Bundle next = sample(400, 4, 62);
+            if (!readiness.allows(surface, AutoLyricsView.sampleKey(next)))
+                throw new AssertionError("unfit credit blocked the next song's lyrics");
+            layout(view, width, Math.round(600 * density));
+            if (!readiness.allows(surface, creditKey) || view.metrics().getInt("pages") != 1)
+                throw new AssertionError("resized surface did not display the credit");
+            view.update(next); layout(view, width, Math.round(600 * density));
+            if (view.metrics().getBoolean("creditVisible") || view.metrics().getInt("pages") == 0)
+                throw new AssertionError("next song did not restore lyrics");
+        } finally {
+            view.stop();
+            if (replacement != null) replacement.stop();
+            readiness.layoutChanged(surface);
+        }
+    }
+
+    /** Each timed word sweeps on its own timing; silent gaps hold and seeks restore. */
     private void checkTimedFill(String surface, boolean wordBoundaries) {
         AutoLyricsView view = newView(surface);
         activity.setContentView(view);
@@ -223,8 +322,8 @@ public final class AndroidAutoRenderingInstrumentation {
             Bitmap early = pausedFrame(view, packet, 300); frames.add(early);
             SpicyAnimatedTextView mountedToken = tailTokens(view, 2).get(0);
             int unsungAlpha = lastTextAlpha(view);
-            if (unsungAlpha < 130 || unsungAlpha > 150)
-                throw new AssertionError("timed token lost the broad gradient floor: " + unsungAlpha);
+            if (unsungAlpha < 70 || unsungAlpha > 100)
+                throw new AssertionError("unsung timed word lost its per-word floor: " + unsungAlpha);
             Bitmap late = pausedFrame(view, packet, 800); frames.add(late);
             if (!early.sameAs(late)) throw new AssertionError("timed fill moved during a silent gap");
             Bitmap sung = pausedFrame(view, packet, 1100); frames.add(sung);
@@ -233,7 +332,7 @@ public final class AndroidAutoRenderingInstrumentation {
             if (tailTokens(view, 2).get(0) != mountedToken)
                 throw new AssertionError("seek fixture replaced the mounted word");
             if (!early.sameAs(back)) throw new AssertionError("timed fill did not restore after seek");
-            checkSmoothTimedProgress(view, packet, wordBoundaries, frames);
+            checkPerWordSweep(view, packet, frames);
             packet.putBoolean("lineLevelSync", true);
             Bitmap lineUnsung = pausedFrame(view, packet, 0); frames.add(lineUnsung);
             if (lastTextAlpha(view) < 130) throw new AssertionError("line sync lost its bright soft sweep");
@@ -245,53 +344,43 @@ public final class AndroidAutoRenderingInstrumentation {
         if (wordBoundaries) checkRows(surface, true);
     }
 
-    private void checkSmoothTimedProgress(AutoLyricsView view, Bundle packet,
-                                         boolean wordBoundaries, List<Bitmap> frames) {
-        int codePoints = wordBoundaries ? 2 : 4;
-        long start = wordBoundaries ? 1100 : 1000;
-        frames.add(pausedFrame(view, packet, start - 1));
-        List<Bitmap> before = new ArrayList<>();
-        for (SpicyAnimatedTextView token : tailTokens(view, codePoints)) before.add(textFrame(token));
-        try {
-            frames.add(pausedFrame(view, packet, start + 1));
-            List<SpicyAnimatedTextView> tokens = tailTokens(view, codePoints);
-            if (tokens.size() != before.size()) throw new AssertionError("word geometry changed");
-            for (int i = 0; i < tokens.size(); i++) {
-                Bitmap actual = textFrame(tokens.get(i));
-                try {
-                    if (maximumAlphaChange(before.get(i), actual) > 8)
-                        throw new AssertionError("word onset flashed instead of sweeping smoothly");
-                } finally { actual.recycle(); }
-            }
-            int onset = lastTextAlpha(view);
-            if (onset >= 250) throw new AssertionError("current word has a solid bright overlay");
-            frames.add(pausedFrame(view, packet, 1125));
-            frames.add(pausedFrame(view, packet, 1150));
-            int middle = lastTextAlpha(view);
-            if (middle <= onset) throw new AssertionError("wide gradient did not progress within the word");
-            SpicyAnimatedTextView token = tailTokens(view, 2).get(0);
-            Bitmap broad = textFrame(token);
-            token.setGradientPosition(LyricAnimations.GRADIENT_UNSUNG, .37f);
-            Bitmap changedToken = textFrame(token);
-            try {
-                if (!broad.sameAs(changedToken))
-                    throw new AssertionError("individual token fill changed the broad-only gradient");
-                if (Math.abs(token.getGlow() - .37f) > .001f)
-                    throw new AssertionError("sentence base replaced token glow state");
-            } finally { broad.recycle(); changedToken.recycle(); }
-            frames.add(pausedFrame(view, packet, 1200));
-            if (lastTextAlpha(view) < 250) throw new AssertionError("wide gradient did not finish");
-        } finally { for (Bitmap bitmap : before) bitmap.recycle(); }
+    /** The last word (1100-1200 ms) fills left to right inside its own glyphs. */
+    private void checkPerWordSweep(AutoLyricsView view, Bundle packet, List<Bitmap> frames) {
+        Bitmap quarter = pausedFrame(view, packet, 1125); frames.add(quarter);
+        int[] word = wordBounds(view, tailTokens(view, 2));
+        if (bandAlpha(quarter, word, 0f, .2f) < 200)
+            throw new AssertionError("current word did not start its own sweep");
+        int aheadAlpha = bandAlpha(quarter, word, .7f, 1f);
+        if (aheadAlpha > 110) throw new AssertionError("current word filled ahead of its timing: " + aheadAlpha);
+        Bitmap later = pausedFrame(view, packet, 1175); frames.add(later);
+        if (bandAlpha(later, word, .7f, 1f) < aheadAlpha + 60)
+            throw new AssertionError("sweep did not progress inside the word");
+        // Sample just before the line ends; at 1200 ms the finished line dims as a whole.
+        Bitmap done = pausedFrame(view, packet, 1195); frames.add(done);
+        int finished = bandAlpha(done, word, .7f, 1f);
+        if (finished < 200) throw new AssertionError("word did not finish its sweep: " + finished);
     }
 
-    private static int maximumAlphaChange(Bitmap first, Bitmap second) {
-        if (first.getWidth() != second.getWidth() || first.getHeight() != second.getHeight())
-            throw new AssertionError("glyph geometry changed");
-        int maximum = 0;
-        for (int y = 0; y < first.getHeight(); y++) for (int x = 0; x < first.getWidth(); x++)
-            maximum = Math.max(maximum, Math.abs(Color.alpha(first.getPixel(x, y))
-                    - Color.alpha(second.getPixel(x, y))));
-        return maximum;
+    private static int[] wordBounds(View root, List<SpicyAnimatedTextView> tokens) {
+        int[] origin = new int[2]; root.getLocationInWindow(origin);
+        int left = Integer.MAX_VALUE, top = Integer.MAX_VALUE, right = 0, bottom = 0;
+        for (View token : tokens) {
+            int[] at = new int[2]; token.getLocationInWindow(at);
+            left = Math.min(left, at[0] - origin[0]); top = Math.min(top, at[1] - origin[1]);
+            right = Math.max(right, at[0] - origin[0] + token.getWidth());
+            bottom = Math.max(bottom, at[1] - origin[1] + token.getHeight());
+        }
+        return new int[]{left, top, right, bottom};
+    }
+
+    /** Brightest alpha within a horizontal fraction of the word's box. */
+    private static int bandAlpha(Bitmap frame, int[] word, float from, float to) {
+        int width = word[2] - word[0], brightest = 0;
+        int x0 = Math.max(0, word[0] + Math.round(width * from));
+        int x1 = Math.min(frame.getWidth(), word[0] + Math.round(width * to));
+        for (int y = Math.max(0, word[1]); y < Math.min(frame.getHeight(), word[3]); y++)
+            for (int x = x0; x < x1; x++) brightest = Math.max(brightest, Color.alpha(frame.getPixel(x, y)));
+        return brightest;
     }
 
     private static List<SpicyAnimatedTextView> tailTokens(View root, int codePoints) {

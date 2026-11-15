@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics.catalog;
 
+import com.eza.spicyex.lyrics.LyricUtils;
 import android.content.Context;
 
 import com.eza.spicyex.SpotifyTrack;
@@ -47,8 +48,8 @@ public final class CatalogAdapters {
         LyricsDocument current = after.document;
         if (!previous.fetchSource.startsWith("spotify_native_model:")
                 || !"spotify_native_model".equals(current.fetchSource)
-                || isBlank(current.language) || "unknown".equals(current.language)) return false;
-        if (isBlank(previous.language) || "unknown".equals(previous.language)) {
+                || LyricUtils.isBlank(current.language) || "unknown".equals(current.language)) return false;
+        if (LyricUtils.isBlank(previous.language) || "unknown".equals(previous.language)) {
             previous.language = current.language;
         }
         previous.fetchSource = current.fetchSource;
@@ -59,23 +60,6 @@ public final class CatalogAdapters {
         // Different lyrics, timings, known languages, or provider metadata remain separate.
         return CanonicalSourceCodec.encode(previous, 1, "", 0, "").equals(
                 CanonicalSourceCodec.encode(current, 1, "", 0, ""));
-    }
-
-    /** Fallback order among the adapters owned here: AMLL word timing before LRCLIB lines. */
-    public static List<SourceId> fallbackOrder() {
-        List<SourceId> order = new ArrayList<>();
-        order.add(SourceId.AMLL);
-        order.add(SourceId.LRCLIB);
-        return Collections.unmodifiableList(order);
-    }
-
-    /** Direct Spotify-ID queries are exact mappings; title searches are strong search matches. */
-    public static MatchMethod matchMethodForQuery(SourceId source, boolean exactIdQuery) {
-        if (exactIdQuery && (source == SourceId.AMLL || source == SourceId.QQ
-                || source == SourceId.NETEASE)) {
-            return MatchMethod.EXACT_SPOTIFY_ID;
-        }
-        return MatchMethod.STRONG_SEARCH;
     }
 
     /**
@@ -112,7 +96,7 @@ public final class CatalogAdapters {
         List<String> transliteration = providerTransliteration(doc);
         boolean hasTransliteration = false;
         for (String value : transliteration) {
-            if (!isBlank(value)) {
+            if (!LyricUtils.isBlank(value)) {
                 hasTransliteration = true;
                 break;
             }
@@ -123,7 +107,7 @@ public final class CatalogAdapters {
                 method == null ? MatchMethod.STRONG_SEARCH : method, 0.8, 0L, timing, true,
                 timing == TimingLevel.UNSYNCED || hasTiming(doc), hasProviderTranslation(doc),
                 hasTransliteration, hasBackgroundVocals(doc), hasDuet(doc),
-                !isBlank(doc.songWriters),
+                !LyricUtils.isBlank(doc.songWriters),
                 base.digest, normalized,
                 CatalogCodec.encodeProviderTransliteration(transliteration),
                 CatalogCodec.deflate(source == SourceId.SPICY_ORG ? doc.spicyOrgRawPayload : rawPayload), CanonicalSourceCodec.SCHEMA_VERSION,
@@ -176,7 +160,7 @@ public final class CatalogAdapters {
         if (!doc.catalogCandidateId.isEmpty()) return true;
         SourceId source = CatalogSource.inferSourceId(doc.fetchSource, doc.provider);
         if (source == null) return false;
-        boolean exact = source == SourceId.SPICY_ORG || source == SourceId.APPLE || source == SourceId.SPOTIFY_NATIVE;
+        boolean exact = source.isPrimary();
         String bare = CatalogSource.bareTrackId(track == null ? "" : track.uri);
         return recordSuccess(context, source, track, doc,
                 exact ? MatchMethod.EXACT_SPOTIFY_ID : MatchMethod.STRONG_SEARCH,
@@ -197,14 +181,16 @@ public final class CatalogAdapters {
                     || (!policy.karaokeOriginalLyrics
                     && delivery.matchMethod == MatchMethod.KARAOKE_SUBSTITUTION);
         }
-        boolean exact = source == SourceId.SPICY_ORG || source == SourceId.APPLE || source == SourceId.SPOTIFY_NATIVE;
+        boolean exact = source.isPrimary();
         String item = exact ? (bareTrackId == null ? "" : bareTrackId) : "";
         return state.isRejected(source, item);
     }
 
     /**
      * Storage-backed overload for the session: reads the current policy and track state.
-     * Call off the main thread; both reads are plain SQLite queries.
+     * Call off the main thread; both reads are plain SQLite queries. An unreadable store cannot
+     * prove a stored rejection, so the delivery keeps the existing render-for-this-visit fallback;
+     * the session still reports it unsaved and never writes over the stored decision.
      */
     public static boolean isRefusedFallback(Context context, SpotifyTrack track,
                                             LyricsDocument doc) {
@@ -212,19 +198,20 @@ public final class CatalogAdapters {
         try {
             String bare = CatalogSource.bareTrackId(track == null ? "" : track.uri);
             return isRefusedFallback(CatalogPolicy.read(context),
-                    CatalogStore.state(context, bare), bare, doc);
+                    CatalogStore.read(context, bare).state, bare, doc);
         } catch (Throwable ignored) {
             return false;
         }
     }
 
-    /** Commits a terminal provider failure, classified into a durable or transient outcome. */
+    /** Commits a terminal provider failure whose status was chosen at the adapter origin. */
     public static boolean recordError(Context context, SourceId source, SpotifyTrack track,
-                                      String error) {
+                                      ProviderFailure failure) {
+        if (failure == null) return false;
         try {
             String bareId = CatalogSource.bareTrackId(track == null ? "" : track.uri);
             if (bareId.isEmpty() || source == null) return false;
-            ProviderStatus status = ProviderFailureClassifier.classify(source, error);
+            ProviderStatus status = failure.status;
             long now = System.currentTimeMillis();
             CatalogPolicy policy = CatalogPolicy.read(context);
             return CatalogStore.transact(context, bareId,
@@ -260,7 +247,7 @@ public final class CatalogAdapters {
         for (int i = 0; i < count; i++) {
             LyricsLine line = document.lines.get(i);
             String value = values.get(i);
-            if (line != null && !isBlank(value)) line.romanizedText = value;
+            if (line != null && !LyricUtils.isBlank(value)) line.romanizedText = value;
         }
     }
 
@@ -279,7 +266,7 @@ public final class CatalogAdapters {
 
     private static boolean hasProviderTranslation(LyricsDocument doc) {
         for (LyricsLine line : doc.lines) {
-            if (line != null && !isBlank(line.providerTranslatedText)) return true;
+            if (line != null && !LyricUtils.isBlank(line.providerTranslatedText)) return true;
         }
         return false;
     }
@@ -298,7 +285,4 @@ public final class CatalogAdapters {
         return false;
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
 }

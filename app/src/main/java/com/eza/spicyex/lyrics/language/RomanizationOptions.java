@@ -17,8 +17,8 @@ public final class RomanizationOptions {
 
     public RomanizationOptions(String chineseMode, String koreanMode, boolean chineseTones,
                                String cyrillicMode, boolean cyrillicKeepSigns) {
-        this.chineseOutputStyle = ChineseOutputStyle.fromSetting(chineseMode);
         this.chineseMode = canonicalChineseMode(chineseMode);
+        this.chineseOutputStyle = available(this.chineseMode, ChineseOutputStyle.fromSetting(chineseMode));
         this.koreanMode = "Off".equals(koreanMode) ? "Off" : KoreanDisplayMode.valueOfSetting(koreanMode);
         this.chineseTones = chineseTones;
         this.cyrillicMode = cyrillicMode;
@@ -28,9 +28,9 @@ public final class RomanizationOptions {
     public RomanizationOptions(String chineseMode, String koreanMode, boolean chineseTones,
                                String cyrillicMode, boolean cyrillicKeepSigns,
                                ChineseOutputStyle chineseOutputStyle) {
-        this.chineseOutputStyle = chineseOutputStyle == null
-                ? ChineseOutputStyle.fromSetting(chineseMode) : chineseOutputStyle;
         this.chineseMode = canonicalChineseMode(chineseMode);
+        this.chineseOutputStyle = available(this.chineseMode, chineseOutputStyle == null
+                ? ChineseOutputStyle.fromSetting(chineseMode) : chineseOutputStyle);
         this.koreanMode = "Off".equals(koreanMode) ? "Off" : KoreanDisplayMode.valueOfSetting(koreanMode);
         this.chineseTones = chineseTones;
         this.cyrillicMode = cyrillicMode;
@@ -46,11 +46,10 @@ public final class RomanizationOptions {
         return "cn=" + n(chineseMode)
                 + "|kr=" + n(koreanMode)
                 + "|cnStyle=" + chineseOutputStyle.value
-                + (chineseOutputStyle == ChineseOutputStyle.EZA ? "@"
-                    + ("jyutping".equals(chineseMode) ? ChineseOutputStyle.CANTONESE_REVISION
-                    : ChineseOutputStyle.REVISION) : "")
+                + (chineseOutputStyle == ChineseOutputStyle.EZA
+                    ? "@" + ChineseOutputStyle.REVISION : "")
                 + (KoreanDisplayMode.VN_PRONUNCIATION.value.equals(koreanMode)
-                    ? "|krStyle=eza@" + ChineseOutputStyle.REVISION : "")
+                    ? "|krStyle=eza@" + ChineseOutputStyle.KOREAN_REVISION : "")
                 + "|tn=" + (chineseTones ? 1 : 0)
                 + "|cy=" + n(cyrillicMode)
                 + "|cs=" + (cyrillicKeepSigns ? 1 : 0);
@@ -58,6 +57,18 @@ public final class RomanizationOptions {
 
     private static String n(String s) {
         return s == null ? "" : s;
+    }
+
+    /**
+     * Mandarin eza式 needs the language model pack. Without it the row shows Standard Pinyin, and
+     * the cache key says so, so installing the pack recomputes the row in eza式.
+     */
+    private static ChineseOutputStyle available(String canonicalMode, ChineseOutputStyle style) {
+        if (style == ChineseOutputStyle.EZA && SpotifyPlusConfig.CHINESE_MODE_PINYIN.equals(canonicalMode)
+                && !MandarinReadings.available()) {
+            return ChineseOutputStyle.CANONICAL;
+        }
+        return style;
     }
 
     private static String canonicalChineseMode(String mode) {

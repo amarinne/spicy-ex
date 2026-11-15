@@ -1,5 +1,6 @@
 package com.eza.spicyex.hooks;
 
+import com.eza.spicyex.lyrics.LyricUtils;
 import com.eza.spicyex.lyrics.providers.NativeLyricsSource;
 import com.eza.spicyex.xposed.XpHooks;
 import com.eza.spicyex.xposed.XpLog;
@@ -131,9 +132,9 @@ final class NativeLyricsNetworkHook {
             String paired = body == null ? null : PENDING.remove(body);
             String text = ((String) payload).trim();
             if (text.length() < 32) return;
-            String trackId = !isBlank(paired) ? paired : embeddedTrackId(text);
-            if (isBlank(trackId)) trackId = currentTrackId();
-            if (isBlank(trackId)) return;
+            String trackId = !LyricUtils.isBlank(paired) ? paired : embeddedTrackId(text);
+            if (LyricUtils.isBlank(trackId)) trackId = currentTrackId();
+            if (LyricUtils.isBlank(trackId)) return;
             if (source() != null) source().captureColorLyricsResponse(trackId, text);
         } catch (Throwable ignored) {
         }
@@ -142,10 +143,6 @@ final class NativeLyricsNetworkHook {
     /** Releases a paired body when the host closes it without reading the payload. */
     static void forgetPending(Object body) {
         if (body != null) PENDING.remove(body);
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
     }
 
     /** Track identity carried by the payload itself, when the response includes one. */

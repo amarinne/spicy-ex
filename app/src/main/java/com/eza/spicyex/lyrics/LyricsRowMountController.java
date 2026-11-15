@@ -14,7 +14,6 @@ public final class LyricsRowMountController {
     private final LyricsMountedRowWindow mountedRows = new LyricsMountedRowWindow();
     private final BoundedLyricWindow lyricWindow;
     private final int fullRenderThreshold;
-    private final int edgeBuffer;
     private int[] rowHeightPrefix;
 
     public LyricsRowMountController(
@@ -23,14 +22,12 @@ public final class LyricsRowMountController {
             LyricsSpaceView bottomVirtualSpacer,
             int fullRenderThreshold,
             int beforeActive,
-            int afterActive,
-            int edgeBuffer
+            int afterActive
     ) {
         this.mountedRowsHost = mountedRowsHost;
         this.topVirtualSpacer = topVirtualSpacer;
         this.bottomVirtualSpacer = bottomVirtualSpacer;
         this.fullRenderThreshold = fullRenderThreshold;
-        this.edgeBuffer = edgeBuffer;
         this.lyricWindow = new BoundedLyricWindow(fullRenderThreshold, beforeActive, afterActive);
     }
 
@@ -123,11 +120,11 @@ public final class LyricsRowMountController {
         if (measuredHeightPx > 0) return measuredHeightPx;
         int estimate = estimatedBaseHeightPx;
         boolean hasPlannedReading = line.readingRenderPlan != null
-                && !isBlank(line.readingRenderPlan.joinedDisplayText);
-        if (!line.bgLine && showRomanization && (hasPlannedReading || !isBlank(line.romanizedText))) {
+                && !LyricUtils.isBlank(line.readingRenderPlan.joinedDisplayText);
+        if (!line.bgLine && showRomanization && (hasPlannedReading || !LyricUtils.isBlank(line.romanizedText))) {
             estimate += secondaryExtraHeightPx;
         }
-        if (!line.bgLine && showTranslation && !isBlank(line.translatedText)) estimate += secondaryExtraHeightPx;
+        if (!line.bgLine && showTranslation && !LyricUtils.isBlank(line.translatedText)) estimate += secondaryExtraHeightPx;
         return estimate;
     }
 
@@ -167,10 +164,6 @@ public final class LyricsRowMountController {
         return true;
     }
 
-    public boolean shouldRemountWindowForViewport(List<AppliedLine> lines, int anchor) {
-        return shouldRemountWindowForViewport(lines, anchor, edgeBuffer);
-    }
-
     public boolean shouldRemountWindowForViewport(List<AppliedLine> lines, int anchor, int remountEdgeBuffer) {
         int count = lines == null ? 0 : lines.size();
         return LyricsRowVirtualizer.shouldRemountWindowForViewport(
@@ -186,10 +179,6 @@ public final class LyricsRowMountController {
     private void clearSpacerHeights() {
         topVirtualSpacer.setHeightPx(0);
         bottomVirtualSpacer.setHeightPx(0);
-    }
-
-    private boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
     }
 
     public interface LineRemeasurer {

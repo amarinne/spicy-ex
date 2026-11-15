@@ -20,6 +20,9 @@ final class NativeIconButtons {
     private NativeIconButtons() {
     }
 
+    /** Tint of every owned chrome icon; the shell, chips, and track readout all share it. */
+    static final int ICON_TINT = Color.rgb(232, 232, 238);
+
     static ImageButton createRoundIconButton(
             Context context,
             int drawableRes,
@@ -42,7 +45,7 @@ final class NativeIconButtons {
         ImageButton button = new ImageButton(context);
         button.setContentDescription(description);
         button.setImageDrawable(drawable);
-        button.setColorFilter(Color.rgb(232, 232, 238));
+        button.setColorFilter(ICON_TINT);
         button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         button.setPadding(dp(paddingDp), dp(paddingDp), dp(paddingDp), dp(paddingDp));
         button.setMinimumWidth(dp(sizeDp));

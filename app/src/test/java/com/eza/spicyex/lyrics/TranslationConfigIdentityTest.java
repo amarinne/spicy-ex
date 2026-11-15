@@ -172,11 +172,11 @@ public final class TranslationConfigIdentityTest {
                         + "|krStyle=eza@eza-2026-10-08.1|tn=0|cy=Russian|cs=0",
                 new RomanizationOptions("pinyin", "vnPronunciation", false, "Russian", false)
                         .cacheKey());
-        assertEquals("cn=pinyin|kr=rrStandard|cnStyle=eza@eza-2026-10-08.1"
+        assertEquals("cn=pinyin|kr=rrStandard|cnStyle=eza@eza-2026-11-15.3"
                         + "|tn=0|cy=Russian|cs=0",
                 new RomanizationOptions("pinyin", "rrStandard", false, "Russian", false,
                         ChineseOutputStyle.EZA).cacheKey());
-        assertEquals("cn=jyutping|kr=rrStandard|cnStyle=eza@eza-2026-10-25.1"
+        assertEquals("cn=jyutping|kr=rrStandard|cnStyle=eza@eza-2026-11-15.3"
                         + "|tn=1|cy=Ukrainian|cs=0",
                 new RomanizationOptions("jyutping-eza", "rrStandard", true, "Ukrainian", false)
                         .cacheKey());

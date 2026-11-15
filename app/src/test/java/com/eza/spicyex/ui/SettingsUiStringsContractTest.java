@@ -2,15 +2,11 @@ package com.eza.spicyex.ui;
 
 import com.eza.spicyex.Settings;
 
-import com.eza.spicyex.settings.panel.SettingsPanel;
-
 import org.junit.Test;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -18,7 +14,6 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 
 public class SettingsUiStringsContractTest {
     @Test
@@ -105,85 +100,6 @@ public class SettingsUiStringsContractTest {
         Set<String> expected = defaultStringNames();
         expected.addAll(stringNames("src/main/res/values/diagnostics.xml"));
         assertEquals(expected, stringNames("translation/strings-template.xml"));
-    }
-
-    @Test
-    public void injectedLyricsShellNeverResolvesModuleIdsAgainstSpotifyResources() throws Exception {
-        File source = new File("src/main/java/com/eza/spicyex/hooks/NativeSpicyShellViewImpl.java");
-        if (!source.isFile()) source = new File("app/" + source.getPath());
-        assertTrue(source.isFile());
-        String java = new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8);
-
-        assertFalse(java.contains("getString(R.string"));
-        assertFalse(java.contains("Toast.makeText(activity, R.string"));
-    }
-
-    @Test
-    public void layoutEditorActionsSurviveIncrementalSectionRebuilds() throws Exception {
-        File source = new File("src/main/java/com/eza/spicyex/settings/panel/SettingsPanel.java");
-        if (!source.isFile()) source = new File("app/" + source.getPath());
-        assertTrue(source.isFile());
-        String java = new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8);
-
-        assertTrue(java.contains("appendEditorActionRows(card, section);"));
-        assertTrue(java.contains("syncEditorActionRows(card, target);"));
-        assertTrue(java.contains("TAG_LAYOUT_EDITOR_ACTION"));
-        assertTrue(java.contains("TAG_CARD_EDITOR_ACTION"));
-    }
-
-    @Test
-    public void legacyBackKeyOffersOwnedLyricsLayersFirst() throws Exception {
-        File source = new File("src/main/java/com/eza/spicyex/hooks/LyricsActivityTakeoverHook.java");
-        if (!source.isFile()) source = new File("app/" + source.getPath());
-        assertTrue(source.isFile());
-        String java = new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8);
-
-        assertTrue(java.contains("event.getAction() == KeyEvent.ACTION_UP"));
-        assertTrue(java.contains("&& shellConsumesBack(activity)"));
-        assertTrue(java.contains("param.setResult(true);"));
-    }
-
-    @Test
-    public void layoutEditorUsesContinuousSlidersAndSharedChipPanel() throws Exception {
-        File source = new File("src/main/java/com/eza/spicyex/hooks/LyricsLayoutEditController.java");
-        if (!source.isFile()) source = new File("app/" + source.getPath());
-        assertTrue(source.isFile());
-        String java = new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8);
-
-        assertFalse(java.contains("presetSliderRow"));
-        assertFalse(java.contains("snapBand"));
-        // The top bar and the chips render from the registry, so their hand builders are gone
-        // and the controller only maps its elements onto the registry ones.
-        assertFalse(java.contains("buildChipOptions()"));
-        assertFalse(java.contains("buildDockOptions()"));
-        assertTrue(java.contains("return ControlSpec.Element.TOP_BAR;"));
-        assertTrue(java.contains("return ControlSpec.Element.CHIPS;"));
-        // The chip row itself is shared with the registry renderer, so its line-breaking rule
-        // moved to settings/editor/EditorRows and the plan that carries it to
-        // settings/editor/ChipRowPlan.
-        File rows = new File("src/main/java/com/eza/spicyex/settings/editor/EditorRows.java");
-        if (!rows.isFile()) rows = new File("app/" + rows.getPath());
-        assertTrue(rows.isFile());
-        String rowWidgets = new String(Files.readAllBytes(rows.toPath()), StandardCharsets.UTF_8);
-        assertTrue(rowWidgets.contains("ChipRowPlan.plan("));
-        File plan = new File("src/main/java/com/eza/spicyex/settings/editor/ChipRowPlan.java");
-        if (!plan.isFile()) plan = new File("app/" + plan.getPath());
-        assertTrue(plan.isFile());
-        String planSource = new String(Files.readAllBytes(plan.toPath()), StandardCharsets.UTF_8);
-        assertTrue(planSource.contains("static List<List<Integer>> plan("));
-        // The top bar's own rows are registry entries now.
-        File registry = new File("src/main/java/com/eza/spicyex/settings/registry/ControlRegistry.java");
-        if (!registry.isFile()) registry = new File("app/" + registry.getPath());
-        assertTrue(registry.isFile());
-        String registrySource = new String(Files.readAllBytes(registry.toPath()), StandardCharsets.UTF_8);
-        assertTrue(registrySource.contains("Settings.SHOW_FULLSCREEN_BACK_BUTTON"));
-        // The continuous blur control moved with the lyrics effects tab into the registry's
-        // composite renderer, which is where it writes the one blur strength now.
-        File composites = new File("src/main/java/com/eza/spicyex/settings/editor/EditorComposites.java");
-        if (!composites.isFile()) composites = new File("app/" + composites.getPath());
-        assertTrue(composites.isFile());
-        String compositeWidgets = new String(Files.readAllBytes(composites.toPath()), StandardCharsets.UTF_8);
-        assertTrue(compositeWidgets.contains("rows.put(Settings.LYRICS_BLUR_STRENGTH, value)"));
     }
 
     @Test

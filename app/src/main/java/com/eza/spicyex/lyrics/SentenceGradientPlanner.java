@@ -8,8 +8,7 @@ public final class SentenceGradientPlanner {
 
     /** Shared timing cursor used by render adapters to select display pages. */
     public static float sourceProgress(AppliedLine line, long positionMs) {
-        return (gradientPosition(line, positionMs) - LyricAnimations.GRADIENT_UNSUNG)
-                / LyricAnimations.GRADIENT_RANGE;
+        return LyricAnimations.progressOf(gradientPosition(line, positionMs));
     }
 
     static float gradientPosition(AppliedLine line, long positionMs) {

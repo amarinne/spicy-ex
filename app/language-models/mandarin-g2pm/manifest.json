@@ -1,0 +1,266 @@
+{
+  "schema": "cjk-labs.zh.mandarin-g2pm.manifest.v1",
+  "format": "mandarin-g2pm-f32-v1",
+  "algorithm": "g2pm-bilstm-f32-v2",
+  "model": {
+    "file": "model.f32",
+    "dtype": "float32",
+    "byteOrder": "little-endian",
+    "byteLength": 1606192,
+    "tensors": [
+      {
+        "name": "embedding.weight",
+        "offset": 0,
+        "shape": [
+          5398,
+          64
+        ]
+      },
+      {
+        "name": "lstm.weight_ih_l0",
+        "offset": 1381888,
+        "shape": [
+          128,
+          64
+        ]
+      },
+      {
+        "name": "lstm.weight_hh_l0",
+        "offset": 1414656,
+        "shape": [
+          128,
+          32
+        ]
+      },
+      {
+        "name": "lstm.bias_ih_l0",
+        "offset": 1431040,
+        "shape": [
+          128
+        ]
+      },
+      {
+        "name": "lstm.bias_hh_l0",
+        "offset": 1431552,
+        "shape": [
+          128
+        ]
+      },
+      {
+        "name": "lstm.weight_ih_l0_reverse",
+        "offset": 1432064,
+        "shape": [
+          128,
+          64
+        ]
+      },
+      {
+        "name": "lstm.weight_hh_l0_reverse",
+        "offset": 1464832,
+        "shape": [
+          128,
+          32
+        ]
+      },
+      {
+        "name": "lstm.bias_ih_l0_reverse",
+        "offset": 1481216,
+        "shape": [
+          128
+        ]
+      },
+      {
+        "name": "lstm.bias_hh_l0_reverse",
+        "offset": 1481728,
+        "shape": [
+          128
+        ]
+      },
+      {
+        "name": "logit_layer.0.weight",
+        "offset": 1482240,
+        "shape": [
+          32,
+          64
+        ]
+      },
+      {
+        "name": "logit_layer.0.bias",
+        "offset": 1490432,
+        "shape": [
+          32
+        ]
+      },
+      {
+        "name": "logit_layer.2.weight",
+        "offset": 1490560,
+        "shape": [
+          876,
+          32
+        ]
+      },
+      {
+        "name": "logit_layer.2.bias",
+        "offset": 1602688,
+        "shape": [
+          876
+        ]
+      }
+    ]
+  },
+  "files": {
+    "model.f32": {
+      "sha256": "e460f9e1d342406a57557766690d54c5b40c7a0bc55c7c211b6dae89f5c4db0c",
+      "bytes": 1606192
+    },
+    "model-vocab.json": {
+      "sha256": "b93a3e260f96867a777b1044b5869e884952c2e93d974226cc10579d5a33c8ad",
+      "bytes": 32351
+    },
+    "classes.txt": {
+      "sha256": "40bd29f5222e0a062f4bf0e4c8401c4e96f9c6d5173caf203f8a06f2d746e278",
+      "bytes": 4501
+    },
+    "characters.tsv": {
+      "sha256": "0d93889b17149f1ba6d896a2b7a698f620b5937bb0133d7b30400d5205214bac",
+      "bytes": 1043998
+    },
+    "digest.json": {
+      "sha256": "c95cbc196c4e29e4a55522f472cd7008019398675836f4b74a050674e9e1048e",
+      "bytes": 167944
+    },
+    "phrases.tsv": {
+      "sha256": "0130dde5358f3d0edb3dcdeff328f53e4b735335efd92c7bb8bfb66a9f1ac808",
+      "bytes": 7029770
+    },
+    "t2s.tsv": {
+      "sha256": "f23ef15584d9ade5948008584648e950a6b60a3e4331d54042c7ba0af6440166",
+      "bytes": 26069
+    },
+    "jieba.tsv": {
+      "sha256": "240ee11eb316c2944de36af8eeb2214ecd635bf43bf34f3f54a72471437c9be4",
+      "bytes": 5071843
+    },
+    "hmm.json": {
+      "sha256": "43f8715e7c31c3b80876f58cd468d013bec9c36b6de86960ae29b2213cf646d8",
+      "bytes": 584223
+    }
+  },
+  "sources": [
+    {
+      "id": "g2pM",
+      "version": "0.1.2.5",
+      "commit": "170526efad0a3ef9b55a9ad4579f73218f9be06c",
+      "url": "https://files.pythonhosted.org/packages/af/21/dc5b497f09a94a9605e0b8a94ad0e01ae73a2b65109bf5bd325b0814b6a8/g2pM-0.1.2.5-py3-none-any.whl",
+      "sha256": "9e920b82df4002f96d8679720c7a858d10816d438dbd61b8b6b621a80a976361",
+      "license": "Apache-2.0",
+      "licenseUrl": "https://github.com/kakaobrain/g2pM/blob/170526efad0a3ef9b55a9ad4579f73218f9be06c/LICENSE",
+      "files": [
+        "g2pM/np_ckpt.pkl",
+        "g2pM/char2idx.pkl",
+        "g2pM/class2idx.pkl",
+        "g2pM/digest_cedict.pkl"
+      ]
+    },
+    {
+      "id": "g2pM-source",
+      "version": "0.1.2.5",
+      "commit": "170526efad0a3ef9b55a9ad4579f73218f9be06c",
+      "url": "https://codeload.github.com/kakaobrain/g2pM/tar.gz/170526efad0a3ef9b55a9ad4579f73218f9be06c",
+      "sha256": "709514bb0019998c2978bac24531bde1eeae14cb0bc07b9c14641dbea177921f",
+      "license": "Apache-2.0",
+      "licenseUrl": "https://github.com/kakaobrain/g2pM/blob/170526efad0a3ef9b55a9ad4579f73218f9be06c/LICENSE",
+      "files": [
+        "g2pM/g2pM.py",
+        "LICENSE"
+      ]
+    },
+    {
+      "id": "phrase-pinyin-data",
+      "version": "v0.20.0",
+      "commit": "6bc96ab093edb5b5c7c1e673e339e7c5f9621558",
+      "url": "https://codeload.github.com/mozillazg/phrase-pinyin-data/tar.gz/6bc96ab093edb5b5c7c1e673e339e7c5f9621558",
+      "sha256": "f0759e38fa238f1bfecc64ee50dbad8f96777c57b0981e90c6a2d2021d864dd6",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/mozillazg/phrase-pinyin-data/blob/6bc96ab093edb5b5c7c1e673e339e7c5f9621558/LICENSE",
+      "files": [
+        "large_pinyin.txt"
+      ]
+    },
+    {
+      "id": "pinyin-data",
+      "version": "v0.16.0",
+      "commit": "fe29ad32bdf352b31a02b9936e537f575432e9a6",
+      "url": "https://codeload.github.com/mozillazg/pinyin-data/tar.gz/fe29ad32bdf352b31a02b9936e537f575432e9a6",
+      "sha256": "96ee3e53630248db03d02711e446426f3965f54fa4e0f179e222bf6f5761b0c2",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/mozillazg/pinyin-data/blob/fe29ad32bdf352b31a02b9936e537f575432e9a6/LICENSE",
+      "files": [
+        "kMandarin_8105.txt",
+        "pinyin.txt"
+      ]
+    },
+    {
+      "id": "opencc-js",
+      "version": "1.4.2",
+      "url": "https://registry.npmjs.org/opencc-js/-/opencc-js-1.4.2.tgz",
+      "sha256": "acde2ed46fecc53eb1c329ff093886bf702975be24ace4caa3d01321167d69c8",
+      "license": "MIT AND Apache-2.0",
+      "licenseUrl": "https://github.com/nk2028/opencc-js/blob/main/LICENSE",
+      "files": [
+        "dist/esm-lib/dict/TSCharacters.js",
+        "LICENSE",
+        "LICENSES/Apache-2.0.txt"
+      ]
+    },
+    {
+      "id": "jieba-rs-dict",
+      "version": "fengkx/jieba-rs@7f3b27375b638bc22a2efe2fd889ea60130d265c",
+      "date": "2024-06-01",
+      "url": "https://raw.githubusercontent.com/fengkx/jieba-rs/7f3b27375b638bc22a2efe2fd889ea60130d265c/src/data/dict.txt",
+      "sha256": "139519822fe8ab9e10d9d07e68ea0451045380aedaf54ecc51e2a28c6b42a13f",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/messense/jieba-rs/blob/main/LICENSE",
+      "attribution": "jieba dictionary as embedded by jieba-rs; the jieba-rs submodule pinned by jieba-wasm 2.4.0 (fengkx/jieba-wasm@1708f27)."
+    },
+    {
+      "id": "jieba-rs-hmm",
+      "version": "fengkx/jieba-rs@7f3b27375b638bc22a2efe2fd889ea60130d265c",
+      "date": "2024-06-01",
+      "url": "https://raw.githubusercontent.com/fengkx/jieba-rs/7f3b27375b638bc22a2efe2fd889ea60130d265c/src/data/hmm.model",
+      "sha256": "f17790586ac86dd048c8adffed052c4bd2b28ed0682972c1275e59040c0589a7",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/messense/jieba-rs/blob/main/LICENSE",
+      "attribution": "jieba dictionary as embedded by jieba-rs; the jieba-rs submodule pinned by jieba-wasm 2.4.0 (fengkx/jieba-wasm@1708f27)."
+    }
+  ],
+  "policy": {
+    "id": "mandarin-g2pm-model-first-v1",
+    "summary": "Whole-input exact phrase entry; g2pM for digest-polyphonic characters (original code point when the model vocabulary knows it, else the 1:1 simplified shadow); phrase fill only for non-model positions; else pinyin-data default. No model candidate mask; neutral raw remains 5."
+  },
+  "counts": {
+    "characters": 44440,
+    "phrases": 317610,
+    "t2s": 3222,
+    "classes": 876,
+    "vocab": 5398,
+    "digest": 10714
+  },
+  "pruning": {
+    "policy": "globally-invariant-nonmodel-v1",
+    "rowsBefore": 411989,
+    "rowsAfter": 317610,
+    "removedRows": 94379,
+    "invariantCharacters": 9243,
+    "sourceManifestSha256": "23c786536cc752076f5e6b3c77ed575515543685e60a6d0faab72310d8d25482",
+    "phrasesBefore": {
+      "sha256": "680fc6511c2f46dc877d4b0fb4ca880729e27ec32fd838b86d0529bb5c620214",
+      "bytes": 8746947
+    },
+    "phrasesAfter": {
+      "sha256": "0130dde5358f3d0edb3dcdeff328f53e4b735335efd92c7bb8bfb66a9f1ac808",
+      "bytes": 7029770
+    },
+    "removedRowsSha256": "e67d62b3e5347b81f1b3e47e062619e990a79bbdc1b4a99001b6bd432ecfd8ed"
+  }
+}

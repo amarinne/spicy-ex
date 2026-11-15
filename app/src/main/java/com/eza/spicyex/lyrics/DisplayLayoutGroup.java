@@ -233,7 +233,7 @@ public final class DisplayLayoutGroup {
         ArrayList<DisplayLayoutGroup> groups = new ArrayList<>();
         int start = 0;
         int syllableCount = 0;
-        final int MAX_SYLLABLES_PER_GROUP = 8; // ~8 syllables per visual group
+        final int MAX_SYLLABLES_PER_GROUP = 8;
 
         for (int i = 0; i < text.length(); ) {
             int cp = text.codePointAt(i);
@@ -247,10 +247,8 @@ public final class DisplayLayoutGroup {
                 syllableCount++;
             }
 
-            // Check if we should break here
             boolean shouldBreak = false;
 
-            // Break after punctuation if followed by non-punctuation
             if (isPunct && i + charCount < text.length()) {
                 int nextCp = text.codePointAt(i + charCount);
                 if (!isKoreanPunctuation(nextCp) && !Character.isWhitespace(nextCp)) {
@@ -262,7 +260,6 @@ public final class DisplayLayoutGroup {
             else if (isSpace) {
                 shouldBreak = true;
             }
-            // Break at max syllable count
             else if (syllableCount >= MAX_SYLLABLES_PER_GROUP) {
                 shouldBreak = true;
             }
@@ -293,7 +290,6 @@ public final class DisplayLayoutGroup {
             i += charCount;
         }
 
-        // Add remaining
         if (start < text.length()) {
             groups.add(new DisplayLayoutGroup(start, text.length(), "ko-syllable-group", true, 0.8));
         }

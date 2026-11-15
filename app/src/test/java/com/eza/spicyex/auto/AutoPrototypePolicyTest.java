@@ -14,6 +14,12 @@ public class AutoPrototypePolicyTest {
         assertFalse(AutoPrototypePolicy.suppressFullProgress(true, true, 0));
         assertFalse(AutoPrototypePolicy.suppressFullProgress(true, true, Float.NaN));
     }
+    @Test public void extraLineAloneDecidesFullSongInfoSuppression() {
+        assertTrue(AutoPrototypePolicy.suppressFullSongInfo(true, true, true));
+        assertFalse(AutoPrototypePolicy.suppressFullSongInfo(true, true, false));
+        assertFalse(AutoPrototypePolicy.suppressFullSongInfo(false, true, true));
+        assertFalse(AutoPrototypePolicy.suppressFullSongInfo(true, false, true));
+    }
     @Test public void fullPlayerRequiresSyncedLyricsButStressStillExercisesTheSurface() {
         assertFalse(AutoPrototypePolicy.fullPlayerTakeover(true, false, false, true));
         assertTrue(AutoPrototypePolicy.fullPlayerTakeover(true, true, false, true));

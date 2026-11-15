@@ -1,0 +1,131 @@
+{
+  "schema": "cjk-labs.eza-rev3-parity-changes.v1",
+  "policy": "eza-2026-11-15.3",
+  "fromPolicy": "eza-2026-11-12.2",
+  "notes": [
+    "Every eza column that differs between tests/fixtures/eza-rev2-parity.json and tests/fixtures/eza-rev3-parity.json is listed here once.",
+    "The pinyin column is unchanged: Standard Pinyin stays the plain package output.",
+    "Kinds: third-tone (revision 3 run and unit rules), repeated-character, neutral-mark (layer 2 pitch class), tone-4 (flat before tone 4 across words), reading-gap (the installed g2pM/phrase pack still differs from the owner reading)."
+  ],
+  "rows": [
+    {
+      "source": "我也想你好",
+      "from": "wó yẻ shiảng ní hảo",
+      "to": "wó yẻ shiáng ní hảo",
+      "kind": "third-tone",
+      "reason": "A third-tone run crosses tokens; 想 + 你好 is verb + object, so 想 lowers (2 3 2 2 3)."
+    },
+    {
+      "source": "老总好看",
+      "from": "láo zỏng hảo khàn",
+      "to": "láo zóng hảo khàn",
+      "kind": "third-tone",
+      "reason": "老总 + 好看 is a three-syllable unit (word + syllable), so 总 lowers (2 2 3 4)."
+    },
+    {
+      "source": "好好好",
+      "from": "hảo hảo hảo",
+      "to": "háo háo hảo",
+      "kind": "repeated-character",
+      "reason": "A repeated character follows the same 2 2 3 unit as any three-syllable word; the revision-2 raw-repeat exemption is gone."
+    },
+    {
+      "source": "说说",
+      "from": "shuo shuo",
+      "to": "shuo shuò",
+      "kind": "neutral-mark",
+      "reason": "The reader marks the second 说 neutral after tone 1, so layer 2 gives it the grave (shuò)."
+    },
+    {
+      "source": "一个人",
+      "from": "yí kưa rấn",
+      "to": "yí kừa rấn",
+      "kind": "reading-gap",
+      "reason": "The installed pack reads 个 ge4 instead of the neutral ge5; a full tone 4 is written grave (kừa)."
+    },
+    {
+      "source": "吆喝",
+      "from": "yao hừa",
+      "to": "yao hưa",
+      "kind": "reading-gap",
+      "reason": "The installed pack reads 喝 he1 instead of the neutral he5; tone 1 is unmarked (hưa)."
+    },
+    {
+      "source": "朋友",
+      "from": "pấng you",
+      "to": "pấng yỏu",
+      "kind": "neutral-mark",
+      "reason": "友 is neutral with real tone 3 and a full vowel, so it takes the hook after tone 2."
+    },
+    {
+      "source": "现在是",
+      "from": "shien zài shừ",
+      "to": "shien zai shừ",
+      "kind": "tone-4",
+      "reason": "现 (4) before 在 (4) is written flat across tokens."
+    },
+    {
+      "source": "一万种解答",
+      "from": "yí wàn zhỏng ziẻ tá",
+      "to": "yí wàn zhóng ziẻ tá",
+      "kind": "third-tone",
+      "reason": "种 (3) before 解 (3) is a pair across the token boundary, so 种 lowers (zhóng)."
+    },
+    {
+      "source": "轻轻地唱",
+      "from": "ching ching tờ chàng",
+      "to": "ching ching ti chàng",
+      "kind": "reading-gap",
+      "reason": "地 is read dì here (the token is not tagged uv), and dì (4) before chàng (4) is flat (ti)."
+    },
+    {
+      "source": "开心得不得了",
+      "from": "khai shin tờ bù tứa liảo",
+      "to": "khai shin tứa bù tứa lơ",
+      "kind": "reading-gap",
+      "reason": "得 is read dé (the token is not tagged ud) and 了 is the neutral le, so the line reads ... tứa bù tứa lơ."
+    },
+    {
+      "source": "想得睡不着",
+      "from": "shiảng tứa shuêi bù zháo",
+      "to": "shiảng tứa shuêi bù zhơ",
+      "kind": "reading-gap",
+      "reason": "得 is read dé (the token is not tagged ud); 不 in the verb + 不 + complement pattern is neutral, and 着 is unmarked after another neutral."
+    },
+    {
+      "source": "吃了饭再走",
+      "from": "chư lờ fàn zài zỏu",
+      "to": "chư lờ fan zài zỏu",
+      "kind": "tone-4",
+      "reason": "饭 (4) before 再 (4) is written flat across tokens (fan zài)."
+    },
+    {
+      "source": "爱过恨过",
+      "from": "ai kuò hân kuò",
+      "to": "ai kuo hân kuò",
+      "kind": "tone-4",
+      "reason": "Every tone 4 before another tone 4 is flat across tokens; only the last 过 keeps the grave."
+    },
+    {
+      "source": "朋友们",
+      "from": "pấng you mân",
+      "to": "pấng yỏu mân",
+      "kind": "neutral-mark",
+      "reason": "友 takes the hook before the neutral 们."
+    },
+    {
+      "source": "妳眼帶笑意",
+      "from": "ní yiẻn tài shiao yì",
+      "to": "ní yiẻn tai shiao yì",
+      "kind": "tone-4",
+      "reason": "帶 (4) before 笑 (4) is written flat across tokens (tai)."
+    },
+    {
+      "source": "换种生活 让自己变得快乐",
+      "from": "huàn zhỏng shâng huó ràng zừ zỉ bien tờ khuai lừa",
+      "to": "huàn zhỏng shâng huó rang zừ zỉ bien tờ khuai lừa",
+      "kind": "tone-4",
+      "reason": "让 (4) before 自 (4) is written flat across tokens (rang)."
+    }
+  ]
+}

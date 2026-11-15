@@ -39,15 +39,10 @@ import java.util.function.Supplier;
  * the jump-to-current chip's own corner is {@link Settings#FOLLOW_CHIP_POSITION}.
  */
 final class LyricsSkipGapController {
-    /** How long the label stays before the pill collapses to its icon, in "Auto". */
-    private static final long COLLAPSE_DELAY_MS = 3200L;
     private static final long COLLAPSE_DURATION_MS = 260L;
     private static final long HIDE_DURATION_MS = 240L;
-    private static final int CHIP_HEIGHT_DP = 44;
-    private static final int TEXT_COLOR = Color.rgb(232, 232, 238);
+    private static final int TEXT_COLOR = NativeIconButtons.ICON_TINT;
     private static final int SIDE_MARGIN_DP = NativeLyricsUtils.EDGE_BUTTON_MARGIN_DP;
-    /** Vertical distance between the two stacked chips: 44dp chip + 8dp gap. */
-    private static final int STACK_OFFSET_DP = 52;
 
     private final SpotifyPlusConfig config;
     private final LinearLayout pill;
@@ -69,7 +64,7 @@ final class LyricsSkipGapController {
     private boolean visible;
     private ValueAnimator widthAnimator;
     private int baselineBottomMarginDp = 24;
-    private int bottomMarginDp = 24 + STACK_OFFSET_DP;
+    private int bottomMarginDp = 24 + FloatingChipMetrics.STACK_OFFSET_DP;
     /** Set only by {@link #showForEditing()}, so {@link #restoreAfterEditing()} never hides a
      *  chip a real skip gap put up on its own. */
     private boolean editingForcedVisible;
@@ -128,7 +123,7 @@ final class LyricsSkipGapController {
         pill.addView(label, labelLp);
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(CHIP_HEIGHT_DP), Gravity.BOTTOM | Gravity.END);
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(FloatingChipMetrics.HEIGHT_DP), Gravity.BOTTOM | Gravity.END);
         parent.addView(pill, lp);
 
         LyricsSkipGapController controller = new LyricsSkipGapController(
@@ -195,7 +190,7 @@ final class LyricsSkipGapController {
     private void applyBottomMargin() {
         // Only stack vertically when both chips share the same horizontal anchor. Otherwise the
         // skip chip stays pinned to its own baseline rather than floating in space.
-        int target = isStacked() ? baselineBottomMarginDp + STACK_OFFSET_DP : baselineBottomMarginDp;
+        int target = isStacked() ? baselineBottomMarginDp + FloatingChipMetrics.STACK_OFFSET_DP : baselineBottomMarginDp;
         if (target == bottomMarginDp && lp.bottomMargin == dp(target)) return;
         bottomMarginDp = target;
         lp.bottomMargin = dp(target);
@@ -264,7 +259,7 @@ final class LyricsSkipGapController {
         if (style != ChipStyle.LABEL) {
             // "Auto": only worth collapsing if it was ever expanded; re-showing the same label
             // mid-life restarts the timer rather than snapping it shut.
-            pill.postDelayed(collapse, appearing ? COLLAPSE_DELAY_MS : COLLAPSE_DELAY_MS / 2);
+            pill.postDelayed(collapse, appearing ? FloatingChipMetrics.COLLAPSE_DELAY_MS : FloatingChipMetrics.COLLAPSE_DELAY_MS / 2);
         }
     }
 
@@ -274,8 +269,8 @@ final class LyricsSkipGapController {
         label.setAlpha(value ? 0f : 1f);
         ViewGroup.LayoutParams pillLp = pill.getLayoutParams();
         if (pillLp != null) {
-            pillLp.width = value ? dp(CHIP_HEIGHT_DP) : ViewGroup.LayoutParams.WRAP_CONTENT;
-            pillLp.height = dp(CHIP_HEIGHT_DP);
+            pillLp.width = value ? dp(FloatingChipMetrics.HEIGHT_DP) : ViewGroup.LayoutParams.WRAP_CONTENT;
+            pillLp.height = dp(FloatingChipMetrics.HEIGHT_DP);
             pill.setLayoutParams(pillLp);
         }
         pill.setPadding(value ? 0 : dp(10), 0, value ? 0 : dp(10), 0);
@@ -290,7 +285,7 @@ final class LyricsSkipGapController {
     private void collapseToIcon() {
         if (collapsed || pill.getVisibility() != View.VISIBLE) return;
         int startWidth = pill.getWidth();
-        int endWidth = dp(CHIP_HEIGHT_DP);
+        int endWidth = dp(FloatingChipMetrics.HEIGHT_DP);
         if (startWidth <= endWidth) {
             setCollapsed(true);
             return;
@@ -360,7 +355,7 @@ final class LyricsSkipGapController {
     private static GradientDrawable pillBackground() {
         GradientDrawable background = new GradientDrawable();
         background.setShape(GradientDrawable.RECTANGLE);
-        background.setCornerRadius(dp(CHIP_HEIGHT_DP) / 2f);
+        background.setCornerRadius(dp(FloatingChipMetrics.HEIGHT_DP) / 2f);
         background.setColor(Color.argb(48, 255, 255, 255));
         background.setStroke(dp(1), Color.argb(52, 255, 255, 255));
         return background;

@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.Map;
 
 /** Experimental APK discovery. A match proves structure, not visibility or hook safety. */
@@ -47,6 +48,8 @@ public final class AndroidAutoResolver {
         public Method currentScope;
         public Method invalidateScope;
         public Method markScopeUsed;
+        public Field[] compositionTables = new Field[0];
+        public Field compositionSlots;
         public Method androidViewEmitter;
         public Method weatherSizeModifier;
         public Field weatherSizeValue, weatherObserverCallback;
@@ -65,7 +68,7 @@ public final class AndroidAutoResolver {
         public Method[] fullMediaContent = new Method[0];
         public Method[] fullMediaArtwork = new Method[0];
         public Method fullMediaProgress, mediaThumbnail;
-        public Method mediaBadgeContent, mediaBadgeListRead;
+        public Method mediaBadgeContent, mediaBadgeListRead, explicitBadgeProducer;
         public Class<?> mediaBadgeTextScope;
         public Method fullBadgePainter, fullBadgeDrawable, carIconRead, iconResourceId, iconResourcePackage;
         public Field fullBadgeIcon;
@@ -78,10 +81,22 @@ public final class AndroidAutoResolver {
         public boolean expandedMediaMapped() { return mediaPlaybackUpdate != null; }
     }
 
-    public static synchronized Results resolve(String apk, ClassLoader loader, int temperatureId, int explicitId) {
+    public static Results resolve(String apk, ClassLoader loader, int temperatureId, int explicitId) {
+        return resolve(apk, loader, temperatureId, explicitId, null);
+    }
+
+    /**
+     * The weather owner resolves first. Handing it back before the remaining families scan lets
+     * the installer hook and deoptimize it while the host may still be composing its first card.
+     */
+    public static synchronized Results resolve(String apk, ClassLoader loader, int temperatureId, int explicitId,
+                                               Consumer<Results> onWeatherReady) {
         File source = new File(apk);
         String identity = apk + ":" + source.length() + ":" + source.lastModified() + ":" + temperatureId + ":" + explicitId;
-        if (identity.equals(cachedIdentity) && loader == cachedLoader && cachedResults != null) return cachedResults;
+        if (identity.equals(cachedIdentity) && loader == cachedLoader && cachedResults != null) {
+            if (onWeatherReady != null) onWeatherReady.accept(cachedResults);
+            return cachedResults;
+        }
         Results result = new Results();
         try {
             System.loadLibrary("dexkit");
@@ -89,12 +104,19 @@ public final class AndroidAutoResolver {
                 dex.setThreadNum(2);
                 try { weather(dex, loader, temperatureId, result); }
                 catch (Throwable error) { result.diagnostics.put("weatherUnresolved", error.toString()); }
+                // Install the weather hook here, before the unrelated families delay it.
+                if (onWeatherReady != null) {
+                    try { onWeatherReady.accept(result); }
+                    catch (Throwable error) { result.diagnostics.put("weatherInstallUnresolved", error.toString()); }
+                }
                 try { dashboardCards(dex, loader, result); }
                 catch (Throwable error) { result.diagnostics.put("dashboardCardsUnresolved", error.toString()); }
                 try { media(dex, loader, result); }
                 catch (Throwable error) { result.diagnostics.put("mediaUnresolved", error.toString()); }
                 try { interop(dex, loader, result); }
                 catch (Throwable error) { result.diagnostics.put("interopUnresolved", error.toString()); }
+                try { compositionRecovery(dex, loader, result); }
+                catch (Throwable error) { result.diagnostics.put("compositionRecoveryUnresolved", error.toString()); }
                 try { weatherGeometry(dex, loader, result); }
                 catch (Throwable error) { result.diagnostics.put("weatherGeometryUnresolved", error.toString()); }
                 try { fullTemplate(dex, loader, result); }
@@ -479,6 +501,26 @@ public final class AndroidAutoResolver {
         result.diagnostics.put("mediaArtworkContent", background.getDescriptor());
     }
 
+    private static void compositionRecovery(DexKitBridge dex, ClassLoader loader, Results result) throws Exception {
+        if (result.currentScope == null) throw new IllegalStateException("Composer unresolved");
+        MethodData reader = one("compositionSlotReader", find(dex, MethodMatcher.create()
+                .usingStrings("Cannot read while a writer is pending").paramCount(0)));
+        Class<?> tableType = Class.forName(reader.getClassName(), false, loader);
+        if (!Iterable.class.isAssignableFrom(tableType)) throw new IllegalStateException("Slot table structure changed");
+        List<Field> arrays = new ArrayList<>(), tables = new ArrayList<>();
+        for (Field field : tableType.getDeclaredFields())
+            if (!Modifier.isStatic(field.getModifiers()) && field.getType() == Object[].class) arrays.add(field);
+        if (arrays.size() != 1) throw new IllegalStateException("Composition slots ambiguous");
+        for (Field field : result.currentScope.getDeclaringClass().getDeclaredFields())
+            if (!Modifier.isStatic(field.getModifiers()) && field.getType() == tableType) tables.add(field);
+        if (tables.isEmpty() || tables.size() > 2) throw new IllegalStateException("Composer tables ambiguous");
+        for (Field field : tables) field.setAccessible(true);
+        Field slots = arrays.get(0); slots.setAccessible(true);
+        result.compositionTables = tables.toArray(new Field[0]);
+        result.compositionSlots = slots;
+        result.diagnostics.put("compositionSlotReader", reader.getDescriptor());
+    }
+
     private static void interop(DexKitBridge dex, ClassLoader loader, Results result) throws Exception {
         List<MethodData> emitters = new ArrayList<>();
         for (MethodData method : find(dex, MethodMatcher.create().usingNumbers(-1783766393))) {
@@ -605,8 +647,23 @@ public final class AndroidAutoResolver {
 
     private static void mediaBadges(DexKitBridge dex, ClassLoader loader, int explicitId, Results result) throws Exception {
         if (explicitId == 0) throw new IllegalStateException("Explicit drawable resource missing");
-        one("explicitMetadataProducer", find(dex, MethodMatcher.create()
-                .usingStrings("android.media.IS_EXPLICIT").usingNumbers(explicitId)));
+        try {
+            MethodData producer = one("explicitMetadataProducer", find(dex, MethodMatcher.create()
+                    .usingStrings("android.media.IS_EXPLICIT").usingNumbers(explicitId)));
+            result.explicitBadgeProducer = reflective(producer, loader);
+            result.diagnostics.put("explicitBadgeProducer", producer.getDescriptor());
+        } catch (Throwable error) {
+            result.diagnostics.put("explicitBadgeProducerUnresolved", error.toString());
+        }
+        // Compact and full badge paths are independent. A template change in one must
+        // not prevent the other from installing.
+        try { compactBadge(dex, loader, result); }
+        catch (Throwable error) { result.diagnostics.put("compactBadgeUnresolved", error.toString()); }
+        try { fullBadge(dex, loader, result); }
+        catch (Throwable error) { result.diagnostics.put("fullBadgeUnresolved", error.toString()); }
+    }
+
+    private static void compactBadge(DexKitBridge dex, ClassLoader loader, Results result) throws Exception {
         MethodData content = one("mediaBadgeContent", find(dex, MethodMatcher.create()
                 .usingNumbers(-1612190263, 168862689)));
         if (!content.getParamTypeNames().equals(Arrays.asList("java.lang.Object", "java.lang.Object", "java.lang.Object"))
@@ -626,6 +683,10 @@ public final class AndroidAutoResolver {
         result.mediaBadgeListRead = reader;
         result.mediaBadgeTextScope = textScope;
         result.diagnostics.put("mediaBadgeContent", content.getDescriptor());
+    }
+
+    private static void fullBadge(DexKitBridge dex, ClassLoader loader, Results result) throws Exception {
+        String composer = result.mediaContentSlot.getParameterTypes()[17].getName();
         MethodData painter = one("fullBadgePainter", find(dex, MethodMatcher.create().usingNumbers(-1585463547)));
         if (!painter.getParamTypeNames().equals(Arrays.asList("int", composer, "int")))
             throw new IllegalStateException("Car icon painter shape changed");

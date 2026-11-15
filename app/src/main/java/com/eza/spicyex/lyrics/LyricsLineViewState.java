@@ -572,8 +572,8 @@ public final class LyricsLineViewState {
     ) {
         if (line == null || state(line).rowView == null) return false;
         boolean needsNewViews =
-                (romanChanged && showRomanization && !isBlank(roman) && state(line).romanView == null)
-                        || (translatedChanged && showTranslation && !isBlank(translated) && state(line).translationView == null);
+                (romanChanged && showRomanization && !LyricUtils.isBlank(roman) && state(line).romanView == null)
+                        || (translatedChanged && showTranslation && !LyricUtils.isBlank(translated) && state(line).translationView == null);
         if (needsNewViews) {
             clear(line, mountedRowsHost, invalidation);
             return true;
@@ -581,10 +581,6 @@ public final class LyricsLineViewState {
         if (romanChanged && state(line).romanView != null) state(line).romanView.setText(roman);
         if (translatedChanged && state(line).translationView != null) state(line).translationView.setText(translated);
         return false;
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
     }
 
     private static AppliedLineRenderState state(AppliedLine line) {

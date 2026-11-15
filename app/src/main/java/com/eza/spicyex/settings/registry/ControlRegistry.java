@@ -434,6 +434,7 @@ public final class ControlRegistry {
         // Android Auto
         panelToggle(rows, Settings.AUTO_ENABLED, Visibility.ALWAYS);
         panelChoice(rows, Settings.AUTO_SECONDARY_TEXT, ANDROID_AUTO_ON);
+        panelToggle(rows, Settings.AUTO_DUET, ANDROID_AUTO_ON);
         // Picture-in-picture
         panelToggle(rows, Settings.PIP_ENABLED, Visibility.ALWAYS);
         panelChoice(rows, Settings.PIP_SHAPE, PIP_ON);

@@ -42,7 +42,6 @@ public final class SpicyCacheStore {
     public static final String SOUND = "SpotifyPlusSoundArtifactCache";
     public static final String MEANING = "SpotifyPlusMeaningArtifactCache";
     public static final String DETECTION = "SpotifyPlusDetectionArtifactCache";
-    public static final String CANONICAL = "SpotifyPlusCanonicalSourceCache";
     public static final String RESPONSES = "SpotifyPlusLyricsResponseCache";
 
     /** Bookkeeping keys the preferences format kept inline with real entries. Never imported. */
@@ -100,8 +99,9 @@ public final class SpicyCacheStore {
             SQLiteDatabase writable = db.getWritableDatabase();
             synchronized (SpicyCacheStore.class) {
                 if (quotaBytes != CacheStoragePolicy.UNLIMITED && bytes > quotaBytes) return false;
-                if (quotaBytes != CacheStoragePolicy.UNLIMITED
-                        && (CANONICAL.equals(namespace) || RESPONSES.equals(namespace))
+                // Raw provider responses are refused when they do not fit: a full cache must
+                // never delete an older response to make room for a new one.
+                if (quotaBytes != CacheStoragePolicy.UNLIMITED && RESPONSES.equals(namespace)
                         && usedBytes(writable, namespace) - entryBytes(writable, namespace, key)
                         + bytes > quotaBytes) return false;
                 writable.beginTransaction();

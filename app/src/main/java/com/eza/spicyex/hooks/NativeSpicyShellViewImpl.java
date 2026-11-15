@@ -90,6 +90,7 @@ import com.eza.spicyex.lyrics.LyricsLineViewState;
 import com.eza.spicyex.lyrics.LyricsLineVisualController;
 import com.eza.spicyex.lyrics.LyricsLine;
 import com.eza.spicyex.lyrics.language.LyricsLocalRomanizer;
+import com.eza.spicyex.lyrics.language.MandarinReadings;
 import com.eza.spicyex.lyrics.LyricsMotionConfig;
 import com.eza.spicyex.lyrics.LyricsPlaybackClock;
 import com.eza.spicyex.lyrics.LyricsRenderConfig;
@@ -118,6 +119,7 @@ import com.eza.spicyex.lyrics.cache.SpotifyArtworkCache;
 import com.eza.spicyex.lyrics.Spring;
 import com.eza.spicyex.lyrics.SyllableSegment;
 
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -342,6 +344,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private LyricsDocument document;
     /** Last real document, kept while the lyrics editor's demo mode replaces {@link #document}. */
     private LyricsDocument editorLiveSnapshot;
+    /** Rows of {@link #document} that an in-place timeline rebuild replaced; released on the next clear. */
+    private final List<AppliedLine> replacedLines = new ArrayList<>();
     private boolean running;
     private boolean chromeRevealAnimating;
     private boolean scrollWindowRenderScheduled;
@@ -502,8 +506,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         ++NativeSpicyLyricsHook.fetchGeneration;
         soundAiFeedback.reset();
         meaningAiFeedback.reset();
-        document = null;
-        editorLiveSnapshot = null;
+        replaceMountedDocument(null, null);
         String id = trackIdFromUri(snapshot.trackUri);
         loadingTrackId = id;
         pendingSourceSwap = null;
@@ -733,7 +736,6 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private String lastDisplayedArtist = "";
     private String lastDisplayedAlbum = "";
     private boolean autoResumeFollow;
-    private static final long IDLE_FRAME_PROBE_MS = 250L;
     private static final int SETTLE_FRAMES_BEFORE_IDLE = 15;
     private int visuallySettledFrames;
     private final Runnable idleFrameProbe = new Runnable() {
@@ -741,7 +743,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         public void run() {
             if (!running || frameScheduler.isContinuous()) return;
             frameScheduler.requestFrame();
-            handler.postDelayed(this, IDLE_FRAME_PROBE_MS);
+            handler.postDelayed(this, NativeRuntime.IDLE_FRAME_PROBE_MS);
         }
     };
 
@@ -1141,10 +1143,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     private void enableDemoMode() {
         if (demoModeActive) return;
         demoModeActive = true;
-        if (document != null) editorLiveSnapshot = document;
         if (demoTrack == null) demoTrack = DemoLyricsContent.demoTrack();
         if (demoArtBitmap == null) demoArtBitmap = DemoLyricsContent.demoArtBitmap();
-        document = DemoLyricsContent.demoDocument();
+        // The real document stays registered: the card editor's Live preview reads its rows.
+        replaceMountedDocument(DemoLyricsContent.demoDocument(),
+                document != null ? document : editorLiveSnapshot);
         demoStartElapsedMs = SystemClock.elapsedRealtime();
         clearRowCascade();
         followState.resetActive();
@@ -1170,8 +1173,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         lastDisplayedTitle = "";
         lastDisplayedArtist = "";
         lastDisplayedAlbum = "";
-        document = null;
-        editorLiveSnapshot = null;
+        replaceMountedDocument(null, null);
         lastUri = "";
         showLoading("Waiting for Spotify track…");
     }
@@ -1737,6 +1739,12 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         preferences = activity.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE);
         renderConfig = LyricsRenderConfig.read(activity, config, pipTextBoost());
         motion = renderConfig.motion;
+        // Mandarin readings load once from the module's verified data pack. Start the parse on its
+        // own worker when the selected mode can use it; a Chinese line never blocks the main thread
+        // on first use, and an unavailable pack leaves the reading off rather than falling back.
+        if (!"off".equalsIgnoreCase(renderConfig.defaultChineseMode)) {
+            MandarinReadings.warm();
+        }
         // SettingsStore normally attaches this context when the settings panel is opened, but
         // lyrics can be mounted first (or restored from a warm Spotify process). Attach it here as
         // well so post-install model packs are visible to the tokenizer/detector on every entry
@@ -1941,8 +1949,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 bottomVirtualSpacer,
                 LYRIC_FULL_RENDER_THRESHOLD,
                 LYRIC_WINDOW_BEFORE_ACTIVE,
-                LYRIC_WINDOW_AFTER_ACTIVE,
-                NativeRuntime.LYRIC_WINDOW_EDGE_BUFFER);
+                LYRIC_WINDOW_AFTER_ACTIVE);
         scrollController = new LyricsScrollController(lyricsScroll, lyricsColumn, topStaticSpacer);
         scrollController.setAnchorFraction(resolveFocusAnchorFraction());
         applyLyricsScrollPadding();
@@ -2171,6 +2178,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         frameScheduler.stop();
         clearRowCascade();
         clearLoadEntrance();
+        // Teardown releases the rows. A restarted shell remounts the session's replayed document.
+        replaceMountedDocument(null, null);
         scrollSpring = null;
         returnToCurrentPending = false;
         clearScrollSubpixel();
@@ -2257,8 +2266,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         resetScrollForNextDocument = true;
         soundAiFeedback.reset();
         meaningAiFeedback.reset();
-        document = null;
-        editorLiveSnapshot = null;
+        replaceMountedDocument(null, null);
         String id = trackIdFromUri(uri);
         ambientImageId = safe(track.imageId);
         ambientController.updateForTrack(track, () -> running);
@@ -2424,7 +2432,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (frameScheduler.isContinuous()) {
             frameScheduler.setContinuous(false);
             handler.removeCallbacks(idleFrameProbe);
-            handler.postDelayed(idleFrameProbe, IDLE_FRAME_PROBE_MS);
+            handler.postDelayed(idleFrameProbe, NativeRuntime.IDLE_FRAME_PROBE_MS);
         }
     }
 
@@ -2502,6 +2510,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean characterFormChanged = document != null && document.chineseCharacterForm != nextCharacterForm;
         if (document != null && characterFormChanged) {
             document.chineseCharacterForm = nextCharacterForm;
+            // New AppliedLine objects replace rows that stay on screen until the remount below.
+            replacedLines.addAll(document.appliedLines);
             LyricTimeline.applySyncedRows(document);
         }
         if (diff == null || !diff.hasChanges) {
@@ -2764,8 +2774,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
         cancelLoadEntranceAnimation();
         boolean firstMount = document == null;
-        document = doc;
-        editorLiveSnapshot = doc;
+        replaceMountedDocument(doc, doc);
         ambientController.updateForDocument(trackUri, doc);
         pendingLoadEntrance = firstMount;
         loadingTrackId = "";
@@ -2856,8 +2865,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         writerFooter.setVisibility(GONE);
         responseAttribution.bind(null);
         songChangeHadSkeleton = false;
-        document = null;
-        editorLiveSnapshot = null;
+        replaceMountedDocument(null, null);
         loadingTrackId = "";
         pendingSourceSwap = null;
         pendingSourceSwapUri = "";
@@ -2869,7 +2877,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             emptyStateController.showInstrumental(lyricsColumn);
             return;
         }
-        // The error box is the visible report for this failure; it keeps the provider text.
+        // Missing lyrics and fetch failures show a neutral note; details stay in diagnostics.
         emptyStateController.showError(lyricsColumn, error);
     }
     /** Opens the catalog source picker for the currently rendered track. */
@@ -4068,12 +4076,40 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
     }
 
     private void clearRenderedLineViews() {
-        if (document != null && document.appliedLines != null) {
-            for (AppliedLine line : document.appliedLines) {
-                secondaryRowUpdater.clear(line);
-            }
-        }
+        releaseMountedLineViews(document);
         rowMountController.reset();
+    }
+
+    /** Releases the rows of the document mounted in this shell, including replaced ones. */
+    private void releaseMountedLineViews(LyricsDocument doc) {
+        for (AppliedLine line : replacedLines) secondaryRowUpdater.clear(line);
+        replacedLines.clear();
+        releaseLineViews(doc);
+    }
+
+    private void releaseLineViews(LyricsDocument doc) {
+        if (doc == null || doc.appliedLines == null) return;
+        for (AppliedLine line : doc.appliedLines) {
+            secondaryRowUpdater.clear(line);
+        }
+    }
+
+    /**
+     * Replaces the mounted document and the editor's live snapshot. Per-line render state is
+     * static, and a row's views capture their AppliedLine, so a document dropped with rows still
+     * registered keeps those views and their Activity reachable. Release each document the shell
+     * stops holding before the fields change; clearRenderedLineViews() reads only the new one.
+     */
+    private void replaceMountedDocument(LyricsDocument nextDocument, LyricsDocument nextEditorSnapshot) {
+        LyricsDocument outgoing = document;
+        LyricsDocument outgoingSnapshot = editorLiveSnapshot;
+        if (outgoing != nextDocument && outgoing != nextEditorSnapshot) releaseMountedLineViews(outgoing);
+        if (outgoingSnapshot != outgoing && outgoingSnapshot != nextDocument
+                && outgoingSnapshot != nextEditorSnapshot) {
+            releaseLineViews(outgoingSnapshot);
+        }
+        document = nextDocument;
+        editorLiveSnapshot = nextEditorSnapshot;
     }
 
     private void flushStyleBatch() {
@@ -6199,7 +6235,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         boolean star = kind == com.eza.spicyex.ui.ActionIconDrawable.Kind.STAR;
         int savedColor = star ? Color.rgb(255, 214, 10) : Color.rgb(255, 55, 95);
         likeButton.setImageDrawable(new com.eza.spicyex.ui.ActionIconDrawable(
-                kind, saved ? savedColor : Color.rgb(232, 232, 238), density, saved));
+                kind, saved ? savedColor : NativeIconButtons.ICON_TINT, density, saved));
         likeButton.setContentDescription(saved
                 ? uiText("lyrics_like_remove", "Remove from Liked Songs")
                 : uiText("lyrics_like_add", "Add to Liked Songs"));

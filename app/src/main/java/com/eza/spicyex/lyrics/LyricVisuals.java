@@ -26,10 +26,6 @@ public final class LyricVisuals {
         }
     }
 
-    public static int[] spicyColorBackgroundColors(int seed) {
-        return spicyColorBackgroundColors(seed, true);
-    }
-
     public static int[] spicyColorBackgroundColors(int seed, boolean forceDark) {
         return AmbientArtworkPalette.fallback(seed, forceDark);
     }

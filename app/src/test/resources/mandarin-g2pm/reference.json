@@ -1,0 +1,473 @@
+{
+  "schema": "cjk-labs.zh.mandarin-g2pm.mobile-reference.v1",
+  "source": {
+    "project": "cjk-labs",
+    "commit": "24c494c",
+    "engine": "experiments/mandarin-g2pm",
+    "packManifestSha256": "91623743afdfcab754a83d5efa723373c5b63378cb75d121a73910c7572afc9b",
+    "cppDataset": "cpp-test@170526efad0a3ef9b55a9ad4579f73218f9be06c"
+  },
+  "probes": [
+    {
+      "text": "睡得着",
+      "readings": [
+        "shui4",
+        "de5",
+        "zhao2"
+      ]
+    },
+    {
+      "text": "想得睡不着",
+      "readings": [
+        "xiang3",
+        "de2",
+        "shui4",
+        "bu4",
+        "zhe5"
+      ]
+    },
+    {
+      "text": "看得见",
+      "readings": [
+        "kan4",
+        "de2",
+        "jian4"
+      ]
+    },
+    {
+      "text": "变得",
+      "readings": [
+        "bian4",
+        "de5"
+      ]
+    },
+    {
+      "text": "说说",
+      "readings": [
+        "shuo1",
+        "shuo5"
+      ]
+    },
+    {
+      "text": "暈開了結局",
+      "readings": [
+        "yun1",
+        "kai1",
+        "le5",
+        "jie2",
+        "ju2"
+      ]
+    },
+    {
+      "text": "他说的确实在理",
+      "readings": [
+        "ta1",
+        "shuo1",
+        "de5",
+        "que4",
+        "shi2",
+        "zai4",
+        "li3"
+      ]
+    },
+    {
+      "text": "去不了",
+      "readings": [
+        "qu4",
+        "bu4",
+        "le5"
+      ]
+    },
+    {
+      "text": "种在心中",
+      "readings": [
+        "zhong3",
+        "zai4",
+        "xin1",
+        "zhong1"
+      ]
+    },
+    {
+      "text": "数一数",
+      "readings": [
+        "shu3",
+        "yi1",
+        "shu4"
+      ]
+    },
+    {
+      "text": "只不过",
+      "readings": [
+        "zhi3",
+        "bu4",
+        "guo4"
+      ]
+    },
+    {
+      "text": "一个人",
+      "readings": [
+        "yi1",
+        "ge4",
+        "ren2"
+      ]
+    },
+    {
+      "text": "我的哥哥",
+      "readings": [
+        "wo3",
+        "de5",
+        "ge1",
+        "ge5"
+      ]
+    },
+    {
+      "text": "看见哥哥",
+      "readings": [
+        "kan4",
+        "jian4",
+        "ge1",
+        "ge5"
+      ]
+    },
+    {
+      "text": "朋友来了",
+      "readings": [
+        "peng2",
+        "you5",
+        "lai2",
+        "le5"
+      ]
+    }
+  ],
+  "cpp": [
+    {
+      "id": "cpp-test-00000",
+      "text": "专案组反复调查，认为这些情况均不存在，于是向上级递交了结案报告。",
+      "targetIndex": 26,
+      "gold": "le5",
+      "readings": [
+        "zhuan1",
+        "an4",
+        "zu3",
+        "fan3",
+        "fu4",
+        "diao4",
+        "cha2",
+        null,
+        "ren4",
+        "wei2",
+        "zhe4",
+        "xie1",
+        "qing2",
+        "kuang4",
+        "jun1",
+        "bu4",
+        "cun2",
+        "zai4",
+        null,
+        "yu2",
+        "shi4",
+        "xiang4",
+        "shang4",
+        "ji2",
+        "di4",
+        "jiao1",
+        "le5",
+        "jie2",
+        "an4",
+        "bao4",
+        "gao4",
+        null
+      ]
+    },
+    {
+      "id": "cpp-test-00001",
+      "text": "刘乐阳认为王子铭和钟义浩表现不错、很有潜力，就向当时的一线队主教练李霄鹏推荐了他们。",
+      "targetIndex": 38,
+      "gold": "le5",
+      "readings": [
+        "liu2",
+        "le4",
+        "yang2",
+        "ren4",
+        "wei2",
+        "wang2",
+        "zi3",
+        "ming2",
+        "he2",
+        "zhong1",
+        "yi4",
+        "hao4",
+        "biao3",
+        "xian4",
+        "bu4",
+        "cuo4",
+        null,
+        "hen3",
+        "you3",
+        "qian2",
+        "li4",
+        null,
+        "jiu4",
+        "xiang4",
+        "dang1",
+        "shi2",
+        "de5",
+        "yi1",
+        "xian4",
+        "dui4",
+        "zhu3",
+        "jiao4",
+        "lian4",
+        "li3",
+        "xiao1",
+        "peng2",
+        "tui1",
+        "jian4",
+        "le5",
+        "ta1",
+        "men5",
+        null
+      ]
+    },
+    {
+      "id": "cpp-test-00002",
+      "text": "《爱疯了》被描述为宽松地受导演德雷克·多雷穆斯的真实生活经验启发。",
+      "targetIndex": 3,
+      "gold": "le5",
+      "readings": [
+        null,
+        "ai4",
+        "feng1",
+        "le5",
+        null,
+        "bei4",
+        "miao2",
+        "shu4",
+        "wei2",
+        "kuan1",
+        "song1",
+        "di4",
+        "shou4",
+        "dao3",
+        "yan3",
+        "de2",
+        "lei2",
+        "ke4",
+        null,
+        "duo1",
+        "lei2",
+        "mu4",
+        "si1",
+        "de5",
+        "zhen1",
+        "shi2",
+        "sheng1",
+        "huo2",
+        "jing1",
+        "yan4",
+        "qi3",
+        "fa1",
+        null
+      ]
+    },
+    {
+      "id": "cpp-test-00003",
+      "text": "在关东军于满洲建立的一系列要塞中，虎头要塞以其战略价值成为了最重要的要塞之一。",
+      "targetIndex": 29,
+      "gold": "le5",
+      "readings": [
+        "zai4",
+        "guan1",
+        "dong1",
+        "jun1",
+        "yu2",
+        "man3",
+        "zhou1",
+        "jian4",
+        "li4",
+        "de5",
+        "yi1",
+        "xi4",
+        "lie4",
+        "yao4",
+        "sai4",
+        "zhong1",
+        null,
+        "hu3",
+        "tou2",
+        "yao4",
+        "sai4",
+        "yi3",
+        "qi2",
+        "zhan4",
+        "lüe4",
+        "jia4",
+        "zhi2",
+        "cheng2",
+        "wei2",
+        "le5",
+        "zui4",
+        "zhong4",
+        "yao4",
+        "de5",
+        "yao4",
+        "sai4",
+        "zhi1",
+        "yi1",
+        null
+      ]
+    },
+    {
+      "id": "cpp-test-00004",
+      "text": "这部作品触犯了当时社会上的权势人物，使张恨水受到特务的严密监视，只写了十几个梦便被迫停笔。",
+      "targetIndex": 6,
+      "gold": "le5",
+      "readings": [
+        "zhe4",
+        "bu4",
+        "zuo4",
+        "pin3",
+        "chu4",
+        "fan4",
+        "le5",
+        "dang1",
+        "shi2",
+        "she4",
+        "hui4",
+        "shang4",
+        "de5",
+        "quan2",
+        "shi4",
+        "ren2",
+        "wu4",
+        null,
+        "shi3",
+        "zhang1",
+        "hen4",
+        "shui3",
+        "shou4",
+        "dao4",
+        "te4",
+        "wu5",
+        "de5",
+        "yan2",
+        "mi4",
+        "jian1",
+        "shi4",
+        null,
+        "zhi3",
+        "xie3",
+        "le5",
+        "shi2",
+        "ji3",
+        "ge4",
+        "meng4",
+        "bian4",
+        "bei4",
+        "po4",
+        "ting2",
+        "bi3",
+        null
+      ]
+    },
+    {
+      "id": "cpp-test-00005",
+      "text": "然而，他红了20年以后，他竟退出了大家的视线。",
+      "targetIndex": 5,
+      "gold": "le5",
+      "readings": [
+        "ran2",
+        "er2",
+        null,
+        "ta1",
+        "hong2",
+        "le5",
+        null,
+        null,
+        "nian2",
+        "yi3",
+        "hou4",
+        null,
+        "ta1",
+        "jing4",
+        "tui4",
+        "chu1",
+        "le5",
+        "da4",
+        "jia1",
+        "de5",
+        "shi4",
+        "xian4",
+        null
+      ]
+    },
+    {
+      "id": "cpp-test-00006",
+      "text": "因此，西德选择了一个在当地被称为“奥运选拔队（）”的队伍，与组建类似。",
+      "targetIndex": 7,
+      "gold": "le5",
+      "readings": [
+        "yin1",
+        "ci3",
+        null,
+        "xi1",
+        "de2",
+        "xuan3",
+        "ze2",
+        "le5",
+        "yi2",
+        "ge4",
+        "zai4",
+        "dang1",
+        "di4",
+        "bei4",
+        "cheng1",
+        "wei2",
+        null,
+        "ao4",
+        "yun4",
+        "xuan3",
+        "ba2",
+        "dui4",
+        null,
+        null,
+        null,
+        "de5",
+        "dui4",
+        "wu3",
+        null,
+        "yu3",
+        "zu3",
+        "jian4",
+        "lei4",
+        "si4",
+        null
+      ]
+    },
+    {
+      "id": "cpp-test-00007",
+      "text": "而这部词典编写组撰文进行了回应。",
+      "targetIndex": 12,
+      "gold": "le5",
+      "readings": [
+        "er2",
+        "zhe4",
+        "bu4",
+        "ci2",
+        "dian3",
+        "bian1",
+        "xie3",
+        "zu3",
+        "zhuan4",
+        "wen2",
+        "jin4",
+        "xing2",
+        "le5",
+        "hui2",
+        "ying4",
+        null
+      ]
+    }
+  ]
+}

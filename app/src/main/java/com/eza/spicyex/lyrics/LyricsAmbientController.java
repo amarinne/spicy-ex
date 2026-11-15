@@ -210,7 +210,6 @@ public final class LyricsAmbientController {
     }
 
     private static AmbientShaderEffect rendererEffect(BackgroundEffect effect) {
-        if (effect == BackgroundEffect.MESH_GRADIENT) return AmbientShaderEffect.MESH_GRADIENT;
         AmbientShaderEffect mapped = AmbientShaderEffect.fromArgument(effect.stableId());
         return mapped == null ? AmbientShaderEffect.KAWARP : mapped;
     }

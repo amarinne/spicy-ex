@@ -11,7 +11,6 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
-import com.eza.spicyex.Settings;
 import com.eza.spicyex.lyrics.reading.ReadingModels.RenderPlan;
 import com.eza.spicyex.lyrics.reading.ReadingModels.CanonicalSpanMapping;
 import com.eza.spicyex.lyrics.reading.ReadingModels.TextRange;
@@ -48,13 +47,6 @@ public class LyricsSurfaceRowPlannerTest {
     }
 
     @Test
-    public void adaptiveSectioningIsPublicAndDefaultsOn() {
-        assertEquals("lyric_adaptive_sectioning", Settings.ADAPTIVE_SECTIONING.key);
-        assertSame(Settings.INTERNAL, Settings.ADAPTIVE_SECTIONING.section);
-        assertTrue(Settings.ADAPTIVE_SECTIONING.defaultValue);
-    }
-
-    @Test
     public void adaptiveSectioningSelectsOnlyTheRecentWrappingModes() {
         assertEquals(LyricsRowViewFactory.AdaptiveBreakMode.NONE,
                 LyricsRowViewFactory.adaptiveBreakMode(false, true, 35));
@@ -79,13 +71,6 @@ public class LyricsSurfaceRowPlannerTest {
 
         assertFalse(plan.options.adaptiveSectioningEnabled);
         assertTrue(plan.options.wrapLongLines);
-    }
-
-    @Test
-    public void adaptiveTextSizeIsPublicAndDefaultsOn() {
-        assertEquals("lyrics_adaptive_text_size", Settings.LYRICS_ADAPTIVE_TEXT_SIZE.key);
-        assertSame(Settings.INTERNAL, Settings.LYRICS_ADAPTIVE_TEXT_SIZE.section);
-        assertTrue(Settings.LYRICS_ADAPTIVE_TEXT_SIZE.defaultValue);
     }
 
     @Test

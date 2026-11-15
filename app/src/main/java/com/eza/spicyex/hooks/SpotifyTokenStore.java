@@ -1,5 +1,6 @@
 package com.eza.spicyex.hooks;
 
+import com.eza.spicyex.lyrics.LyricUtils;
 import android.content.Context;
 import android.content.SharedPreferences;
 
@@ -81,7 +82,7 @@ final class SpotifyTokenStore {
      * @param expiresAtMillis observed expiry, or any value &lt;= 0 when unknown
      */
     static synchronized void store(String tokenText, long capturedAtMillis, long expiresAtMillis, String source) {
-        if (isBlank(tokenText)) return;
+        if (LyricUtils.isBlank(tokenText)) return;
         boolean advanced = STATE.capture(tokenText, capturedAtMillis, expiresAtMillis);
         if (STATE.isInvalidated() || !STATE.hasToken()) {
             // Tombstoned epoch: never persist, never log a capture, never resurrect the token.
@@ -98,8 +99,6 @@ final class SpotifyTokenStore {
         if (advanced) {
             XpLog.log(NativeSpicyLyricsHook.TAG + " captured Spotify access token"
                     + " source=" + source
-                    + " tokenPreview=" + tokenPreview(tokenText)
-                    + " tokenLength=" + tokenText.length()
                     + " generation=" + STATE.generation()
                     + " hasObservedExpiry=" + (STATE.expiresAtMillis() > 0));
         }
@@ -116,7 +115,7 @@ final class SpotifyTokenStore {
             SharedPreferences prefs = prefs(context);
             if (prefs == null) return;
             String token = prefs.getString(KEY_TOKEN, "");
-            if (isBlank(token) || "0".equals(token)) return;
+            if (LyricUtils.isBlank(token) || "0".equals(token)) return;
             long capturedAt = prefs.getLong(KEY_CAPTURED_AT, 0L);
             long expiresAt = prefs.getLong(KEY_EXPIRES_AT, 0L);
             int generation = prefs.getInt(KEY_GENERATION, 0);
@@ -142,8 +141,6 @@ final class SpotifyTokenStore {
             syncMirror();
             XpLog.log(NativeSpicyLyricsHook.TAG
                     + " restored persisted Spotify access token"
-                    + " tokenPreview=" + tokenPreview(token)
-                    + " tokenLength=" + token.length()
                     + " generation=" + STATE.generation()
                     + " hasObservedExpiry=" + (STATE.expiresAtMillis() > 0));
         } catch (Throwable t) {
@@ -151,7 +148,6 @@ final class SpotifyTokenStore {
                     + " token restore failed type=" + t.getClass().getName());
         }
     }
-
 
     /** Package-private M3 seam: current usable authorization snapshot, or {@code null} when none. */
     static SpotifyTokenState.Authorized authorization(long nowMillis) {
@@ -260,13 +256,4 @@ final class SpotifyTokenStore {
         return null;
     }
 
-    static String tokenPreview(String token) {
-        if (token == null) return "<absent>";
-        if (token.length() <= 10) return "<redacted>";
-        return token.substring(0, 5) + "…" + token.substring(token.length() - 5);
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
 }

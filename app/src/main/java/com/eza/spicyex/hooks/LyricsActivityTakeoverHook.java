@@ -689,7 +689,7 @@ final class LyricsActivityTakeoverHook {
         button.setContentDescription("Open Spicy lyrics");
         // House mark (mic + sparkles), same as the footer entry button — not a Lucide glyph.
         NativeIconButtons.setModuleIcon(button, activity, R.drawable.ic_spicy_lyrics_page);
-        button.setColorFilter(Color.rgb(232, 232, 238));
+        button.setColorFilter(NativeIconButtons.ICON_TINT);
         button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         button.setBackgroundColor(Color.TRANSPARENT);
         button.setPadding(dp(9), dp(9), dp(9), dp(9));
@@ -735,7 +735,7 @@ final class LyricsActivityTakeoverHook {
         button.setTag(TAG_EXTRA_LYRICS_BUTTON);
         button.setContentDescription("Open Spicy lyrics");
         NativeIconButtons.setModuleIcon(button, activity, R.drawable.ic_spicy_lyrics_page);
-        button.setColorFilter(Color.rgb(232, 232, 238));
+        button.setColorFilter(NativeIconButtons.ICON_TINT);
         button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         button.setBackgroundColor(Color.TRANSPARENT);
         button.setPadding(dp(13), dp(13), dp(13), dp(13));

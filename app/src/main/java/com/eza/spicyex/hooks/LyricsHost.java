@@ -117,6 +117,9 @@ public interface LyricsHost extends PlaybackTransportHost {
     /** Renders one stored candidate and pins it; zero requests. */
     void selectCatalogCandidate(String candidateId, CatalogActionCallback callback);
 
+    /** Imports and pins a TTML file only for the song that opened the picker. */
+    void importLocalLyrics(String expectedTrackUri, android.net.Uri file, CatalogActionCallback callback);
+
     /** Drops the manual pin and re-resolves the automatic winner. */
     void resetCatalogToAuto(CatalogActionCallback callback);
 

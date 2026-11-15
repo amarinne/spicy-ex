@@ -110,3 +110,27 @@ from the opencc-js MIT implementation, Copyright (c) 2020-2021 The nk2028 Projec
 Upstream: https://github.com/nk2028/opencc-js and https://github.com/nk2028/opencc-data
 The APK includes both license texts, attribution, and SHA-256 provenance under
 opencc/. The source copies are in app/src/main/resources/opencc/.
+
+Mandarin reading data
+---------------------
+The optional language model pack bundles one offline Mandarin g2pM reading
+pack generated from:
+- g2pM 0.1.2.5 (Apache License 2.0), Copyright (c) 2020 Kakao Brain Corp.
+  Model weights, character vocabulary, output classes, and the
+  character-reading digest. The digest was derived upstream from CC-CEDICT
+  and is distributed by the g2pM package under Apache-2.0. CC-CEDICT is
+  CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0/
+- phrase-pinyin-data v0.20.0 (MIT), Copyright (c) 2018 mozillazg. Its phrase
+  table composes CC-CEDICT, zdic_cibs, zdic_cybs, pinyin, di, and overwrite
+  data; CC-CEDICT rows retain CC BY-SA 4.0 attribution.
+- pinyin-data v0.16.0 (MIT), Copyright (c) 2018 mozillazg. Character defaults
+  and candidate readings.
+- The OpenCC traditional-to-simplified character table from opencc-js 1.4.2
+  (MIT AND Apache-2.0), Copyright (c) 2020-2021 The nk2028 Project.
+- The jieba dictionary and HMM as embedded by jieba-rs (MIT),
+  Copyright (c) 2018-2019 messense and Copyright (c) 2019 Paul Meng.
+  Segmentation, tags, and search subwords only; no readings come from jieba.
+
+The derived tables remain available under those licences. The language model
+pack includes source pins, licence texts, attribution, and SHA-256 receipts
+under mandarin-g2pm/. The source copies are in app/language-models/mandarin-g2pm/.

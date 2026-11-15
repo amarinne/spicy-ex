@@ -180,11 +180,6 @@ public final class AiModelProbe {
         }
     }
 
-    /** Compatibility boolean for callers that only need the gate. */
-    public static boolean run(AiSettings settings, AiSignal signal) {
-        return probe(settings, signal).ok;
-    }
-
     private static String failureToken(AiProviderFailure failure) {
         if (failure == null) return "provider:no_failure_detail";
         String kind = failure.kind == null ? "unknown" : failure.kind.name().toLowerCase(java.util.Locale.ROOT);

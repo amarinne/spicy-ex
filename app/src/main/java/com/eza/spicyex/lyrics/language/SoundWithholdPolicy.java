@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics.language;
 
+import com.eza.spicyex.lyrics.LyricUtils;
 import com.eza.spicyex.lyrics.session.DetectionResult;
 
 /**
@@ -35,7 +36,7 @@ public final class SoundWithholdPolicy {
                 && SpicyTextDetection.itemKoreanTest(text)) return true;
         if ("Off".equalsIgnoreCase(opts.cyrillicMode)
                 && SpicyTextDetection.itemCyrillicTest(text)) return true;
-        return isBlank(opts.chineseMode) && isChineseLine(text, detection, docLanguage);
+        return LyricUtils.isBlank(opts.chineseMode) && isChineseLine(text, detection, docLanguage);
     }
 
     /**
@@ -49,7 +50,4 @@ public final class SoundWithholdPolicy {
                         docLanguage == null ? "" : docLanguage));
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
 }

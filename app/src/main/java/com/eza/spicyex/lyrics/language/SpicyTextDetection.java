@@ -296,15 +296,15 @@ public final class SpicyTextDetection {
                 || isGreek(cp);
     }
 
-    private static boolean isKana(int cp) {
+    static boolean isKana(int cp) {
         return cp >= 0x3040 && cp <= 0x30FF;
     }
 
-    private static boolean isCjkIdeograph(int cp) {
+    static boolean isCjkIdeograph(int cp) {
         return Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN;
     }
 
-    private static boolean isKorean(int cp) {
+    static boolean isKorean(int cp) {
         return (cp >= 0xAC00 && cp <= 0xD7AF)
                 || (cp >= 0x1100 && cp <= 0x11FF)
                 || (cp >= 0x3130 && cp <= 0x318F)
@@ -312,19 +312,19 @@ public final class SpicyTextDetection {
                 || (cp >= 0xD7B0 && cp <= 0xD7FF);
     }
 
-    private static boolean isCyrillic(int cp) {
+    static boolean isCyrillic(int cp) {
         return (cp >= 0x0400 && cp <= 0x04FF)
                 || (cp >= 0x0500 && cp <= 0x052F)
                 || (cp >= 0x2DE0 && cp <= 0x2DFF)
                 || (cp >= 0xA640 && cp <= 0xA69F);
     }
 
-    private static boolean isGreek(int cp) {
+    static boolean isGreek(int cp) {
         return (cp >= 0x0370 && cp <= 0x03FF)
                 || (cp >= 0x1F00 && cp <= 0x1FFF);
     }
 
-    private static boolean isDevanagari(int cp) {
+    static boolean isDevanagari(int cp) {
         return (cp >= 0x0900 && cp <= 0x097F)
                 || (cp >= 0xA8E0 && cp <= 0xA8FF);
     }

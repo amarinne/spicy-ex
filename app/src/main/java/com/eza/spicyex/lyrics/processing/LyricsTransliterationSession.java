@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics.processing;
 
+import com.eza.spicyex.lyrics.LyricUtils;
 import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
 import com.eza.spicyex.lyrics.language.SpicyRomanizer;
 
@@ -104,10 +105,10 @@ public final class LyricsTransliterationSession {
             koreanMode = cycleOrDefault(koreanModeConfig, koreanMode, config.defaultKoreanMode);
             cyrillicMode = cycleOrDefault(cyrillicModeConfig, cyrillicMode, config.defaultCyrillicMode);
         } else {
-            if (isBlank(japaneseReadingMode)) japaneseReadingMode = safe(config.defaultJapaneseReadingMode);
-            if (isBlank(chineseMode)) chineseMode = safe(config.defaultChineseMode);
-            if (isBlank(koreanMode)) koreanMode = safe(config.defaultKoreanMode);
-            if (isBlank(cyrillicMode)) cyrillicMode = safe(config.defaultCyrillicMode);
+            if (LyricUtils.isBlank(japaneseReadingMode)) japaneseReadingMode = safe(config.defaultJapaneseReadingMode);
+            if (LyricUtils.isBlank(chineseMode)) chineseMode = safe(config.defaultChineseMode);
+            if (LyricUtils.isBlank(koreanMode)) koreanMode = safe(config.defaultKoreanMode);
+            if (LyricUtils.isBlank(cyrillicMode)) cyrillicMode = safe(config.defaultCyrillicMode);
         }
         return changed;
     }
@@ -181,16 +182,12 @@ public final class LyricsTransliterationSession {
         }
     }
 
-    private static boolean isBlank(String value) {
-        return value == null || value.isEmpty();
-    }
-
     private static String safe(String value) {
         return value == null ? "" : value;
     }
 
     private static String cycleOrDefault(String modeConfig, String current, String fallback) {
-        if ("cycle".equals(modeConfig) && !isBlank(current)) return current;
+        if ("cycle".equals(modeConfig) && !LyricUtils.isBlank(current)) return current;
         return safe(fallback);
     }
 

@@ -20,6 +20,13 @@ public final class AutoResponseCredit {
         return com.eza.spicyex.lyrics.ResponseCreditOutro.outro(synced, lastVocalEndMs, positionMs, hasCredit);
     }
 
+    /** The bounded credit episode, including its hold and visible window. */
+    public static boolean outroWindow(boolean synced, long lastVocalEndMs, long positionMs, boolean hasCredit) {
+        long start = lastVocalEndMs + com.eza.spicyex.lyrics.ResponseCreditOutro.HOLD_MS;
+        return hasCredit && synced && lastVocalEndMs > 0 && positionMs >= start
+                && positionMs < start + com.eza.spicyex.lyrics.ResponseCreditOutro.VISIBLE_MS;
+    }
+
     public static boolean hasCredit(String writers, java.util.List<String> labels) {
         return writers != null && !writers.trim().isEmpty() || labels != null && !labels.isEmpty();
     }

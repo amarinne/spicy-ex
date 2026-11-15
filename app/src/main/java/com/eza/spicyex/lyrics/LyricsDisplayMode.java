@@ -22,11 +22,7 @@ public final class LyricsDisplayMode {
     }
 
     public static boolean isChineseModeLine(AppliedLine line) {
-        return line != null && line.sourceLine != null && !isBlank(line.sourceLine.chineseMode);
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.isEmpty();
+        return line != null && line.sourceLine != null && !LyricUtils.isBlank(line.sourceLine.chineseMode);
     }
 
     public static boolean showJapaneseFurigana(AppliedLine line, boolean showRomanization, String japaneseReadingMode) {

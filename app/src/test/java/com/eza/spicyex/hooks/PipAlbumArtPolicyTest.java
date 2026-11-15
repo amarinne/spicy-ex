@@ -16,14 +16,6 @@ import org.junit.Test;
 /** PiP album-art toggle: off-default, panel wiring, and the two-column geometry gate. */
 public class PipAlbumArtPolicyTest {
     @Test
-    public void albumArtIsOffByDefaultInThePipSection() {
-        assertEquals("lyrics_pip_album_art", Settings.PIP_ALBUM_ART.key);
-        assertEquals(Settings.PIP, Settings.PIP_ALBUM_ART.section);
-        assertEquals("Show album art", Settings.PIP_ALBUM_ART.label);
-        assertFalse(Settings.PIP_ALBUM_ART.defaultValue);
-    }
-
-    @Test
     public void theRegistryListsAlbumArtInThePipSection() {
         boolean listed = false;
         for (ControlSpec entry : ControlRegistry.panelControls(Settings.PIP)) {

@@ -18,8 +18,25 @@ public final class LyricAnimations {
     private LyricAnimations() {
     }
 
+    private static final float GRADIENT_ENDPOINT_EPSILON = 0.5f;
+
     public static float gradientPosition(float progress) {
         return GRADIENT_UNSUNG + GRADIENT_RANGE * clamp01(progress);
+    }
+
+    /** Inverse of {@link #gradientPosition}: normalized fill progress for a gradient value. */
+    public static float progressOf(float gradient) {
+        return clamp01((gradient - GRADIENT_UNSUNG) / GRADIENT_RANGE);
+    }
+
+    /** Whether a gradient value sits at the unsung end of the band. */
+    public static boolean isUnsung(float gradient) {
+        return gradient <= GRADIENT_UNSUNG + GRADIENT_ENDPOINT_EPSILON;
+    }
+
+    /** Whether a gradient value has reached the fully sung end of the band. */
+    public static boolean isSung(float gradient) {
+        return gradient >= GRADIENT_SUNG - GRADIENT_ENDPOINT_EPSILON;
     }
 
     /**

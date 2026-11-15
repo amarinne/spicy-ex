@@ -80,9 +80,6 @@ final class LyricsFetchCoordinator {
         );
         SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
         boolean sendToken = config.get(Settings.SEND_TOKEN);
-        // Source selection is owned by LyricsSourcePreferences toggles/order. The retired
-        // global override must not bypass that policy.
-        String sourceOverride = "Auto";
         // M3: in-flight identity uses the non-secret token generation from the token store
         // (never the raw token, never a token-present boolean), so a fresh token generation
         // can never join an in-flight stale-token request. The snapshot binds the token text
@@ -91,40 +88,20 @@ final class LyricsFetchCoordinator {
                 ? SpotifyTokenStore.authorization(System.currentTimeMillis())
                 : null;
         String operationKey = fetchKey(track, sendToken, authorized)
-                + "|source=" + sourceOverride
                 + "|scope=" + (scope == null ? "none" : scope.key())
                 + "|spicyOrgEpoch=" + com.eza.spicyex.lyrics.providers.SpicyOrgKeyStore.epoch(context)
                 + "|orgAccessRevision=" + com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.revision(context);
-        InFlightFetch existing;
-        LyricsDocument replay = null;
-        boolean joined = false;
-        synchronized (inFlightLock) {
-            existing = inFlight.get(operationKey);
-            if (existing != null) {
-                joined = true;
-                existing.callbacks.add(callback);
-                if (existing.latest != null) replay = LyricsDocument.copyOf(existing.latest);
-            } else {
-                // The upgrade window follows Apple availability, never Spotify token presence: a
-                // credential-free Apple request can still upgrade a native baseline, so a
-                // tokenless fetch must stay open for it the same way a token-bound one does.
-                boolean appleEnabled = scope != null && scope.allows(
-                        com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId.APPLE);
-                existing = new InFlightFetch(operationKey,
-                        CatalogRequestIdentity.upgradeExpected(authorized != null, appleEnabled));
-                existing.callbacks.add(callback);
-                inFlight.put(operationKey, existing);
-            }
-        }
-        if (replay != null) callback.onSuccess(replay);
-        if (joined) return;
-        InFlightFetch operation = existing;
-        LyricsRepository repository = new LyricsRepository(
-                http,
-                lyricsParser,
-                nativeLyricsSource,
-                NativeRuntime.LYRICS_IO
-        );
+        // The upgrade window follows Apple availability, never Spotify token presence: a
+        // credential-free Apple request can still upgrade a native baseline, so a tokenless
+        // fetch must stay open for it the same way a token-bound one does.
+        boolean appleEnabled = scope != null && scope.allows(
+                com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId.APPLE);
+        Subscriber subscriber = subscribe(operationKey,
+                CatalogRequestIdentity.upgradeExpected(authorized != null, appleEnabled), callback);
+        if (subscriber.replay != null) notifySuccess(callback, subscriber.replay);
+        if (subscriber.joined) return;
+        InFlightFetch operation = subscriber.operation;
+        LyricsRepository repository = repository();
         String accessToken = authorized == null ? "" : authorized.token();
         final boolean requestSendToken = sendToken;
         final String requestAccessToken = accessToken;
@@ -139,17 +116,7 @@ final class LyricsFetchCoordinator {
                 tokenGeneration,
                 authRecovery,
                 scope,
-                new LyricsRepository.ResultCallback() {
-                    @Override
-                    public void onSuccess(LyricsDocument document) {
-                        deliverSuccess(operation, document);
-                    }
-
-                    @Override
-                    public void onError(String error) {
-                        deliverError(operation, error);
-                    }
-                }));
+                delivery(operation)));
     }
 
     /** One strict provider request shared by every picker/surface caller for this track. */
@@ -174,12 +141,46 @@ final class LyricsFetchCoordinator {
                     + "|accessCheck=" + explicitAccessCheck;
         }
         if (repositorySource == null || key.isEmpty() || callback == null) {
-            if (callback != null) callback.onError("Unknown lyrics source");
+            if (callback != null) notifyError(callback, "Unknown lyrics source");
             return;
         }
+        Subscriber subscriber = subscribe(key, false, callback);
+        if (subscriber.replay != null) notifySuccess(callback, subscriber.replay);
+        if (subscriber.joined) return;
+        final InFlightFetch started = subscriber.operation;
+        LyricsRepository repository = repository();
+        LyricsRepository.ResultCallback resultCallback = delivery(started);
+        started.fetchFuture = NativeRuntime.LYRICS_IO.submit(() -> {
+                if (explicitAccessCheck && repositorySource
+                        == com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPICY)
+                    repository.fetchSpicyOrgAccessCheck(context, track, resultCallback);
+                else repository.fetchSource(context, track, generation, repositorySource,
+                        karaokeOriginalLyrics, resultCallback);
+        });
+    }
+
+    private LyricsRepository repository() {
+        return new LyricsRepository(http, lyricsParser, nativeLyricsSource, NativeRuntime.LYRICS_IO);
+    }
+
+    private LyricsRepository.ResultCallback delivery(InFlightFetch operation) {
+        return new LyricsRepository.ResultCallback() {
+            @Override public void onSuccess(LyricsDocument document) {
+                deliverSuccess(operation, document);
+            }
+
+            @Override public void onError(String error) {
+                deliverError(operation, error);
+            }
+        };
+    }
+
+    /** Registers a subscriber, replaying the last result when the operation already finished. */
+    private Subscriber subscribe(String key, boolean upgradeExpected,
+                                 NativeSpicyLyricsHook.LyricsResultCallback callback) {
         InFlightFetch operation;
         LyricsDocument replay = null;
-        boolean joined;
+        boolean joined = false;
         synchronized (inFlightLock) {
             operation = inFlight.get(key);
             if (operation != null) {
@@ -187,33 +188,24 @@ final class LyricsFetchCoordinator {
                 operation.callbacks.add(callback);
                 if (operation.latest != null) replay = LyricsDocument.copyOf(operation.latest);
             } else {
-                joined = false;
-                operation = new InFlightFetch(key, false);
+                operation = new InFlightFetch(key, upgradeExpected);
                 operation.callbacks.add(callback);
                 inFlight.put(key, operation);
             }
         }
-        if (replay != null) callback.onSuccess(replay);
-        if (joined) return;
-        final InFlightFetch started = operation;
-        LyricsRepository repository = new LyricsRepository(
-                http, lyricsParser, nativeLyricsSource, NativeRuntime.LYRICS_IO);
-        started.fetchFuture = NativeRuntime.LYRICS_IO.submit(() -> {
-                LyricsRepository.ResultCallback delivery = new LyricsRepository.ResultCallback() {
-                    @Override public void onSuccess(LyricsDocument document) {
-                        deliverSuccess(started, document);
-                    }
+        return new Subscriber(operation, replay, joined);
+    }
 
-                    @Override public void onError(String error) {
-                        deliverError(started, error);
-                    }
-                };
-                if (explicitAccessCheck && repositorySource
-                        == com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source.SPICY)
-                    repository.fetchSpicyOrgAccessCheck(context, track, delivery);
-                else repository.fetchSource(context, track, generation, repositorySource,
-                        karaokeOriginalLyrics, delivery);
-        });
+    private static final class Subscriber {
+        final InFlightFetch operation;
+        final LyricsDocument replay;
+        final boolean joined;
+
+        Subscriber(InFlightFetch operation, LyricsDocument replay, boolean joined) {
+            this.operation = operation;
+            this.replay = replay;
+            this.joined = joined;
+        }
     }
 
     static String pickerKey(String bareTrackId,
@@ -277,7 +269,7 @@ final class LyricsFetchCoordinator {
             }
         }
         for (NativeSpicyLyricsHook.LyricsResultCallback callback : callbacks) {
-            callback.onSuccess(LyricsDocument.copyOf(document));
+            notifySuccess(callback, LyricsDocument.copyOf(document));
         }
     }
 
@@ -294,7 +286,25 @@ final class LyricsFetchCoordinator {
             callbacks = new ArrayList<>(operation.callbacks);
             operation.callbacks.clear();
         }
-        for (NativeSpicyLyricsHook.LyricsResultCallback callback : callbacks) callback.onError(error);
+        for (NativeSpicyLyricsHook.LyricsResultCallback callback : callbacks) notifyError(callback, error);
+    }
+
+    /** Host callbacks must not interrupt delivery to other subscribers or escape immediate replays. */
+    private static void notifySuccess(NativeSpicyLyricsHook.LyricsResultCallback callback,
+                                      LyricsDocument document) {
+        try {
+            callback.onSuccess(document);
+        } catch (Throwable failure) {
+            Diagnostics.warn("lyrics_fetch", "subscriber_success", failure);
+        }
+    }
+
+    private static void notifyError(NativeSpicyLyricsHook.LyricsResultCallback callback, String error) {
+        try {
+            callback.onError(error);
+        } catch (Throwable failure) {
+            Diagnostics.warn("lyrics_fetch", "subscriber_error", failure);
+        }
     }
 
     private void expire(InFlightFetch operation) {

@@ -3,6 +3,7 @@ package com.eza.spicyex.lyrics.language;
 import android.content.Context;
 
 import com.eza.spicyex.BuildConfig;
+import com.eza.spicyex.lyrics.language.mandarin.MandarinReader;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -11,12 +12,16 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -45,13 +50,23 @@ public final class LanguageModelPack {
         }
     }
 
-    private static final String VERSION = "v1";
+    private static final String VERSION = "v2";
+    /** Earlier pack roots. A finished install of this version removes them. */
+    private static final String[] RETIRED_VERSIONS = {"v1"};
     private static final String READY = ".ready";
     private static final int BUFFER_SIZE = 1 << 16;
+    // The v2 recipe is v1 (11 files, ~52 MiB compressed, ~153 MiB expanded) plus the
+    // Mandarin g2pM reader (17 files, ~16 MiB expanded). Allow
+    // ample ZIP overhead and headroom without allowing an unbounded transfer or install.
+    private static final long MAX_DOWNLOAD_BYTES = 128L << 20;
+    private static final long MAX_EXPANDED_BYTES = 384L << 20;
+    private static final int MAX_ENTRIES = 128;
+    private static final long DOWNLOAD_TIMEOUT_NANOS = TimeUnit.MINUTES.toNanos(10);
     private static final Set<String> REQUIRED = requiredFiles();
     private static final ExecutorService DOWNLOADS = Executors.newSingleThreadExecutor();
     private static volatile Context appContext;
     private static volatile boolean downloadStarted;
+    private static volatile boolean upgradeRequested;
     private static volatile Runnable readyListener;
     private static volatile DownloadStatus transientStatus = new DownloadStatus(Phase.IDLE, 0, "");
 
@@ -62,6 +77,28 @@ public final class LanguageModelPack {
         if (context == null) return;
         Context applicationContext = context.getApplicationContext();
         appContext = applicationContext == null ? context : applicationContext;
+        upgradeRetiredPack();
+    }
+
+    /**
+     * A user who installed an earlier pack already chose the download, so fetch the current
+     * version once per process instead of turning their readings off until they ask again.
+     */
+    private static void upgradeRetiredPack() {
+        if (upgradeRequested) return;
+        Context context = appContext;
+        File parent = context == null ? null : context.getFilesDir();
+        if (!hasRetiredPack(parent) || isReady()) return;
+        upgradeRequested = true;
+        requestDownload();
+    }
+
+    static boolean hasRetiredPack(File parent) {
+        if (parent == null) return false;
+        for (String version : RETIRED_VERSIONS) {
+            if (new File(new File(parent, "language-models-" + version), READY).isFile()) return true;
+        }
+        return false;
     }
 
     public static void setReadyListener(Runnable listener) {
@@ -77,7 +114,7 @@ public final class LanguageModelPack {
     }
 
     public static void clearTransientState() {
-        downloadStarted = false;
+        // The worker retains single-flight ownership until its finally block runs.
         transientStatus = new DownloadStatus(Phase.IDLE, 0, "");
     }
 
@@ -97,6 +134,10 @@ public final class LanguageModelPack {
 
     public static boolean isReady() {
         File root = root();
+        return isReady(root);
+    }
+
+    private static boolean isReady(File root) {
         if (root == null || !new File(root, READY).isFile()) return false;
         for (String required : REQUIRED) {
             if (!new File(root, required).isFile()) return false;
@@ -115,21 +156,40 @@ public final class LanguageModelPack {
         }
     }
 
+    @FunctionalInterface
+    interface Installation { void run() throws Exception; }
+
+    @FunctionalInterface
+    interface Downloader { void download(File archive) throws Exception; }
+
+    @FunctionalInterface
+    interface Renamer { boolean rename(File from, File to); }
+
     private static void prefetch() {
+        prefetch(DOWNLOADS, LanguageModelPack::downloadAndInstall);
+    }
+
+    // Package-local seams keep tests on the production single-flight and install owners.
+    static void prefetch(Executor executor, Installation installation) {
         if (downloadStarted || isReady() || BuildConfig.LANGUAGE_MODEL_PACK_URL.isEmpty()) return;
         synchronized (LanguageModelPack.class) {
             if (downloadStarted || isReady()) return;
             downloadStarted = true;
         }
-        DOWNLOADS.execute(() -> {
-            try {
-                downloadAndInstall();
-            } catch (Throwable failure) {
-                transientStatus = new DownloadStatus(Phase.ERROR, 0, describe(failure));
-            } finally {
-                downloadStarted = false;
-            }
-        });
+        try {
+            executor.execute(() -> {
+                try {
+                    installation.run();
+                } catch (Throwable failure) {
+                    transientStatus = new DownloadStatus(Phase.ERROR, 0, describe(failure));
+                } finally {
+                    downloadStarted = false;
+                }
+            });
+        } catch (RuntimeException failure) {
+            downloadStarted = false;
+            transientStatus = new DownloadStatus(Phase.ERROR, 0, describe(failure));
+        }
     }
 
     private static void downloadAndInstall() throws Exception {
@@ -139,55 +199,70 @@ public final class LanguageModelPack {
             transientStatus = new DownloadStatus(Phase.ERROR, 0, "NO_CONTEXT");
             return;
         }
-        File archive = new File(parent, "language-models." + VERSION + ".zip.part");
-        OkHttpClient client = new OkHttpClient.Builder().build();
+        downloadAndInstall(parent, BuildConfig.LANGUAGE_MODEL_PACK_SHA256,
+                LanguageModelPack::downloadArchive, File::renameTo);
+    }
+
+    static OkHttpClient downloadClient() {
+        // Includes redirects, connection setup, and the entire response body, even if a
+        // server keeps sending a few bytes often enough to avoid the read timeout.
+        return new OkHttpClient.Builder().callTimeout(DOWNLOAD_TIMEOUT_NANOS, TimeUnit.NANOSECONDS).build();
+    }
+
+    private static void downloadArchive(File archive) throws IOException {
         Request request = new Request.Builder().url(BuildConfig.LANGUAGE_MODEL_PACK_URL).build();
-        Response response = client.newCall(request).execute();
-        try {
+        try (Response response = downloadClient().newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) {
-                transientStatus = new DownloadStatus(Phase.ERROR, 0, "HTTP_" + response.code());
-                return;
+                throw new IOException("HTTP_" + response.code());
             }
             long total = response.body().contentLength();
+            if (total > MAX_DOWNLOAD_BYTES) throw new IOException("DOWNLOAD_LIMIT");
             try (InputStream in = response.body().byteStream();
                  OutputStream out = new BufferedOutputStream(new FileOutputStream(archive))) {
                 copy(in, out, total);
             }
-        } finally {
-            response.close();
         }
-        if (!BuildConfig.LANGUAGE_MODEL_PACK_SHA256.equalsIgnoreCase(sha256(archive))) {
-            archive.delete();
-            transientStatus = new DownloadStatus(Phase.ERROR, 0, "SHA256");
-            return;
-        }
+    }
 
+    static void downloadAndInstall(File parent, String expectedSha256, Downloader downloader,
+                                   Renamer renamer) throws Exception {
+        File archive = new File(parent, "language-models." + VERSION + ".zip.part");
         File root = new File(parent, "language-models-" + VERSION);
         File staging = new File(parent, root.getName() + ".partial");
-        deleteRecursively(staging);
-        if (!staging.mkdirs()) {
-            transientStatus = new DownloadStatus(Phase.ERROR, 0, "STAGING");
-            return;
-        }
-        unzip(archive, staging);
-        archive.delete();
-        for (String required : REQUIRED) {
-            if (!new File(staging, required).isFile()) {
-                deleteRecursively(staging);
-                transientStatus = new DownloadStatus(Phase.ERROR, 0, "MISSING_FILE");
-                return;
+        File previous = new File(parent, root.getName() + ".previous");
+        try {
+            // A killed process can leave temporary files or a parked root. Restore the
+            // latter before retrying; never discard the only surviving install.
+            deleteRecursively(archive);
+            deleteRecursively(staging);
+            if (previous.exists()) {
+                if (!root.exists()) {
+                    if (!renamer.rename(previous, root)) throw new IOException("RECOVERY");
+                } else if (!isReady(root)) {
+                    throw new IOException("RECOVERY");
+                }
+                if (previous.exists()) deleteRecursively(previous);
             }
-        }
-        if (!new File(staging, READY).createNewFile()) {
-            deleteRecursively(staging);
-            transientStatus = new DownloadStatus(Phase.ERROR, 0, "READY_FILE");
-            return;
-        }
-        deleteRecursively(root);
-        if (!staging.renameTo(root)) {
-            deleteRecursively(staging);
-            transientStatus = new DownloadStatus(Phase.ERROR, 0, "RENAME");
-            return;
+            if (!isReady(root)) {
+                checkInterrupted();
+                downloader.download(archive);
+                if (!expectedSha256.equalsIgnoreCase(sha256(archive))) throw new IOException("SHA256");
+                if (!staging.mkdirs()) throw new IOException("STAGING");
+                // Only the pinned, trusted archive reaches extraction.
+                unzip(archive, staging);
+                for (String required : REQUIRED) {
+                    if (!new File(staging, required).isFile()) throw new IOException("MISSING_FILE");
+                }
+                if (!new File(staging, READY).createNewFile()) throw new IOException("READY_FILE");
+                checkInterrupted();
+                // A ready root is normally skipped by prefetch. Keep one that became
+                // ready during the download too; this is recovery, not an update system.
+                if (!isReady(root)) activate(staging, root, previous, renamer);
+            }
+            removeRetired(parent);
+        } finally {
+            try { deleteRecursively(archive); }
+            finally { deleteRecursively(staging); }
         }
         transientStatus = new DownloadStatus(Phase.READY, 100, "");
         JapaneseReadingEngine.shared().trimMemory();
@@ -196,22 +271,64 @@ public final class LanguageModelPack {
         if (listener != null) listener.run();
     }
 
+    private static void removeRetired(File parent) {
+        for (String version : RETIRED_VERSIONS) {
+            try {
+                deleteRecursively(new File(parent, "language-models-" + version));
+            } catch (IOException ignored) {
+                // A leftover old root costs storage only; the next install retries.
+            }
+        }
+    }
+
+    private static void activate(File staging, File root, File previous, Renamer renamer) throws IOException {
+        boolean parked = root.exists();
+        if (parked && !renamer.rename(root, previous)) throw new IOException("RENAME");
+        boolean activated = false;
+        try {
+            checkInterrupted();
+            if (!renamer.rename(staging, root)) throw new IOException("RENAME");
+            activated = true;
+        } finally {
+            if (!activated && parked && !renamer.rename(previous, root)) throw new IOException("RECOVERY");
+        }
+        if (parked) deleteRecursively(previous);
+    }
+
     private static void unzip(File archive, File destination) throws IOException {
+        unzip(archive, destination, MAX_EXPANDED_BYTES, MAX_ENTRIES);
+    }
+
+    static void unzip(File archive, File destination, long byteLimit, int entryLimit) throws IOException {
         try (ZipInputStream zip = new ZipInputStream(
                 new BufferedInputStream(new FileInputStream(archive)))) {
             ZipEntry entry;
             byte[] buffer = new byte[BUFFER_SIZE];
+            long expanded = 0;
+            int entries = 0;
+            checkInterrupted();
             while ((entry = zip.getNextEntry()) != null) {
-                if (entry.isDirectory()) continue;
+                checkInterrupted();
+                if (++entries > entryLimit) throw new IOException("ENTRY_LIMIT");
                 File output = safeChild(destination, entry.getName());
                 if (output == null) throw new IOException("invalid model path");
-                File parent = output.getParentFile();
-                if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
-                    throw new IOException("cannot create model directory");
+                if (entry.getSize() > byteLimit - expanded) throw new IOException("EXPANDED_LIMIT");
+                if (!entry.isDirectory()) {
+                    File parent = output.getParentFile();
+                    if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                        throw new IOException("cannot create model directory");
+                    }
                 }
-                try (OutputStream out = new BufferedOutputStream(new FileOutputStream(output))) {
+                try (OutputStream out = entry.isDirectory() ? null
+                        : new BufferedOutputStream(new FileOutputStream(output))) {
                     int read;
-                    while ((read = zip.read(buffer)) != -1) out.write(buffer, 0, read);
+                    while ((read = zip.read(buffer)) != -1) {
+                        checkInterrupted();
+                        if (read > byteLimit - expanded) throw new IOException("EXPANDED_LIMIT");
+                        expanded += read;
+                        // Directory payloads also consume the expanded-byte budget.
+                        if (out != null) out.write(buffer, 0, read);
+                    }
                 }
             }
         }
@@ -250,7 +367,10 @@ public final class LanguageModelPack {
         try (InputStream in = new BufferedInputStream(new FileInputStream(file))) {
             byte[] buffer = new byte[BUFFER_SIZE];
             int read;
-            while ((read = in.read(buffer)) != -1) digest.update(buffer, 0, read);
+            while ((read = in.read(buffer)) != -1) {
+                checkInterrupted();
+                digest.update(buffer, 0, read);
+            }
         }
         StringBuilder out = new StringBuilder(64);
         for (byte value : digest.digest()) out.append(String.format("%02x", value));
@@ -258,10 +378,21 @@ public final class LanguageModelPack {
     }
 
     private static void copy(InputStream in, OutputStream out, long totalBytes) throws IOException {
+        copy(in, out, totalBytes, MAX_DOWNLOAD_BYTES, DOWNLOAD_TIMEOUT_NANOS, System::nanoTime);
+    }
+
+    static void copy(InputStream in, OutputStream out, long totalBytes, long byteLimit,
+                     long timeoutNanos, LongSupplier clock) throws IOException {
+        if (totalBytes > byteLimit) throw new IOException("DOWNLOAD_LIMIT");
+        long started = clock.getAsLong();
         byte[] buffer = new byte[BUFFER_SIZE];
         long readTotal = 0;
-        int read;
-        while ((read = in.read(buffer)) != -1) {
+        while (true) {
+            checkDownloadTime(started, timeoutNanos, clock);
+            int read = in.read(buffer);
+            checkDownloadTime(started, timeoutNanos, clock);
+            if (read == -1) return;
+            if (read > byteLimit - readTotal) throw new IOException("DOWNLOAD_LIMIT");
             out.write(buffer, 0, read);
             readTotal += read;
             if (totalBytes > 0) {
@@ -269,6 +400,16 @@ public final class LanguageModelPack {
                 transientStatus = new DownloadStatus(Phase.DOWNLOADING, progress, "");
             }
         }
+    }
+
+    private static void checkDownloadTime(long started, long timeoutNanos, LongSupplier clock)
+            throws InterruptedIOException {
+        checkInterrupted();
+        if (clock.getAsLong() - started >= timeoutNanos) throw new InterruptedIOException("DOWNLOAD_TIMEOUT");
+    }
+
+    private static void checkInterrupted() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("interrupted model install");
     }
 
     private static String describe(Throwable failure) {
@@ -291,13 +432,14 @@ public final class LanguageModelPack {
         files.add("kuromoji/tokenInfoPartOfSpeechMap.bin");
         files.add("kuromoji/tokenInfoTargetMap.bin");
         files.add("kuromoji/unknownDictionary.bin");
+        files.addAll(MandarinReader.packPaths());
         return files;
     }
 
-    private static void deleteRecursively(File file) {
+    private static void deleteRecursively(File file) throws IOException {
         if (file == null || !file.exists()) return;
         File[] children = file.listFiles();
         if (children != null) for (File child : children) deleteRecursively(child);
-        file.delete();
+        if (!file.delete()) throw new IOException("cannot remove " + file.getName());
     }
 }

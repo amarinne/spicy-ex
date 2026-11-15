@@ -21,9 +21,6 @@ import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
  */
 public final class QqSongRanker {
 
-    /** How many distinct hits the caller should be willing to try word-level lyrics on. */
-    public static final int MAX_WORD_LYRIC_ATTEMPTS = 3;
-
     private QqSongRanker() {
     }
 
