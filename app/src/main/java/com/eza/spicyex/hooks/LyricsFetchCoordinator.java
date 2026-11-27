@@ -70,6 +70,7 @@ final class LyricsFetchCoordinator {
             SpotifyTrack track,
             int generation,
             com.eza.spicyex.lyrics.catalog.AcquisitionScope scope,
+            boolean foreground,
             NativeSpicyLyricsHook.LyricsResultCallback callback
     ) {
         Diagnostics.event("lyrics_fetch", "request_started",
@@ -97,11 +98,12 @@ final class LyricsFetchCoordinator {
         boolean appleEnabled = scope != null && scope.allows(
                 com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId.APPLE);
         Subscriber subscriber = subscribe(operationKey,
-                CatalogRequestIdentity.upgradeExpected(authorized != null, appleEnabled), callback);
+                CatalogRequestIdentity.upgradeExpected(authorized != null, appleEnabled),
+                foreground, callback);
         if (subscriber.replay != null) notifySuccess(callback, subscriber.replay);
         if (subscriber.joined) return;
         InFlightFetch operation = subscriber.operation;
-        LyricsRepository repository = repository();
+        LyricsRepository repository = repository(operation);
         String accessToken = authorized == null ? "" : authorized.token();
         final boolean requestSendToken = sendToken;
         final String requestAccessToken = accessToken;
@@ -123,12 +125,19 @@ final class LyricsFetchCoordinator {
     void fetchCatalogSource(Context context, SpotifyTrack track, int generation,
                             com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source,
                             NativeSpicyLyricsHook.LyricsResultCallback callback) {
-        fetchCatalogSource(context, track, generation, source, false, callback);
+        fetchCatalogSource(context, track, generation, source, false, true, callback);
     }
 
     void fetchCatalogSource(Context context, SpotifyTrack track, int generation,
                             com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source,
                             boolean explicitAccessCheck, NativeSpicyLyricsHook.LyricsResultCallback callback) {
+        fetchCatalogSource(context, track, generation, source, explicitAccessCheck, true, callback);
+    }
+
+    void fetchCatalogSource(Context context, SpotifyTrack track, int generation,
+                            com.eza.spicyex.lyrics.catalog.CatalogSource.SourceId source,
+                            boolean explicitAccessCheck, boolean foreground,
+                            NativeSpicyLyricsHook.LyricsResultCallback callback) {
         com.eza.spicyex.lyrics.session.LyricsSourcePreferences.Source repositorySource =
                 repositorySource(source);
         boolean karaokeOriginalLyrics = com.eza.spicyex.lyrics.catalog.CatalogPolicy.read(context)
@@ -144,11 +153,11 @@ final class LyricsFetchCoordinator {
             if (callback != null) notifyError(callback, "Unknown lyrics source");
             return;
         }
-        Subscriber subscriber = subscribe(key, false, callback);
+        Subscriber subscriber = subscribe(key, false, foreground, callback);
         if (subscriber.replay != null) notifySuccess(callback, subscriber.replay);
         if (subscriber.joined) return;
         final InFlightFetch started = subscriber.operation;
-        LyricsRepository repository = repository();
+        LyricsRepository repository = repository(started);
         LyricsRepository.ResultCallback resultCallback = delivery(started);
         started.fetchFuture = NativeRuntime.LYRICS_IO.submit(() -> {
                 if (explicitAccessCheck && repositorySource
@@ -159,8 +168,9 @@ final class LyricsFetchCoordinator {
         });
     }
 
-    private LyricsRepository repository() {
-        return new LyricsRepository(http, lyricsParser, nativeLyricsSource, NativeRuntime.LYRICS_IO);
+    private LyricsRepository repository(InFlightFetch operation) {
+        return new LyricsRepository(http, lyricsParser, nativeLyricsSource, NativeRuntime.LYRICS_IO,
+                () -> operation.reportDiagnostics);
     }
 
     private LyricsRepository.ResultCallback delivery(InFlightFetch operation) {
@@ -176,7 +186,7 @@ final class LyricsFetchCoordinator {
     }
 
     /** Registers a subscriber, replaying the last result when the operation already finished. */
-    private Subscriber subscribe(String key, boolean upgradeExpected,
+    private Subscriber subscribe(String key, boolean upgradeExpected, boolean foreground,
                                  NativeSpicyLyricsHook.LyricsResultCallback callback) {
         InFlightFetch operation;
         LyricsDocument replay = null;
@@ -192,6 +202,7 @@ final class LyricsFetchCoordinator {
                 operation.callbacks.add(callback);
                 inFlight.put(key, operation);
             }
+            if (foreground) operation.reportDiagnostics = true;
         }
         return new Subscriber(operation, replay, joined);
     }
@@ -369,6 +380,7 @@ final class LyricsFetchCoordinator {
         final String key;
         final boolean networkUpgradeExpected;
         final List<NativeSpicyLyricsHook.LyricsResultCallback> callbacks = new ArrayList<>();
+        volatile boolean reportDiagnostics;
         LyricsDocument latest;
         boolean latestWasBaseline;
         ScheduledFuture<?> expiry;

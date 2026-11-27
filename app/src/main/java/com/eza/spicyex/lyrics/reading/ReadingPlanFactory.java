@@ -25,6 +25,65 @@ import com.eza.spicyex.lyrics.reading.ReadingModels.TextRange;
 public final class ReadingPlanFactory {
     private ReadingPlanFactory() {}
 
+    /** Whole-line phonetic resolution precedes projection onto provider timing spans. */
+    public static RenderPlan zhuyin(LyricsLine line,
+            List<com.eza.spicyex.lyrics.language.ZhuyinResolver.Part> parts) {
+        String display = com.eza.spicyex.lyrics.language.ZhuyinResolver.join(parts);
+        if (display.equals(line.text)) return null;
+        if (line.syllables == null || line.syllables.isEmpty()) return lineFallback(line, display, "local");
+        List<SourceSpan> spans = new ArrayList<>();
+        for (int index = 0; index < line.syllables.size(); index++) {
+            SyllableSegment seg = line.syllables.get(index);
+            if (seg == null) return lineFallback(line, display, "local");
+            spans.add(new SourceSpan(spanId(seg, index), seg.sourceText, seg.text, seg.startMs, seg.endMs,
+                    seg.providerPartOfWord, null));
+        }
+        ParsedLine parsed = new ParsedLine("line-" + line.startMs + "-" + line.endMs, line.text, spans,
+                null, ParagraphProvenance.UNAVAILABLE, Collections.emptyMap());
+        CanonicalLine canonical = new DefaultCanonicalLineBuilder().build(parsed);
+        // Provider normalization must not silently turn original UTF-16 ranges into different coordinates.
+        if (!canonical.text.equals(line.text)) return lineFallback(line, display, "local");
+        int count = canonical.spanMappings.size();
+        int[] groups = new int[count];
+        for (int i = 0; i < count; i++) groups[i] = i;
+        int[] owners = new int[parts.size()];
+        for (int p = 0; p < parts.size(); p++) {
+            com.eza.spicyex.lyrics.language.ZhuyinResolver.Part part = parts.get(p);
+            int start = line.text.codePointCount(0, part.start);
+            int end = line.text.codePointCount(0, part.end);
+            int first = -1, last = -1;
+            for (int i = 0; i < count; i++) {
+                TextRange range = canonical.spanMappings.get(i).canonicalRange;
+                if (range.startCp < end && range.endCp > start) {
+                    if (first < 0) first = i;
+                    last = i;
+                }
+            }
+            if (first < 0) first = p > 0 ? owners[p - 1] : 0;
+            owners[p] = first;
+            // A resolved syllable crossing chunks has one display owner and shared timing identity.
+            if (last > first) {
+                int group = groups[first];
+                for (int i = first; i <= last; i++) {
+                    int old = groups[i];
+                    for (int j = 0; j < count; j++) if (groups[j] == old) groups[j] = group;
+                }
+            }
+        }
+        StringBuilder[] output = new StringBuilder[count];
+        for (int i = 0; i < count; i++) output[i] = new StringBuilder();
+        for (int p = 0; p < parts.size(); p++) output[groups[owners[p]]].append(parts.get(p).text);
+        List<ReadingUnit> units = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            CanonicalSpanMapping mapping = canonical.spanMappings.get(i);
+            units.add(new ReadingUnit(mapping.canonicalRange, output[i].toString(),
+                    ReadingUnitKind.TRANSFORMED, "zhuyin-" + groups[i], Collections.singletonList(mapping.spanId)));
+        }
+        RenderPlan plan = new DefaultRenderPlanBuilder().build(parsed, canonical, Collections.singletonList(
+                new ReadingAnnotation("Zhuyin", "mandarin", ReadingProvenance.LOCAL, units)));
+        return validAuthoritativePlan(plan, display) ? plan : lineFallback(line, display, "local");
+    }
+
     public static RenderPlan korean(LyricsLine line, KoreanDisplayMode mode) {
         if (line == null || mode == KoreanDisplayMode.OFF) return null;
         List<SourceSpan> spans = new ArrayList<>();

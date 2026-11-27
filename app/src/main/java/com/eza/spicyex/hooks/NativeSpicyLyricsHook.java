@@ -163,6 +163,11 @@ public class NativeSpicyLyricsHook extends SpotifyHook implements LyricsHost {
     }
 
     @Override
+    public String prefetchStatus() {
+        return lyricsSessionManager.prefetchStatus();
+    }
+
+    @Override
     public boolean skipToNextTrack() {
         return playbackBridge.skipToNextTrack();
     }

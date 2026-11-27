@@ -170,7 +170,8 @@ public final class AiModelProbe {
         if (result.finish == AiFinishReason.SAFETY) return Result.failed("finish:safety", trace);
         if (result.finish == AiFinishReason.LENGTH) return Result.failed("finish:length", trace);
         try {
-            AiResponseValidator.validate(AiResponseReader.readItems(result.rawText), items,
+            AiResponseValidator.validate(AiTextWire.readItems(result.rawText, items,
+                    LayerKind.MEANING), items,
                     LayerKind.MEANING, "en");
             return Result.success(trace);
         } catch (AiProtocolException invalid) {

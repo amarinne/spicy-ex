@@ -48,6 +48,7 @@ public final class PanelDialog {
     private final ScrollView scroll;
     private final PanelSurface surface;
     private ImageButton closeButton;
+    private boolean fillHeight;
 
     public PanelDialog(Context context, String title) {
         this.context = context;
@@ -285,6 +286,87 @@ public final class PanelDialog {
 
     /** A text field styled like the panel's own inputs. */
     public EditText field(boolean secret, String initial) {
+        EditText field = styledField(secret, initial);
+        add(field);
+        return field;
+    }
+
+    /**
+     * A search field pinned between the header and the scrolling body, so it stays in reach while
+     * a long list scrolls under it.
+     */
+    public EditText pinnedSearch(String hint) {
+        EditText field = styledField(false, "");
+        field.setHint(hint);
+        field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        field.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        field.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        root.addView(field, root.indexOfChild(scroll), matchWrap(10));
+        return field;
+    }
+
+    /**
+     * Keeps the card at its full height, so a list that filters or loads in place does not resize
+     * the card under the user's finger.
+     */
+    public PanelDialog fillHeight() {
+        fillHeight = true;
+        return this;
+    }
+
+    /**
+     * A choice with an optional detail line and a check when selected. Tapping it dismisses the
+     * dialog first and then runs {@code onPick}.
+     */
+    public View choiceRow(String title, String detail, boolean selected, final Runnable onPick) {
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(48));
+        row.setPadding(dp(14), dp(8), dp(10), dp(8));
+        row.setBackground(ripple(rounded(selected ? COL_FIELD : 0x00000000,
+                selected ? COL_CARD_BORDER : 0x00000000, 14)));
+        row.setSelected(selected);
+        row.setFocusable(true);
+
+        LinearLayout labels = new LinearLayout(context);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView name = text(title, 15f, selected ? COL_ACCENT : COL_TITLE);
+        name.setTag("title");
+        labels.addView(name);
+        TextView sub = text(detail, 12f, COL_SUMMARY);
+        sub.setTag("detail");
+        sub.setVisibility(detail == null || detail.isEmpty() ? View.GONE : View.VISIBLE);
+        labels.addView(sub);
+        row.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        if (selected) {
+            ImageView check = new ImageView(context);
+            check.setImageDrawable(new ActionIconDrawable(ActionIconDrawable.Kind.CHECK,
+                    COL_ACCENT, density()));
+            check.setPadding(dp(5), dp(5), dp(5), dp(5));
+            check.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            row.addView(check, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        }
+        row.setOnClickListener(v -> dismissThen(onPick));
+        body.addView(row, matchWrap(2));
+        return row;
+    }
+
+    /** Sets a {@link #choiceRow}'s lines in place. A null title is kept; an empty detail hides. */
+    public static void setChoiceLines(View row, String title, String detail) {
+        if (row == null) return;
+        View name = row.findViewWithTag("title");
+        if (title != null && name instanceof TextView) ((TextView) name).setText(title);
+        View sub = row.findViewWithTag("detail");
+        if (!(sub instanceof TextView)) return;
+        ((TextView) sub).setText(detail == null ? "" : detail);
+        sub.setVisibility(detail == null || detail.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private EditText styledField(boolean secret, String initial) {
         EditText field = new EditText(context);
         field.setSingleLine(true);
         field.setText(initial == null ? "" : initial);
@@ -300,7 +382,6 @@ public final class PanelDialog {
         } else {
             field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         }
-        add(field);
         return field;
     }
 
@@ -437,6 +518,8 @@ public final class PanelDialog {
         public ActionIconDrawable.Kind icon;
         /** Dimmed and not tappable, with the reason carried in {@link #suffix}. */
         public boolean unavailable;
+        /** Visually separates an option from the preceding choices. */
+        public boolean separatorBefore;
 
         private Option(String value, String label) {
             this.value = value == null ? "" : value;
@@ -448,7 +531,7 @@ public final class PanelDialog {
         }
     }
 
-    private static final class OptionRow {
+    public final class OptionRow {
         final LinearLayout row;
         final ImageView dot;
         final TextView label;
@@ -461,6 +544,13 @@ public final class PanelDialog {
             this.label = label;
             this.icon = icon;
             this.option = option;
+        }
+
+        public void update(String text, boolean selected, boolean enabled) {
+            label.setText(text);
+            row.setEnabled(enabled);
+            row.setAlpha(enabled ? 1f : 0.48f);
+            paintOptionHighlight(this, selected);
         }
     }
 
@@ -505,35 +595,54 @@ public final class PanelDialog {
                                          final java.util.function.Consumer<String> onSave,
                                          String saveLabel, String cancelLabel) {
         if (options == null) return this;
-        final ConfirmingSelection selection = new ConfirmingSelection(initialValue);
-        final java.util.List<OptionRow> rows = new java.util.ArrayList<>();
-        final TextView save = button(saveLabel, true, () -> {
+        ConfirmingSelection selection = new ConfirmingSelection(initialValue);
+        TextView save = button(saveLabel, true, () -> {
             if (onSave != null) onSave.accept(selection.pending());
         });
-        for (final Option option : options) {
-            final OptionRow built = optionRow(option);
-            rows.add(built);
-            paintOptionHighlight(built, selection.isHighlighted(option.value));
-            if (!option.unavailable) {
-                built.row.setOnClickListener(v -> {
-                    selection.select(option.value);
-                    for (OptionRow other : rows) {
-                        paintOptionHighlight(other, selection.isHighlighted(other.option.value));
-                    }
-                    applySaveArmed(save, selection);
-                });
-            }
-            add(built.row);
-        }
-        applySaveArmed(save, selection);
+        addChoices(options, selection, () -> applySaveArmed(save, selection.isDirty()));
+        applySaveArmed(save, false);
         root.addView(save, matchWrap(8));
         secondary(cancelLabel, null);
         return this;
     }
 
-    /** Save is an armed action: enabled only while pending differs from stored. */
-    private static void applySaveArmed(TextView save, ConfirmingSelection selection) {
-        boolean dirty = selection.isDirty();
+    /** A vertical group of dialog choices with an independent pending selection. */
+    public void choiceGroup(java.util.List<Option> options, String initialValue,
+                            java.util.function.Consumer<String> onChange) {
+        ConfirmingSelection selection = new ConfirmingSelection(initialValue);
+        addChoices(options, selection, () -> onChange.accept(selection.pending()));
+    }
+
+    private void addChoices(java.util.List<Option> options, ConfirmingSelection selection,
+                            Runnable onChange) {
+        java.util.List<OptionRow> rows = new java.util.ArrayList<>();
+        for (Option option : options) {
+            if (option.separatorBefore) divider();
+            OptionRow row = optionRow(option);
+            rows.add(row);
+            paintOptionHighlight(row, selection.isHighlighted(option.value));
+            if (!option.unavailable) {
+                row.row.setOnClickListener(v -> {
+                    selection.select(option.value);
+                    for (OptionRow other : rows) {
+                        paintOptionHighlight(other, selection.isHighlighted(other.option.value));
+                    }
+                    onChange.run();
+                });
+            }
+            add(row.row);
+        }
+    }
+
+    /** One row in a list whose selected value or label can change while the dialog is open. */
+    public OptionRow choiceRow(String label, Runnable onTap) {
+        OptionRow row = optionRow(Option.of("", label));
+        row.row.setOnClickListener(v -> onTap.run());
+        add(row.row);
+        return row;
+    }
+
+    public static void applySaveArmed(TextView save, boolean dirty) {
         save.setEnabled(dirty);
         save.setAlpha(dirty ? 1f : 0.45f);
     }
@@ -584,6 +693,19 @@ public final class PanelDialog {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         add(row);
         return this;
+    }
+
+    public void divider() {
+        View divider = new View(context);
+        divider.setMinimumHeight(dp(1));
+        divider.setBackgroundColor(COL_CARD_BORDER);
+        add(divider);
+    }
+
+    public void sectionHeading(String label) {
+        TextView heading = text(label, 14, COL_SUMMARY);
+        if (android.os.Build.VERSION.SDK_INT >= 28) heading.setAccessibilityHeading(true);
+        add(heading);
     }
 
     /** The confirming action. Accent-filled, like the panel's primary buttons. */
@@ -638,7 +760,7 @@ public final class PanelDialog {
 
         root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        boolean constrained = root.getMeasuredHeight() > maxHeight;
+        boolean constrained = fillHeight || root.getMeasuredHeight() > maxHeight;
         scrollParams.height = constrained ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT;
         scrollParams.weight = constrained ? 1f : 0f;
         scroll.setLayoutParams(scrollParams);

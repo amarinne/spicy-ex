@@ -155,6 +155,7 @@
     <string name="settings_label_lyrics_cyrillic_mode">キリル文字読み</string>
     <string name="settings_label_lyrics_cyrillic_keep_signs">キリル文字記号を保持</string>
     <string name="settings_label_lyrics_translation_enabled">リリックスを翻訳</string>
+    <string name="settings_label_prefetch_next_song">次の曲の歌詞を事前に準備</string>
     <string name="settings_label_lyrics_translation_target">対象言語</string>
     <string name="settings_label_lyrics_translation_brightness">翻訳明度</string>
 
@@ -219,6 +220,17 @@
     <string name="settings_option_wordtranslit">単語ごとの音字</string>
     <string name="settings_option_rrpronunciation">発音に従う (RR)</string>
     <string name="settings_option_vnpronunciation">発音に従う (VN)</string>
+    <string name="settings_option_lyrics_cyrillic_mode_auto">自動検出</string>
+    <string name="settings_reading_mandarin">標準中国語</string>
+    <string name="settings_reading_cantonese">広東語</string>
+    <string name="settings_reading_chinese">中国語</string>
+    <string name="settings_reading_cyrillic">キリル文字</string>
+    <string name="settings_reading_style">読み方</string>
+    <string name="settings_reading_standard">標準</string>
+    <string name="settings_reading_pack_required">言語パックが必要</string>
+    <string name="settings_reading_hidden">非表示</string>
+    <string name="settings_option_lyrics_chinese_mode_auto">自動検出</string>
+    <string name="settings_option_lyrics_chinese_mode_auto_eza">自動検出 eza式</string>
     <string name="settings_option_russian">ロシア語</string>
     <string name="settings_option_ukrainian">ウクライナ語</string>
     <string name="settings_option_disabled">無効</string>
@@ -295,6 +307,8 @@
     <string name="settings_ai_model">モデル</string>
     <string name="settings_action_download_language_models">言語モデルをダウンロード</string>
     <string name="settings_ai_model_absent">未選択</string>
+    <string name="settings_ai_model_search">モデルを検索、またはIDを入力</string>
+    <string name="settings_ai_model_use_typed">「%1$s」を使用</string>
     <string name="settings_ai_action_set_key">API キーを設定</string>
     <string name="settings_ai_action_edit_key">API キーを編集</string>
     <string name="settings_ai_action_delete_key">API キーを削除</string>
@@ -314,7 +328,7 @@
     <string name="settings_ai_key_saved">API キー保存済み</string>
     <string name="settings_ai_key_rejected">キー未保存</string>
     <string name="settings_label_ai_provider">プロバイダ</string>
-    <string name="settings_label_ai_deepseek_reasoning">DeepSeek 推論</string>
+    <string name="settings_label_ai_deepseek_reasoning">推論</string>
     <string name="settings_option_ai_deepseek_reasoning_off">オフ</string>
     <string name="settings_option_ai_deepseek_reasoning_low">低</string>
     <string name="settings_option_ai_deepseek_reasoning_high">高</string>
@@ -375,6 +389,7 @@
     <string name="lyrics_ai_failed_attempt_payload">失敗した試行ペイロード</string>
     <string name="lyrics_ai_previous_failed_attempt">前の失敗した試行</string>
     <string name="lyrics_ai_reasoning_trace">推論トレース</string>
+    <string name="lyrics_ai_no_reasoning_trace">推論トレースなし</string>
     <string name="lyrics_ai_translation_prompt_help">モデルが保持、修正、または強調する内容を説明するプリセットを選択するか、カスタムプロンプトを編集します。</string>
     <string name="lyrics_ai_pronunciation_prompt_help">発音、方言、綴り、または混合言語ガイダンス用のカスタムプロンプトを選択または編集します。</string>
     <string name="lyrics_ai_prompt_preset">プロンプトプリセット</string>

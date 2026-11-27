@@ -497,7 +497,15 @@ public final class LyricsSoundLane {
                     if (!run.accepts(currentGuard, id, generation, snapshot)) return;
                     result = AiSoundRun.run(context, settings, run.base, snapshot, baseline,
                             orthography, settings.soundUsesBaseline(), allowProviderRequest, signal,
-                            monitor, opts, explicitAiRequest);
+                            monitor, opts, explicitAiRequest,
+                            partial -> post(run, id, generation, snapshot, currentGuard, () -> {
+                                java.util.List<SoundEntry> partialComposed = AiSoundOverlay.compose(
+                                        fallback == null ? null : entriesOf(fallback),
+                                        entriesOf(partial));
+                                SoundArtifact overlay = new SoundArtifact(run.canonicalDigest(),
+                                        partial.configId, partial.provenance, partialComposed, true);
+                                callback.rerender(LayerKind.SOUND, overlay, "AI reading arriving");
+                            }));
                     if (result != null && result.outcome != null
                             && result.outcome.kind == AiRunOutcome.Kind.FAILED) {
                         aiFailure = result.outcome.failure;

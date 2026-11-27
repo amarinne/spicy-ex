@@ -48,6 +48,13 @@ public final class AiGeminiProvider implements AiProvider {
 
         AiHttp.Result postJson(String url, Map<String, String> headers, String json,
                                AiSignal signal, int maxBytes);
+
+        /** Streaming post; a transport without streaming answers with an ordinary body. */
+        default AiHttp.Result postJsonStream(String url, Map<String, String> headers, String json,
+                                             AiSignal signal, int maxBytes,
+                                             AiHttp.StreamSink sink) {
+            return postJson(url, headers, json, signal, maxBytes);
+        }
     }
 
     /** Reads the key at call time, so a rotation takes effect without rebuilding the provider. */
@@ -56,17 +63,7 @@ public final class AiGeminiProvider implements AiProvider {
     }
 
     public AiGeminiProvider(CredentialSource credential) {
-        this(credential, new Transport() {
-            @Override public AiHttp.Result get(String url, Map<String, String> headers,
-                                               AiSignal signal, int maxBytes) {
-                return AiHttp.get(url, headers, signal, maxBytes);
-            }
-
-            @Override public AiHttp.Result postJson(String url, Map<String, String> headers,
-                                                    String json, AiSignal signal, int maxBytes) {
-                return AiHttp.postJson(url, headers, json, signal, maxBytes);
-            }
-        });
+        this(credential, AiTransports.live());
     }
 
     public AiGeminiProvider(CredentialSource credential, Transport transport) {
@@ -152,6 +149,12 @@ public final class AiGeminiProvider implements AiProvider {
     @Override
     public AiProviderResult generateChunk(AiProviderRequest request, AiProviderConfig config,
                                           AiSignal signal) {
+        return generateChunk(request, config, signal, null);
+    }
+
+    @Override
+    public AiProviderResult generateChunk(AiProviderRequest request, AiProviderConfig config,
+                                          AiSignal signal, StreamListener listener) {
         if (signal != null) signal.throwIfAborted();
         String key = secret();
         if (key.isEmpty()) return AiProviderResult.failed(AiProviderFailure.auth());
@@ -159,10 +162,15 @@ public final class AiGeminiProvider implements AiProvider {
             return AiProviderResult.failed(AiProviderFailure.modelUnavailable());
         }
 
-        String url = BASE_URL + "/models/" + config.model.name + ":generateContent";
-        AiHttp.Result result = transport.postJson(url, headers(key),
-                bodyOf(request, config), signal, AiContract.MAX_RESPONSE_BYTES);
+        String url = BASE_URL + "/models/" + config.model.name
+                + ":streamGenerateContent?alt=sse";
+        StreamAccumulator stream = new StreamAccumulator(listener);
+        AiHttp.Result result = transport.postJsonStream(url, headers(key),
+                bodyOf(request, config), signal, AiContract.MAX_RESPONSE_BODY_BYTES, stream);
         if (!result.ok()) return AiProviderResult.failed(failureOf(result));
+        com.eza.spicyex.xposed.XpLog.log("[SpotifyPlusAiStream] provider=gemini streamed="
+                + result.streamed + " " + stream.summary());
+        if (result.streamed) return stream.result(result.bytes);
 
         JsonObject body = objectOf(result.body);
         if (body == null) return AiProviderResult.failed(AiProviderFailure.protocol("not_json"));
@@ -177,6 +185,94 @@ public final class AiGeminiProvider implements AiProvider {
         AiFinishReason finish = finishOf(stringOf(candidate, "finishReason"));
         return AiProviderResult.ok(partsOf(candidate, false), partsOf(candidate, true),
                 usageOf(body), finish, result.bytes);
+    }
+
+    /**
+     * Folds Gemini's {@code :streamGenerateContent?alt=sse} events into the same result a single
+     * {@code :generateContent} body gives, while notifying the listener on each finished line or
+     * JSON item and on growing thought traces.
+     */
+    private static final class StreamAccumulator implements AiHttp.StreamSink {
+        private static final int REASONING_LIMIT =
+                AiContract.MAX_RESPONSE_BODY_BYTES - AiContract.MAX_RESPONSE_BYTES;
+        private final StreamListener listener;
+        private final StringBuilder text = new StringBuilder();
+        private final StringBuilder reasoning = new StringBuilder();
+        private String finish = "";
+        private JsonObject usage;
+        private boolean sawCandidate;
+        private boolean oversized;
+        private long textBytes;
+        private int notifiedReasoning;
+
+        private final long startedAtMs = System.currentTimeMillis();
+        private long firstEventMs = -1L;
+        private long firstContentMs = -1L;
+        private long lastContentMs = -1L;
+        private int events;
+        private int lineNotices;
+
+        StreamAccumulator(StreamListener listener) {
+            this.listener = listener;
+        }
+
+        String summary() {
+            return "events=" + events + " firstEventMs=" + firstEventMs
+                    + " firstContentMs=" + firstContentMs + " lastContentMs=" + lastContentMs
+                    + " lineNotices=" + lineNotices + " textChars=" + text.length()
+                    + " reasoningChars=" + reasoning.length();
+        }
+
+        @Override public void onData(String data) {
+            long now = System.currentTimeMillis() - startedAtMs;
+            events++;
+            if (firstEventMs < 0) firstEventMs = now;
+            JsonObject event = objectOf(data);
+            if (event == null) return;
+            if (event.has("usageMetadata") && event.get("usageMetadata").isJsonObject()) {
+                usage = event;
+            }
+            JsonObject candidate = firstCandidate(event);
+            if (candidate == null) return;
+            sawCandidate = true;
+            String reason = stringOf(candidate, "finishReason");
+            if (!reason.isEmpty()) finish = reason;
+            String piece = partsOf(candidate, false);
+            if (!piece.isEmpty() && !oversized) {
+                if (firstContentMs < 0) firstContentMs = now;
+                lastContentMs = now;
+                text.append(piece);
+                textBytes += AiText.utf8Bytes(piece);
+                if (textBytes > AiContract.MAX_RESPONSE_BYTES) {
+                    oversized = true;
+                } else if (listener != null && (piece.indexOf('\n') >= 0 || piece.indexOf('}') >= 0)) {
+                    lineNotices++;
+                    listener.onText(text.toString());
+                }
+            }
+            String thought = partsOf(candidate, true);
+            if (!thought.isEmpty() && reasoning.length() < REASONING_LIMIT) {
+                reasoning.append(thought);
+                if (listener != null && reasoning.length() - notifiedReasoning >= 512) {
+                    notifiedReasoning = reasoning.length();
+                    listener.onReasoning(reasoning.toString());
+                }
+            }
+        }
+
+        AiProviderResult result(long bytes) {
+            if (oversized) return AiProviderResult.failed(AiProviderFailure.oversized(bytes));
+            if (!sawCandidate) {
+                return AiProviderResult.failed(AiProviderFailure.protocol("no_candidate"));
+            }
+            if (finish.isEmpty()) {
+                return AiProviderResult.failed(AiProviderFailure.deliveryUnknown(
+                        AiProviderFailure.Cause.NETWORK, 0).withHttp(0, "stream_ended"));
+            }
+            return AiProviderResult.ok(text.toString(), reasoning.toString(),
+                    usage == null ? AiUsage.UNREPORTED : usageOf(usage),
+                    finishOf(finish), bytes);
+        }
     }
 
     @Override
@@ -200,7 +296,7 @@ public final class AiGeminiProvider implements AiProvider {
         systemInstruction.add("parts", systemParts);
 
         JsonObject userPart = new JsonObject();
-        userPart.addProperty("text", request.toJson());
+        userPart.addProperty("text", AiTextWire.userTurn(request, config.layer));
         JsonArray userParts = new JsonArray();
         userParts.add(userPart);
         JsonObject content = new JsonObject();
@@ -212,8 +308,10 @@ public final class AiGeminiProvider implements AiProvider {
         JsonObject generationConfig = new JsonObject();
         generationConfig.addProperty("temperature", config.temperature);
         generationConfig.addProperty("maxOutputTokens", config.maxOutputTokens);
-        generationConfig.addProperty("responseMimeType", "application/json");
-        generationConfig.add("responseSchema", responseSchema());
+        if (!AiTextWire.usesText(config.layer)) {
+            generationConfig.addProperty("responseMimeType", "application/json");
+            generationConfig.add("responseSchema", responseSchema());
+        }
 
         JsonObject body = new JsonObject();
         body.add("systemInstruction", systemInstruction);
@@ -340,6 +438,11 @@ public final class AiGeminiProvider implements AiProvider {
     private static AiProviderFailure failureOf(AiHttp.Result result) {
         if (result.failure != null) return result.failure;
         int status = result.status;
+        return classify(status, result).withHttp(status,
+                AiProviderFailure.errorToken(result.body));
+    }
+
+    private static AiProviderFailure classify(int status, AiHttp.Result result) {
         if (status == 401 || status == 403) return AiProviderFailure.auth();
         // An invalid key arrives as a 400 with reason API_KEY_INVALID, not a 401. Without this
         // a mistyped key reports as "request rejected" and sends the owner to debug the model
@@ -353,6 +456,9 @@ public final class AiGeminiProvider implements AiProvider {
         // burns attempts against a wall.
         if (status == 400 && result.body.contains("RESOURCE_EXHAUSTED")) {
             return AiProviderFailure.quota();
+        }
+        if (status == 503 || status == 529) {
+            return AiProviderFailure.rateLimited(result.retryAfterMs);
         }
         if (status >= 500) {
             return AiProviderFailure.deliveryUnknown(AiProviderFailure.Cause.SERVER, status);

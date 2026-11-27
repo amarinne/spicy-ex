@@ -207,7 +207,7 @@ public class LyricsFetchCoordinatorDeliveryIsolationBehaviorTest {
         context.file(SpotifyPlusConfig.PREFS_NAME).edit().putBoolean(Settings.SEND_TOKEN.key, false).apply();
         String key = KEY + "|scope=none|spicyOrgEpoch=" + SpicyOrgKeyStore.epoch(context)
                 + "|orgAccessRevision=" + SpicyOrgAccessState.revision(context);
-        assertReplay(key, () -> coordinator.fetchLyrics(context, track(), 0, null, replayThrower));
+        assertReplay(key, () -> coordinator.fetchLyrics(context, track(), 0, null, true, replayThrower));
     }
 
     private ThrowingCallback replayThrower;

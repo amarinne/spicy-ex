@@ -8,15 +8,12 @@ import android.widget.TextView;
 import com.eza.spicyex.ui.GlossyToggle;
 import com.eza.spicyex.Settings;
 import com.eza.spicyex.SettingsStore;
-import com.eza.spicyex.lyrics.language.MandarinReadings;
-import com.eza.spicyex.settings.values.ChineseMode;
 import com.eza.spicyex.settings.SettingsWriter;
 import com.eza.spicyex.settings.registry.ControlSpec;
 import com.eza.spicyex.ui.SettingsUiStrings;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.ActionIconDrawable.Kind;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -101,17 +98,6 @@ public final class SettingRowFactory {
     public void selectorRow(LinearLayout content, final Settings.StringSetting setting) {
         if (setting == Settings.CACHE_SIZE) {
             selectorRow(content, setting, Settings.CACHE_SIZE.allowedValues, host.cacheSizeSummary());
-            return;
-        }
-        if (setting == Settings.CHINESE_MODE && !MandarinReadings.available()) {
-            // Mandarin eza式 reads from the language model pack; offer it once the pack is installed.
-            List<String> values = new ArrayList<>(setting.allowedValues);
-            values.remove(ChineseMode.PINYIN_EZA.storedLabel());
-            // A stored eza式 choice shows Standard Pinyin until then, so name what is shown.
-            String stored = host.store().get(setting);
-            String summary = ChineseMode.PINYIN_EZA.storedLabel().equals(stored)
-                    ? host.labelFor(setting, ChineseMode.PINYIN.storedLabel()) : null;
-            selectorRow(content, setting, values, summary);
             return;
         }
         selectorRow(content, setting, setting.allowedValues, null);

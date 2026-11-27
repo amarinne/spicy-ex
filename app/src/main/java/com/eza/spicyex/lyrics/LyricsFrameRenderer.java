@@ -329,7 +329,7 @@ public final class LyricsFrameRenderer {
                                     config.spotlight,
                                     config.glowBlurEnabled,
                                     wordBounceEnabled(config, line),
-                                    !config.appleStyle,
+                                    false,
                                     liftMotion(config),
                                     individualWordBounce(config),
                                     config.appleLift,
@@ -342,7 +342,7 @@ public final class LyricsFrameRenderer {
                     } else {
                             LyricsAnimationApplier.resetSyllables(
                                     line, styleSink, wordBounceEnabled(config, line),
-                                    liftBounce(config), individualWordBounce(config));
+                                    liftMotion(config), individualWordBounce(config));
                     }
                 } else if (line.words != null && !line.words.isEmpty()
                         && wordGradientRoute == WordGradientRoute.CONTINUOUS_BLOCK
@@ -373,7 +373,7 @@ public final class LyricsFrameRenderer {
                                 config.spotlight,
                                 config.glowBlurEnabled,
                                 wordBounceEnabled(config, line),
-                                !config.appleStyle,
+                                false,
                                 liftMotion(config),
                                 individualWordBounce(config),
                                 config.appleLift,
@@ -383,11 +383,11 @@ public final class LyricsFrameRenderer {
                     if (config.lineSyncFillWord() || config.lineSyncFillSentence()) {
                         resetNearbySyllables(
                                 line, i, activeIndex, styleSink, wordBounceEnabled(config, line),
-                                liftBounce(config), individualWordBounce(config));
+                                liftMotion(config), individualWordBounce(config));
                     } else {
                         LyricsAnimationApplier.resetSyllables(
                                 line, styleSink, wordBounceEnabled(config, line),
-                                liftBounce(config), individualWordBounce(config));
+                                liftMotion(config), individualWordBounce(config));
                     }
                 }
             }
@@ -446,11 +446,11 @@ public final class LyricsFrameRenderer {
     }
 
     /** Lift curve source: shared Lift bounce style, or Apple lift owning motion in Apple style. */
-    private boolean liftMotion(LyricsRenderConfig config) {
+    static boolean liftMotion(LyricsRenderConfig config) {
         return liftBounce(config) || (config != null && config.appleLift);
     }
 
-    private boolean liftBounce(LyricsRenderConfig config) {
+    private static boolean liftBounce(LyricsRenderConfig config) {
         return config != null && config.wordBounceStyle != WordBounceStyle.APPLE_LIFT
                 && config.wordBounceStyle.isLift();
     }

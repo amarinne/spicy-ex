@@ -119,12 +119,13 @@ public final class LyricsRowMountController {
         int measuredHeightPx = LyricsLineViewState.measuredHeightPx(line);
         if (measuredHeightPx > 0) return measuredHeightPx;
         int estimate = estimatedBaseHeightPx;
-        boolean hasPlannedReading = line.readingRenderPlan != null
-                && !LyricUtils.isBlank(line.readingRenderPlan.joinedDisplayText);
-        if (!line.bgLine && showRomanization && (hasPlannedReading || !LyricUtils.isBlank(line.romanizedText))) {
+        String reading = !line.bgLine && showRomanization ? LyricsRowViewFactory.displayReading(line) : "";
+        if (!LyricUtils.isBlank(reading)) {
             estimate += secondaryExtraHeightPx;
         }
-        if (!line.bgLine && showTranslation && !LyricUtils.isBlank(line.translatedText)) estimate += secondaryExtraHeightPx;
+        String translation = !line.bgLine && showTranslation
+                ? LyricsRowViewFactory.displayTranslation(line, reading) : "";
+        if (!LyricUtils.isBlank(translation)) estimate += secondaryExtraHeightPx;
         return estimate;
     }
 

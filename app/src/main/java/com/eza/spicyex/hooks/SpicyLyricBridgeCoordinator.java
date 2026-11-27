@@ -279,9 +279,20 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
         state.putString("artist", safe(track.artist, 512));
         state.putString("album", safe(track.album, 512));
         state.putString("imageId", safe(track.imageId, 512));
+        String secondaryModeValue = preferences.getString(
+                Settings.LIVE_CARD_SECONDARY_MODE.key, Settings.LIVE_CARD_SECONDARY_MODE.defaultValue);
+        com.eza.spicyex.settings.values.SecondaryTextMode secondaryMode =
+                com.eza.spicyex.settings.values.StoredValues.fromStored(
+                        com.eza.spicyex.settings.values.SecondaryTextMode.class, secondaryModeValue);
+        String reading = line == null || line.dotLine ? ""
+                : com.eza.spicyex.lyrics.SecondaryDisplayText.reading(line);
+        String translated = line == null || line.dotLine ? ""
+                : secondaryMode.showsTransliteration() && secondaryMode.showsTranslation()
+                ? com.eza.spicyex.lyrics.SecondaryDisplayText.translation(line, reading)
+                : com.eza.spicyex.lyrics.SecondaryDisplayText.translation(line);
         state.putString("line", line == null || line.dotLine ? "" : safe(line.text, 8192));
-        state.putString("romanizedLine", line == null || line.dotLine ? "" : safe(readingText(line), 8192));
-        state.putString("translatedLine", line == null || line.dotLine ? "" : safe(line.translatedText, 8192));
+        state.putString("romanizedLine", safe(reading, 8192));
+        state.putString("translatedLine", safe(translated, 8192));
         state.putInt("lineIndex", lineIndex);
         state.putLong("positionMs", positionMs);
         state.putLong("durationMs", durationMs);
@@ -294,8 +305,7 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
                 Settings.LIVE_CARD_TEXT_SIZE.key, Settings.LIVE_CARD_TEXT_SIZE.defaultValue));
         state.putInt("liveCardTextSizeCustom", preferences.getInt(
                 Settings.LIVE_CARD_TEXT_SIZE_CUSTOM.key, Settings.LIVE_CARD_TEXT_SIZE_CUSTOM.defaultValue));
-        state.putString("liveCardSecondaryMode", preferences.getString(
-                Settings.LIVE_CARD_SECONDARY_MODE.key, Settings.LIVE_CARD_SECONDARY_MODE.defaultValue));
+        state.putString("liveCardSecondaryMode", secondaryModeValue);
         state.putString("liveCardAnimation", preferences.getString(
                 Settings.LIVE_CARD_ANIMATION.key, Settings.LIVE_CARD_ANIMATION.defaultValue));
         state.putString("liveCardGlow", preferences.getString(
@@ -326,10 +336,5 @@ final class SpicyLyricBridgeCoordinator implements LyricsSessionManager.Listener
     private static String safe(String value, int maxLength) {
         if (value == null) return "";
         return value.length() <= maxLength ? value : value.substring(0, maxLength);
-    }
-
-    private static String readingText(AppliedLine line) {
-        String planned = line.readingRenderPlan == null ? "" : line.readingRenderPlan.joinedDisplayText;
-        return planned == null || planned.trim().isEmpty() ? line.romanizedText : planned;
     }
 }

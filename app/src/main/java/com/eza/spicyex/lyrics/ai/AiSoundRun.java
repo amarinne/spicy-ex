@@ -78,6 +78,15 @@ public final class AiSoundRun {
                              LyricsDocument document, SoundArtifact existing, String orthography,
                              boolean layered, boolean allowProviderRequest, AiSignal signal,
                              AiRunMonitor monitor, RomanizationOptions opts, boolean explicitRetry) {
+        return run(context, settings, base, document, existing, orthography, layered,
+                allowProviderRequest, signal, monitor, opts, explicitRetry, null);
+    }
+
+    public static Result run(Context context, AiSettings settings, CanonicalBase base,
+                             LyricsDocument document, SoundArtifact existing, String orthography,
+                             boolean layered, boolean allowProviderRequest, AiSignal signal,
+                             AiRunMonitor monitor, RomanizationOptions opts, boolean explicitRetry,
+                             java.util.function.Consumer<SoundArtifact> onPartial) {
         if (settings == null || base == null || base.rows.isEmpty()) {
             return new Result(null, AiRunOutcome.nothingToDo());
         }
@@ -124,7 +133,7 @@ public final class AiSoundRun {
         args.store = AiRecordStores.forRun(context, document);
         args.rows = rows;
         args.signal = signal;
-        args.monitor = monitor;
+        args.monitor = withPartials(monitor, onPartial, base, config, orthography);
         args.useBaseline = layered;
         // The runner still reads the paid store first. A missing/deleted credential therefore
         // keeps exact reuse available, but can never fall through into a live request.
@@ -205,5 +214,37 @@ public final class AiSoundRun {
                         AiIdentity.promptContractId(LayerKind.SOUND, config.configId),
                         config.modelName, System.currentTimeMillis()),
                 entries, !record.isComplete());
+    }
+
+    private static AiRunMonitor withPartials(final AiRunMonitor monitor,
+                                             final java.util.function.Consumer<SoundArtifact> onPartial,
+                                             final CanonicalBase base, final AiRunConfig config,
+                                             final String orthography) {
+        if (monitor == null || onPartial == null) return monitor;
+        final Map<String, String> shown = new java.util.LinkedHashMap<>();
+        return new AiRunMonitor() {
+            @Override public void onAttempt(String chunkId, int attempt, String wirePayload) {
+                monitor.onAttempt(chunkId, attempt, wirePayload);
+            }
+
+            @Override public void onReasoning(String chunkId, int attempt, String reasoning) {
+                monitor.onReasoning(chunkId, attempt, reasoning);
+            }
+
+            @Override public void onStreamProgress(String chunkId, int receivedRows, int totalRows) {
+                monitor.onStreamProgress(chunkId, receivedRows, totalRows);
+            }
+
+            @Override public void onPartialRows(String chunkId, List<AiResponseItem> partial) {
+                monitor.onPartialRows(chunkId, partial);
+                for (AiResponseItem item : partial) shown.put(item.id, item.text);
+                AiPaidRecord provisional = AiPaidRecord.begin(config, System.currentTimeMillis());
+                for (Map.Entry<String, String> row : shown.entrySet()) {
+                    provisional.putItem(row.getKey(), row.getValue());
+                }
+                SoundArtifact artifact = artifactOf(base, config, provisional, orthography);
+                if (artifact != null) onPartial.accept(artifact);
+            }
+        };
     }
 }

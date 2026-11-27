@@ -1,6 +1,7 @@
 package com.eza.spicyex.lyrics.processing;
 
 import com.eza.spicyex.lyrics.LyricUtils;
+import com.eza.spicyex.lyrics.language.ChineseAutoMode;
 import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
 import com.eza.spicyex.lyrics.language.SpicyRomanizer;
 
@@ -38,6 +39,7 @@ public final class LyricsTransliterationSession {
     private String chineseModeConfig;
     private String koreanModeConfig;
     private String cyrillicModeConfig;
+    private boolean chineseSwitchedThisReveal;
 
     public LyricsTransliterationSession(boolean showRomanization, LyricsRenderConfig config) {
         this(showRomanization, config, null, null, null, null);
@@ -115,12 +117,22 @@ public final class LyricsTransliterationSession {
 
     public CycleResult cycle(boolean japaneseDocument, boolean chineseDocument,
                              boolean koreanDocument, boolean cyrillicDocument) {
+        return cycle(japaneseDocument, chineseDocument, koreanDocument, cyrillicDocument, "", "");
+    }
+
+    /**
+     * @param trackId the current song, for a per-song Chinese choice under an auto mode
+     * @param shownChineseMode the concrete Chinese mode on screen for that song
+     */
+    public CycleResult cycle(boolean japaneseDocument, boolean chineseDocument,
+                             boolean koreanDocument, boolean cyrillicDocument,
+                             String trackId, String shownChineseMode) {
         if (japaneseDocument) {
             cycleJapanese();
             return new CycleResult(showRomanization, "jp transliteration mode");
         }
         if (chineseDocument) {
-            cycleChinese();
+            cycleChinese(trackId, shownChineseMode);
             return new CycleResult(showRomanization, "cn transliteration mode");
         }
         if (koreanDocument) {
@@ -171,12 +183,26 @@ public final class LyricsTransliterationSession {
         }
     }
 
-    private void cycleChinese() {
+    private void cycleChinese(String trackId, String shownChineseMode) {
         if ("cycle".equals(chineseModeConfig)) {
             CycleStep step = advanceCycle(showRomanization,
                     LyricsDisplayMode.normalizeChineseMode(chineseMode), CHINESE_CYCLE);
             showRomanization = step.visible;
             chineseMode = step.mode;
+        } else if (ChineseAutoMode.isAuto(chineseModeConfig)) {
+            // Auto: show the song's reading, then switch it for this song only, then hide.
+            if (!showRomanization) {
+                showRomanization = true;
+                chineseSwitchedThisReveal = false;
+            } else if (!chineseSwitchedThisReveal && !LyricUtils.isBlank(trackId)) {
+                boolean jyutping = LyricsDisplayMode.normalizeChineseMode(shownChineseMode)
+                        .startsWith(SpotifyPlusConfig.CHINESE_MODE_JYUTPING);
+                ChineseAutoMode.setOverride(trackId, jyutping
+                        ? SpotifyPlusConfig.CHINESE_MODE_PINYIN : SpotifyPlusConfig.CHINESE_MODE_JYUTPING);
+                chineseSwitchedThisReveal = true;
+            } else {
+                showRomanization = false;
+            }
         } else {
             showRomanization = !showRomanization;
         }

@@ -1,12 +1,12 @@
-package com.eza.spicyex.settings.editor;
+package com.eza.spicyex.ui;
 
 import java.util.Locale;
 
-/** Pure matching rule for the searchable background-effect pickers. */
-final class EffectPickerSearch {
-    private EffectPickerSearch() { }
+/** Pure matching rule for searchable pickers: every query token must appear in a candidate. */
+public final class PickerSearch {
+    private PickerSearch() { }
 
-    static boolean matches(String query, String... candidates) {
+    public static boolean matches(String query, String... candidates) {
         if (query == null || query.trim().isEmpty()) return true;
         String haystack = normalize(String.join(" ", candidates == null
                 ? new String[0] : candidates));

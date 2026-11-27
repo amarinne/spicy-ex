@@ -515,14 +515,14 @@ final class NowPlayingLyricController {
         if (lead == null || lead.sourceLine == null) return lead;
         StringBuilder text = new StringBuilder(lead.text == null ? "" : lead.text);
         StringBuilder romanized = new StringBuilder(LyricsRowViewFactory.displayReading(lead));
-        StringBuilder translated = new StringBuilder(lead.translatedText == null ? "" : lead.translatedText);
+        StringBuilder translated = new StringBuilder(LyricsRowViewFactory.displayTranslation(lead));
         StringBuilder key = new StringBuilder();
         for (AppliedLine background : activeBackgroundRows(cardDocument, lead, positionMs)) {
             if (key.length() > 0) key.append('');
             key.append(background.startMs).append(':').append(background.endMs).append(':').append(background.text);
             appendMiniPart(text, background.text);
             appendMiniPart(romanized, LyricsRowViewFactory.displayReading(background));
-            appendMiniPart(translated, background.translatedText);
+            appendMiniPart(translated, LyricsRowViewFactory.displayTranslation(background));
         }
         String backgroundKey = key.toString();
         if (backgroundKey.isEmpty()) return lead;
@@ -773,11 +773,26 @@ final class NowPlayingLyricController {
         String liveId = liveTrack == null ? "" : NativeLyricsUtils.trackIdFromUri(liveTrack.uri);
         if (!NowPlayingSessionGuard.matchesCurrentTrack(id, liveId, currentId)) return;
         int generation = snapshot.generation;
-        long revision = projectionRevision.incrementAndGet();
         final boolean replayRequired = authoritativeReplayRequired;
         LyricsRenderConfig fetchConfig = renderConfig;
-        RomanizationOptions fetchOptions = romanizationOptions();
         ChineseCharacterForm fetchCharacterForm = currentCharacterForm();
+        // Fast-path same-base derived updates (streamed AI lines, Google preview, reading gap
+        // fill) directly on the main thread so rapid partials never supersede each other in
+        // LYRICS_IO and drop before reaching the live card / artwork overlay.
+        if (!replayRequired && id.equals(loadedId) && cardDocument != null && artworkDocument != null
+                && cardDocument.chineseCharacterForm == fetchCharacterForm
+                && artworkDocument.chineseCharacterForm == fetchCharacterForm
+                && LyricsDocumentProcessor.sameCanonicalBase(cardDocument, doc)) {
+            projectionRevision.incrementAndGet();
+            LyricsDocument nextCardDocument = LyricsDocument.copyOf(doc);
+            if (nextCardDocument != null) {
+                nextCardDocument.chineseCharacterForm = fetchCharacterForm;
+                applyCharacterForm(nextCardDocument, fetchCharacterForm);
+                if (tryMergeMountedProjection(id, nextCardDocument, false)) return;
+            }
+        }
+        long revision = projectionRevision.incrementAndGet();
+        RomanizationOptions fetchOptions = romanizationOptions().forDocument(doc);
         NativeRuntime.LYRICS_IO.execute(() -> {
             try {
                 if (isProjectionStale(id, generation, revision)) return;
@@ -966,7 +981,7 @@ final class NowPlayingLyricController {
         // Synthetic sentence words do not share the source plan's span IDs, so the plan can exist
         // while this exact display segment still needs the local per-segment fallback.
         return LyricsLocalRomanizer.romanizeDisplaySegment(
-                romanizationOptions(), cardDocument, line, segment, fullText);
+                romanizationOptions().forDocument(cardDocument), cardDocument, line, segment, fullText);
     }
 
     private boolean isUnsyncedDocument(LyricsDocument doc) {

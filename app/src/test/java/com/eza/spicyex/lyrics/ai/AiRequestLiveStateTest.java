@@ -141,4 +141,19 @@ public class AiRequestLiveStateTest {
         assertEquals(AiRequestLiveState.Phase.FAILED, snapshot.current.phase);
         assertEquals(AiRequestLiveState.Phase.COMPLETE, snapshot.lastSettled.phase);
     }
+
+    @Test
+    public void aStreamedTraceReplacesItsOwnSectionInsteadOfRepeating() {
+        AiRequestLiveState.clearForTest();
+        com.eza.spicyex.lyrics.session.LayerKind layer =
+                com.eza.spicyex.lyrics.session.LayerKind.MEANING;
+        AiRequestLiveState.begin(layer, "digest", "run");
+        AiRequestLiveState.reasoning(layer, "digest", "run", "C0", 1, "first");
+        AiRequestLiveState.reasoning(layer, "digest", "run", "C0", 1, "first and more");
+        AiRequestLiveState.reasoning(layer, "digest", "run", "C0", 2, "retry");
+        String trace = AiRequestLiveState.snapshot(layer, "digest").current.reasoning;
+        org.junit.Assert.assertEquals("Attempt 1 \u00b7 C0\nfirst and more\n\n"
+                + "Attempt 2 \u00b7 C0\nretry", trace);
+        AiRequestLiveState.clearForTest();
+    }
 }

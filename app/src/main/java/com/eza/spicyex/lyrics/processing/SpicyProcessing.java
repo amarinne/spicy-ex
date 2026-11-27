@@ -5,6 +5,11 @@ import com.eza.spicyex.lyrics.language.SpicyTextDetection;
 import java.util.Locale;
 
 import com.eza.spicyex.lyrics.session.DetectionResult;
+import com.eza.spicyex.lyrics.LyricsLine;
+import com.eza.spicyex.lyrics.ai.AiLineClass;
+import com.eza.spicyex.lyrics.ai.AiLineClassifier;
+
+import java.util.List;
 
 import static com.eza.spicyex.lyrics.LyricUtils.isBlank;
 import static com.eza.spicyex.lyrics.LyricUtils.safe;
@@ -110,6 +115,67 @@ public final class SpicyProcessing {
         public boolean includesRomanization;
         public boolean includesTranslation;
         public boolean detectedChinese;
+    }
+
+    /**
+     * Fewest confidently non-target rows that justify an automatic AI request when no row is in a
+     * non-target script. One row is not enough: detector errors on short English rows ("I want
+     * you" as Walloon, "Boom, boom, boom" as Tswana) are common.
+     */
+    static final int AUTOMATIC_AI_MIN_FOREIGN_ROWS = 2;
+    /**
+     * Fewest non-target rows, as a share of the rows with a confident language. Derived from the
+     * X14 paid ledger (2026-11-19, 897 English-target songs): 2 rows and 10% skipped 251 of 339
+     * fully-copied English songs and lost 2 songs whose only foreign text was one phrase. The
+     * Google lane still translates those rows.
+     */
+    static final double AUTOMATIC_AI_MIN_FOREIGN_SHARE = 0.10;
+
+    /**
+     * Whether a document gives an automatic AI request real translation work.
+     *
+     * <p>The row gate treats an uncertain detection as work, which is right for Google but makes
+     * one {@code SCRIPT_ONLY} row send a whole English song to a paid model. This gate trusts only
+     * confident evidence: a row in a non-target script, or enough confidently non-target rows. A
+     * document with no confident detection at all (romanized lyrics) stays eligible. Ad-lib rows
+     * never count. Explicit requests do not use this gate.
+     */
+    public static boolean hasConfidentTranslationWork(List<LyricsLine> lines, String targetLang) {
+        if (lines == null || isBlank(targetLang)) return false;
+        String target = toIso2(targetLang);
+        int confident = 0;
+        int foreign = 0;
+        for (LyricsLine line : lines) {
+            if (line == null || line.interlude || isBlank(line.text)) continue;
+            String text = line.text.trim();
+            if (text.codePoints().noneMatch(Character::isLetter)) continue;
+            if (AiLineClassifier.classify(text) != AiLineClass.ORDINARY) continue;
+            if (hasObviousNonTargetScript(text, target)
+                    || isLatinTarget(target) && hasNonLatinLetter(text)) {
+                return true;
+            }
+            DetectionResult detection = line.detection;
+            if (detection == null || !detection.hasLanguage()) continue;
+            confident++;
+            if (!target.equalsIgnoreCase(detection.language)) foreign++;
+        }
+        if (confident == 0) return true;
+        return foreign >= AUTOMATIC_AI_MIN_FOREIGN_ROWS
+                && foreign >= AUTOMATIC_AI_MIN_FOREIGN_SHARE * confident;
+    }
+
+    private static boolean hasNonLatinLetter(String text) {
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            i += Character.charCount(cp);
+            if (!Character.isLetter(cp)) continue;
+            Character.UnicodeScript script = Character.UnicodeScript.of(cp);
+            if (script != Character.UnicodeScript.LATIN && script != Character.UnicodeScript.COMMON
+                    && script != Character.UnicodeScript.INHERITED) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean hasObviousNonTargetScript(String text, String targetLang) {

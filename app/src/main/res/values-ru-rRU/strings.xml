@@ -109,6 +109,7 @@
     <string name="settings_label_lyrics_cyrillic_mode">Кириллическое написание</string>
     <string name="settings_label_lyrics_cyrillic_keep_signs">Оставить мягкие / твёрдые знаки</string>
     <string name="settings_label_lyrics_translation_enabled">Переводить текст</string>
+    <string name="settings_label_prefetch_next_song">Предзагрузка текста следующей песни</string>
     <string name="settings_label_lyrics_translation_target">Язык</string>
     <string name="settings_label_lyrics_translation_brightness">Яркость перевода</string>
     <!-- Selector values. Stored values remain locale-independent. -->
@@ -171,6 +172,17 @@
     <string name="settings_option_wordtranslit">Транслитерация слово за словом</string>
     <string name="settings_option_rrpronunciation">Как в произношении (RR)</string>
     <string name="settings_option_vnpronunciation">Как в произношении (VN)</string>
+    <string name="settings_option_lyrics_cyrillic_mode_auto">Автоопределение</string>
+    <string name="settings_reading_mandarin">Мандаринский</string>
+    <string name="settings_reading_cantonese">Кантонский</string>
+    <string name="settings_reading_chinese">Китайский</string>
+    <string name="settings_reading_cyrillic">Кириллица</string>
+    <string name="settings_reading_style">Стиль чтения</string>
+    <string name="settings_reading_standard">Стандартный</string>
+    <string name="settings_reading_pack_required">Требуется языковой пакет</string>
+    <string name="settings_reading_hidden">Скрыто</string>
+    <string name="settings_option_lyrics_chinese_mode_auto">Автоопределение</string>
+    <string name="settings_option_lyrics_chinese_mode_auto_eza">Автоопределение eza式</string>
     <string name="settings_option_russian">Русский</string>
     <string name="settings_option_ukrainian">Украинский</string>
     <string name="settings_option_disabled">Отключен</string>

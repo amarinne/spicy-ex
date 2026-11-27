@@ -19,6 +19,12 @@ final class AiTransports {
                                                     String json, AiSignal signal, int maxBytes) {
                 return AiHttp.postJson(url, headers, json, signal, maxBytes);
             }
+
+            @Override public AiHttp.Result postJsonStream(String url, Map<String, String> headers,
+                                                          String json, AiSignal signal,
+                                                          int maxBytes, AiHttp.StreamSink sink) {
+                return AiHttp.postJsonStream(url, headers, json, signal, maxBytes, sink);
+            }
         };
     }
 }

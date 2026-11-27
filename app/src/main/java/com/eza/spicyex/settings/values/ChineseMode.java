@@ -11,6 +11,10 @@ public enum ChineseMode implements StoredValue {
     JYUTPING("jyutping"),
     PINYIN_EZA("pinyin-eza"),
     JYUTPING_EZA("jyutping-eza"),
+    /** Pinyin or Jyutping, guessed per song from the lyrics. */
+    AUTO("auto"),
+    /** Mandarin or Cantonese eza式, guessed per song from the lyrics. */
+    AUTO_EZA("auto-eza"),
     CYCLE("cycle");
 
     /** The value used when the stored label is unknown or absent. */

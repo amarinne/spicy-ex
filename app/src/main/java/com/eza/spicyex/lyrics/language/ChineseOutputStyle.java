@@ -7,7 +7,7 @@ public enum ChineseOutputStyle {
     CANONICAL("canonical"),
     EZA("eza");
 
-    /** Shared Mandarin/Cantonese eza式 policy revision. Cantonese rules stay unchanged. */
+    /** Shared Mandarin/Cantonese eza式 policy revision. Cantonese revision 2 adds JyutpingRomanizer.REVISION. */
     public static final String REVISION = "eza-2026-11-15.3";
     /** Korean VN pronunciation has its own eza revision and does not follow the Chinese one. */
     public static final String KOREAN_REVISION = "eza-2026-10-08.1";

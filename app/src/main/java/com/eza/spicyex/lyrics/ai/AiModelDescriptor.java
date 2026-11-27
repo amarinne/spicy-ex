@@ -19,6 +19,11 @@ public final class AiModelDescriptor extends AiModelLimits {
      * contract default. Measured per provider/model identity, persisted across process restarts.
      */
     public final int reasoningAllowanceTokens;
+    /**
+     * The upstream that serves this id, from a compatible {@code /models} {@code owned_by}; empty
+     * when absent. Display and search only: the stored selection stays {@link #name}.
+     */
+    public final String owner;
 
     public AiModelDescriptor(String name, String version, int inputTokenLimit, int outputTokenLimit,
                              List<String> supportedGenerationMethods) {
@@ -27,6 +32,13 @@ public final class AiModelDescriptor extends AiModelLimits {
 
     public AiModelDescriptor(String name, String version, int inputTokenLimit, int outputTokenLimit,
                              List<String> supportedGenerationMethods, int reasoningAllowanceTokens) {
+        this(name, version, inputTokenLimit, outputTokenLimit, supportedGenerationMethods,
+                reasoningAllowanceTokens, "");
+    }
+
+    public AiModelDescriptor(String name, String version, int inputTokenLimit, int outputTokenLimit,
+                             List<String> supportedGenerationMethods, int reasoningAllowanceTokens,
+                             String owner) {
         super(inputTokenLimit, outputTokenLimit);
         this.name = AiText.nz(name);
         this.version = AiText.nz(version);
@@ -34,5 +46,6 @@ public final class AiModelDescriptor extends AiModelLimits {
                 supportedGenerationMethods == null
                         ? Collections.<String>emptyList() : supportedGenerationMethods));
         this.reasoningAllowanceTokens = reasoningAllowanceTokens;
+        this.owner = AiText.trim(AiText.nz(owner));
     }
 }

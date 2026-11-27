@@ -18,6 +18,7 @@ public final class ReadingLanguagePolicy {
         }
         if (SpicyTextDetection.hasKana(text)) return "ja";
         if (SpicyTextDetection.itemKoreanTest(text)) return "ko";
+        if (ZhuyinResolver.contains(text)) return "zh";
         // Before detection, only explicit CJK metadata can route Han. A kana elsewhere in the
         // song is not sufficient; session context resolution is the only owner of that inference.
         String hint = SpicyProcessing.toIso2(sourceHint);

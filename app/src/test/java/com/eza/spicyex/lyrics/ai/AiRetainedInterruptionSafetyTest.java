@@ -217,8 +217,8 @@ public class AiRetainedInterruptionSafetyTest {
         assertEquals(AiFailureReason.RATE_LIMITED, held.chunk("C0").failure.reason);
         assertEquals(1, held.chunk("C0").attempts);
         assertEquals(0, held.chunk("C0").repairs);
-        assertTrue(held.usageEstimated);
-        assertEquals(8192, held.outputTokens);
+        assertFalse(held.usageEstimated);
+        assertEquals(0, held.outputTokens);
         assertEquals(1, ((FakeAiProvider) args.provider).calls.size());
     }
 

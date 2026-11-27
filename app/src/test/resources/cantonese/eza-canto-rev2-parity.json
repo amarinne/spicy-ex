@@ -1,0 +1,226 @@
+{
+ "schema": "cjk-labs.eza-canto-rev2-parity.v1",
+ "policy": "eza-2026-11-15.3/adapter-2026-11-18.5",
+ "reader": "to-jyutping@3.1.1 passage selection, OpenCC cn→t lookup for simplified passages",
+ "note": "Lines come from the owner's cached Spotify lyrics and crafted rows. Clients with another reading lexicon must match the syllables table and the rule rows exactly; line rows are exact only for to-jyutping clients.",
+ "syllables": [
+  {
+   "jyutping": "m4",
+   "eza": "ừm"
+  },
+  {
+   "jyutping": "m6",
+   "eza": "ựm"
+  },
+  {
+   "jyutping": "ng5",
+   "eza": "ửng"
+  },
+  {
+   "jyutping": "ng4",
+   "eza": "ừng"
+  },
+  {
+   "jyutping": "hm4",
+   "eza": "hừm"
+  },
+  {
+   "jyutping": "hng6",
+   "eza": "hựng"
+  },
+  {
+   "jyutping": "ngoi3",
+   "eza": "ngoi"
+  },
+  {
+   "jyutping": "ngaa3",
+   "eza": "nga"
+  },
+  {
+   "jyutping": "aa3",
+   "eza": "a"
+  },
+  {
+   "jyutping": "o2",
+   "eza": "ó"
+  },
+  {
+   "jyutping": "ngo5",
+   "eza": "ngỏ"
+  },
+  {
+   "jyutping": "nguk1",
+   "eza": "ngũc"
+  }
+ ],
+ "cases": [
+  {
+   "origin": "七友",
+   "source": "認命扮矮人的有太多個早有六個",
+   "jyutping": "jing6 meng6 baan6 ngai2 jan4 dik1 jau5 taai3 do1 go3 zou2 jau5 luk6 go3",
+   "eza": "yịng mẹng bạn ngáy yằn tĩc yảu thai tõ ko zóu yảu lục ko"
+  },
+  {
+   "origin": "陀飛輪",
+   "source": "回頭走天已暗",
+   "jyutping": "wui4 tau4 zau2 tin1 ji5 ngam3",
+   "eza": "wùi thàu záu thĩn yỉ ngăm"
+  },
+  {
+   "origin": "陀飛輪",
+   "source": "曾付出 幾多心跳",
+   "jyutping": "cang4 fu6 ceot1 gei2 do1 sam1 tiu3",
+   "eza": "tsằng fụ tsỡt kéi tõ sẵm thiu"
+  },
+  {
+   "origin": "陀飛輪",
+   "source": "人值得 命中減少幾秒 多買一隻錶",
+   "jyutping": "jan4 zik6 dak1 ming6 zung3 gaam2 siu2 gei2 miu5 do1 maai5 jat1 zek3 biu1",
+   "eza": "yằn zịc tẵc mịng zung kám síu kéi mỉu tõ mải yẵt zec bĩu"
+  },
+  {
+   "origin": "終身美麗",
+   "source": "記憶無論再輕 輕不過脈搏聲",
+   "jyutping": "gei3 jik1 mou4 leon6 zoi3 heng1 heng1 bat1 gwo3 mak6 bok3 sing1",
+   "eza": "kei yĩc mòu lợn zoi hẽng hẽng bẵt quo mặc boc sĩng"
+  },
+  {
+   "origin": "浮誇",
+   "source": "屋邨你住哪一座",
+   "jyutping": "nguk1 cyun1 nei5 zyu6 naa5 jat1 zo6",
+   "eza": "ngũc tsyũn nẻi zyụ nả yẵt zọ"
+  },
+  {
+   "origin": "浮誇",
+   "source": "很不安 怎去優雅",
+   "jyutping": "han2 bat1 ngon1 zam2 heoi3 jau1 ngaa5",
+   "eza": "hắn bẵt ngõn zắm hơi yãu ngả"
+  },
+  {
+   "origin": "浮誇",
+   "source": "搏人們看看我 算病態麼",
+   "jyutping": "bok3 jan4 mun4 hon3 hon3 ngo5 syun3 beng6 taai3 mo1",
+   "eza": "boc yằn mùn hon hon ngỏ syun bẹng thai mõ"
+  },
+  {
+   "origin": "取消資格",
+   "source": "寧願聽舊笑話 安慰可免則免",
+   "jyutping": "ning4 jyun2 teng1 gau6 siu3 waa2 ngon1 wai3 ho2 min5 zak1 min5",
+   "eza": "nìng yún thẽng kạu siu wá ngõn way hó mỉn zẵc mỉn"
+  },
+  {
+   "origin": "不需要挽留",
+   "source": "但系发现你已唔喺我嘅身边",
+   "jyutping": "daan6 hai6 faat3 jin6 nei5 ji5 m4 hai2 ngo5 ge3 san1 bin1",
+   "eza": "tạn hạy fat yịn nẻi yỉ ừm háy ngỏ ke sẵn bĩn"
+  },
+  {
+   "origin": "不需要挽留",
+   "source": "大脑神经清醒 原来只系一梦南柯",
+   "jyutping": "daai6 nou5 san4 ging1 cing1 sing2 jyun4 loi4 zi2 hai6 jat1 mung6 naam4 ngo1",
+   "eza": "tại nỏu sằn kĩng tsĩng síng yùn lòi zí hạy yẵt mụng nàm ngõ"
+  },
+  {
+   "origin": "明年今日",
+   "source": "即使你不愛",
+   "jyutping": "zik1 si2 nei5 bat1 ngoi3",
+   "eza": "zĩc sí nẻi bẵt ngoi"
+  },
+  {
+   "origin": "明年今日",
+   "source": "餘生都不會再悲哀",
+   "jyutping": "jyu4 sang1 dou1 bat1 wui5 zoi3 bei1 ngoi1",
+   "eza": "yù sẵng tõu bẵt wủi zoi bẽi ngõi"
+  },
+  {
+   "origin": "好心分手",
+   "source": "挨得過無限次 寂寞凌遲",
+   "jyutping": "ngaai1 dak1 gwo3 mou4 haan6 ci3 zik6 mok6 ling4 ci4",
+   "eza": "ngãi tẵc quo mòu hạn tsi zịc mọc lìng tsì"
+  },
+  {
+   "origin": "面具",
+   "source": "來化解一切壓力似失蹤",
+   "jyutping": "loi4 faa3 gaai2 jat1 cai3 ngaat3 lik6 ci5 sat1 zung1",
+   "eza": "lòi fa kái yẵt tsay ngat lịc tsỉ sẵt zũng"
+  },
+  {
+   "origin": "Children Song",
+   "source": "想笑就笑要嗌就嗌",
+   "jyutping": "soeng2 siu3 zau6 siu3 jiu3 ngaai3 zau6 ngaai3",
+   "eza": "sớong siu zạu siu yiu ngai zạu ngai"
+  },
+  {
+   "origin": "夕陽之歌",
+   "source": "啊 天生孤單的我心暗淡",
+   "jyutping": "aa3 tin1 saang1 gu1 daan1 dik1 ngo5 sam1 ngam3 daam6",
+   "eza": "a thĩn sãng kũ tãn tĩc ngỏ sẵm ngăm tạm"
+  },
+  {
+   "origin": "追",
+   "source": "原來早不缺少 哦只得你",
+   "jyutping": "jyun4 loi4 zou2 bat1 kyut3 siu2 o2 zi2 dak1 nei5",
+   "eza": "yùn lòi zóu bẵt khyut síu ó zí tẵc nẻi"
+  },
+  {
+   "origin": "祝君好",
+   "source": "只望停在遠處 祝君安好",
+   "jyutping": "zi2 mong6 ting4 zoi6 jyun5 cyu3 zuk1 gwan1 ngon1 hou2",
+   "eza": "zí mọng thìng zọi yủn tsyu zũc quẵn ngõn hóu"
+  },
+  {
+   "origin": "祝君好",
+   "source": "但我還是要啞口道別",
+   "jyutping": "daan6 ngo5 waan4 si6 jiu3 ngaa2 hau2 dou6 bit6",
+   "eza": "tạn ngỏ wàn sị yiu ngá háu tọu bịt"
+  },
+  {
+   "origin": "每天愛你多一些",
+   "source": "不願離開 只願留低",
+   "jyutping": "bat1 jyun6 lei4 hoi1 zi2 jyun6 lau4 dai1",
+   "eza": "bẵt yụn lèi hõi zí yụn làu tãy"
+  },
+  {
+   "origin": "囍帖街",
+   "source": "快要住滿烏鴉",
+   "jyutping": "faai3 jiu3 zyu6 mun5 wu1 ngaa1",
+   "eza": "fai yiu zyụ mủn wũ ngã"
+  },
+  {
+   "origin": "絕",
+   "source": "將戀愛絕後的標準答案",
+   "jyutping": "zoeng1 lyun2 ngoi3 zyut6 hau6 dik1 biu1 zeon2 daap3 ngon3",
+   "eza": "zỡong lyún ngoi zyụt hạu tĩc bĩu zớn tap ngon"
+  },
+  {
+   "origin": "小城大事",
+   "source": "無回憶的男人 就當偷厄與瞞騙",
+   "jyutping": "mou4 wui4 jik1 dik1 naam4 jan2 zau6 dong1 tau1 ngak1 jyu5 mun4 pin3",
+   "eza": "mòu wùi yĩc tĩc nàm yắn zạu tõng thãu ngẵc yủ mùn pin"
+  },
+  {
+   "origin": "crafted",
+   "source": "不愿离开 我听到 用钱",
+   "jyutping": "bat1 jyun6 lei4 hoi1 ngo5 teng1 dou3 jung6 cin2",
+   "eza": "bẵt yụn lèi hõi ngỏ thẽng tou yụng tsín"
+  },
+  {
+   "origin": "crafted",
+   "source": "唔該 五個 啊 我愛你 好聽啊",
+   "jyutping": "m4 goi1 ng5 go3 aa3 ngo5 ngoi3 nei5 hou2 teng1 aa3",
+   "eza": "ừm kõi ửng ko a ngỏ ngoi nẻi hóu thẽng a"
+  },
+  {
+   "origin": "crafted",
+   "source": "哎呀 唉 欸 喔 噢",
+   "jyutping": "ai1 jaa3 ai1 ei6 ak1 o1",
+   "eza": "ãy ya ãy ẹi ẵc õ"
+  },
+  {
+   "origin": "crafted",
+   "source": "誤會 覺悟 吳先生 呣",
+   "jyutping": "ng6 wui6 gok3 ng6 ng4 sin1 saang1 m2",
+   "eza": "ựng wụi koc ựng ừng sĩn sãng ứm"
+  }
+ ]
+}

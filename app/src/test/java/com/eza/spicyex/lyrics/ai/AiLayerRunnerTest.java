@@ -165,6 +165,48 @@ public class AiLayerRunnerTest {
     }
 
     @Test
+    public void aDeclinedFailureIsAskedAgainOnTheNextAutomaticRun() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        FakeAiProvider refused = new FakeAiProvider(FakeAiProvider.failure(
+                AiProviderFailure.rateLimited(null).withHttp(503, "")),
+                FakeAiProvider.failure(AiProviderFailure.rateLimited(null).withHttp(503, "")));
+        AiLayerRunner.Args first = args(rows(3), refused, store);
+        first.wait = (millis, signal) -> { };
+        AiRunOutcome failed = AiLayerRunner.run(first);
+        assertEquals(AiRunOutcome.Kind.FAILED, failed.kind);
+        assertEquals(0, store.peek(config()).outputTokens);
+
+        FakeAiProvider recovered = new FakeAiProvider();
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(3), recovered, store));
+
+        assertEquals(AiRunOutcome.Kind.COMPLETED, outcome.kind);
+        assertEquals(1, recovered.calls.size());
+    }
+
+    @Test
+    public void anUnknownDeliveryStillWaitsForAnExplicitRetry() {
+        FakeAiRecordStore store = new FakeAiRecordStore();
+        AiLayerRunner.run(args(rows(3), new FakeAiProvider(FakeAiProvider.failure(
+                AiProviderFailure.deliveryUnknown(AiProviderFailure.Cause.TIMEOUT, 0))), store));
+
+        FakeAiProvider forbidden = new FakeAiProvider();
+        AiRunOutcome outcome = AiLayerRunner.run(args(rows(3), forbidden, store));
+
+        assertEquals(AiRunOutcome.Kind.FAILED, outcome.kind);
+        assertEquals(0, forbidden.calls.size());
+    }
+
+    @Test
+    public void aLegacyStored503IsTreatedAsDeclined() {
+        assertTrue(AiLayerRunner.declinedBeforeGeneration(
+                new AiChunkFailure(AiFailureReason.DELIVERY_UNKNOWN, 503, "")));
+        assertFalse(AiLayerRunner.declinedBeforeGeneration(
+                new AiChunkFailure(AiFailureReason.DELIVERY_UNKNOWN, 524, "")));
+        assertFalse(AiLayerRunner.declinedBeforeGeneration(
+                new AiChunkFailure(AiFailureReason.TRUNCATED, 0, "")));
+    }
+
+    @Test
     public void aDocumentWithNothingToSendCostsNothingAndStoresNothing() {
         FakeAiRecordStore store = new FakeAiRecordStore();
         FakeAiProvider provider = new FakeAiProvider();
@@ -517,7 +559,8 @@ public class AiLayerRunnerTest {
         FakeAiProvider provider = new FakeAiProvider(new FakeAiProvider.Step() {
             @Override public AiProviderResult answer(AiProviderRequest request,
                                                      AiProviderConfig config, AiSignal signal) {
-                return AiProviderResult.failed(AiProviderFailure.quota());
+                return AiProviderResult.failed(AiProviderFailure.deliveryUnknown(
+                        AiProviderFailure.Cause.NETWORK, 0));
             }
         });
 

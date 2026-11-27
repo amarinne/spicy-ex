@@ -329,6 +329,8 @@ public final class LyricsShellSettings {
         String configured = safe(configuredMode);
         ChineseMode mode = StoredValues.fromStored(ChineseMode.class, configured);
         if (mode == ChineseMode.OFF) return "";
+        // Auto modes resolve per song where a document is known (ChineseAutoMode).
+        if (mode == ChineseMode.AUTO || mode == ChineseMode.AUTO_EZA) return mode.storedLabel();
         if (mode != ChineseMode.CYCLE) return LyricsDisplayMode.normalizeChineseMode(configured);
         String fallback = config == null
                 ? Settings.LAST_CHINESE_CYCLE_MODE.defaultValue

@@ -24,6 +24,11 @@ public class LyricsLine {
     public boolean interlude;
     public boolean oppositeAligned;
     /**
+     * True while an AI translation is running and this row still shows a placeholder (the Google
+     * preview or older output) that the run has not replaced yet. Display state only.
+     */
+    public boolean translationAiPending;
+    /**
      * Session-owned detection for this canonical row, shared by both render surfaces.
      *
      * <p>Display/pipeline input only: it is not canonical text and never persisted on the
@@ -48,6 +53,7 @@ public class LyricsLine {
         copy.endMs = source.endMs;
         copy.interlude = source.interlude;
         copy.oppositeAligned = source.oppositeAligned;
+        copy.translationAiPending = source.translationAiPending;
         for (SyllableSegment seg : source.syllables) copy.syllables.add(SyllableSegment.copyOf(seg));
         for (BackgroundLine bg : source.backgroundLines) copy.backgroundLines.add(BackgroundLine.copyOf(bg));
         return copy;

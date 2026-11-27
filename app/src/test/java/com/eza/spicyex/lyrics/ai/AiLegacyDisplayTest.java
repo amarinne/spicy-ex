@@ -125,6 +125,18 @@ public class AiLegacyDisplayTest {
         assertEquals(legacyPayload, AiPaidRecordCodec.encode(store.peek(legacyConfig())));
     }
 
+    @Test public void epochOneOutputStaysOnScreenAfterTheEpochTwoBump() {
+        seed(configFor(1));
+
+        AiMeaningRun.Result result = run(false, false);
+
+        assertEquals(AiRunOutcome.Kind.REUSED, result.outcome.kind);
+        assertTrue(result.hasArtifact());
+        assertTrue(result.legacy);
+        assertEquals(1, result.epoch);
+        assertEquals(0, providerCalls.get());
+    }
+
     @Test public void aRunThatMayNotBuyDoesNotResumeAPartialCurrentEpochRecord() {
         seed(legacyConfig());
         AiPaidRecord partial = AiPaidRecord.begin(currentConfig(), 3L);
@@ -368,31 +380,26 @@ public class AiLegacyDisplayTest {
     /** Answers the OpenAI-wire request with one accepted item per requested row. */
     private static String successBody(String wireBody) {
         JsonObject wire = JsonParser.parseString(wireBody).getAsJsonObject();
-        JsonObject request = null;
+        String request = null;
         if (wire.has("messages") && wire.get("messages").isJsonArray()) {
             for (JsonElement element : wire.getAsJsonArray("messages")) {
                 JsonObject message = element.getAsJsonObject();
                 if (message.has("role") && "user".equals(message.get("role").getAsString())) {
-                    request = JsonParser.parseString(
-                            message.get("content").getAsString()).getAsJsonObject();
+                    request = message.get("content").getAsString();
                     break;
                 }
             }
         }
         if (request == null) throw new AssertionError("unexpected provider request");
-        JsonArray answers = new JsonArray();
-        for (JsonElement element : request.getAsJsonArray("items")) {
-            JsonObject item = element.getAsJsonObject();
-            JsonObject answer = new JsonObject();
-            answer.addProperty("id", item.get("id").getAsString());
-            answer.addProperty("t", "AI " + item.get("s").getAsString());
-            answers.add(answer);
+        StringBuilder answers = new StringBuilder();
+        java.util.regex.Matcher line = java.util.regex.Pattern
+                .compile("(?m)^(\\d+)\\. (.*)$").matcher(request);
+        while (line.find()) {
+            answers.append(line.group(1)).append(". AI ").append(line.group(2)).append('\n');
         }
-        JsonObject payload = new JsonObject();
-        payload.add("items", answers);
         JsonObject message = new JsonObject();
         message.addProperty("role", "assistant");
-        message.addProperty("content", payload.toString());
+        message.addProperty("content", answers.toString());
         JsonObject choice = new JsonObject();
         choice.add("message", message);
         choice.addProperty("finish_reason", "stop");

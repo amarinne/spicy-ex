@@ -42,6 +42,43 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
         with:
+          # Only a trusted manual run seeds caches. Pull requests cannot write them.
           cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Run unit tests and assemble debug APK
-        run: ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest :app:assembleDebug
+        id: gates
+        shell: bash
+        run: |
+          started=$SECONDS
+          status=0
+          # Reuse compilation and dex outputs, but execute the full JVM suite each time.
+          ./gradlew --no-daemon --max-workers=2 --console=plain --build-cache \
+            :app:testDebugUnitTest --rerun :app:assembleDebug \
+            | tee "$RUNNER_TEMP/gradle-debug.log" || status=$?
+          {
+            echo '### Full JVM suite and debug APK'
+            echo "Gradle wall time: $((SECONDS - started)) seconds. Exit code: $status."
+            echo '```text'
+            tail -n 15 "$RUNNER_TEMP/gradle-debug.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Summarize fresh test results
+        if: ${{ !cancelled() && steps.gates.outcome == 'success' }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          files = sorted(Path('app/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          suites = [ET.parse(path).getroot() for path in files]
+          counts = {key: sum(int(suite.get(key, 0)) for suite in suites)
+                    for key in ('tests', 'skipped', 'failures', 'errors')}
+          executed = counts['tests'] - counts['skipped']
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f"\nExecuted {executed} tests in {len(files)} suites; "
+                            f"{counts['skipped']} skipped, {counts['failures']} failures, "
+                            f"{counts['errors']} errors.\n")
+          if executed <= 0 or counts['failures'] or counts['errors']:
+              raise SystemExit('Expected a nonempty, passing full JVM suite')
+          PY

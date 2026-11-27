@@ -84,6 +84,18 @@ public final class AiHttp {
             return new Result(status, body, bytes, null);
         }
 
+        static Result streamed(int status, long bytes) {
+            Result result = new Result(status, "", bytes, null);
+            result.streamed = true;
+            return result;
+        }
+
+        /**
+         * True when the body arrived as server-sent events and went to the sink; {@link #body}
+         * is then empty. False when the endpoint answered with an ordinary body.
+         */
+        public boolean streamed;
+
         static Result failed(AiProviderFailure failure) {
             return new Result(0, "", 0L, failure);
         }
@@ -139,6 +151,56 @@ public final class AiHttp {
         return execute(builder.build(), signal, maxResponseBytes, "post");
     }
 
+    /** Receives each server-sent event's {@code data} payload, in order. */
+    public interface StreamSink {
+        void onData(String data);
+    }
+
+    /**
+     * Raw byte bound for a streamed body. Every delta repeats a JSON envelope of a few hundred
+     * bytes, so the raw stream is far larger than the text it carries; the adapter bounds the
+     * accumulated text itself. This only stops a runaway stream from running forever.
+     */
+    static final long MAX_STREAM_BYTES = 64L * 1024L * 1024L;
+
+    /**
+     * Posts {@code json} and reads a server-sent event stream into {@code sink}.
+     *
+     * <p>Bytes keep flowing while the model works, so a gateway that drops a silent connection
+     * (one closed a 40-row call at exactly 60 s on 2026-11-19) sees a live one. A non-2xx answer,
+     * or an endpoint that ignores {@code stream} and returns an ordinary body, is read as
+     * {@link #postJson} would read it, bounded by {@code maxResponseBytes}.
+     */
+    public static Result postJsonStream(String url, Map<String, String> headers, String json,
+                                        AiSignal signal, int maxResponseBytes, StreamSink sink) {
+        Request.Builder builder = request(url, headers)
+                .header("Accept", "text/event-stream, application/json")
+                .post(RequestBody.create(AiText.nz(json).getBytes(StandardCharsets.UTF_8), JSON));
+        return execute(builder.build(), signal, maxResponseBytes, "stream", sink);
+    }
+
+    private static Result readStream(Response response, int maxBytes, StreamSink sink)
+            throws IOException {
+        ResponseBody body = response.body();
+        String type = body == null || body.contentType() == null
+                ? "" : body.contentType().toString().toLowerCase(java.util.Locale.ROOT);
+        if (sink == null || !response.isSuccessful() || !type.contains("text/event-stream")) {
+            return read(response, maxBytes);
+        }
+        BufferedSource source = body.source();
+        long bytes = 0L;
+        String line;
+        while ((line = source.readUtf8Line()) != null) {
+            bytes += line.length() + 1L;
+            if (bytes > MAX_STREAM_BYTES) return Result.failed(AiProviderFailure.oversized(bytes));
+            if (!line.startsWith("data:")) continue;
+            String data = line.substring(5).trim();
+            if (data.equals("[DONE]")) break;
+            if (!data.isEmpty()) sink.onData(data);
+        }
+        return Result.streamed(response.code(), bytes);
+    }
+
     private static Request.Builder request(String url, Map<String, String> headers) {
         Request.Builder builder = new Request.Builder().url(url);
         if (headers != null) {
@@ -151,6 +213,11 @@ public final class AiHttp {
 
     private static Result execute(Request request, AiSignal signal, int maxResponseBytes,
                                   String operation) {
+        return execute(request, signal, maxResponseBytes, operation, null);
+    }
+
+    private static Result execute(Request request, AiSignal signal, int maxResponseBytes,
+                                  String operation, StreamSink sink) {
         final Call call = client().newCall(request);
         AiSignal.Registration registration = signal == null ? null
                 : signal.onAbort(new Runnable() {
@@ -159,7 +226,8 @@ public final class AiHttp {
                     }
                 });
         try (Response response = call.execute()) {
-            Result result = read(response, maxResponseBytes);
+            Result result = sink == null ? read(response, maxResponseBytes)
+                    : readStream(response, maxResponseBytes, sink);
             result.retryAfterMs = retryAfterMs(response.header("Retry-After"));
             Diagnostics.event("Ai" + TAG, operation + ":" + result.status + ":" + result.bytes + "b");
             return result;

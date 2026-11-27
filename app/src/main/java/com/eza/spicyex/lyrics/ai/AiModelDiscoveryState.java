@@ -35,11 +35,6 @@ public final class AiModelDiscoveryState {
         return isCurrent(settings, attempt);
     }
 
-    /** Recheck when the picker is clicked: configuration can change after its list is displayed. */
-    public boolean canSelect(AiSettings settings, Attempt attempt) {
-        return isCurrent(settings, attempt) && attempt.finished && !attempt.signal.isAborted();
-    }
-
     private boolean isCurrent(AiSettings settings, Attempt attempt) {
         return attempt != null && attempt.revision == revision && settings != null
                 && settings.isEnabled() && attempt.snapshot.matches(settings);

@@ -24,6 +24,26 @@ public interface AiProvider {
     AiProviderResult generateChunk(AiProviderRequest request, AiProviderConfig config,
                                    AiSignal signal);
 
+    /** Receives a streamed call's accumulated text while it is still arriving. */
+    interface StreamListener {
+        /** The visible answer so far. Called again with the longer text as it grows. */
+        void onText(String textSoFar);
+
+        /** The reasoning trace so far, when the endpoint streams one. */
+        default void onReasoning(String reasoningSoFar) {
+        }
+    }
+
+    /**
+     * {@link #generateChunk(AiProviderRequest, AiProviderConfig, AiSignal)}, streaming partial
+     * text to {@code listener} where the adapter supports it. The returned result is the same
+     * either way; an adapter without streaming simply never calls the listener.
+     */
+    default AiProviderResult generateChunk(AiProviderRequest request, AiProviderConfig config,
+                                           AiSignal signal, StreamListener listener) {
+        return generateChunk(request, config, signal);
+    }
+
     /** Credential-free JSON body used by the live request monitor. */
     default String monitorPayload(AiProviderRequest request, AiProviderConfig config) {
         return request == null ? "" : request.toJson();

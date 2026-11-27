@@ -156,6 +156,7 @@
     <string name="settings_label_lyrics_cyrillic_mode">키릴 문자 발음 표기</string>
     <string name="settings_label_lyrics_cyrillic_keep_signs">연음·경음 부호 유지</string>
     <string name="settings_label_lyrics_translation_enabled">가사 번역</string>
+    <string name="settings_label_prefetch_next_song">다음 곡 가사 미리 준비</string>
     <string name="settings_label_lyrics_translation_target">번역할 언어</string>
     <string name="settings_label_lyrics_translation_brightness">번역 밝기</string>
 
@@ -220,6 +221,17 @@
     <string name="settings_option_wordtranslit">단어별 표기</string>
     <string name="settings_option_rrpronunciation">발음대로 (로마자)</string>
     <string name="settings_option_vnpronunciation">발음대로 (베트남식)</string>
+    <string name="settings_option_lyrics_cyrillic_mode_auto">자동 감지</string>
+    <string name="settings_reading_mandarin">표준 중국어</string>
+    <string name="settings_reading_cantonese">광둥어</string>
+    <string name="settings_reading_chinese">중국어</string>
+    <string name="settings_reading_cyrillic">키릴 문자</string>
+    <string name="settings_reading_style">읽기 방식</string>
+    <string name="settings_reading_standard">표준</string>
+    <string name="settings_reading_pack_required">언어 팩 필요</string>
+    <string name="settings_reading_hidden">숨김</string>
+    <string name="settings_option_lyrics_chinese_mode_auto">자동 감지</string>
+    <string name="settings_option_lyrics_chinese_mode_auto_eza">자동 감지 eza式</string>
     <string name="settings_option_russian">러시아어</string>
     <string name="settings_option_ukrainian">우크라이나어</string>
     <string name="settings_option_disabled">사용 안 함</string>
@@ -295,6 +307,8 @@
     <string name="settings_ai_key_absent">설정 안 됨</string>
     <string name="settings_ai_model">모델</string>
     <string name="settings_ai_model_absent">선택 안 됨</string>
+    <string name="settings_ai_model_search">모델 검색 또는 ID 입력</string>
+    <string name="settings_ai_model_use_typed">“%1$s” 사용</string>
     <string name="settings_ai_action_set_key">API 키 설정</string>
     <string name="settings_ai_action_edit_key">API 키 수정</string>
     <string name="settings_ai_action_delete_key">API 키 삭제</string>
@@ -314,7 +328,7 @@
     <string name="settings_ai_key_saved">API 키를 저장했습니다</string>
     <string name="settings_ai_key_rejected">키를 저장하지 못했습니다</string>
     <string name="settings_label_ai_provider">AI 제공업체</string>
-    <string name="settings_label_ai_deepseek_reasoning">DeepSeek 추론</string>
+    <string name="settings_label_ai_deepseek_reasoning">추론</string>
     <string name="settings_option_ai_deepseek_reasoning_off">끄기</string>
     <string name="settings_option_ai_deepseek_reasoning_low">낮음</string>
     <string name="settings_option_ai_deepseek_reasoning_high">높음</string>
@@ -375,6 +389,7 @@
     <string name="lyrics_ai_failed_attempt_payload">실패한 요청 데이터</string>
     <string name="lyrics_ai_previous_failed_attempt">이전에 실패한 요청</string>
     <string name="lyrics_ai_reasoning_trace">추론 과정</string>
+    <string name="lyrics_ai_no_reasoning_trace">추론 과정 없음</string>
     <string name="lyrics_ai_translation_prompt_help">프리셋을 고르거나, 모델이 지키고 고치고 강조할 점을 직접 적어 보세요.</string>
     <string name="lyrics_ai_pronunciation_prompt_help">프리셋을 고르거나, 발음·방언·표기·다국어 가사에 대한 지침을 직접 적어 보세요.</string>
     <string name="lyrics_ai_prompt_preset">프롬프트 프리셋</string>

@@ -1,10 +1,13 @@
 package com.eza.spicyex.hooks;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 
+import com.eza.spicyex.References;
+import com.eza.spicyex.Settings;
 import com.eza.spicyex.SpotifyPlusConfig;
 import com.eza.spicyex.SpotifyTrack;
 import com.eza.spicyex.Diagnostics;
@@ -53,11 +56,13 @@ import com.eza.spicyex.lyrics.ai.AiSettings;
 
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 
 /** Spotify-main-process owner for current-track lyric fetch and shared processing state. */
 final class LyricsSessionManager {
     static final long POLL_MS = 200L;
+    private static final long PREFETCH_POLL_MS = 1000L;
     static final long RETRY_MS = 5000L;
 
     interface Listener {
@@ -112,6 +117,24 @@ final class LyricsSessionManager {
     private final LyricsSecondaryProcessingSession secondaryProcessing;
     /** Session-owned detection: one run per canonical digest, shared by both render surfaces. */
     private final LyricsDetectionSession detectionSession;
+    private final LyricsSessionManager foreground;
+    private final SpotifyPlusConfig hostConfig;
+
+    private PollingDemandLease prefetchDemand;
+    private LyricsSessionManager upcoming;
+    private String observedQueueUri = "";
+    private long queueObservedAtMs;
+    private long nextQueueSampleAtMs;
+    private boolean queueHeadAttempted;
+    private boolean preparingUpcoming;
+    private String preparedInputs = "";
+    private final EnumSet<LayerKind> joinedUpcomingLayers = EnumSet.noneOf(LayerKind.class);
+    private final SharedPreferences.OnSharedPreferenceChangeListener prefetchSettingListener =
+            (store, key) -> {
+                if (key == null || Settings.PREFETCH_NEXT_SONG.key.equals(key)) {
+                    updatePrefetchDemand();
+                }
+            };
 
     private SpotifyTrack track;
     private String loadingUri = "";
@@ -168,22 +191,28 @@ final class LyricsSessionManager {
     private boolean awaitingDetection;
 
     LyricsSessionManager(NativeSpicyLyricsHook hook, LyricsFetchCoordinator fetchCoordinator, Context context) {
+        this(hook, fetchCoordinator, context, null);
+    }
+
+    private LyricsSessionManager(NativeSpicyLyricsHook hook, LyricsFetchCoordinator fetchCoordinator,
+                                 Context context, LyricsSessionManager foreground) {
         this.hook = hook;
+        this.foreground = foreground;
         this.fetchCoordinator = fetchCoordinator;
         this.handler = new Handler(Looper.getMainLooper());
         this.snapshotClock = SystemClock::elapsedRealtime;
         Context app = context.getApplicationContext();
         this.context = app != null ? app : context;
-        SpotifyPlusConfig config = SpotifyPlusConfig.from(this.context);
+        hostConfig = SpotifyPlusConfig.from(this.context);
         LyricsSecondaryProcessor processor = new LyricsSecondaryProcessor(
                 this.context, NativeRuntime.HTTP, NativeRuntime.SOUND_PROCESSOR,
                 NativeRuntime.SOUND_WORKERS, NativeRuntime.MEANING_WORKERS, NativeRuntime.AI_WORKERS, handler,
                 NativeRuntime.GOOGLE_PROCESSING_VERSION);
         secondaryProcessing = new LyricsSecondaryProcessingSession(
-                this.context, config, processor, NativeRuntime.GOOGLE_PROCESSING_VERSION,
-                "[SpotifyPlusSession]");
+                this.context, hostConfig, processor, NativeRuntime.GOOGLE_PROCESSING_VERSION,
+                foreground == null ? "[SpotifyPlusSession]" : "[SpotifyPlusPrefetch]");
         detectionSession = new LyricsDetectionSession(this.context, NativeRuntime.LYRICS_IO);
-        LyricsMemoryPressure.addReclaimer(level -> detectionSession.trimMemory());
+        if (foreground == null) LyricsMemoryPressure.addReclaimer(level -> detectionSession.trimMemory());
     }
 
     /** Injects runtime dependencies for JVM tests of session transitions and publication. */
@@ -192,6 +221,8 @@ final class LyricsSessionManager {
                          LyricsDetectionSession detectionSession,
                          java.util.function.LongSupplier snapshotClock) {
         this.hook = null;
+        this.foreground = null;
+        this.hostConfig = null;
         this.fetchCoordinator = null;
         this.context = context;
         this.handler = handler;
@@ -203,6 +234,9 @@ final class LyricsSessionManager {
     void start() {
         if (started) return;
         started = true;
+        context.getSharedPreferences(SpotifyPlusConfig.PREFS_NAME, Context.MODE_PRIVATE)
+                .registerOnSharedPreferenceChangeListener(prefetchSettingListener);
+        updatePrefetchDemand();
         com.eza.spicyex.lyrics.providers.SpicyOrgAccessState.addListener(() -> handler.post(() -> {
             if (orgAccessBlocked(document)) {
                 retireDisplayedBase(true, policy.generation(), "org-access-terminated");
@@ -256,7 +290,12 @@ final class LyricsSessionManager {
     }
 
     PollingDemandLease acquirePollingDemand() {
-        if (policy.acquirePollingDemand()) handler.post(poll);
+        if (policy.acquirePollingDemand()) {
+            handler.post(poll);
+        } else if (prefetchDemand != null && policy.pollingDemandCount() == 2) {
+            handler.removeCallbacks(poll);
+            handler.post(poll);
+        }
         return new DemandRecord();
     }
 
@@ -289,6 +328,7 @@ final class LyricsSessionManager {
         @Override public void run() {
             if (!policy.hasPollingDemand()) return;
             try {
+                Object playbackState = References.playerStateStrong;
                 SpotifyTrack current = hook.getCurrentTrackSafely();
                 if (current == null || current.uri == null || current.uri.isEmpty()) {
                     if (!policy.trackUri().isEmpty()) {
@@ -304,14 +344,224 @@ final class LyricsSessionManager {
                     notifyState(new Snapshot(current, policy.trackUri(), policy.generation(), status, playing,
                             position, SystemClock.elapsedRealtime(), hook.readEffectivePlaybackRate(playing)));
                     maybeFetch();
+                    if (prefetchDemand != null && playbackState == References.playerStateStrong) {
+                        updateUpcoming(playbackState, playing);
+                    }
                 }
             } catch (Throwable ignored) {
                 // Spotify player internals are version-fragile. Keep session polling alive.
             } finally {
-                if (policy.hasPollingDemand()) handler.postDelayed(this, POLL_MS);
+                if (policy.hasPollingDemand()) {
+                    boolean onlyPrefetch = prefetchDemand != null && policy.pollingDemandCount() == 1;
+                    handler.postDelayed(this, onlyPrefetch ? PREFETCH_POLL_MS : POLL_MS);
+                }
             }
         }
     };
+
+    private void updatePrefetchDemand() {
+        if (hostConfig.get(Settings.PREFETCH_NEXT_SONG)) {
+            if (prefetchDemand == null) prefetchDemand = acquirePollingDemand();
+        } else if (prefetchDemand != null) {
+            prefetchDemand.close();
+            prefetchDemand = null;
+            // Once playback has joined, the run belongs to the song already playing.
+            if (joinedUpcomingLayers.isEmpty()) stopUpcoming(false);
+            observedQueueUri = "";
+            queueHeadAttempted = false;
+        }
+    }
+
+    private void updateUpcoming(Object playbackState, boolean playing) {
+        long now = snapshotClock.getAsLong();
+        if (now < nextQueueSampleAtMs) return;
+        nextQueueSampleAtMs = now + PREFETCH_POLL_MS;
+        SpotifyTrack queueHead = References.nextQueuedTrack(playbackState);
+        if (upcoming != null && policy.trackUri().equals(upcoming.policy.trackUri())) {
+            // The queued song started. Let its normal catalog and detection pass confirm that
+            // the input still matches before taking over the background lanes.
+            if (!joinedUpcomingLayers.isEmpty() && !upcomingMismatch().isEmpty()) stopUpcoming(true);
+            if (!isSettledForPrefetch()) return;
+            stopUpcoming(false);
+        }
+        String nextUri = queueHead == null ? "" : queueHead.uri;
+        if (!nextUri.equals(observedQueueUri)) {
+            stopUpcoming(false);
+            observedQueueUri = nextUri;
+            queueHeadAttempted = false;
+            queueObservedAtMs = now;
+        }
+        if (upcoming != null) {
+            if (upcoming.inputsChanged()) {
+                stopUpcoming(false);
+            } else if (playing) {
+                upcoming.prepareWhenSettled();
+            }
+            return;
+        }
+        if (!playing || queueHeadAttempted || nextUri.isEmpty() || nextUri.equals(policy.trackUri())
+                || now - queueObservedAtMs < PREFETCH_POLL_MS || !isSettledForPrefetch()) return;
+        queueHeadAttempted = true;
+        upcoming = new LyricsSessionManager(hook, fetchCoordinator, context, this);
+        upcoming.adoptTrack(queueHead);
+        com.eza.spicyex.xposed.XpLog.log("[SpotifyPlusPrefetch] started");
+    }
+
+    private boolean stillQueuedFor(LyricsSessionManager worker) {
+        if (prefetchDemand == null || upcoming != worker) return false;
+        String uri = worker.policy.trackUri();
+        if (uri.equals(policy.trackUri())) return true;
+        SpotifyTrack next = References.nextQueuedTrack(References.playerStateStrong);
+        return next != null && uri.equals(next.uri);
+    }
+
+    private boolean isSettledForPrefetch() {
+        return !policy.trackUri().isEmpty() && canonicalLoadingUri.isEmpty() && loadingUri.isEmpty()
+                && !replanning && (pendingPlan == null || !pendingPlan.fetches()
+                        || snapshotClock.getAsLong() < nextFetchAtMs)
+                && !awaitingDetection && !hasRunningLayers();
+    }
+
+    private boolean hasRunningLayers() {
+        return session != null && (session.sound.status == LayerStatus.PROCESSING
+                || session.meaning.status == LayerStatus.PROCESSING);
+    }
+
+    private void prepareWhenSettled() {
+        if (preparingUpcoming || document == null || !isSettledForPrefetch()
+                || orgAccessBlocked(document)
+                || com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.expires(document, System.currentTimeMillis())) {
+            return;
+        }
+        preparingUpcoming = true;
+        startDetection(track, document, policy.generation());
+    }
+
+    private boolean inputsChanged() {
+        return (loadedPolicy != null && !loadedPolicy.equals(CatalogPolicy.read(context)))
+                || (!preparedInputs.isEmpty() && document != null
+                        && !preparedInputs.equals(preparationInputs(document)));
+    }
+
+    private String preparationInputs(LyricsDocument input) {
+        AiSettings ai = new AiSettings(context);
+        return LyricsDocumentProcessor.meaningConfigId(context) + "|"
+                + LyricsDocumentProcessor.currentSoundConfigId(context, input) + "|"
+                + renderConfig().transliterationEnabled + "|" + ai.replayFingerprint() + "|"
+                + ai.translationAutomatic() + "|" + ai.pronunciationAutomatic();
+    }
+
+    private String upcomingMismatch() {
+        if (upcoming == null || session == null || document == null || upcoming.session == null
+                || upcoming.preparedInputs.isEmpty()) return "not-started";
+        if (!policy.trackUri().equals(upcoming.policy.trackUri())) return "track";
+        if (!session.base.digest.equals(upcoming.session.base.digest)) return "canonical";
+        if (orgAccessBlocked(upcoming.document) || upcoming.inputsChanged()
+                || !upcoming.preparedInputs.equals(preparationInputs(document))) return "settings";
+        return "";
+    }
+
+    private EnumSet<LayerKind> joinUpcoming() {
+        EnumSet<LayerKind> reused = EnumSet.noneOf(LayerKind.class);
+        if (upcoming == null || !policy.trackUri().equals(upcoming.policy.trackUri())) return reused;
+        String mismatch = upcomingMismatch();
+        if (mismatch.isEmpty()) {
+            for (LayerKind layer : LayerKind.values()) {
+                LayerState pending = upcoming.session.layer(layer);
+                if (!pending.failure.isFailure()
+                        && (pending.status == LayerStatus.PROCESSING || pending.artifact != null)) {
+                    session = session.withLayer(layer, pending);
+                    reused.add(layer);
+                    if (pending.status == LayerStatus.PROCESSING) joinedUpcomingLayers.add(layer);
+                }
+            }
+            if (!reused.isEmpty()) {
+                // A lane we did not join still needs its original work flags for startup.
+                boolean soundPending = document.romanizationPending;
+                boolean meaningPending = document.translationPending;
+                syncDocumentLayerFlags();
+                if (!reused.contains(LayerKind.SOUND)) document.romanizationPending = soundPending;
+                if (!reused.contains(LayerKind.MEANING)) document.translationPending = meaningPending;
+                publishProcessed(document, policy.generation());
+                com.eza.spicyex.xposed.XpLog.log("[SpotifyPlusPrefetch] reused=" + reused
+                        + " inFlight=" + joinedUpcomingLayers);
+            }
+        }
+        if (reused.isEmpty()) {
+            com.eza.spicyex.xposed.XpLog.log("[SpotifyPlusPrefetch] use live pipeline reason="
+                    + (mismatch.isEmpty() ? "no-usable-layers" : mismatch));
+        }
+        if (joinedUpcomingLayers.isEmpty()) stopUpcoming(false);
+        return reused;
+    }
+
+    private void copyUpcomingUpdates(LyricsSessionManager source) {
+        if (source != upcoming || joinedUpcomingLayers.isEmpty()) return;
+        if (!upcomingMismatch().isEmpty()) {
+            stopUpcoming(true);
+            return;
+        }
+        for (LayerKind layer : EnumSet.copyOf(joinedUpcomingLayers)) {
+            LayerState update = source.session.layer(layer);
+            session = session.withLayer(layer, update);
+            if (update.status != LayerStatus.PROCESSING) joinedUpcomingLayers.remove(layer);
+        }
+        syncDocumentLayerFlags();
+        publishProcessed(document, policy.generation());
+        if (joinedUpcomingLayers.isEmpty()) stopUpcoming(false);
+    }
+
+    private void yieldUpcomingToCurrent() {
+        if (upcoming != null && !policy.trackUri().equals(upcoming.policy.trackUri())
+                && (upcoming.preparedInputs.isEmpty() || upcoming.hasRunningLayers())) {
+            stopUpcoming(false);
+        }
+    }
+
+    private void retireUpcomingLayer(LayerKind layer) {
+        if (upcoming == null) return;
+        if (!policy.trackUri().equals(upcoming.policy.trackUri()) || joinedUpcomingLayers.isEmpty()) {
+            stopUpcoming(false);
+        } else if (joinedUpcomingLayers.remove(layer)) {
+            upcoming.secondaryProcessing.cancelLayer(layer);
+            if (joinedUpcomingLayers.isEmpty()) stopUpcoming(false);
+        }
+    }
+
+    private void stopUpcoming(boolean restartJoined) {
+        if (upcoming == null) return;
+        LyricsSessionManager retired = upcoming;
+        upcoming = null;
+        retired.clearCurrent();
+        EnumSet<LayerKind> restart = EnumSet.copyOf(joinedUpcomingLayers);
+        joinedUpcomingLayers.clear();
+        if (restartJoined && !restart.isEmpty() && document != null && session != null) {
+            for (LayerKind layer : restart) {
+                if (layer == LayerKind.SOUND) {
+                    LyricsDocumentProcessor.resetSoundLayer(context, document);
+                } else {
+                    LyricsDocumentProcessor.resetMeaningLayer(context, document);
+                }
+                LayerState state = session.layer(layer);
+                session = session.withLayer(layer, state.settled(null,
+                        com.eza.spicyex.lyrics.session.LayerFailure.NONE));
+            }
+            startSharedProcessing(track, document, policy.generation(),
+                    java.util.Collections.emptySet(), restart);
+        }
+    }
+
+    String prefetchStatus() {
+        SpotifyTrack next = References.nextQueuedTrack(References.playerStateStrong);
+        String phase = upcoming == null ? "idle" : upcoming.awaitingDetection ? "detecting"
+                : !upcoming.preparedInputs.isEmpty()
+                        ? upcoming.hasRunningLayers() ? "processing" : "prepared"
+                        : "no_lyrics".equals(upcoming.status) ? "unavailable" : "acquiring";
+        return "prefetch_enabled=" + (prefetchDemand != null)
+                + " next_uri=" + (next == null ? "-" : next.uri)
+                + " prefetch_uri=" + (upcoming == null ? "-" : upcoming.policy.trackUri())
+                + " prefetch_phase=" + phase + " prefetch_joined=" + joinedUpcomingLayers.size();
+    }
 
     private void adoptTrack(SpotifyTrack next) {
         String uri = next == null || next.uri == null ? "" : next.uri;
@@ -319,6 +569,15 @@ final class LyricsSessionManager {
             track = next;
             return;
         }
+        if (foreground == null) {
+            joinedUpcomingLayers.clear();
+            if (upcoming != null && !uri.equals(upcoming.policy.trackUri())) stopUpcoming(false);
+            observedQueueUri = "";
+            queueHeadAttempted = false;
+            nextQueueSampleAtMs = 0L;
+        }
+        preparingUpcoming = false;
+        preparedInputs = "";
         track = next;
         loadingUri = "";
         document = null;
@@ -401,7 +660,7 @@ final class LyricsSessionManager {
         if (view != null && view.document != null
                 && publishSeat(requestedTrack, requestedUri, requestedGeneration, view.document,
                 view.sourceRevision)) {
-            LyricsFetchDiagnosticsState.recordCached(view.document);
+            if (foreground == null) LyricsFetchDiagnosticsState.recordCached(view.document);
             LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.CACHED_ORIGINAL_RENDER);
             LyricPipelineMetrics.record(LyricPipelineMetrics.Timing.CACHED_ORIGINAL_RENDER,
                     SystemClock.elapsedRealtime() - startedAtMs);
@@ -485,6 +744,7 @@ final class LyricsSessionManager {
     }
 
     private void maybeFetch() {
+        if (foreground != null && (preparingUpcoming || !foreground.stillQueuedFor(this))) return;
         if (orgAccessBlocked(document)
                 || com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.expires(document, System.currentTimeMillis())) {
             retireDisplayedBase(true, policy.generation(), "spicy-org-expired");
@@ -508,6 +768,7 @@ final class LyricsSessionManager {
             if (document == null) reportNoLyrics(policy.generation(), "Lyrics unavailable (source attempts settled)");
             return;
         }
+        if (foreground == null) yieldUpcomingToCurrent();
         final AcquisitionScope scope = pendingPlan.scope;
         final AcquisitionPlanner.Plan launched = pendingPlan;
         final SpotifyTrack requestedTrack = track;
@@ -543,7 +804,7 @@ final class LyricsSessionManager {
                                        int requestedGeneration, AcquisitionScope scope, long attemptId) {
         if (scope.sourceOrderMode) {
             fetchCoordinator.fetchLyrics(context, requestedTrack, requestedGeneration, scope,
-                    automaticResult(requestedTrack, requestedUri, requestedGeneration, attemptId));
+                    foreground == null, automaticResult(requestedTrack, requestedUri, requestedGeneration, attemptId));
             return;
         }
         java.util.concurrent.atomic.AtomicInteger remaining =
@@ -568,7 +829,7 @@ final class LyricsSessionManager {
                 };
         for (CatalogSource.SourceId source : scope.sources) {
             fetchCoordinator.fetchCatalogSource(context, requestedTrack, requestedGeneration,
-                    source, result);
+                    source, false, foreground == null, result);
         }
     }
 
@@ -666,11 +927,14 @@ final class LyricsSessionManager {
             }
             return false;
         }
-        displayedCandidateId = candidateId;
         CanonicalBase incoming = CanonicalBase.fromDocument(requestedUri, result);
         CanonicalBaseAdoption.Outcome outcome = CanonicalBaseAdoption.evaluate(
                 session != null, session == null ? "" : session.identity.canonicalDigest,
                 incoming.digest);
+        if (outcome == CanonicalBaseAdoption.Outcome.REPLACE && !joinedUpcomingLayers.isEmpty()) {
+            stopUpcoming(false);
+        }
+        displayedCandidateId = candidateId;
         if (outcome == CanonicalBaseAdoption.Outcome.UNCHANGED && document != null) {
             // Another candidate with identical canonical content: publish its provider metadata
             // but keep the source revision, artifacts, and the input owned by active runs.
@@ -698,7 +962,7 @@ final class LyricsSessionManager {
             request.callback.onSuccess(LyricsDocument.copyOf(published));
         }
         notifyDocument(snapshot, result);
-        startDetection(requestedTrack, result, requestedGeneration);
+        if (foreground == null) startDetection(requestedTrack, result, requestedGeneration);
         return true;
     }
 
@@ -816,6 +1080,9 @@ final class LyricsSessionManager {
             completeCatalogAction(callback, false, "Track changed");
             return;
         }
+        // The catalog can keep a late upgrade. An offscreen run keeps its original input;
+        // playback joins only if that same canonical digest wins when the track actually starts.
+        if (foreground != null && preparingUpcoming) return;
         if (attemptId != 0L && attemptId == automaticAttemptId && requestedUri.equals(loadingUri)) loadingUri = "";
         if (seated != null && !seated.readable) {
             // No snapshot to apply: keep the delivery fallback policy and never clear or replace
@@ -1214,6 +1481,7 @@ final class LyricsSessionManager {
     /** Withdraws an ineligible Auto base while keeping the current track and generation alive. */
     private void retireDisplayedBase(boolean acquisitionPlanned, int requestedGeneration,
                                      String settledReason) {
+        if (!joinedUpcomingLayers.isEmpty()) stopUpcoming(false);
         document = null;
         canonicalSource = null;
         session = null;
@@ -1293,6 +1561,7 @@ final class LyricsSessionManager {
         if (track == null || document == null || policy.trackUri().isEmpty()) return;
         // A user-initiated refresh must not wait on detection; the completion only attaches rows.
         awaitingDetection = false;
+        retireUpcomingLayer(layer);
         if (layer == com.eza.spicyex.lyrics.session.LayerKind.MEANING) {
             LyricsDocumentProcessor.resetMeaningLayer(context, document);
         } else {
@@ -1328,6 +1597,7 @@ final class LyricsSessionManager {
             }
         }
         awaitingDetection = false;
+        retireUpcomingLayer(layer);
         if (layer == LayerKind.MEANING) {
             LyricsDocumentProcessor.resetMeaningLayer(context, document);
         } else {
@@ -1462,7 +1732,7 @@ final class LyricsSessionManager {
                     com.eza.spicyex.lyrics.ai.AiSoundRun.Result saved = com.eza.spicyex.lyrics.ai.AiSoundRun.run(
                             context, settings, base, input, baseline,
                             com.eza.spicyex.lyrics.ai.AiContract.ORTHOGRAPHY_LATIN, settings.soundUsesBaseline(),
-                            false, new com.eza.spicyex.lyrics.ai.AiSignal(), null, romanizationOptions(config));
+                            false, new com.eza.spicyex.lyrics.ai.AiSignal(), null, romanizationOptions(config, input));
                     if (saved.artifact == null) artifact = null;
                     else {
                         for (String id : saved.artifact.rowIds()) local.add(saved.artifact.sound(id));
@@ -1502,6 +1772,7 @@ final class LyricsSessionManager {
         if (layer == null || document == null || session == null) return;
         // Layer-scoped: the sibling lane keeps its run, so it still completes (or stays
         // explicitly retryable) instead of stranding in PROCESSING with its work cancelled.
+        retireUpcomingLayer(layer);
         secondaryProcessing.cancelLayer(layer);
         LayerState restored = LayerState.absent(layer);
         if (layer == LayerKind.MEANING
@@ -1529,6 +1800,11 @@ final class LyricsSessionManager {
      */
     void clearCache(CacheClearKind kind) {
         if (kind == null) return;
+        if (kind == CacheClearKind.TRANSLATION || kind == CacheClearKind.TRANSLITERATION) {
+            retireUpcomingLayer(kind == CacheClearKind.TRANSLATION ? LayerKind.MEANING : LayerKind.SOUND);
+        } else {
+            stopUpcoming(false);
+        }
         switch (kind) {
             case TRANSLATION:
                 secondaryProcessing.cancelLayer(LayerKind.MEANING);
@@ -1595,9 +1871,9 @@ final class LyricsSessionManager {
         return LyricsRenderConfig.read(context, SpotifyPlusConfig.from(context));
     }
 
-    private static RomanizationOptions romanizationOptions(LyricsRenderConfig config) {
+    private static RomanizationOptions romanizationOptions(LyricsRenderConfig config, LyricsDocument doc) {
         return new RomanizationOptions(config.defaultChineseMode, config.koreanMode,
-                config.chineseTones, config.defaultCyrillicMode, config.cyrillicKeepSigns);
+                config.chineseTones, config.defaultCyrillicMode, config.cyrillicKeepSigns).forDocument(doc);
     }
 
     /**
@@ -1673,15 +1949,18 @@ final class LyricsSessionManager {
 
     private void startSharedProcessing(SpotifyTrack requestedTrack, LyricsDocument snapshot,
                                        int requestedGeneration) {
-        startSharedProcessing(requestedTrack, snapshot, requestedGeneration,
-                java.util.Collections.<LayerKind>emptySet());
-    }
-
-    private java.util.Set<LayerKind> startSharedProcessing(
-            SpotifyTrack requestedTrack, LyricsDocument snapshot, int requestedGeneration,
-            java.util.Set<LayerKind> explicitAiRequests) {
-        return startSharedProcessing(requestedTrack, snapshot, requestedGeneration,
-                explicitAiRequests, java.util.EnumSet.allOf(LayerKind.class));
+        if (foreground != null) {
+            if (!foreground.stillQueuedFor(this)) return;
+            preparedInputs = preparationInputs(snapshot);
+        } else {
+            yieldUpcomingToCurrent();
+        }
+        EnumSet<LayerKind> needed = EnumSet.allOf(LayerKind.class);
+        needed.removeAll(joinUpcoming());
+        if (!needed.isEmpty()) {
+            startSharedProcessing(requestedTrack, snapshot, requestedGeneration,
+                    java.util.Collections.emptySet(), needed);
+        }
     }
 
     private java.util.Set<LayerKind> startSharedProcessing(
@@ -1693,7 +1972,7 @@ final class LyricsSessionManager {
                 && session.sound.artifact instanceof com.eza.spicyex.lyrics.session.SoundArtifact
                 ? (com.eza.spicyex.lyrics.session.SoundArtifact) session.sound.artifact : null;
         java.util.Set<LayerKind> started = secondaryProcessing.start(snapshot.trackId, requestedGeneration, snapshot,
-                config.transliterationEnabled, romanizationOptions(config),
+                config.transliterationEnabled, romanizationOptions(config, snapshot),
                 displayedSound,
                 explicitAiRequests,
                 (id, callbackGeneration, callbackSnapshot) -> callbackGeneration == policy.generation()
@@ -1749,6 +2028,7 @@ final class LyricsSessionManager {
                             : LyricsDocumentProcessor.meaningConfigId(context),
                     "", ""));
         }
+        syncDocumentLayerFlags();
     }
 
     /**
@@ -1798,14 +2078,20 @@ final class LyricsSessionManager {
 
     private void publishProcessed(LyricsDocument processed, int requestedGeneration) {
         if (processed != document || requestedGeneration != policy.generation()) return;
+        if (foreground != null) {
+            foreground.copyUpcomingUpdates(this);
+            return;
+        }
         notifyDocument(snapshot(), processed);
     }
 
     private Snapshot snapshot() {
-        boolean playing = track != null && hook.isPlayerActuallyPlaying();
-        long position = track == null ? 0L : hook.readBestMeasuredProgressMs(track, playing);
+        boolean playing = foreground == null && track != null && hook.isPlayerActuallyPlaying();
+        long position = track == null || foreground != null
+                ? 0L : hook.readBestMeasuredProgressMs(track, playing);
         return new Snapshot(track, policy.trackUri(), policy.generation(), status, playing, position,
-                snapshotClock.getAsLong(), track == null ? 0d : hook.readEffectivePlaybackRate(playing));
+                snapshotClock.getAsLong(), track == null || foreground != null
+                        ? 0d : hook.readEffectivePlaybackRate(playing));
     }
 
     private void notifyState(Snapshot snapshot) {
@@ -1815,6 +2101,7 @@ final class LyricsSessionManager {
     }
 
     private void notifyDocument(Snapshot snapshot, LyricsDocument value) {
+        if (subscriptions.isEmpty()) return;
         LyricsDocument published = publishedProjection(value);
         for (SubscriptionRecord record : new ArrayList<>(subscriptions)) {
             if (record.lifetime.isActive()) {

@@ -307,8 +307,9 @@ final class AgentCommandChannel {
                     String settingsAction = argument;
                     onMain(verb, correlation, () -> {
                         if (!"open".equals(settingsAction) && !"close".equals(settingsAction)
-                                && !"status".equals(settingsAction) && !settingsAction.startsWith("section ")) {
-                            reply("error", verb, "expected open, close, status, or section ID", correlation);
+                                && !"status".equals(settingsAction) && !settingsAction.startsWith("section ")
+                                && !settingsAction.matches("reading (chinese|cyrillic|close)")) {
+                            reply("error", verb, "expected open, close, status, section ID, or reading chinese|cyrillic|close", correlation);
                             return;
                         }
                         NativeSpicyShellView shell = requireShell(verb, correlation);
@@ -675,8 +676,8 @@ final class AgentCommandChannel {
                     SpotifyTrack track = host.getCurrentTrackSafely();
                     boolean playing = host.isPlayerActuallyPlaying();
                     reply("ok", "playback", "playing=" + playing + " position="
-                            + host.readBestMeasuredProgressMs(track, playing) + " seekable=" + host.canSeek(),
-                            correlation);
+                            + host.readBestMeasuredProgressMs(track, playing) + " seekable=" + host.canSeek()
+                            + " " + host.prefetchStatus(), correlation);
                     return;
                 default:
                     reply("error", "playback", "expected status, toggle, next, previous, or seek MS", correlation);

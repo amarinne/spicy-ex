@@ -513,7 +513,36 @@ public final class AiSettings {
                     : store.get(Settings.AI_DEEPSEEK_REASONING, AiDeepSeekReasoning.class);
             return deepSeekProviderVersion(mode);
         }
+        if (choice == AiProviderChoice.CUSTOM) {
+            AiDeepSeekReasoning mode = store == null ? AiDeepSeekReasoning.DEFAULT
+                    : store.get(Settings.AI_DEEPSEEK_REASONING, AiDeepSeekReasoning.class);
+            return customProviderVersion(mode);
+        }
         return usesOpenAiWire() ? "openai-v1" : "v1beta";
+    }
+
+    /** Provider version of a custom gateway before reasoning effort entered its identity. */
+    public static final String CUSTOM_LEGACY_PROVIDER_VERSION = "openai-v1";
+
+    /**
+     * Custom gateways carry the reasoning effort in their identity, like DeepSeek: a different
+     * effort is a different answer. Without it a DeepSeek model behind CLIProxy ran at its
+     * provider's high default (96% of output tokens were reasoning on 2026-11-19).
+     */
+    static String customProviderVersion(AiDeepSeekReasoning mode) {
+        AiDeepSeekReasoning effort = mode == null ? AiDeepSeekReasoning.DEFAULT : mode;
+        return CUSTOM_LEGACY_PROVIDER_VERSION + "+reasoning="
+                + effort.name().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * The provider version older Meaning epochs were bought under, for displaying their output.
+     * Only the custom gateway's version changed; every other provider kept its token.
+     */
+    public static String legacyProviderVersion(String providerVersion) {
+        String version = AiText.nz(providerVersion);
+        return version.startsWith(CUSTOM_LEGACY_PROVIDER_VERSION + "+reasoning=")
+                ? CUSTOM_LEGACY_PROVIDER_VERSION : version;
     }
 
     static String deepSeekProviderVersion(AiDeepSeekReasoning mode) {

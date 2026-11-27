@@ -347,15 +347,15 @@ public final class LyricsMeaningLaneBehaviorTest {
     @Test public void previewPublishesGoogleFirstAndAiOnlyNeverDoes() throws Exception {
         configureAi(AiSettings.TRANSLATION_PIPELINE_GOOGLE_PREVIEW, false);
         giveCredential();
-        aiExecutor.openGate();
 
         Recorder preview = new Recorder("preview");
         assertTrue(newLane().start("track", 1, pendingDocument(), BACKEND, "en", "ko", "ko",
                 true, alwaysCurrent(), preview));
+        assertTrue("preview shows Google while AI works, saw " + events.snapshot(),
+                events.await("preview:rerender", WAIT_MS));
+        aiExecutor.openGate();
         assertTrue("expected preview:complete, saw " + events.snapshot(),
                 events.await("preview:complete", WAIT_MS));
-        assertTrue("preview shows Google while AI works, saw " + events.snapshot(),
-                events.index("preview:rerender") >= 0);
 
         configureAi(AiSettings.TRANSLATION_PIPELINE_AI_ONLY, false);
         Recorder aiOnly = new Recorder("aiOnly");
@@ -393,9 +393,10 @@ public final class LyricsMeaningLaneBehaviorTest {
     }
 
     /**
-     * Google publication releases the AI job; until it publishes, no paid request may leave.
+     * Google preview runs Google and AI in parallel: a slow or rate-limited Google job must never
+     * stall the AI request from starting.
      */
-    @Test public void previewHoldsThePaidRequestUntilGooglePublishes() throws Exception {
+    @Test public void previewStartsAiInParallelWithoutWaitingForGoogle() throws Exception {
         configureAi(AiSettings.TRANSLATION_PIPELINE_GOOGLE_PREVIEW, false);
         giveCredential();
         aiExecutor.openGate();
@@ -405,19 +406,12 @@ public final class LyricsMeaningLaneBehaviorTest {
         assertTrue(newLane().start("track", 1, pendingDocument(), BACKEND, "en", "ko", "ko",
                 true, alwaysCurrent(), preview));
 
-        Thread.sleep(300L);
-        assertEquals("Google has not published, so nothing may be billed yet",
-                0, AiHttpTestControl.count());
-        assertEquals("the AI job must still be waiting on Google",
-                AiRequestLiveState.Phase.PREPARING,
-                AiRequestLiveState.diagnosticSnapshot(LayerKind.MEANING).current.phase);
-        assertEquals(-1, events.index("preview:rerender"));
+        assertTrue("AI must dispatch while Google is still blocked",
+                events.await(() -> AiHttpTestControl.count() == 1, WAIT_MS));
+        assertEquals("Google has not finished yet, so no preliminary rerender fired",
+                -1, events.index("preview:rerender"));
 
         provider.release();
-        assertTrue("expected preview:rerender, saw " + events.snapshot(),
-                events.await("preview:rerender", WAIT_MS));
-        assertTrue("the released AI job must reach the provider",
-                events.await(() -> AiHttpTestControl.count() == 1, WAIT_MS));
         assertTrue("expected preview:complete, saw " + events.snapshot(),
                 events.await("preview:complete", WAIT_MS));
     }
@@ -456,11 +450,13 @@ public final class LyricsMeaningLaneBehaviorTest {
                 previewIdentity, recordStore.keys());
     }
 
-    /** A paid answer already bought must not skip the display flow the user selected. */
-    @Test public void cachedAiAnswerStillShowsGoogleFirstInPreview() throws Exception {
+    /** A cached paid answer settles immediately in preview without waiting on a slow Google call. */
+    @Test public void cachedAiAnswerSettlesImmediatelyWithoutWaitingForGoogleInPreview()
+            throws Exception {
         configureAi(AiSettings.TRANSLATION_PIPELINE_GOOGLE_PREVIEW, false);
         giveCredential();
         aiExecutor.openGate();
+        provider.gate();
         LyricsDocument document = pendingDocument();
         AiRecordStores.installFactoryForTest(ignored -> new CachedAnswerStore(document));
         Recorder preview = new Recorder("preview");
@@ -468,11 +464,10 @@ public final class LyricsMeaningLaneBehaviorTest {
         assertTrue(newLane().start("track", 1, document, BACKEND, "en", "ko", "ko",
                 true, alwaysCurrent(), preview));
 
-        assertTrue("a cached answer must not skip the Google display: " + events.snapshot(),
-                events.await("preview:rerender", WAIT_MS));
-        assertTrue("expected preview:complete, saw " + events.snapshot(),
+        assertTrue("cached AI must settle even while Google is still blocked: " + events.snapshot(),
                 events.await("preview:complete", WAIT_MS));
         assertEquals("a reused answer is not billed again", 0, AiHttpTestControl.count());
+        provider.release();
     }
 
     /**

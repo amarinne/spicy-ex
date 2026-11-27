@@ -44,7 +44,7 @@ public final class ScriptClassifier {
             // first character must not decide the script.
             if (SpicyTextDetection.isKana(cp)) japanese = true;
             else if (SpicyTextDetection.isKorean(cp)) korean = true;
-            else if (SpicyTextDetection.isCjkIdeograph(cp)) chinese = true;
+            else if (SpicyTextDetection.isCjkIdeograph(cp) || ZhuyinResolver.isSymbol(cp)) chinese = true;
             else if (SpicyTextDetection.isCyrillic(cp)) cyrillic = true;
             else if (SpicyTextDetection.isGreek(cp)) greek = true;
             else if (isIndic(cp)) indic = true;

@@ -24,7 +24,7 @@ import com.eza.spicyex.ui.ActionIconDrawable;
  * </ol>
  */
 public final class ChipSpinnerDrawable extends Drawable {
-    private static final int AI_GREEN = 0xFF1ED760;
+    public static final int AI_GREEN = 0xFF1ED760;
     private static final int AI_RUNNING_GRAY = 0xFF8E8E93;
     private static final int AI_FAILED_RED = 0xFFE91429;
 

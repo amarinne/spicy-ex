@@ -27,21 +27,31 @@ public final class AiRequestLiveState {
         public final String failureToken;
         public final int httpStatus;
         public final String failureDetail;
+        public final int streamedRows;
+        public final int totalRows;
 
         private Attempt(Phase phase, String payload, String reasoning, String failureToken,
                         int httpStatus, String failureDetail) {
+            this(phase, payload, reasoning, failureToken, httpStatus, failureDetail, 0, 0);
+        }
+
+        private Attempt(Phase phase, String payload, String reasoning, String failureToken,
+                        int httpStatus, String failureDetail, int streamedRows, int totalRows) {
             this.phase = phase == null ? Phase.NONE : phase;
             this.payload = nz(payload);
             this.reasoning = nz(reasoning);
             this.failureToken = nz(failureToken);
             this.httpStatus = httpStatus;
             this.failureDetail = nz(failureDetail);
+            this.streamedRows = Math.max(0, streamedRows);
+            this.totalRows = Math.max(0, totalRows);
         }
 
         /** The same attempt in a new phase; both retained texts carry over unchanged. */
         private Attempt settled(Phase next, String failureToken, int httpStatus,
                                 String failureDetail) {
-            return new Attempt(next, payload, reasoning, failureToken, httpStatus, failureDetail);
+            return new Attempt(next, payload, reasoning, failureToken, httpStatus, failureDetail,
+                    streamedRows, totalRows);
         }
 
         public boolean hasPayload() {
@@ -129,15 +139,34 @@ public final class AiRequestLiveState {
         Entry entry = matching(layer, canonicalDigest, runId);
         String text = nz(trace).trim();
         if (entry == null || text.isEmpty()) return;
-        StringBuilder reasoning = new StringBuilder(entry.current.reasoning);
-        if (reasoning.length() > 0) reasoning.append("\n\n");
-        reasoning.append("Attempt ").append(Math.max(1, attempt));
         String chunk = nz(chunkId);
-        if (!chunk.isEmpty()) reasoning.append(" \u00b7 ").append(chunk);
-        reasoning.append('\n').append(text);
+        String header = "Attempt " + Math.max(1, attempt)
+                + (chunk.isEmpty() ? "" : " \u00b7 " + chunk) + "\n";
+        String existing = entry.current.reasoning;
+        // A streamed attempt reports its growing trace many times; replace its own section
+        // rather than appending a copy each time.
+        int section = existing.lastIndexOf(header);
+        boolean sameSection = section == 0
+                || section >= 2 && existing.startsWith("\n\n", section - 2);
+        StringBuilder reasoning = new StringBuilder(
+                sameSection ? existing.substring(0, section) : existing);
+        if (!sameSection && reasoning.length() > 0) reasoning.append("\n\n");
+        reasoning.append(header).append(text);
         entry.current = new Attempt(entry.current.phase, entry.current.payload,
                 bounded(reasoning), entry.current.failureToken, entry.current.httpStatus,
-                entry.current.failureDetail);
+                entry.current.failureDetail, entry.current.streamedRows, entry.current.totalRows);
+    }
+
+    /** Updates streamed row progress for the active attempt. */
+    public static synchronized void progress(LayerKind layer, String canonicalDigest, String runId,
+                                             int streamedRows, int totalRows) {
+        Entry entry = matching(layer, canonicalDigest, runId);
+        if (entry == null) return;
+        int nextStreamed = Math.max(entry.current.streamedRows, Math.max(0, streamedRows));
+        int nextTotal = Math.max(entry.current.totalRows, Math.max(nextStreamed, totalRows));
+        entry.current = new Attempt(entry.current.phase, entry.current.payload,
+                entry.current.reasoning, entry.current.failureToken, entry.current.httpStatus,
+                entry.current.failureDetail, nextStreamed, nextTotal);
     }
 
     /** Keeps the newest {@link #MAX_REASONING_CHARS}; a clipped trace says so at its head. */

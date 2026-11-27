@@ -1967,9 +1967,10 @@ public final class LyricsShareCardController {
         text.setText(safe(line.text));
         text.setTextSize(16);
         texts.addView(text);
-        if (!isBlank(line.translatedText)) {
+        String translated = com.eza.spicyex.lyrics.LyricsRowViewFactory.displayTranslation(line);
+        if (!isBlank(translated)) {
             TextView sub = new TextView(activity);
-            sub.setText(safe(line.translatedText));
+            sub.setText(safe(translated));
             sub.setTextSize(12);
             sub.setTextColor(Color.argb(120, 255, 255, 255));
             LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
@@ -2278,7 +2279,7 @@ public final class LyricsShareCardController {
     private boolean hasAnyTranslation() {
         if (document == null) return false;
         for (AppliedLine line : document.appliedLines) {
-            if (!line.dotLine && !isBlank(line.translatedText)) return true;
+            if (!line.dotLine && !isBlank(com.eza.spicyex.lyrics.LyricsRowViewFactory.displayTranslation(line))) return true;
         }
         return false;
     }
@@ -3362,7 +3363,7 @@ public final class LyricsShareCardController {
             if (i < 0 || i >= document.appliedLines.size()) continue;
             AppliedLine line = document.appliedLines.get(i);
             if (line.dotLine || isBlank(line.text)) continue;
-            out.add(showTranslation ? safe(line.translatedText) : "");
+            out.add(showTranslation ? com.eza.spicyex.lyrics.LyricsRowViewFactory.displayTranslation(line) : "");
         }
         return out;
     }
@@ -3547,7 +3548,8 @@ public final class LyricsShareCardController {
             StaticLayout l = layout(quotes.get(i), paint, (int) box.width, box.align);
             f.main.add(l);
             f.height += l.getHeight();
-            String t = translations != null && i < translations.size() ? translations.get(i) : "";
+            String t = translations != null && i < translations.size()
+                    ? com.eza.spicyex.lyrics.SecondaryDisplayText.translation(quotes.get(i), translations.get(i)) : "";
             if (!isBlank(t)) {
                 StaticLayout sl = layout(t, sub, (int) box.width, box.align);
                 f.sub.add(sl);

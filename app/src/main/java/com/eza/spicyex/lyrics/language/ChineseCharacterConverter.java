@@ -27,6 +27,25 @@ public final class ChineseCharacterConverter {
         if (form == null || form == ChineseCharacterForm.ORIGINAL || source.text.isEmpty()) return source;
         Projection normalized = source.through(Common.NORMALIZATION);
         if (form == ChineseCharacterForm.SIMPLIFIED) return normalized.through(Simplified.CONVERSION);
+        return traditional(normalized, true);
+    }
+
+    /**
+     * The Cantonese lookup form (revision 2, R1). A passage with no traditional-only characters
+     * is read through OpenCC cn→t without regional variants, because the Jyutping lexicon ranks
+     * traditional readings. Otherwise, or when the conversion would change the code-point count,
+     * the source is returned unchanged.
+     */
+    public static String cantoneseLookupForm(String text) {
+        if (text == null || text.isEmpty()) return text == null ? "" : text;
+        Projection source = Projection.identity(text);
+        if (!source.through(Simplified.CONVERSION).text.equals(text)) return text;
+        String converted = traditional(source, false).text;
+        return converted.codePointCount(0, converted.length()) == source.sourceCodePointCount()
+                ? converted : text;
+    }
+
+    private static Projection traditional(Projection normalized, boolean regionalVariants) {
         int[] input = codePoints(normalized.text);
         int[] boundaries = new int[input.length + 1];
         StringBuilder output = new StringBuilder(normalized.text.length());
@@ -45,7 +64,8 @@ public final class ChineseCharacterConverter {
                 }
             }
             Projection segment = Projection.identity(new String(input, start, end - start))
-                    .through(Traditional.CONVERSION).through(Traditional.VARIANTS);
+                    .through(Traditional.CONVERSION);
+            if (regionalVariants) segment = segment.through(Traditional.VARIANTS);
             output.append(segment.text);
             for (int i = start; i <= end; i++) boundaries[i] = outputCp + segment.mapBoundary(i - start);
             outputCp += segment.targetOffsets.length - 1;

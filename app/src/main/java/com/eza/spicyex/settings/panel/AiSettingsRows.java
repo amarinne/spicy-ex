@@ -24,7 +24,6 @@ import com.eza.spicyex.lyrics.ai.AiSettings;
 import com.eza.spicyex.settings.SettingsWriter;
 import com.eza.spicyex.ui.ActionIconDrawable;
 import com.eza.spicyex.ui.PanelDialog;
-import com.eza.spicyex.ui.PanelPickerPopup;
 
 import java.util.List;
 
@@ -227,10 +226,11 @@ public final class AiSettingsRows {
     }
 
     /**
-     * Fetches the models this key can actually use, then lets the owner pick one.
+     * Opens the model picker at once and fills it with the models this key can use.
      *
      * <p>Never auto-selected, even when only one comes back: the choice is part of cache identity,
-     * and one made silently is one the owner cannot remember making when the results change.
+     * and one made silently is one the owner cannot remember making when the results change. A
+     * typed id is accepted without discovery, because a proxy can serve a model its list omits.
      */
     private void chooseModel(View anchor) {
         if (!settings.hasCredential()) {
@@ -243,18 +243,36 @@ public final class AiSettingsRows {
         }
         final AiModelDiscoveryState.Attempt attempt = discovery.begin(settings);
         if (attempt == null) return;
-        toast(host.string("settings_ai_checking", "Checking…"));
+        final AiModelPicker picker = new AiModelPicker(context,
+                host.string("settings_ai_model", "Model"),
+                host.string("settings_ai_model_search", "Search or type a model ID"),
+                host.string("settings_ai_model_use_typed", "Use \u201c%1$s\u201d"),
+                host.string("lyrics_ai_close", "Close"),
+                settings.modelName(),
+                name -> {
+                    // The configuration can change while the picker is open; a pick made for the
+                    // old one must not land on the new one.
+                    if (!anchor.isAttachedToWindow() || !settings.isEnabled()
+                            || !attempt.snapshot.matches(settings)) return;
+                    settings.setModelName(name);
+                    host.rebuild();
+                });
+        picker.status(host.string("settings_ai_checking", "Checking…"));
         final Handler handler = new Handler(context.getMainLooper());
         // Backstop only: paged discovery on a slow link (dead-route fallback plus several
         // model-list pages) legitimately exceeds 30s. The transport enforces its own ceiling;
         // this only reclaims a hung settings action so it never spins forever.
         final Runnable timeout = () -> {
             attempt.signal.abort("model_discovery_timeout");
-            if (discovery.finish(settings, attempt) && anchor.isAttachedToWindow()) {
-                toast(host.string("settings_ai_runtime_unavailable", "AI runtime unavailable"));
+            if (discovery.finish(settings, attempt) && picker.isShowing()) {
+                picker.status(host.string("settings_ai_runtime_unavailable", "AI runtime unavailable"));
             }
         };
         handler.postDelayed(timeout, 60000L);
+        picker.show(() -> {
+            handler.removeCallbacks(timeout);
+            attempt.signal.abort("model_picker_closed");
+        });
         new Thread(() -> {
             try {
                 XpLog.log("[SpotifyPlusAiSettings] model discovery started provider="
@@ -264,8 +282,8 @@ public final class AiSettingsRows {
                         + failureToken(result));
                 handler.post(() -> {
                     handler.removeCallbacks(timeout);
-                    if (discovery.finish(settings, attempt) && anchor.isAttachedToWindow()) {
-                        showModels(anchor, result, attempt);
+                    if (discovery.finish(settings, attempt) && picker.isShowing()) {
+                        showModels(picker, result);
                     }
                 });
             } catch (Throwable failure) {
@@ -273,32 +291,24 @@ public final class AiSettingsRows {
                         + AiRuntimeFailureLog.describe(failure));
                 handler.post(() -> {
                     handler.removeCallbacks(timeout);
-                    if (discovery.finish(settings, attempt) && anchor.isAttachedToWindow()) {
-                        toast(host.string("settings_ai_runtime_unavailable", "AI runtime unavailable"));
+                    if (discovery.finish(settings, attempt) && picker.isShowing()) {
+                        picker.status(host.string("settings_ai_runtime_unavailable",
+                                "AI runtime unavailable"));
                     }
                 });
             }
         }, "ai-model-discovery").start();
     }
 
-    private void showModels(View anchor, AiModelListResult result, AiModelDiscoveryState.Attempt attempt) {
+    private void showModels(AiModelPicker picker, AiModelListResult result) {
         if (!result.ok) {
-            toast(failureLabel(result));
+            picker.status(failureLabel(result));
             return;
         }
         List<AiModelDescriptor> models = AiGeminiProvider.withSuggestedFirst(result.models);
-        if (models.isEmpty()) {
-            toast(host.string("settings_ai_no_models", "No usable models for this key"));
-            return;
-        }
-        String current = settings.modelName();
-        java.util.List<String> names = new java.util.ArrayList<>();
-        for (AiModelDescriptor model : models) names.add(model.name);
-        PanelPickerPopup.show(context, anchor, names, current, name -> {
-            if (!anchor.isAttachedToWindow() || !discovery.canSelect(settings, attempt)) return;
-            settings.setModelName(name);
-            host.rebuild();
-        });
+        picker.status(models.isEmpty()
+                ? host.string("settings_ai_no_models", "No usable models for this key") : "");
+        picker.models(models);
     }
 
     private void testModel() {

@@ -85,9 +85,9 @@ public final class LyricsDocumentProcessor {
         if (context == null) return soundConfigId(null, RomanizationOptions.DEFAULTS, "");
         SpotifyPlusConfig config = SpotifyPlusConfig.from(context);
         LyricsRenderConfig render = LyricsRenderConfig.read(context, config);
-        RomanizationOptions options = new RomanizationOptions(render.defaultChineseMode,
-                render.koreanMode, render.chineseTones, render.defaultCyrillicMode,
-                render.cyrillicKeepSigns);
+        RomanizationOptions options = new RomanizationOptions(
+                render.defaultChineseMode, render.koreanMode, render.chineseTones,
+                render.defaultCyrillicMode, render.cyrillicKeepSigns).forDocument(doc);
         return soundConfigId(context, options,
                 effectiveSourceLanguage(TranslationConfig.read(config),
                         doc == null ? "" : doc.language));
@@ -240,6 +240,11 @@ public final class LyricsDocumentProcessor {
      * @return DIFFERENT_BASE when a replacement is required; otherwise CHANGED or UNCHANGED refers
      *         to displayed text. Compatible publications always copy readiness and provenance.
      */
+    public static boolean sameCanonicalBase(LyricsDocument a, LyricsDocument b) {
+        if (a == null || b == null) return false;
+        return canonicalBaseOf(a).digest.equals(canonicalBaseOf(b).digest);
+    }
+
     public static DerivedMergeResult mergeDerivedPublication(LyricsDocument target, LyricsDocument source) {
         if (target == null || source == null) return DerivedMergeResult.DIFFERENT_BASE;
         CanonicalBase targetBase = canonicalBaseOf(target);
@@ -282,6 +287,12 @@ public final class LyricsDocumentProcessor {
     private static boolean mergeLine(LyricsLine target, LyricsLine source) {
         if (target == null || source == null) return false;
         boolean changed = false;
+        if (target.translationAiPending != source.translationAiPending) {
+            // A state flag, not a derived value: it follows the source every time, so a row
+            // whose AI line landed clears its pending mark on surfaces that merge publications.
+            target.translationAiPending = source.translationAiPending;
+            changed = true;
+        }
         if (source.detection != null && target.detection != source.detection) {
             target.detection = source.detection;
             changed = true;

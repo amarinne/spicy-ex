@@ -39,6 +39,24 @@ public final class AiLayerRunner {
         public long nowMs = System.currentTimeMillis();
     }
 
+    /** Stored failures that a provider declined before any generation; see {@link #run}. */
+    static boolean declinedBeforeGeneration(AiChunkFailure failure) {
+        if (failure == null || failure.reason == null) return false;
+        switch (failure.reason) {
+            case AUTH_REJECTED:
+            case QUOTA_EXHAUSTED:
+            case MODEL_UNAVAILABLE:
+            case REQUEST_REJECTED:
+            case RATE_LIMITED:
+                return true;
+            case DELIVERY_UNKNOWN:
+                // Recorded before 503/529 were classified as busy.
+                return failure.status == 503 || failure.status == 529;
+            default:
+                return false;
+        }
+    }
+
     private AiLayerRunner() {
     }
 
@@ -106,11 +124,18 @@ public final class AiLayerRunner {
         }
         // Read-only terminal fallback replay precedes the dispatch gate and never rewrites usage.
         if (!args.allowProviderRequest) return AiRunOutcome.nothingToDo();
+        // A failure that may have generated output (delivery unknown, truncation, an invalid
+        // answer) waits for an explicit retry. A refusal that came before generation — key, quota,
+        // model, request, busy — billed nothing, so the next automatic run simply asks again.
+        // Making those sticky left every song played during a provider outage untranslated.
+        boolean reopenDeclined = false;
         if (stored != null && !args.explicitRetry) {
             for (AiChunkRecord chunk : stored.chunks().values()) {
-                if (chunk.status == AiChunkRecord.Status.FAILED) {
+                if (chunk.status != AiChunkRecord.Status.FAILED) continue;
+                if (!declinedBeforeGeneration(chunk.failure)) {
                     return AiRunOutcome.failed(stored, chunk.failure, true);
                 }
+                reopenDeclined = true;
             }
         }
 
@@ -119,7 +144,7 @@ public final class AiLayerRunner {
         record.replay = args.replay;
         // A record that failed before is resumable: its completed chunks stand, and only the failed
         // ones are reopened. An explicit retry is the only thing that reaches this line.
-        if (args.explicitRetry) record.reopenFailedChunks();
+        if (args.explicitRetry || reopenDeclined) record.reopenFailedChunks();
 
         try {
             boolean durable = store == null || stored != null;

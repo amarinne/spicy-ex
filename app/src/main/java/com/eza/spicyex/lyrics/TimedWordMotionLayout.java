@@ -11,6 +11,10 @@ final class TimedWordMotionLayout extends ViewGroup {
     private int[] childRows = new int[0];
     private int[] rowHeights = new int[0];
     private int[] rowAscents = new int[0];
+    private float[] childTargetScales = new float[0];
+    private int[] seamWidthsScratch = new int[0];
+    private float[] seamScalesScratch = new float[0];
+    private float[] seamOffsetsScratch = new float[0];
 
     TimedWordMotionLayout(Context context) {
         super(context);
@@ -129,11 +133,115 @@ final class TimedWordMotionLayout extends ViewGroup {
             }
             rowTop += rowHeights[row];
         }
+        alignScaledSeams();
         /*
          * Layout is intentionally row-based rather than a single horizontal strip. The outer
          * GlowFlexbox can only wrap this ViewGroup as one timing atom; putting all of its CJK
          * children on one line was the source of the off-screen overflow.
          */
+    }
+
+    /** Records the next frame's horizontal scale for one syllable child before seam alignment. */
+    void recordChildScaleX(View child, float scaleX) {
+        int count = getChildCount();
+        ensureSeamBuffers(count);
+        for (int i = 0; i < count; i++) {
+            if (getChildAt(i) == child) {
+                childTargetScales[i] = scaleX;
+                return;
+            }
+        }
+    }
+
+    /**
+     * Keeps adjacent scaled syllable children pixel-flush (zero seam gap, zero overlap) by
+     * pinning each child's horizontal pivot to its leading edge and shifting each child's
+     * translationX to absorb its siblings' scale deltas.
+     */
+    void alignScaledSeams() {
+        int count = getChildCount();
+        if (count == 0 || rowHeights.length == 0 || childRows.length < count) return;
+        ensureSeamBuffers(count);
+        boolean anyScaled = false;
+        boolean anyTranslated = false;
+        for (int i = 0; i < count; i++) {
+            View child = getChildAt(i);
+            int width = child.getVisibility() == GONE ? 0 : child.getWidth();
+            seamWidthsScratch[i] = width;
+            float scale = childTargetScales[i];
+            seamScalesScratch[i] = scale;
+            if (Math.abs(scale - 1f) > 0.0005f) anyScaled = true;
+            if (Math.abs(child.getTranslationX()) > 0.05f) anyTranslated = true;
+        }
+        if (!anyScaled && !anyTranslated) return;
+        boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+        int parentWidth = getParent() instanceof View ? ((View) getParent()).getWidth() : 0;
+        computeSeamOffsets(seamWidthsScratch, seamScalesScratch, childRows, count,
+                rowHeights.length, rtl, getLeft(), getRight(), getWidth(), parentWidth,
+                seamOffsetsScratch);
+        for (int i = 0; i < count; i++) {
+            View child = getChildAt(i);
+            if (child.getVisibility() == GONE) continue;
+            int width = child.getWidth();
+            int height = child.getHeight();
+            if (width > 0 && height > 0) {
+                float pivotX = rtl ? width : 0f;
+                if (Math.abs(child.getPivotX() - pivotX) > 0.5f) child.setPivotX(pivotX);
+                if (Math.abs(child.getPivotY() - height) > 0.5f) child.setPivotY(height);
+            }
+            float tx = seamOffsetsScratch[i];
+            if (Math.abs(child.getTranslationX() - tx) > 0.05f) {
+                child.setTranslationX(tx);
+            }
+        }
+    }
+
+    private void ensureSeamBuffers(int count) {
+        if (childTargetScales.length < count) {
+            int oldLen = childTargetScales.length;
+            childTargetScales = java.util.Arrays.copyOf(childTargetScales, count);
+            java.util.Arrays.fill(childTargetScales, oldLen, count, 1f);
+        }
+        if (seamWidthsScratch.length < count) {
+            seamWidthsScratch = new int[count];
+            seamScalesScratch = new float[count];
+            seamOffsetsScratch = new float[count];
+        }
+    }
+
+    /**
+     * Pure seam-alignment geometry (unit-tested). Given each child's unscaled width, current
+     * horizontal scale (pivoted at leading edge: 0 in LTR, width in RTL), and wrapped row index,
+     * writes each child's translationX into {@code outOffsets} so siblings stay edge-to-edge while
+     * the word stays centered in its layout box (or clamped inward near row edges).
+     */
+    static void computeSeamOffsets(int[] widths, float[] scales, int[] rows, int count,
+                                   int rowCount, boolean rtl, int leftEdge, int rightEdge,
+                                   int containerWidth, int parentWidth, float[] outOffsets) {
+        java.util.Arrays.fill(outOffsets, 0, count, 0f);
+        if (count <= 0 || rowCount <= 0) return;
+        float expansion = containerWidth * ((1.025f - 1f) * 0.5f);
+        boolean pinLeft = leftEdge < expansion;
+        boolean pinRight = parentWidth > 0 && (parentWidth - rightEdge) < expansion;
+        for (int row = 0; row < rowCount; row++) {
+            float rowDelta = 0f;
+            for (int i = 0; i < count; i++) {
+                if (rows[i] != row || widths[i] <= 0) continue;
+                rowDelta += (scales[i] - 1f) * widths[i];
+            }
+            float anchor;
+            if (rtl) {
+                anchor = pinRight ? 0f : pinLeft ? rowDelta : rowDelta * 0.5f;
+            } else {
+                anchor = pinLeft ? 0f : pinRight ? -rowDelta : -rowDelta * 0.5f;
+            }
+            float accDelta = 0f;
+            for (int i = 0; i < count; i++) {
+                if (rows[i] != row || widths[i] <= 0) continue;
+                outOffsets[i] = rtl ? (anchor - accDelta) : (anchor + accDelta);
+                accDelta += (scales[i] - 1f) * widths[i];
+            }
+        }
     }
 
     @Override

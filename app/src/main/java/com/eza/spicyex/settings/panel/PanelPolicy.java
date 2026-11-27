@@ -39,14 +39,15 @@ public final class PanelPolicy {
     /**
      * Which commit policy a setting uses.
      *
-     * <p>The six language-class pickers are {@code CONFIRMING}: they accumulate a pending
+     * <p>Language-class pickers and their page switches are {@code CONFIRMING}: they accumulate a pending
      * highlight and write only on an explicit Save, so a stray tap in an open list cannot change
      * the interface language. This mirrors AndroidX {@code ListPreference}, which persists only
      * in {@code onDialogClosed(positiveResult=true)}. Steppers settle after the last tick;
      * everything else writes at once.
      */
     public static CommitPolicy commitPolicyFor(Settings.Setting<?> setting) {
-        if (isConfirmingSelector(setting)) return CommitPolicy.CONFIRMING;
+        if (isConfirmingSelector(setting) || setting == Settings.CHINESE_TONES
+                || setting == Settings.CYRILLIC_KEEP_SIGNS) return CommitPolicy.CONFIRMING;
         if (setting instanceof Settings.IntegerSetting) return CommitPolicy.DEBOUNCED;
         return CommitPolicy.IMMEDIATE;
     }

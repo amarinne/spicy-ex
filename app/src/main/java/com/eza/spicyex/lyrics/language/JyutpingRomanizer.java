@@ -8,7 +8,12 @@ final class JyutpingRomanizer {
     static final class Segment {
         final String reading;
         final int codePoint;
-        Segment(String reading, int codePoint) { this.reading = reading; this.codePoint = codePoint; }
+        /** Source code points covered: 1 for a character, the phrase length for a phrase. */
+        final int length;
+        Segment(String reading, int codePoint) { this(reading, codePoint, 1); }
+        Segment(String reading, int codePoint, int length) {
+            this.reading = reading; this.codePoint = codePoint; this.length = length;
+        }
     }
     static final class TrieWalk {
         final java.util.List<Segment> segments;
@@ -22,88 +27,116 @@ final class JyutpingRomanizer {
     private static volatile Map<Integer, String> map;
     private static volatile TrieNode trie;
 
+    /**
+     * Cantonese revision 2 (cjk-labs {@code docs/eza-cantonese-revision-2.md}, policy
+     * {@code eza-2026-11-15.3/adapter-2026-11-18.5}). Part of the romanization cache key.
+     */
+    static final String REVISION = "adapter-2026-11-18.5";
+    /** R2a: interjections and sentence-final particles keep the bare vowel. */
+    private static final String PARTICLES = "啊呀吖哦喔噢哎唉欸誒噯嗄";
+
     private JyutpingRomanizer() {}
 
     static String romanize(String text) {
         if (text == null || text.trim().isEmpty()) return text;
-        Map<Integer, String> local = map();
-        TrieNode localTrie = trie();
         StringBuilder out = new StringBuilder();
         boolean lastWasReading = false;
-        for (int i = 0; i < text.length();) {
-            PhraseMatch phrase = matchPhrase(localTrie, text, i);
-            if (phrase != null) {
+        for (Segment segment : walk(text).segments) {
+            if (segment.reading != null) {
                 if (out.length() > 0 && lastWasReading) out.append(' ');
-                out.append(phrase.reading);
-                lastWasReading = true;
-                i = phrase.endIndex;
-                continue;
-            }
-            int cp = text.codePointAt(i);
-            String value = local.get(cp);
-            if (value != null && !value.trim().isEmpty()) {
-                if (out.length() > 0 && lastWasReading) out.append(' ');
-                out.append(value);
+                out.append(segment.reading);
                 lastWasReading = true;
             } else {
-                if (out.length() > 0 && lastWasReading && shouldSeparateFallback(cp)) out.append(' ');
-                out.appendCodePoint(cp);
+                if (out.length() > 0 && lastWasReading && shouldSeparateFallback(segment.codePoint)) out.append(' ');
+                out.appendCodePoint(segment.codePoint);
                 lastWasReading = false;
             }
-            i += Character.charCount(cp);
         }
         return out.toString().replaceAll("[ \\t]+", " ").trim();
     }
 
+    /**
+     * Reads the source text (R1): a passage without traditional-only characters is looked up
+     * through its character-preserving traditional form, because the lexicon ranks traditional
+     * readings (simplified 离 would read ci1, 離 reads lei4). Passthrough segments keep the
+     * source code points; phrase segments carry {@code codePoint == -1}.
+     */
     static TrieWalk walk(String text) {
+        return walk(text, true);
+    }
+
+    /** {@code ngInitial == false} returns the lexicon readings without the R2 ng insertion. */
+    static TrieWalk walk(String text, boolean ngInitial) {
         java.util.ArrayList<Segment> segments = new java.util.ArrayList<>();
         if (text == null) return new TrieWalk(segments);
+        int[] source = text.codePoints().toArray();
+        int[] lookup = ChineseCharacterConverter.cantoneseLookupForm(text).codePoints().toArray();
+        if (lookup.length != source.length) lookup = source;
         TrieNode localTrie = trie();
         Map<Integer, String> local = map();
-        for (int i = 0; i < text.length();) {
-            PhraseMatch phrase = matchPhrase(localTrie, text, i);
-            if (phrase != null) {
-                segments.add(new Segment(phrase.reading, -1));
-                i = phrase.endIndex;
+        for (int i = 0; i < lookup.length;) {
+            int phraseEnd = matchPhrase(localTrie, lookup, i);
+            if (phraseEnd > i) {
+                String reading = phraseReading(localTrie, lookup, i, phraseEnd);
+                segments.add(new Segment(ngInitial ? preferNgInitial(reading, source, i) : reading, -1,
+                        phraseEnd - i));
+                i = phraseEnd;
                 continue;
             }
-            int cp = text.codePointAt(i);
-            String value = local.get(cp);
-            segments.add(new Segment(value == null || value.trim().isEmpty() ? null : value, cp));
-            i += Character.charCount(cp);
+            String value = local.get(lookup[i]);
+            segments.add(value == null || value.trim().isEmpty()
+                    ? new Segment(null, source[i])
+                    : new Segment(ngInitial ? preferNgInitial(value, source, i) : value, source[i]));
+            i++;
         }
         return new TrieWalk(segments);
+    }
+
+    /**
+     * R2: a null-initial syllable starting with a, o or u takes the initial ng (愛 ngoi3,
+     * 屋 nguk1), except interjections and sentence-final particles (R2a). Syllables align with
+     * the source characters from {@code start}; the lexicon gives one syllable per character.
+     */
+    private static String preferNgInitial(String reading, int[] source, int start) {
+        String[] syllables = reading.trim().split("\\s+");
+        StringBuilder out = new StringBuilder(reading.length() + 4);
+        for (int k = 0; k < syllables.length; k++) {
+            String syllable = syllables[k];
+            int index = start + k;
+            boolean particle = index < source.length && PARTICLES.indexOf(source[index]) >= 0;
+            if (k > 0) out.append(' ');
+            if (!particle && !syllable.isEmpty() && "aou".indexOf(syllable.charAt(0)) >= 0) out.append("ng");
+            out.append(syllable);
+        }
+        return out.toString();
+    }
+
+    /** The context-free lexicon reading of one character, without R2; null when absent. */
+    static String characterReading(int codePoint) {
+        String value = map().get(codePoint);
+        return value == null || value.trim().isEmpty() ? null : value.trim();
     }
 
     private static boolean shouldSeparateFallback(int cp) {
         return cp < 128 && Character.isLetterOrDigit(cp);
     }
 
-    private static final class PhraseMatch {
-        final int endIndex;
-        final String reading;
-
-        PhraseMatch(int endIndex, String reading) {
-            this.endIndex = endIndex;
-            this.reading = reading;
+    /** Longest phrase from {@code start}; returns its end index, or {@code start} when none. */
+    private static int matchPhrase(TrieNode root, int[] text, int start) {
+        TrieNode node = root;
+        int end = start;
+        for (int i = start; i < text.length; i++) {
+            node = node.children.get(text[i]);
+            if (node == null) break;
+            if (node.reading != null) end = i + 1;
         }
+        return end;
     }
 
-    private static PhraseMatch matchPhrase(TrieNode root, String text, int startIndex) {
+    private static String phraseReading(TrieNode root, int[] text, int start, int end) {
         TrieNode node = root;
-        String reading = null;
-        int readingEnd = startIndex;
-        for (int i = startIndex; i < text.length();) {
-            int cp = text.codePointAt(i);
-            node = node.children.get(cp);
-            if (node == null) break;
-            i += Character.charCount(cp);
-            if (node.reading != null) {
-                reading = node.reading;
-                readingEnd = i;
-            }
-        }
-        return reading == null ? null : new PhraseMatch(readingEnd, reading);
+        for (int i = start; i < end; i++) node = node.children.get(text[i]);
+        return node.reading;
     }
 
     private static Map<Integer, String> map() {

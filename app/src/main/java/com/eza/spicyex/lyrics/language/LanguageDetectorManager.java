@@ -48,6 +48,12 @@ final class LanguageDetectorManager {
         if (text == null || text.codePoints().noneMatch(Character::isLetter)) {
             return DetectionResult.unknown("", text);
         }
+        // Authored Mandarin phonetic symbols are direct language evidence and need no model pack.
+        if (ZhuyinResolver.contains(text) && !SpicyTextDetection.hasKana(text)
+                && !SpicyTextDetection.itemKoreanTest(text)) {
+            return DetectionResult.detected("", text, ScriptClassifier.ScriptClass.CHINESE, "zh", 1)
+                    .withEvidence(DetectionEvidence.SCRIPT);
+        }
         switch (script) {
             case JAPANESE: return DetectionResult.detected("", text, script, "ja", 1).withEvidence(DetectionEvidence.SCRIPT);
             case KOREAN: return DetectionResult.detected("", text, script, "ko", 1).withEvidence(DetectionEvidence.SCRIPT);

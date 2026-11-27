@@ -472,6 +472,26 @@ public final class CatalogStore {
         }
     }
 
+    /** The cataloged metadata row for {@code trackId}, or null when unknown or unreadable. */
+    public static CatalogTrack track(Context context, String trackId) {
+        if (context == null || trackId == null || trackId.isEmpty()) return null;
+        try {
+            SQLiteDatabase db = helper(context).getReadableDatabase();
+            try (Cursor cursor = db.query(CatalogSchema.TABLE_TRACKS,
+                    new String[]{"uri", "title", "artists", "album", "duration_ms", "last_seen_ms"},
+                    "track_id = ?", new String[]{trackId}, null, null, null)) {
+                return cursor.moveToFirst()
+                        ? new CatalogTrack(trackId, cursor.getString(0), cursor.getString(1),
+                                cursor.getString(2), cursor.getString(3), cursor.getLong(4),
+                                cursor.getLong(5))
+                        : null;
+            }
+        } catch (Throwable t) {
+            Diagnostics.warn("CatalogStore", "track", t);
+            return null;
+        }
+    }
+
     public static int candidateCount(Context context) {
         return count(context, CatalogSchema.TABLE_CANDIDATES, null, null);
     }

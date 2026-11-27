@@ -56,6 +56,13 @@ public final class LyricsLocalRomanizer {
                 String selectedMode = opts.chineseMode
                         + (opts.chineseOutputStyle == ChineseOutputStyle.EZA ? "-eza" : "");
                 line.chineseMode = normalizeChineseMode(selectedMode);
+                if (ZhuyinResolver.contains(line.text)) {
+                    List<ZhuyinResolver.Part> parts = SpicyJapaneseChineseProcessor.chineseReadingParts(
+                            line.text, line.chineseMode, opts.chineseTones, opts.chineseOutputStyle);
+                    String display = ZhuyinResolver.join(parts);
+                    line.readingRenderPlan = ReadingPlanFactory.zhuyin(line, parts);
+                    return display;
+                }
                 return SpicyJapaneseChineseProcessor.romanizeChineseLine(line.text, line.chineseMode, opts.chineseTones,
                         opts.chineseOutputStyle);
             }
@@ -232,7 +239,7 @@ public final class LyricsLocalRomanizer {
             String language = ReadingLanguagePolicy.language(text, detection, doc == null ? "" : doc.language);
             if (SpicyTextDetection.hasCjkIdeograph(text) && language.isEmpty()) return "";
             List<SpicyTextDetection.Script> scripts = scriptsFor(doc, fullText);
-            if ("zh".equals(language) && SpicyTextDetection.hasCjkIdeograph(text)) {
+            if ("zh".equals(language) && SpicyTextDetection.itemChineseTest(text)) {
                 if (opts == null || isBlank(opts.chineseMode)) return "";
                 String mode = normalizeChineseMode(isBlank(lineChineseMode) ? opts.chineseMode : lineChineseMode);
                 return SpicyJapaneseChineseProcessor.romanizeChineseLine(text, mode, opts.chineseTones,

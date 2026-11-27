@@ -24,8 +24,16 @@ public final class AiHarnessEpoch {
     /** Output written before the epoch was recorded. Every Sound record uses this epoch. */
     public static final int LEGACY = 0;
 
-    /** The current Meaning harness revision. */
-    public static final int MEANING = 1;
+    /**
+     * The current Meaning harness revision.
+     *
+     * <p>1: person-reference guidance. 2: the hard rule that each row carries only its own
+     * source's meaning (Korean and Japanese clause reordering moved meaning across rows and broke
+     * line sync), and the playing track's title, artists, and album as reference context. 3: the
+     * plain-text numbered-line wire ({@link AiTextWire}) and reasoning effort in a custom
+     * gateway's identity.
+     */
+    public static final int MEANING = 3;
 
     private static final Pattern CONTRACT_EPOCH =
             Pattern.compile("\\|epoch=(\\d+)$");

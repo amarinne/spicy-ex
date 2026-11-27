@@ -13,4 +13,16 @@ public interface AiRunMonitor {
      */
     default void onReasoning(String chunkId, int attempt, String reasoning) {
     }
+
+    /**
+     * Rows of a streamed attempt that already pass the row checks, while the call is still
+     * arriving. Provisional: the final validation of the whole answer still decides what is kept
+     * and stored. Called again with the longer list as more lines finish.
+     */
+    default void onPartialRows(String chunkId, java.util.List<AiResponseItem> rows) {
+    }
+
+    /** Count of streamed rows received so far in this chunk vs rows requested in this chunk. */
+    default void onStreamProgress(String chunkId, int receivedRows, int totalRows) {
+    }
 }

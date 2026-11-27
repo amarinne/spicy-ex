@@ -123,10 +123,10 @@ public final class LyricAnimations {
         return lerp(1.18f, 1f, smoothStep((t - 0.7f) / 0.3f));
     }
 
-    /** Zoom style Y range retained from the original Spicy curve. */
+    /** Zoom style Y range retained from the original Spicy curve, eased smoothly across the peak. */
     public static float yOffsetSpline(float t) {
-        if (t <= 0.9f) return lerp(0.01f, -(1f / 60f), t / 0.9f);
-        return lerp(-(1f / 60f), 0f, (t - 0.9f) / 0.1f);
+        if (t <= 0.9f) return lerp(0.01f, -(1f / 60f), smoothStep(t / 0.9f));
+        return lerp(-(1f / 60f), 0f, smoothStep((t - 0.9f) / 0.1f));
     }
 
     /** Lift style: smooth vertical-only arc, 0 -> -0.04em -> 0. */

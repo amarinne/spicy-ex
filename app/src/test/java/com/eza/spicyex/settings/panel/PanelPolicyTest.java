@@ -118,6 +118,12 @@ public class PanelPolicyTest {
     }
 
     @Test
+    public void readingPageSwitchesCommitOnSave() {
+        assertEquals(CommitPolicy.CONFIRMING, PanelPolicy.commitPolicyFor(Settings.CHINESE_TONES));
+        assertEquals(CommitPolicy.CONFIRMING, PanelPolicy.commitPolicyFor(Settings.CYRILLIC_KEEP_SIGNS));
+    }
+
+    @Test
     public void ordinarySelectorsStillCommitImmediately() {
         assertFalse(PanelPolicy.isConfirmingSelector(Settings.CACHE_SIZE));
         assertEquals(CommitPolicy.IMMEDIATE, PanelPolicy.commitPolicyFor(Settings.CACHE_SIZE));

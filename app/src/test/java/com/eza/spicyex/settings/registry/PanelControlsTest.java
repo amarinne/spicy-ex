@@ -51,6 +51,18 @@ public class PanelControlsTest {
         }
     }
 
+    @Test
+    public void chineseAndCyrillicPagesReplaceTheIndividualPanelRows() {
+        assertEquals("chinese_reading_page", compositeOf(Settings.CHINESE_MODE));
+        assertEquals("cyrillic_reading_page", compositeOf(Settings.CYRILLIC_MODE));
+        assertEquals("chinese_reading_page", compositeOf(Settings.CHINESE_TONES));
+        assertEquals("chinese_reading_page", compositeOf(Settings.CHINESE_CHARACTER_FORM));
+        assertEquals("cyrillic_reading_page", compositeOf(Settings.CYRILLIC_KEEP_SIGNS));
+        assertEquals(Visibility.NEVER, visibleWhen(Settings.CHINESE_TONES));
+        assertEquals(Visibility.NEVER, visibleWhen(Settings.CHINESE_CHARACTER_FORM));
+        assertEquals(Visibility.NEVER, visibleWhen(Settings.CYRILLIC_KEEP_SIGNS));
+    }
+
     /** A setting the layout editor owns has no panel row at all. */
     @Test
     public void editorOwnedSettingsHaveNoPanelRow() {

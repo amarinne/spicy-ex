@@ -92,7 +92,7 @@ public class AiChunkRuntimeTest {
         assertTrue("the second attempt carries the repair instruction",
                 provider.calls.get(1).config.repair);
         assertTrue(provider.calls.get(1).config.systemPrompt()
-                .contains(AiContract.REPAIR_PROMPT));
+                .contains(AiContract.TEXT_REPAIR_PROMPT));
     }
 
     @Test
@@ -143,13 +143,13 @@ public class AiChunkRuntimeTest {
         cases.add(new Object[]{FakeAiProvider.body("{\"items\":[]}", AiUsage.of(1, 1),
                 AiFinishReason.OTHER), AiFailureReason.PROVIDER_REFUSED});
         cases.add(new Object[]{FakeAiProvider.failure(AiProviderFailure.auth()),
-                AiFailureReason.AUTH_REJECTED});
+                AiFailureReason.AUTH_REJECTED, false});
         cases.add(new Object[]{FakeAiProvider.failure(AiProviderFailure.quota()),
-                AiFailureReason.QUOTA_EXHAUSTED});
+                AiFailureReason.QUOTA_EXHAUSTED, false});
         cases.add(new Object[]{FakeAiProvider.failure(AiProviderFailure.requestRejected(400)),
-                AiFailureReason.REQUEST_REJECTED});
+                AiFailureReason.REQUEST_REJECTED, false});
         cases.add(new Object[]{FakeAiProvider.failure(AiProviderFailure.modelUnavailable()),
-                AiFailureReason.MODEL_UNAVAILABLE});
+                AiFailureReason.MODEL_UNAVAILABLE, false});
 
         for (Object[] testCase : cases) {
             FakeAiProvider provider = new FakeAiProvider((FakeAiProvider.Step) testCase[0]);
@@ -157,7 +157,9 @@ public class AiChunkRuntimeTest {
             assertFalse(result.ok);
             assertEquals(testCase[1], result.failure.reason);
             assertEquals("a terminal failure must not be retried", 1, provider.calls.size());
-            assertTrue("a failed attempt is still accounted", result.accountedTokens > 0);
+            // A refusal before generation bills nothing; anything that may have generated does.
+            boolean charged = testCase.length < 3 || (Boolean) testCase[2];
+            assertEquals("charged for " + testCase[1], charged, result.accountedTokens > 0);
         }
     }
 
@@ -217,7 +219,7 @@ public class AiChunkRuntimeTest {
     }
 
     @Test
-    public void cancellingDuringTheRetryWaitStillReportsTheChargedAttempt() {
+    public void cancellingDuringTheRetryWaitReportsTheRateLimitWithoutACharge() {
         FakeAiProvider provider = new FakeAiProvider(
                 FakeAiProvider.failure(AiProviderFailure.rateLimited(30_000L)));
         AiChunkRuntime.Args args = args(provider, chunk(null));
@@ -232,7 +234,26 @@ public class AiChunkRuntimeTest {
         assertFalse(result.ok);
         assertEquals(AiFailureReason.RATE_LIMITED, result.failure.reason);
         assertEquals(1, result.record.attempts);
-        assertTrue(result.accountedTokens > 0);
+        assertEquals(0L, result.accountedTokens);
+    }
+
+    @Test
+    public void aStatusZeroDeliveryFailureKeepsItsCause() {
+        FakeAiProvider provider = new FakeAiProvider(FakeAiProvider.failure(
+                AiProviderFailure.deliveryUnknown(AiProviderFailure.Cause.TIMEOUT, 0)));
+        AiChunkExecution result = AiChunkRuntime.executeChunk(args(provider, chunk(null)));
+        assertEquals(AiFailureReason.DELIVERY_UNKNOWN, result.failure.reason);
+        assertEquals("timeout", result.failure.detail);
+    }
+
+    @Test
+    public void aRefusalKeepsItsStatusAndProviderCode() {
+        FakeAiProvider provider = new FakeAiProvider(FakeAiProvider.failure(
+                AiProviderFailure.auth().withHttp(403, "TOS_VIOLATION")));
+        AiChunkExecution result = AiChunkRuntime.executeChunk(args(provider, chunk(null)));
+        assertEquals(AiFailureReason.AUTH_REJECTED, result.failure.reason);
+        assertEquals(403, result.failure.status);
+        assertEquals("TOS_VIOLATION", result.failure.detail);
     }
 
     // --- cancellation and resume ---------------------------------------------
@@ -490,11 +511,15 @@ public class AiChunkRuntimeTest {
     @Test
     public void theOutputCapIsTheLowerOfTheContractAndTheModel() {
         assertEquals(4_096, CONFIG.callOutputTokens());
-        AiModelDescriptor generous = new AiModelDescriptor("big", "1", 1_000_000, 65_536,
+        AiModelDescriptor generous = new AiModelDescriptor("big", "1", 1_000_000, 1_000_000,
                 Collections.singletonList("generateContent"));
         AiProviderConfig config = new AiProviderConfig(LayerKind.MEANING, null, "1", generous,
                 "en", AiContract.PROMPT_VERSION, false);
         assertEquals(AiContract.MAX_CONFIGURED_OUTPUT_TOKENS, config.callOutputTokens());
+        AiModelDescriptor flash = new AiModelDescriptor("flash", "1", 1_000_000, 65_536,
+                Collections.singletonList("generateContent"));
+        assertEquals(65_536, new AiProviderConfig(LayerKind.MEANING, null, "1", flash, "en",
+                AiContract.PROMPT_VERSION, false).callOutputTokens());
     }
 
     /**
@@ -577,5 +602,47 @@ public class AiChunkRuntimeTest {
 
         assertEquals(1, monitor.payloads.size());
         assertTrue(monitor.traces.isEmpty());
+    }
+
+    @Test
+    public void streamedLinesReachTheMonitorBeforeTheCallReturns() {
+        final List<List<AiResponseItem>> partials = new ArrayList<>();
+        AiProvider streaming = new AiProvider() {
+            @Override public String id() {
+                return "streaming";
+            }
+
+            @Override public AiModelListResult listModels(AiSignal signal) {
+                return AiModelListResult.ok(Collections.singletonList(MODEL));
+            }
+
+            @Override public AiProviderResult generateChunk(AiProviderRequest request,
+                                                            AiProviderConfig config,
+                                                            AiSignal signal) {
+                throw new AssertionError("the runtime must offer a stream listener");
+            }
+
+            @Override public AiProviderResult generateChunk(AiProviderRequest request,
+                                                            AiProviderConfig config,
+                                                            AiSignal signal,
+                                                            StreamListener listener) {
+                listener.onText("Here you go\n");
+                listener.onText("Here you go\n1. hello\n");
+                return AiProviderResult.ok("1. hello", AiUsage.of(4, 2), AiFinishReason.STOP, 8L);
+            }
+        };
+        AiChunkRuntime.Args args = args(streaming, chunk(null));
+        args.monitor = new AiRunMonitor() {
+            @Override public void onAttempt(String chunkId, int attempt, String wirePayload) {
+            }
+
+            @Override public void onPartialRows(String chunkId, List<AiResponseItem> rows) {
+                partials.add(rows);
+            }
+        };
+        AiChunkExecution result = AiChunkRuntime.executeChunk(args);
+        assertTrue(result.ok);
+        assertEquals(1, partials.size());
+        assertEquals("hello", partials.get(0).get(0).text);
     }
 }

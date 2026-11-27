@@ -15,6 +15,9 @@ below are bundled.
 | Cyrillic | Latin-letter reading | `Привет` → `Privet` |
 | Greek | Latin-letter reading | `Αγάπη` → `Agapi` |
 
+On the **Cyrillic** settings page, select **Auto-detect** to use the Ukrainian preset when a song contains
+і, ї, є, or ґ in either case. Songs without these letters use the Russian preset.
+
 Optional AI romanization can cover Thai, Arabic, Hindi, Tamil, and other languages.
 
 <details>

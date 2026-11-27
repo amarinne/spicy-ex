@@ -1,5 +1,7 @@
 package com.eza.spicyex.lyrics;
 
+import com.eza.spicyex.lyrics.language.LyricsLocalRomanizer;
+import com.eza.spicyex.lyrics.language.RomanizationOptions;
 import com.eza.spicyex.lyrics.language.SpicyRomanizer;
 
 import static org.junit.Assert.assertEquals;
@@ -70,5 +72,58 @@ public class CyrillicRomanizerTest {
         assertEquals("Aldadyngby", SpicyRomanizer.romanizeCyrillic("Алдадыңбы", SpicyRomanizer.CYRILLIC_UKRAINIAN, false));
         assertEquals("Kalbadyngby zhanymda", SpicyRomanizer.romanizeCyrillic("Калбадыңбы жанымда", SpicyRomanizer.CYRILLIC_UKRAINIAN, false));
         assertEquals("Omur", SpicyRomanizer.romanizeCyrillic("Өмүр", SpicyRomanizer.CYRILLIC_UKRAINIAN, false));
+    }
+
+    @Test
+    public void autoModeUsesTheWholeSongForLineAndSegmentReadings() {
+        for (char marker : "іїєґІЇЄҐ".toCharArray()) {
+            LyricsDocument doc = document("гора", String.valueOf(marker));
+            RomanizationOptions resolved = options("auto").forDocument(doc);
+            assertEquals(SpicyRomanizer.CYRILLIC_UKRAINIAN, resolved.cyrillicMode);
+            assertEquals("hora", LyricsLocalRomanizer.romanizeLine(
+                    resolved, doc, doc.lines.get(0), "гора " + marker));
+            assertEquals("hora", LyricsLocalRomanizer.romanizeText(
+                    resolved, doc, "гора", "гора " + marker, ""));
+        }
+    }
+
+    @Test
+    public void autoModeFallsBackToRussianAndDoesNotOverrideFixedPresets() {
+        LyricsDocument ambiguous = document("гора");
+        ambiguous.language = "uk";
+        assertEquals("gora", LyricsLocalRomanizer.romanizeLine(
+                options("auto").forDocument(ambiguous), ambiguous, ambiguous.lines.get(0), "гора"));
+
+        LyricsDocument marked = document("гора", "Київ");
+        assertEquals(options("Russian").cacheKey(), options("Russian").forDocument(marked).cacheKey());
+        assertEquals(options("Ukrainian").cacheKey(), options("auto").forDocument(marked).cacheKey());
+        assertEquals(options("Russian").cacheKey(), options("auto").forDocument(ambiguous).cacheKey());
+        assertEquals("Off", options("Off").forDocument(marked).cyrillicMode);
+    }
+
+    @Test
+    public void autoModeReadsBackgroundLyricsAndPreservesOtherOptions() {
+        LyricsDocument doc = document("гора");
+        BackgroundLine background = new BackgroundLine();
+        background.text = "Київ";
+        doc.lines.get(0).backgroundLines.add(background);
+        RomanizationOptions resolved = new RomanizationOptions("jyutping-eza", "Off",
+                true, "auto", true).forDocument(doc);
+        assertEquals(new RomanizationOptions("jyutping-eza", "Off", true, "Ukrainian", true)
+                .cacheKey(), resolved.cacheKey());
+    }
+
+    private static RomanizationOptions options(String mode) {
+        return new RomanizationOptions("pinyin", "Off", false, mode, false);
+    }
+
+    private static LyricsDocument document(String... lines) {
+        LyricsDocument doc = new LyricsDocument();
+        for (String text : lines) {
+            LyricsLine line = new LyricsLine();
+            line.text = text;
+            doc.lines.add(line);
+        }
+        return doc;
     }
 }

@@ -23,6 +23,25 @@ import com.eza.spicyex.lyrics.reading.SyllableCanonicalizer;
 
 public class TimedTextRowProjectionTest {
     @Test
+    public void multiWordTimedReadingCanWrapWithoutChangingItsText() {
+        List<TimedTextRowProjection.Chunk> words = TimedTextRowProjection.words(
+                new TimedTextRowProjection.Chunk("shiao róng  tsáng\twuàn nuǎn wǒ", true));
+        assertEquals(6, words.size());
+        assertEquals("shiao róng tsáng wuàn nuǎn wǒ ", render(words));
+        assertChunk(words.get(5), "wǒ", true);
+    }
+
+    @Test
+    public void visualReadingWordsPreserveCombiningMarksAndNoBreakSpaces() {
+        String text = "ni\u030c\u00a0hao\u030c";
+        List<TimedTextRowProjection.Chunk> words = TimedTextRowProjection.words(
+                new TimedTextRowProjection.Chunk(text, false));
+        assertEquals(1, words.size());
+        assertChunk(words.get(0), text, false);
+        assertTrue(TimedTextRowProjection.words(new TimedTextRowProjection.Chunk("", false)).isEmpty());
+    }
+
+    @Test
     public void exactReconstructionRejectsDuplicatedTimedSuffix() {
         assertFalse(TimedTextRowProjection.exactlyReconstructs(
                 Arrays.asList("najě yolgiga sigun gorirô", "yolgigasigungorirô"),
@@ -101,12 +120,22 @@ public class TimedTextRowProjectionTest {
 
     @Test
     public void groupedMotionKeepsCompletedFragmentsStillAndSeamsClosed() {
+        // Phrase modes keep inner syllable fragments neutral while the wrapper owns motion.
         assertEquals(1f, LyricsAnimationApplier.groupedLocalScale(
                 false, false, true, false, 0.5f), 0.0001f);
         assertEquals(0f, LyricsAnimationApplier.groupedLocalY(
                 false, false, true, false, 0.5f), 0.0001f);
+        // Word zoom uses the exact zoom curve per syllable (0.95 -> 1.025 -> 1.0) while
+        // TimedWordMotionLayout keeps sibling edges flush.
+        assertEquals(0.95f, LyricsAnimationApplier.groupedLocalScale(
+                true, false, false, false, 0f), 0.0001f);
         assertTrue(LyricsAnimationApplier.groupedLocalScale(
                 true, false, true, false, 0.5f) > 1f);
+        assertEquals(1f, LyricsAnimationApplier.groupedLocalScale(
+                true, false, false, true, 1f), 0.0001f);
+        assertEquals(0f, LyricsAnimationApplier.groupedLocalY(
+                true, false, false, true, 1f), 0.0001f);
+        // Word lift keeps scale neutral and lifts the active syllable smoothly.
         assertEquals(1f, LyricsAnimationApplier.groupedLocalScale(
                 true, true, true, false, 0.5f), 0.0001f);
         assertTrue(LyricsAnimationApplier.groupedLocalY(

@@ -28,4 +28,8 @@ public final class AiLiveMonitor implements AiRunMonitor {
     @Override public void onReasoning(String chunkId, int attempt, String reasoning) {
         AiRequestLiveState.reasoning(layer, canonicalDigest, runId, chunkId, attempt, reasoning);
     }
+
+    @Override public void onStreamProgress(String chunkId, int receivedRows, int totalRows) {
+        AiRequestLiveState.progress(layer, canonicalDigest, runId, receivedRows, totalRows);
+    }
 }

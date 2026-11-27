@@ -112,16 +112,7 @@ public class References {
                     String album = md.get("album_title");
                     String color = md.get("extracted_color");
                     String imageId = md.get("image_large_url");
-                    long duration = 0;
-                    try {
-                        String durationValue = md.get("duration_ms");
-                        if (durationValue == null) durationValue = md.get("duration");
-                        if (durationValue != null && !durationValue.isEmpty()) {
-                            duration = Long.parseLong(durationValue.replaceAll("[^0-9]", ""));
-                            if (duration > 0 && duration < 10000) duration *= 1000;
-                        }
-                    } catch (Throwable ignored) {
-                    }
+                    long duration = trackDuration(md);
                     try {
                         if (duration <= 0) duration = (Long) XpReflect.callMethod(state, "duration");
                     } catch (Throwable ignored) {
@@ -157,6 +148,46 @@ public class References {
         } catch(Exception e) {
             Log.e("SpotifyPlus", "Error getting track information", e);
             return null;
+        }
+    }
+
+    /** Reads only the queue head from the same immutable state the playback hook captured. */
+    public static SpotifyTrack nextQueuedTrack(Object state) {
+        if (state == null) return null;
+        try {
+            Object options = XpReflect.callMethod(state, "options");
+            if (Boolean.TRUE.equals(XpReflect.callMethod(options, "repeatingTrack"))) return null;
+            Object list = XpReflect.callMethod(state, "nextTracks");
+            if (!(list instanceof Iterable<?>)) return null;
+            java.util.Iterator<?> tracks = ((Iterable<?>) list).iterator();
+            if (!tracks.hasNext()) return null;
+            Object next = tracks.next();
+            if (next == null) return null;
+            Object uri = XpReflect.callMethod(next, "uri");
+            if (!(uri instanceof String) || !((String) uri).matches("spotify:track:[A-Za-z0-9]{22}")) {
+                return null;
+            }
+            Object metadata = XpReflect.callMethod(next, "metadata");
+            if (!(metadata instanceof Map)) return null;
+            @SuppressWarnings("unchecked")
+            Map<String, String> md = (Map<String, String>) metadata;
+            return new SpotifyTrack(md.get("title"), joinArtistNames(md.get("artist_name"), md),
+                    md.get("album_title"), (String) uri, 0L, md.get("extracted_color"), 0L,
+                    md.get("image_large_url"), trackDuration(md), false);
+        } catch (Exception | LinkageError unavailable) {
+            return null;
+        }
+    }
+
+    private static long trackDuration(Map<String, String> metadata) {
+        try {
+            String value = metadata.get("duration_ms");
+            if (value == null) value = metadata.get("duration");
+            if (value == null || value.isEmpty()) return 0L;
+            long duration = Long.parseLong(value.replaceAll("[^0-9]", ""));
+            return duration > 0L && duration < 10000L ? duration * 1000L : duration;
+        } catch (RuntimeException invalid) {
+            return 0L;
         }
     }
 

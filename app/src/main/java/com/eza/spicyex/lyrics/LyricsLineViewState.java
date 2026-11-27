@@ -571,15 +571,21 @@ public final class LyricsLineViewState {
             boolean showTranslation
     ) {
         if (line == null || state(line).rowView == null) return false;
-        boolean needsNewViews =
-                (romanChanged && showRomanization && !LyricUtils.isBlank(roman) && state(line).romanView == null)
-                        || (translatedChanged && showTranslation && !LyricUtils.isBlank(translated) && state(line).translationView == null);
-        if (needsNewViews) {
+        boolean wantsRoman = showRomanization && !LyricUtils.isBlank(roman);
+        boolean hasRoman = state(line).romanView != null || state(line).timedRomanRow != null;
+        boolean wantsTranslation = showTranslation && !LyricUtils.isBlank(translated);
+        boolean hasTranslation = state(line).translationView != null;
+        boolean needsRemount =
+                (romanChanged && (wantsRoman != hasRoman))
+                        || ((translatedChanged || romanChanged) && (wantsTranslation != hasTranslation));
+        if (needsRemount) {
             clear(line, mountedRowsHost, invalidation);
             return true;
         }
         if (romanChanged && state(line).romanView != null) state(line).romanView.setText(roman);
-        if (translatedChanged && state(line).translationView != null) state(line).translationView.setText(translated);
+        if ((translatedChanged || romanChanged) && state(line).translationView != null) {
+            state(line).translationView.setText(translated);
+        }
         return false;
     }
 

@@ -9,6 +9,7 @@ public enum CyrillicMode implements StoredValue {
     OFF("Off"),
     RUSSIAN("Russian"),
     UKRAINIAN("Ukrainian"),
+    AUTO("auto"),
     CYCLE("cycle");
 
     /** The value used when the stored label is unknown or absent. */

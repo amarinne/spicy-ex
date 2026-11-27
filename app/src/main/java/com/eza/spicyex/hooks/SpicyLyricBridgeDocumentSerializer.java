@@ -69,9 +69,12 @@ final class SpicyLyricBridgeDocumentSerializer {
             encoded.addProperty("fillEndMs", clampTiming(LyricTimeline.fillEndMs(row),
                     encodedStartMs, durationMs > 0L ? durationMs : Long.MAX_VALUE));
             encoded.addProperty("alignedRight", row.oppositeAligned);
+            String rawReading = com.eza.spicyex.lyrics.SecondaryDisplayText.rawReading(row);
+            String displayReading = com.eza.spicyex.lyrics.SecondaryDisplayText.reading(row);
+            boolean readingDeduped = !com.eza.spicyex.lyrics.LyricUtils.isBlank(rawReading) && displayReading.isEmpty();
             encoded.addProperty("text", bounded(row.text));
-            encoded.addProperty("romanized", bounded(readingText(row)));
-            encoded.addProperty("translated", bounded(row.translatedText));
+            encoded.addProperty("romanized", bounded(displayReading));
+            encoded.addProperty("translated", bounded(com.eza.spicyex.lyrics.SecondaryDisplayText.translation(row)));
             JsonArray furigana = new JsonArray();
             if (com.eza.spicyex.lyrics.LyricsDisplayMode.isJapaneseLine(row)
                     && row.japaneseReading != null && row.japaneseReading.furigana != null) {
@@ -114,7 +117,7 @@ final class SpicyLyricBridgeDocumentSerializer {
                 }
                 JsonObject encodedWord = new JsonObject();
                 encodedWord.addProperty("text", bounded(word.text));
-                encodedWord.addProperty("romanized", bounded(word.romanizedText));
+                encodedWord.addProperty("romanized", readingDeduped ? "" : bounded(word.romanizedText));
                 encodedWord.addProperty("startMs", encodedWordStartMs);
                 encodedWord.addProperty("endMs", encodedWordEndMs);
                 encodedWord.addProperty("boundaryAfter", word.boundaryAfter);
@@ -225,11 +228,5 @@ final class SpicyLyricBridgeDocumentSerializer {
         int found = value.isEmpty() ? -1 : text.indexOf(value, cursor);
         if (found < 0 || found + value.length() > text.length()) return new int[]{-1, -1};
         return new int[]{found, found + value.length()};
-    }
-
-    private static String readingText(AppliedLine row) {
-        if (row == null) return "";
-        String planned = row.readingRenderPlan == null ? "" : row.readingRenderPlan.joinedDisplayText;
-        return planned == null || planned.trim().isEmpty() ? row.romanizedText : planned;
     }
 }

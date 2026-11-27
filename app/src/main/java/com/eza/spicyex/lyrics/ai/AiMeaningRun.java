@@ -78,6 +78,19 @@ public final class AiMeaningRun {
                              LyricsDocument document, MeaningArtifact googleBaseline,
                              boolean refineGoogle, String targetLang, boolean allowProviderRequest,
                              AiSignal signal, AiRunMonitor monitor, boolean explicitRetry) {
+        return run(context, settings, base, document, googleBaseline, refineGoogle, targetLang,
+                allowProviderRequest, signal, monitor, explicitRetry, null);
+    }
+
+    /**
+     * @param onPartial receives a provisional artifact each time more streamed rows pass the row
+     *                  checks, on the worker thread; null when the caller does not show progress
+     */
+    public static Result run(Context context, AiSettings settings, CanonicalBase base,
+                             LyricsDocument document, MeaningArtifact googleBaseline,
+                             boolean refineGoogle, String targetLang, boolean allowProviderRequest,
+                             AiSignal signal, AiRunMonitor monitor, boolean explicitRetry,
+                             java.util.function.Consumer<MeaningArtifact> onPartial) {
         if (settings == null || base == null || base.rows.isEmpty()) {
             return new Result(null, AiRunOutcome.nothingToDo());
         }
@@ -89,11 +102,12 @@ public final class AiMeaningRun {
                 LayerKind.MEANING, targetLang, refineGoogle);
         if (providerConfig == null) return new Result(null, AiRunOutcome.nothingToDo());
 
-        AiLyricContext lyricContext = AiLyricContext.EMPTY;
+        AiLyricContext lyricContext = trackContext(context, document);
         String docDigest = AiIdentity.buildDocDigest(rows, lyricContext, refineGoogle);
         String instructions = settings.instructions(LayerKind.MEANING);
         int epoch = AiHarnessEpoch.forLayer(LayerKind.MEANING);
-        String configId = configIdFor(settings, providerConfig, targetLang, instructions, epoch);
+        String configId = configIdFor(settings, providerConfig.providerVersion, providerConfig,
+                targetLang, instructions, epoch);
         AiRunConfig config = new AiRunConfig(LayerKind.MEANING, docDigest, configId,
                 settings.providerId(), lyricContext, providerConfig, instructions, null, null,
                 epoch);
@@ -123,35 +137,48 @@ public final class AiMeaningRun {
             return new Result(artifact, AiRunOutcome.reused(cached));
         }
         // Older-epoch output stays displayable. Its identity is recomputable from the same
-        // settings with the plain instructions, so this needs no ledger or binding scan.
-        AiRunConfig legacyConfig = new AiRunConfig(LayerKind.MEANING, docDigest,
-                configIdFor(settings, providerConfig, targetLang, instructions,
-                        AiHarnessEpoch.LEGACY),
-                settings.providerId(), lyricContext, providerConfig, instructions, null,
-                null, AiHarnessEpoch.LEGACY);
-        AiPaidRecord legacyRecord = records.readReplay(legacyConfig, replay);
+        // settings with the plain instructions, so this needs no ledger or binding scan. Every
+        // older epoch is tried, newest first; all of them were bought without track context and,
+        // on a custom gateway, before reasoning effort entered the provider version, so their
+        // digest is the context-free one and their version is the legacy one.
+        String legacyDocDigest = AiIdentity.buildDocDigest(rows, AiLyricContext.EMPTY,
+                refineGoogle);
+        AiPaidRecord legacyRecord = null;
         MeaningArtifact legacyArtifact = null;
-        if (legacyConfig.matchesConfiguration(legacyRecord)) {
-            AiPaidRecord projected = replay.project(legacyRecord);
-            if (projected != null && projected.hasCompleteItemsForRows(rows)) {
-                records.bind(legacyRecord, binding, replay);
-                legacyArtifact = artifactOf(base, legacyConfig, projected, rows);
-                if (refineGoogle && legacyArtifact != null) {
-                    legacyArtifact = legacyArtifact.withGoogleBaseline(googleBaseline);
+        boolean legacyFound = false;
+        int legacyEpoch = AiHarnessEpoch.LEGACY;
+        for (int older = epoch - 1; older >= AiHarnessEpoch.LEGACY; older--) {
+            AiRunConfig legacyConfig = new AiRunConfig(LayerKind.MEANING, legacyDocDigest,
+                    configIdFor(settings,
+                            AiSettings.legacyProviderVersion(providerConfig.providerVersion),
+                            providerConfig, targetLang, instructions, older),
+                    settings.providerId(), AiLyricContext.EMPTY, providerConfig, instructions,
+                    null, null, older);
+            AiPaidRecord found = records.readReplay(legacyConfig, replay);
+            legacyFound |= found != null;
+            if (legacyConfig.matchesConfiguration(found)) {
+                AiPaidRecord projected = replay.project(found);
+                if (projected != null && projected.hasCompleteItemsForRows(rows)) {
+                    records.bind(found, binding, replay);
+                    legacyArtifact = artifactOf(base, legacyConfig, projected, rows);
+                    legacyRecord = found;
                 }
             }
-        }
-        boolean legacyFound = legacyRecord != null;
-        if (legacyArtifact == null) {
-            AiPaidRecord storedLegacy = records.readLegacy(legacyConfig);
-            legacyFound |= storedLegacy != null;
-            legacyRecord = storedLegacy;
-            if (storedLegacy != null && storedLegacy.isCompleteForRows(rows)) {
-                records.bind(storedLegacy, binding, replay);
-                legacyArtifact = artifactOf(base, legacyConfig, storedLegacy, rows);
-                if (refineGoogle && legacyArtifact != null) {
+            if (legacyArtifact == null) {
+                AiPaidRecord stored = records.readLegacy(legacyConfig);
+                legacyFound |= stored != null;
+                if (stored != null && stored.isCompleteForRows(rows)) {
+                    records.bind(stored, binding, replay);
+                    legacyArtifact = artifactOf(base, legacyConfig, stored, rows);
+                    legacyRecord = stored;
+                }
+            }
+            if (legacyArtifact != null) {
+                legacyEpoch = older;
+                if (refineGoogle) {
                     legacyArtifact = legacyArtifact.withGoogleBaseline(googleBaseline);
                 }
+                break;
             }
         }
         boolean canBuy = allowProviderRequest && settings.canRequest();
@@ -161,14 +188,14 @@ public final class AiMeaningRun {
             // and does not resume a partial record of the current epoch either.
             if (legacyArtifact == null) return new Result(null, AiRunOutcome.nothingToDo());
             return new Result(legacyArtifact, AiRunOutcome.reused(legacyRecord),
-                    AiHarnessEpoch.LEGACY, true);
+                    legacyEpoch, true);
         }
         if (refineGoogle && (googleBaseline == null || googleBaseline.isEmpty())) {
             AiRunOutcome outcome = allowProviderRequest ? AiRunOutcome.failed(null,
                     AiChunkFailure.of(AiFailureReason.BASELINE_UNAVAILABLE), true)
                     : AiRunOutcome.nothingToDo();
             return legacyArtifact == null ? new Result(null, outcome)
-                    : new Result(legacyArtifact, outcome, AiHarnessEpoch.LEGACY, true);
+                    : new Result(legacyArtifact, outcome, legacyEpoch, true);
         }
         AiLayerRunner.Args args = new AiLayerRunner.Args();
         args.config = config;
@@ -176,7 +203,7 @@ public final class AiMeaningRun {
         args.store = records;
         args.rows = rows;
         args.signal = signal;
-        args.monitor = monitor;
+        args.monitor = withPartials(monitor, onPartial, base, config, rows);
         args.allowProviderRequest = canBuy;
         args.explicitRetry = explicitRetry;
         args.replay = replay;
@@ -186,22 +213,104 @@ public final class AiMeaningRun {
         AiRunOutcome outcome = AiLayerRunner.run(args);
         if (!outcome.hasOutput()) {
             return legacyArtifact == null ? new Result(null, outcome)
-                    : new Result(legacyArtifact, outcome, AiHarnessEpoch.LEGACY, true);
+                    : new Result(legacyArtifact, outcome, legacyEpoch, true);
         }
         MeaningArtifact artifact = artifactOf(base, config, outcome.record, rows);
         if (refineGoogle && artifact != null) artifact = artifact.withGoogleBaseline(googleBaseline);
         if (artifact == null && legacyArtifact != null) {
-            return new Result(legacyArtifact, outcome, AiHarnessEpoch.LEGACY, true);
+            return new Result(legacyArtifact, outcome, legacyEpoch, true);
         }
         return new Result(artifact, outcome, epoch, false);
     }
 
-    private static String configIdFor(AiSettings settings, AiProviderConfig providerConfig,
-                                      String targetLang, String instructions, int harnessEpoch) {
+    /**
+     * Title, artists, and album of the playing track, sent as reference context.
+     *
+     * <p>A title disambiguates title drops and names, and an artist steadies register. The stored
+     * artist string is kept whole: splitting on commas breaks names such as "Tyler, The Creator".
+     * Unknown metadata reads as the empty context.
+     */
+    static AiLyricContext trackContext(Context context, LyricsDocument document) {
+        if (context == null || document == null) return AiLyricContext.EMPTY;
+        com.eza.spicyex.lyrics.catalog.CatalogTrack track =
+                com.eza.spicyex.lyrics.catalog.CatalogStore.track(context, document.trackId);
+        if (track == null) return AiLyricContext.EMPTY;
+        return new AiLyricContext(track.title,
+                track.artists.isEmpty() ? null : java.util.Collections.singletonList(track.artists),
+                track.album);
+    }
+
+    /**
+     * Drops a single closing period the source line does not have. Lyric lines rarely end in
+     * one, and a model that adds it to some rows and not others makes the song look uneven
+     * (seen on 2026-11-19: the first eight of 49 rows ended in "."). Display only; the stored
+     * answer is unchanged. An ellipsis, question, or exclamation stays.
+     */
+    static String lyricPunctuation(String translation, String source) {
+        String text = AiText.trim(translation);
+        if (!text.endsWith(".") || text.endsWith("..")) return text;
+        String original = AiText.trim(source);
+        if (original.endsWith(".") || original.endsWith("。") || original.endsWith("．")) {
+            return text;
+        }
+        return AiText.trim(text.substring(0, text.length() - 1));
+    }
+
+    /**
+     * True when a translation repeats its source apart from case, spacing, and punctuation.
+     *
+     * <p>Such a row adds a duplicate line under the lyric. In a mixed-language song the model
+     * returns its target-language rows with only punctuation tidied ("They might fizzle, out soon"
+     * becomes "They might fizzle out soon"), and each of those showed twice on screen.
+     */
+    static boolean sameWords(String translation, String source) {
+        return com.eza.spicyex.lyrics.SecondaryDisplayText.sameText(translation, source);
+    }
+
+    /**
+     * Wraps {@code monitor} so streamed rows become a provisional artifact. Rows accumulate across
+     * the run's chunks; each delivery carries everything shown so far, so the screen never loses
+     * an earlier line when a later chunk starts.
+     */
+    private static AiRunMonitor withPartials(final AiRunMonitor monitor,
+                                             final java.util.function.Consumer<MeaningArtifact> onPartial,
+                                             final CanonicalBase base, final AiRunConfig config,
+                                             final List<AiLine> rows) {
+        if (monitor == null || onPartial == null) return monitor;
+        final Map<String, String> shown = new LinkedHashMap<>();
+        return new AiRunMonitor() {
+            @Override public void onAttempt(String chunkId, int attempt, String wirePayload) {
+                monitor.onAttempt(chunkId, attempt, wirePayload);
+            }
+
+            @Override public void onReasoning(String chunkId, int attempt, String reasoning) {
+                monitor.onReasoning(chunkId, attempt, reasoning);
+            }
+
+            @Override public void onStreamProgress(String chunkId, int receivedRows, int totalRows) {
+                monitor.onStreamProgress(chunkId, receivedRows, totalRows);
+            }
+
+            @Override public void onPartialRows(String chunkId, List<AiResponseItem> partial) {
+                monitor.onPartialRows(chunkId, partial);
+                for (AiResponseItem item : partial) shown.put(item.id, item.text);
+                AiPaidRecord provisional = AiPaidRecord.begin(config, System.currentTimeMillis());
+                for (Map.Entry<String, String> row : shown.entrySet()) {
+                    provisional.putItem(row.getKey(), row.getValue());
+                }
+                MeaningArtifact artifact = artifactOf(base, config, provisional, rows, true);
+                if (artifact != null) onPartial.accept(artifact);
+            }
+        };
+    }
+
+    private static String configIdFor(AiSettings settings, String providerVersion,
+                                      AiProviderConfig providerConfig, String targetLang,
+                                      String instructions, int harnessEpoch) {
         AiIdentity.Config input = new AiIdentity.Config();
         input.layer = LayerKind.MEANING;
         input.provider = settings.providerId();
-        input.providerVersion = providerConfig.providerVersion;
+        input.providerVersion = providerVersion;
         input.modelName = providerConfig.model.name;
         input.targetLang = targetLang;
         input.instructions = instructions;
@@ -227,6 +336,13 @@ public final class AiMeaningRun {
      */
     static MeaningArtifact artifactOf(CanonicalBase base, AiRunConfig config,
                                       AiPaidRecord record, List<AiLine> rows) {
+        return artifactOf(base, config, record, rows, false);
+    }
+
+    /** @param provisional true for streamed rows that the final answer will replace */
+    static MeaningArtifact artifactOf(CanonicalBase base, AiRunConfig config,
+                                      AiPaidRecord record, List<AiLine> rows,
+                                      boolean provisional) {
         Map<String, String> repeatDisplay = isCreativePreset(config)
                 ? null : repeatDisplayOf(record, rows);
         List<MeaningEntry> entries = new ArrayList<>();
@@ -238,8 +354,9 @@ public final class AiMeaningRun {
             if (row == null) continue;
             String text = repeatDisplay == null || !repeatDisplay.containsKey(rowId)
                     ? raw : repeatDisplay.get(rowId);
-            if (text.equals(row.text)) continue;
-            entries.add(new MeaningEntry(rowId, text, config.targetLang));
+            if (sameWords(text, row.text)) continue;
+            entries.add(new MeaningEntry(rowId, lyricPunctuation(text, row.text),
+                    config.targetLang));
         }
         if (entries.isEmpty()) return null;
         return new MeaningArtifact(base.digest, config.configId,
@@ -247,7 +364,7 @@ public final class AiMeaningRun {
                         AiIdentity.artifactContractId(LayerKind.MEANING, config.configId,
                                 config.harnessEpoch),
                         config.modelName, System.currentTimeMillis()),
-                entries, false);
+                entries, provisional);
     }
 
     // --- display-time repeat reconciliation --------------------------------------------

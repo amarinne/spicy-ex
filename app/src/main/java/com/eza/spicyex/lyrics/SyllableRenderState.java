@@ -15,7 +15,7 @@ public final class SyllableRenderState {
     public View containerView;
     public boolean motionOwner;
     public SpicyAnimatedTextView textView;
-    public SpicyAnimatedTextView romanizedTextView;
+    public final List<SpicyAnimatedTextView> romanizedTextViews = new ArrayList<>();
     public final List<AnimatedLetterState> letters = new ArrayList<>();
     /**
      * F6: this segment's motion constants. Scoped per segment — never global — so renderers
@@ -36,7 +36,7 @@ public final class SyllableRenderState {
         containerView = null;
         motionOwner = false;
         textView = null;
-        romanizedTextView = null;
+        romanizedTextViews.clear();
         scaleSpring = null;
         ySpring = null;
         glowSpring = null;

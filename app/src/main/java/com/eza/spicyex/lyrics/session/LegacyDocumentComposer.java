@@ -43,6 +43,11 @@ public final class LegacyDocumentComposer {
                 && session.sound.authority == LayerAuthority.AI;
         projected.translationAiPending = projected.translationPending
                 && session.meaning.authority == LayerAuthority.AI;
+        for (CanonicalRow row : session.base.rows) {
+            if (row.index < 0 || row.index >= projected.lines.size()) continue;
+            projected.lines.get(row.index).translationAiPending = projected.translationAiPending
+                    && !session.meaning.aiDeliveredRows.contains(row.rowId);
+        }
         projected.processingPending = projected.romanizationPending || projected.translationPending;
         projected.readingAiFailureToken = session.sound.failure.aiFailureToken;
         projected.translationAiFailureToken = session.meaning.failure.aiFailureToken;

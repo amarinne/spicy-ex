@@ -779,20 +779,32 @@ public final class SpicyJapaneseChineseProcessor {
 
     public static String romanizeChineseLine(String text, String mode, boolean tones,
                                              ChineseOutputStyle style) {
+        if (ZhuyinResolver.contains(text)) {
+            return ZhuyinResolver.join(chineseReadingParts(text, mode, tones, style));
+        }
+        return romanizeChineseBase(text, mode, tones, style);
+    }
+
+    public static List<ZhuyinResolver.Part> chineseReadingParts(String text, String mode,
+                                                               boolean tones, ChineseOutputStyle style) {
+        return ZhuyinResolver.renderParts(text, tones, style == ChineseOutputStyle.EZA,
+                part -> romanizeChineseBase(part, mode, tones, style));
+    }
+
+    private static String romanizeChineseBase(String text, String mode, boolean tones, ChineseOutputStyle style) {
         String effectiveMode = mode == null ? "" : mode.toLowerCase(Locale.ROOT)
                 .replace("-eza", "").replace("_eza", "");
         if ("jyutping".equalsIgnoreCase(effectiveMode) || "cantonese".equalsIgnoreCase(effectiveMode)) {
-            String jyutping = JyutpingRomanizer.romanize(text);
             if (style == ChineseOutputStyle.EZA) {
                 // Convert each dictionary/trie reading before appending passthrough content.
                 return convertJyutpingSegments(text, tones);
             }
             // Canonical mode keeps authored Latin tokens and digits intact. Strip tone numbers
             // only from the structured Jyutping segments, never from the joined line.
-            return tones ? jyutping : stripJyutpingSegments(text);
+            return tones ? JyutpingRomanizer.romanize(text) : stripJyutpingSegments(text);
         }
         if (style == ChineseOutputStyle.EZA) return convertPinyinSegments(text, tones);
-        return romanizeChinesePinyinLine(text, tones);
+        return romanizeChinesePinyinBase(text, tones);
     }
 
     private static String convertPinyinSegments(String text, boolean tones) {
@@ -1898,6 +1910,20 @@ public final class SpicyJapaneseChineseProcessor {
     }
 
     public static String romanizeChinesePinyinLine(String text, boolean tones) {
+        return romanizeChineseLine(text, "pinyin", tones, ChineseOutputStyle.CANONICAL);
+    }
+
+    static String formatAuthoredPinyin(String numbered, boolean tones) {
+        if (tones && numbered.startsWith("ê")) {
+            int tone = numbered.charAt(numbered.length() - 1) - '0';
+            String mark = tone == 1 ? "\u0304" : tone == 2 ? "\u0301"
+                    : tone == 3 ? "\u030c" : tone == 4 ? "\u0300" : "";
+            return Normalizer.normalize("ê" + mark, Normalizer.Form.NFC);
+        }
+        return tones ? numberedPinyinToToneMark(numbered) : stripPinyinToneNumber(numbered);
+    }
+
+    private static String romanizeChinesePinyinBase(String text, boolean tones) {
         if (isBlank(text)) return text;
         HanyuPinyinOutputFormat format = tones ? PINYIN_FORMAT_TONED : PINYIN_FORMAT;
         PinyinTrieNode phrases = pinyinPhraseTrie();

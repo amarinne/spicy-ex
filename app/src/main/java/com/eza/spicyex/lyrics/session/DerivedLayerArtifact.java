@@ -94,6 +94,24 @@ public class DerivedLayerArtifact {
                 partial && delta.partial);
     }
 
+    /**
+     * This artifact's rows with a provisional artifact from another run laid over them.
+     *
+     * <p>{@link #mergedWith} only joins deltas of the same run, so streamed AI rows arriving over
+     * a Google preview or older output (another configuration) were dropped and nothing changed
+     * on screen until the final swap. Here the incoming run's identity wins and the rows it has
+     * not produced yet keep showing what was already there; the final artifact replaces it all.
+     */
+    public DerivedLayerArtifact overlaidBy(DerivedLayerArtifact incoming) {
+        if (incoming == null || incoming.kind != kind
+                || !incoming.canonicalDigest.equals(canonicalDigest)) {
+            return this;
+        }
+        Map<String, LayerEntry> merged = new LinkedHashMap<>(entries);
+        merged.putAll(incoming.entries);
+        return incoming.recreate(merged.values(), incoming.provenance, true);
+    }
+
     DerivedLayerArtifact recreate(Collection<? extends LayerEntry> nextEntries,
                                   LayerProvenance nextProvenance, boolean nextPartial) {
         return new DerivedLayerArtifact(kind, canonicalDigest, configId, nextProvenance, nextEntries, nextPartial);

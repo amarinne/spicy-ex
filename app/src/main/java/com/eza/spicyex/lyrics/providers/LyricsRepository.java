@@ -45,13 +45,28 @@ public final class LyricsRepository {
     private final Parser parser;
     private final NativeLyricsProvider nativeLyricsProvider;
     private final ScheduledExecutorService ioScheduler;
+    private final java.util.function.BooleanSupplier reportFetch;
 
     public LyricsRepository(OkHttpClient http, Parser parser, NativeLyricsProvider nativeLyricsProvider,
                             ScheduledExecutorService ioScheduler) {
+        this(http, parser, nativeLyricsProvider, ioScheduler, () -> true);
+    }
+
+    public LyricsRepository(OkHttpClient http, Parser parser, NativeLyricsProvider nativeLyricsProvider,
+                            ScheduledExecutorService ioScheduler,
+                            java.util.function.BooleanSupplier reportFetch) {
         this.http = http;
         this.parser = parser;
         this.nativeLyricsProvider = nativeLyricsProvider;
         this.ioScheduler = ioScheduler;
+        this.reportFetch = reportFetch;
+    }
+
+    private void recordFetch(String source, List<String> candidates, LyricsDocument document,
+                             boolean tokenPresent, boolean cacheWrite) {
+        if (reportFetch.getAsBoolean()) {
+            LyricsFetchDiagnosticsState.record(source, candidates, document, tokenPresent, cacheWrite);
+        }
     }
 
     /**
@@ -508,7 +523,7 @@ public final class LyricsRepository {
         if (nativeBaseline != null && nativeBaseline.lines != null && !nativeBaseline.lines.isEmpty()) {
             LyricsProviderChain.Decision baseline = chain.acceptNative(nativeBaseline);
             if (baseline.action == LyricsProviderChain.Action.DELIVER) {
-                LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeBaseline, hasToken, false);
+                recordFetch("native", chain.candidatesSeen(), nativeBaseline, hasToken, false);
                 callback.onSuccess(nativeBaseline);
             }
         }
@@ -524,7 +539,7 @@ public final class LyricsRepository {
                             + " packed=" + doc.spicyPackedPayload
                             + " type=" + safe(doc.type));
                 } else if (decision.action == LyricsProviderChain.Action.DELIVER) {
-                    LyricsFetchDiagnosticsState.record("cache", chain.candidatesSeen(), doc, hasToken, false);
+                    recordFetch("cache", chain.candidatesSeen(), doc, hasToken, false);
                     callback.onSuccess(doc);
                 }
             } catch (Throwable t) {
@@ -635,7 +650,7 @@ public final class LyricsRepository {
                             cacheWrite = true;
                         }
                         XpLog.log(TAG + " using Apple Music synced lyrics type=" + doc.type + " provider=" + doc.provider + " lines=" + doc.lines.size());
-                        LyricsFetchDiagnosticsState.record("apple_music", chain.candidatesSeen(), doc, false, cacheWrite);
+                        recordFetch("apple_music", chain.candidatesSeen(), doc, false, cacheWrite);
                         callback.onSuccess(doc);
                         return;
                     }
@@ -825,14 +840,14 @@ public final class LyricsRepository {
                     XpLog.log(TAG + " using native lyrics (" + safe(reason) + ") type=" + nativeDoc.type
                             + " provider=" + nativeDoc.provider + " lines=" + nativeDoc.lines.size()
                             + " score=" + LyricQualityRanker.score(nativeDoc));
-                    LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
+                    recordFetch("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
                     callback.onSuccess(nativeDoc);
                 } else {
                     LyricsDocument remoteStatic = chain.pendingStatic();
                     boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
                     XpLog.log(TAG + " keeping remote static over native static score="
                             + LyricQualityRanker.score(remoteStatic) + " nativeScore=" + LyricQualityRanker.score(nativeDoc));
-                    LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
+                    recordFetch(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
                     callback.onSuccess(remoteStatic);
                 }
                 return;
@@ -840,12 +855,12 @@ public final class LyricsRepository {
             if (LyricsProviderChain.isSyncedType(nativeDoc.type)) {
                 XpLog.log(TAG + " using native synced lyrics (" + safe(reason) + ") type=" + nativeDoc.type
                         + " provider=" + nativeDoc.provider + " lines=" + nativeDoc.lines.size());
-                LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
+                recordFetch("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
                 callback.onSuccess(nativeDoc);
                 return;
             }
             XpLog.log(TAG + " using native static lyrics (" + safe(reason) + ") lines=" + nativeDoc.lines.size());
-            LyricsFetchDiagnosticsState.record("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
+            recordFetch("native", chain.candidatesSeen(), nativeDoc, tokenPresent, false);
             callback.onSuccess(nativeDoc);
             return;
         }
@@ -868,7 +883,7 @@ public final class LyricsRepository {
                 LyricsDocument remoteStatic = chain.pendingStatic();
                 XpLog.log(TAG + " native absent and no fallback source due; delivering remote static lines="
                         + remoteStatic.lines.size());
-                LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(),
+                recordFetch(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(),
                         remoteStatic, tokenPresent, false);
                 callback.onSuccess(remoteStatic);
                 return;
@@ -914,7 +929,7 @@ public final class LyricsRepository {
             // The plan held LRCLIB back (disabled, or it answered recently).
             if (rankAgainstStatic && chain.hasPendingStatic()) {
                 LyricsDocument remoteStatic = chain.pendingStatic();
-                LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"),
+                recordFetch(sourceLabel(remoteStatic, "apple_music"),
                         chain.candidatesSeen(), remoteStatic, tokenPresent, false);
                 callback.onSuccess(remoteStatic);
             } else {
@@ -1118,7 +1133,7 @@ public final class LyricsRepository {
                         + " lines=" + doc.lines.size());
             }
             LyricsDocument delivered = decision.document != null ? decision.document : doc;
-            LyricsFetchDiagnosticsState.record(sourceLabel(delivered, "amll"),
+            recordFetch(sourceLabel(delivered, "amll"),
                     chain.candidatesSeen(), delivered, tokenPresent, cacheWrite);
             callback.onSuccess(delivered);
             return;
@@ -1208,7 +1223,7 @@ public final class LyricsRepository {
                             + " lines=" + lrclibDoc.lines.size()
                             + " score=" + LyricQualityRanker.score(lrclibDoc)
                             + " remoteScore=" + LyricQualityRanker.score(remoteStatic));
-                    LyricsFetchDiagnosticsState.record("lrclib", chain.candidatesSeen(), lrclibDoc, tokenPresent, false);
+                    recordFetch("lrclib", chain.candidatesSeen(), lrclibDoc, tokenPresent, false);
                     callback.onSuccess(lrclibDoc);
                     return;
                 }
@@ -1216,7 +1231,7 @@ public final class LyricsRepository {
                 boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
                 XpLog.log(TAG + " native/LRCLIB lower ranked; delivering remote static lines="
                         + remoteStatic.lines.size() + " score=" + LyricQualityRanker.score(remoteStatic));
-                LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
+                recordFetch(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
                 callback.onSuccess(remoteStatic);
             }
 
@@ -1227,7 +1242,7 @@ public final class LyricsRepository {
                 LyricsDocument remoteStatic = chain.pendingStatic();
                 boolean cacheWrite = cacheChosenRaw(context, track, decision.rawToCache);
                 XpLog.log(TAG + " LRCLIB miss; delivering remote static lines=" + remoteStatic.lines.size());
-                LyricsFetchDiagnosticsState.record(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
+                recordFetch(sourceLabel(remoteStatic, "apple_music"), chain.candidatesSeen(), remoteStatic, tokenPresent, cacheWrite);
                 callback.onSuccess(remoteStatic);
             }
         }, reason, chain, tokenPresent);
@@ -1243,7 +1258,7 @@ public final class LyricsRepository {
         boolean cacheWrite = cacheChosenRaw(context, track, chain.pendingStaticRaw());
         XpLog.log(TAG + " delivering held sub-word lyrics (" + safe(reason) + ") type=" + held.type
                 + " provider=" + held.provider + " lines=" + held.lines.size());
-        LyricsFetchDiagnosticsState.record(sourceLabel(held, "apple_music"), chain.candidatesSeen(),
+        recordFetch(sourceLabel(held, "apple_music"), chain.candidatesSeen(),
                 held, tokenPresent, cacheWrite);
         callback.onSuccess(held);
     }
@@ -1288,7 +1303,7 @@ public final class LyricsRepository {
         if (doc == null) return false;
         doc.generation = generation;
         chain.acceptLrclib(doc);
-        LyricsFetchDiagnosticsState.record("lrclib", chain.candidatesSeen(), doc, tokenPresent, false);
+        recordFetch("lrclib", chain.candidatesSeen(), doc, tokenPresent, false);
         XpLog.log(TAG + " LRCLIB cached raw hit lines=" + doc.lines.size());
         callback.onSuccess(doc);
         return true;
@@ -1494,7 +1509,7 @@ public final class LyricsRepository {
             return;
         }
         try {
-            LyricsFetchDiagnosticsState.record("lrclib", chain.candidatesSeen(), doc, tokenPresent, false);
+            recordFetch("lrclib", chain.candidatesSeen(), doc, tokenPresent, false);
         } catch (Throwable ignored) {
         }
         try {

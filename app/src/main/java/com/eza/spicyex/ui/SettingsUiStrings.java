@@ -225,6 +225,9 @@ public final class SettingsUiStrings {
         if (setting == Settings.BACKGROUND_EFFECT) {
             return StoredValues.fromStored(BackgroundEffect.class, value).displayLabel();
         }
+        if ((setting == Settings.CHINESE_MODE || setting == Settings.CYRILLIC_MODE) && "auto".equals(value)) {
+            return "Auto-detect";
+        }
         if (setting == Settings.AI_TRANSLATION_MODE) {
             if ("On demand".equals(value)) return "Manual";
             if ("Always use AI".equals(value)) return "Automatic";

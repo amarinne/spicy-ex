@@ -19,6 +19,8 @@ public final class TimedWordSpacingInstrumentation extends Instrumentation {
     private boolean sentenceSuite;
     private boolean autoSuite;
     private boolean chineseSuite;
+    private boolean zhuyinSuite;
+    private boolean translitWrapSuite;
     private boolean paidLinkageSuite;
     private boolean layoutProbeSuite;
     private boolean aiStatusSuite;
@@ -32,18 +34,28 @@ public final class TimedWordSpacingInstrumentation extends Instrumentation {
         autoSuite = arguments != null && "auto".equals(arguments.getString("suite"));
         autoPerfSuite = arguments != null && "auto-perf".equals(arguments.getString("suite"));
         chineseSuite = arguments != null && "chinese".equals(arguments.getString("suite"));
+        zhuyinSuite = arguments != null && "zhuyin".equals(arguments.getString("suite"));
+        translitWrapSuite = arguments != null && "translit-wrap".equals(arguments.getString("suite"));
         paidLinkageSuite = arguments != null && "paid-linkage".equals(arguments.getString("suite"));
         layoutProbeSuite = arguments != null && "layout-probe".equals(arguments.getString("suite"));
         aiStatusSuite = arguments != null && "ai-status".equals(arguments.getString("suite"));
         aiRecoverySuite = arguments != null && "ai-recovery".equals(arguments.getString("suite"));
         receiptSuite = arguments != null && "diagnostic-receipt".equals(arguments.getString("suite"));
         String suite = arguments == null ? null : arguments.getString("suite");
-        unknownSuite = suite != null && !suite.isEmpty() && !sentenceSuite && !autoSuite && !autoPerfSuite && !chineseSuite && !paidLinkageSuite && !layoutProbeSuite && !aiStatusSuite && !aiRecoverySuite && !receiptSuite
-                && !"spacing".equals(suite);
+        unknownSuite = suite != null && !suite.isEmpty() && !sentenceSuite && !autoSuite && !autoPerfSuite && !chineseSuite && !zhuyinSuite && !paidLinkageSuite && !layoutProbeSuite && !aiStatusSuite && !aiRecoverySuite && !receiptSuite
+                && !translitWrapSuite && !"spacing".equals(suite);
         start();
     }
 
     @Override public void onStart() {
+        if (translitWrapSuite) {
+            TransliterationWrapInstrumentation.run(this);
+            return;
+        }
+        if (zhuyinSuite) {
+            ZhuyinReadingInstrumentation.run(this);
+            return;
+        }
         if (autoPerfSuite) {
             com.eza.spicyex.auto.AutoPerformanceInstrumentation.run(this);
             return;

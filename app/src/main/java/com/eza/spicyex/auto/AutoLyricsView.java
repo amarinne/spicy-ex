@@ -32,20 +32,21 @@ import com.google.android.flexbox.JustifyContent;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /** Android Auto sizing and cadence adapter for Spicy's existing mounted-row engine. */
 public final class AutoLyricsView extends FrameLayout implements Choreographer.FrameCallback {
-    private static final Set<Integer> DUET_INDICES = Collections.unmodifiableSet(
-            new LinkedHashSet<>(Arrays.asList(0, 1)));
+    private static final Set<Integer> SINGLE_INDEX = Collections.singleton(0);
 
     private final FrameLayout stage;
+    private final SectionSlot[] slots;
+    private final List<DepartingRow> departing = new ArrayList<>();
     private boolean creditOutro;
-    private LinearLayout rowHost, outgoing;
-    private long fadeStarted, transitions;
+    private LinearLayout rowHost;
+    private long transitions;
     private Bitmap artwork;
     private long artworkFadeStarted, artworkFades;
     private long entranceStarted;
@@ -54,29 +55,25 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
     private final FrameStyleBatcher styles;
     private final LyricsFrameRenderer renderer;
     private final LyricsRenderConfig config;
-    private final LyricsDocument document = new LyricsDocument();
-    private AppliedLine source, mounted, companion, mountedCompanion;
-    private View mountedCompanionRow;
+    private AppliedLine source, companion;
     private long companionEntranceStarted;
     private int fittedWidth, fittedHeight, fittedSettings;
     private Bundle sample, timelineSample;
+    private int mountedGeneration = Integer.MIN_VALUE;
     private String contentKey = "";
     private List<int[]> pages = new ArrayList<>();
     private int page = -1, fontSp, primaryIndex;
     private float secondaryTextSp = 24f;
-    private boolean active, scheduled, stress, planned, showSecondary = true;
+    private boolean active, scheduled, stress, planned, needsSync, showSecondary = true;
     private boolean duet;
     private int secondaryCap = AutoSurfaceFit.secondaryLineCap(false);
-    private List<SectionKey> currentSections = new ArrayList<>(), outgoingSections = new ArrayList<>();
-    private List<Float> outgoingAlphas = new ArrayList<>();
-    private List<Boolean> outgoingHidden = new ArrayList<>(), currentSurvivors = new ArrayList<>();
     private List<AutoDuetLayout.DuetSectionId> duetSlots = new ArrayList<>();
     private boolean interlude;
     private AppliedLine dotTiming;
     private boolean musicNote;
     private Typeface nativeTypeface = Typeface.DEFAULT;
     private String fontFamily = "System fallback";
-    private long localBoundarySwitches, lastBoundaryLateMs;
+    private long localBoundarySwitches, lastBoundaryLateMs, repeatReuses;
     private long previousFrame, frames, totalNanos, maxNanos;
 
     public AutoLyricsView(Context context) {
@@ -87,6 +84,7 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         setPadding(padding, padding, padding, padding);
         stage = new FrameLayout(context);
         addView(stage, new LayoutParams(-1, -1));
+        slots = new SectionSlot[]{new SectionSlot(context), new SectionSlot(context)};
         factory = new LyricsRowViewFactory(context, new LyricsTextFactory(context, null));
         styles = new FrameStyleBatcher(context);
         renderer = new LyricsFrameRenderer(context, styles);
@@ -96,12 +94,13 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
             nativeTypeface = Typeface.create(context.getResources().getFont(font), 400, false);
             fontFamily = "Android Auto Google Sans";
         } catch (android.content.res.Resources.NotFoundException ignored) { }
-        document.type = "Syllable";
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
     }
 
     public void update(Bundle value) {
         timelineSample = value;
+        Bundle previousSample = sample;
+        boolean previousCreditOutro = creditOutro, previousInterlude = interlude, previousStress = stress;
         Bundle next = value.getBundle("next");
         long nextAt = value.getLong("nextAtMs");
         long position = AutoPrototypePolicy.position(value.getLong("positionMs"), value.getLong("sampledAt"),
@@ -132,23 +131,144 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         boolean changed = !key.equals(contentKey);
         if (changed) {
             if (advance) { localBoundarySwitches++; lastBoundaryLateMs = position - nextAt; }
-            contentKey = key; source = decoded; companion = decodedCompanion;
-            dotTiming = interlude && !musicNote
-                    ? com.eza.spicyex.lyrics.LyricTimeline.createAppliedDotRow(decoded.startMs, decoded.endMs, false) : null;
-            pages = new ArrayList<>(); page = -1; planned = false;
+            contentKey = key;
+            boolean lyricTransition = !previousCreditOutro && !creditOutro
+                    && !previousInterlude && !interlude
+                    && !previousStress && !stress;
+            boolean reused = lyricTransition
+                    && tryFastUpdateMountedSlots(previousSample, value, decoded, decodedCompanion, position);
+            if (!reused) {
+                source = decoded; companion = decodedCompanion;
+                dotTiming = interlude && !musicNote
+                        ? com.eza.spicyex.lyrics.LyricTimeline.createAppliedDotRow(decoded.startMs, decoded.endMs, false) : null;
+                pages = new ArrayList<>(); page = -1; planned = false; needsSync = true;
+            }
         }
         active = true;
-        if (changed || mounted == null) render(1f / 30f);
+        if (changed || !hasMountedPrimary()) render(1f / 30f);
         schedule();
+    }
+
+    /**
+     * Fast path for transitions where both mounted slots keep their exact geometry: role swaps
+     * (such as a duet line finishing before the main line) and consecutive repeated lines that only
+     * need their timing rebound in place.
+     */
+    private boolean tryFastUpdateMountedSlots(Bundle previousSample, Bundle currentSample,
+                                              AppliedLine decoded, AppliedLine decodedCompanion, long position) {
+        if (previousSample == null || source == null || !hasMountedPrimary()
+                || !planned || pages.isEmpty() || page < 0 || page >= pages.size()) return false;
+        int generation = currentSample.getInt("generation", Integer.MIN_VALUE);
+        if (previousSample.getInt("generation", Integer.MIN_VALUE) != generation
+                || mountedGeneration != generation) return false;
+        if (fittedSettings != AutoDisplaySettings.signature(currentSample)) return false;
+        int width = getWidth() - getPaddingLeft() - getPaddingRight();
+        int height = getHeight() - getPaddingTop() - getPaddingBottom();
+        if (width <= 0 || height <= 0 || width != fittedWidth || height != fittedHeight) return false;
+        int mountedCount = activeSlotCount();
+        boolean incomingDuet = decodedCompanion != null;
+        if ((mountedCount == 2) != incomingDuet) return false;
+
+        boolean secondaryAllowed = AutoSurfaceFit.secondaryAllowed(String.valueOf(getTag()));
+        boolean checkReading = secondaryAllowed && AutoDisplaySettings.showReading(currentSample);
+        boolean checkTranslation = secondaryAllowed && AutoDisplaySettings.showTranslation(currentSample);
+        AutoDuetLayout.DuetSectionId primaryId = sectionId(generation, currentSample,
+                currentSample.getInt("lineIndex", -1));
+
+        if (!incomingDuet) {
+            SectionSlot slot = slots[0];
+            if (slot.nonLyric || !AutoRepeatedLine.sameRenderedLine(slot.source, decoded, checkReading, checkTranslation))
+                return false;
+            int nextPage = AutoSurfaceFit.pageAt(pages, sourceOffset(decoded, position));
+            if (nextPage != page) return false;
+            if (!AutoRepeatedLine.rebindTiming(slot.mounted, decoded, slot.pageStart, slot.pageEnd)) return false;
+            slot.source = decoded;
+            slot.id = primaryId;
+            slot.signature = contentSignature(slot.mounted);
+            source = decoded;
+            companion = null;
+            duetSlots = primaryId == null ? new ArrayList<>() : new ArrayList<>(Collections.singletonList(primaryId));
+            LyricsLineViewState.requestFrame(slot.mounted);
+            repeatReuses++;
+            return true;
+        }
+
+        Bundle duetBundle = currentSample.getBundle("duet");
+        AutoDuetLayout.DuetSectionId companionId = sectionId(generation, duetBundle,
+                duetBundle == null ? -1 : duetBundle.getInt("lineIndex", -1));
+        if (primaryId == null || companionId == null) return false;
+        List<AutoDuetLayout.DuetSectionId> order = AutoDuetLayout.assignDuetSlots(
+                Arrays.asList(primaryId, companionId), duetSlots);
+        boolean companionFirst = !primaryId.equals(order.get(0));
+        int targetPrimarySlot = companionFirst ? 1 : 0;
+        int targetCompanionSlot = companionFirst ? 0 : 1;
+
+        SectionSlot pSlot = slots[targetPrimarySlot];
+        SectionSlot cSlot = slots[targetCompanionSlot];
+        if (!pSlot.hasMounted() || !cSlot.hasMounted() || pSlot.nonLyric || cSlot.nonLyric) return false;
+
+        boolean pExact = Objects.equals(pSlot.id, primaryId)
+                && pSlot.pageEnd <= decoded.text.length()
+                && Objects.equals(pSlot.signature, contentSignature(slice(decoded, pSlot.pageStart, pSlot.pageEnd)));
+        boolean cExact = Objects.equals(cSlot.id, companionId)
+                && Objects.equals(cSlot.signature, contentSignature(decodedCompanion));
+        boolean pRepeat = !pExact && AutoRepeatedLine.sameRenderedLine(
+                pSlot.source, decoded, checkReading, checkTranslation);
+        boolean cRepeat = !cExact && AutoRepeatedLine.sameRenderedLine(
+                cSlot.source, decodedCompanion, checkReading, checkTranslation);
+        if ((!pExact && !pRepeat) || (!cExact && !cRepeat)) return false;
+
+        // Only skip planning if the primary slot keeps its current single-page or active page slice.
+        if (pSlot.pageStart != 0 || pSlot.pageEnd != decoded.text.length()) {
+            if (targetPrimarySlot != primaryIndex) return false;
+            int nextPage = AutoSurfaceFit.pageAt(pages, sourceOffset(decoded, position));
+            if (nextPage != page) return false;
+        }
+
+        if (pRepeat && !AutoRepeatedLine.rebindTiming(pSlot.mounted, decoded, pSlot.pageStart, pSlot.pageEnd))
+            return false;
+        if (cRepeat && !AutoRepeatedLine.rebindTiming(
+                cSlot.mounted, decodedCompanion, 0, decodedCompanion.text.length())) return false;
+
+        if (pRepeat) {
+            pSlot.source = decoded;
+            pSlot.id = primaryId;
+            pSlot.signature = contentSignature(pSlot.mounted);
+            LyricsLineViewState.requestFrame(pSlot.mounted);
+        }
+        if (cRepeat) {
+            cSlot.source = decodedCompanion;
+            cSlot.id = companionId;
+            cSlot.signature = contentSignature(cSlot.mounted);
+            LyricsLineViewState.requestFrame(cSlot.mounted);
+        }
+        if (pRepeat || cRepeat) repeatReuses++;
+
+        pSlot.isCompanion = false;
+        cSlot.isCompanion = true;
+        companionEntranceStarted = cSlot.deferredEntranceStarted;
+        primaryIndex = targetPrimarySlot;
+        fontSp = pSlot.fontSp;
+        source = decoded;
+        companion = decodedCompanion;
+        duetSlots = new ArrayList<>(order);
+        if (pSlot.pageStart == 0 && pSlot.pageEnd == decoded.text.length()) {
+            pages = Collections.singletonList(new int[]{0, decoded.text.length()});
+            page = 0;
+        }
+        return true;
     }
 
     public void stop() {
         active = false;
         Choreographer.getInstance().removeFrameCallback(this);
         scheduled = false; previousFrame = 0;
-        finishFade();
+        finishFades();
         companionEntranceStarted = 0;
-        if (mountedCompanionRow != null) mountedCompanionRow.setAlpha(1f);
+        for (SectionSlot slot : slots) {
+            slot.deferredEntranceStarted = 0;
+            slot.host.setAlpha(1f);
+        }
         artwork = null;
         entranceStarted = 0;
     }
@@ -177,8 +297,9 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
                     && position() >= timelineSample.getLong("nextAtMs"))) update(timelineSample);
         }
         render(delta);
-        if (artwork != null || entranceStarted != 0 || fadeStarted != 0 || (interlude && !musicNote)) invalidate();
-        if (sample.getBoolean("playing") || fadeStarted != 0 || companionEntranceStarted != 0 || artwork != null || entranceStarted != 0 || renderer.hasPendingAnimation(document, mountedIndices(), rowHost, primaryIndex, 0, 1)) schedule();
+        if (artwork != null || entranceStarted != 0 || hasActiveFade() || (interlude && !musicNote)) invalidate();
+        if (sample.getBoolean("playing") || hasActiveFade() || hasActiveDeferredEntrance()
+                || artwork != null || entranceStarted != 0 || hasPendingAnimation()) schedule();
     }
 
     private long position() {
@@ -202,26 +323,28 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         if (pages.isEmpty()) {
             companionEntranceStarted = 0;
             AndroidAutoPrototype.rejectSurface(String.valueOf(getTag()), sampleKey(sample), width, height, creditOutro);
-            finishFade();
-            if (mounted != null) LyricsLineViewState.clear(mounted, rowHost, old -> LyricsLineViewState.invalidate(old, styles));
-            if (mountedCompanion != null) LyricsLineViewState.clear(mountedCompanion, rowHost, old -> LyricsLineViewState.invalidate(old, styles));
-            mounted = null; mountedCompanion = null; mountedCompanionRow = null;
-            stage.removeAllViews(); rowHost = null; document.appliedLines.clear(); fontSp = 0; page = -1;
-            currentSections = new ArrayList<>(); duet = false;
+            finishFades();
+            clearAllSlots();
+            stage.removeAllViews(); rowHost = null; fontSp = 0; page = -1; needsSync = false;
+            duet = false; duetSlots = new ArrayList<>();
             return;
         }
         int offset = sourceOffset(source, position());
         int selected = AutoSurfaceFit.pageAt(pages, offset);
-        if (selected != page) mountPage(selected, minimum, maximum, width, height);
-        updateDeferredCompanion();
-        if (!creditOutro && !interlude) renderer.applySynced(document, mountedIndices(), rowHost, config,
-                position(), primaryIndex, delta, false);
-        else if (interlude && !musicNote && rowHost != null && rowHost.getChildCount() > 0 && rowHost.getChildAt(0) instanceof LinearLayout) {
-            LinearLayout dots = (LinearLayout) rowHost.getChildAt(0);
+        if (selected != page || needsSync) syncSlots(selected, minimum, maximum, width, height);
+        updateDeferredSlots();
+        if (!creditOutro && !interlude) {
+            long pos = position();
+            for (SectionSlot slot : slots) {
+                if (!slot.hasMounted() || slot.nonLyric || slot.host.getVisibility() != View.VISIBLE) continue;
+                renderer.applySynced(slot.document, SINGLE_INDEX, slot.host, config, pos, 0, delta, false);
+            }
+        } else if (interlude && !musicNote && slots[0].currentRow instanceof LinearLayout) {
+            LinearLayout dots = (LinearLayout) slots[0].currentRow;
             for (int i = 0; i < dots.getChildCount(); i++) dots.getChildAt(i).setAlpha(
                     Motion.animationsEnabled() ? AutoSurfaceFit.dotAlpha(dotTiming, position(), i) : 1f);
         }
-        if (fadeStarted != 0) stepFade();
+        if (hasActiveFade()) stepFades();
     }
 
     /**
@@ -261,35 +384,31 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         duet = false; companion = null;
     }
 
-    private void mountPage(int selected, int minimum, int maximum, int width, int height) {
+    /**
+     * Reconciles each visual slot independently against the target primary and duet sections so
+     * continuing or repeated lines never rebuild or crossfade when their partner changes.
+     */
+    private void syncSlots(int selected, int minimum, int maximum, int width, int height) {
         page = selected;
+        needsSync = false;
         int[] range = pages.get(page);
-        if (mounted != null) LyricsLineViewState.clear(mounted, null, old -> LyricsLineViewState.invalidate(old, styles));
-        if (mountedCompanion != null) LyricsLineViewState.clear(mountedCompanion, null, old -> LyricsLineViewState.invalidate(old, styles));
-        mounted = slice(source, range[0], range[1]);
-        mountedCompanion = duet && companion != null ? companion : null;
-        final AppliedLine partner = mountedCompanion;
+        boolean nonLyric = creditOutro || interlude || stress;
+        AppliedLine primarySlice = slice(source, range[0], range[1]);
+        AppliedLine partner = duet && companion != null && !nonLyric ? companion : null;
         int selectedSize = AutoSurfaceFit.largestSize(minimum, maximum,
-                size -> sceneFits(mounted, partner, size, width, height, showSecondary, secondaryCap));
+                size -> sceneFits(primarySlice, partner, size, width, height, showSecondary, secondaryCap));
         selectedSize = Math.max(minimum, selectedSize);
-        fontSp = partner == null ? selectedSize : retainedDuetSize(mounted, false, selectedSize, width, height);
+        fontSp = partner == null ? selectedSize : retainedDuetSize(primarySlice, false, selectedSize, width, height);
         int companionSize = partner == null ? selectedSize
                 : retainedDuetSize(partner, true, selectedSize, width, height);
-        View primaryRow = build(mounted, fontSp, showSecondary, secondaryCap);
-        if (!creditOutro && primaryRow instanceof LinearLayout) {
-            LinearLayout lyrics = (LinearLayout) primaryRow;
-            for (int i = 1; i < lyrics.getChildCount(); i++) if (lyrics.getChildAt(i) instanceof TextView)
-                secondaryTextSp = ((TextView) lyrics.getChildAt(i)).getTextSize()
-                        / getResources().getDisplayMetrics().scaledDensity;
-        }
-        View companionRow = mountedCompanion == null ? null
-                : build(mountedCompanion, companionSize, showSecondary, secondaryCap);
-        AutoDuetLayout.DuetSectionId primaryId = null, companionId = null;
+
+        int generation = sample.getInt("generation", Integer.MIN_VALUE);
+        AutoDuetLayout.DuetSectionId primaryId = nonLyric ? null
+                : sectionId(generation, sample, sample.getInt("lineIndex", -1));
+        AutoDuetLayout.DuetSectionId companionId = null;
         boolean companionFirst = false;
-        if (mountedCompanion != null) {
-            int generation = sample.getInt("generation");
+        if (partner != null) {
             Bundle duetBundle = sample.getBundle("duet");
-            primaryId = sectionId(generation, sample, sample.getInt("lineIndex", -1));
             companionId = sectionId(generation, duetBundle, duetBundle == null ? -1 : duetBundle.getInt("lineIndex", -1));
             if (primaryId != null && companionId != null) {
                 List<AutoDuetLayout.DuetSectionId> order = AutoDuetLayout.assignDuetSlots(
@@ -297,73 +416,176 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
                 duetSlots = new ArrayList<>(order);
                 companionFirst = !primaryId.equals(order.get(0));
             }
-        }
-
-        List<Float> previousAlphas = captureAlphas(rowHost);
-        List<SectionKey> previousSections = currentSections;
-        Set<SectionKey> previouslyHidden = new HashSet<>();
-        if (rowHost != null) for (int i = 0; i < rowHost.getChildCount() && i < previousSections.size(); i++)
-            if (rowHost.getChildAt(i).getVisibility() != View.VISIBLE) previouslyHidden.add(previousSections.get(i));
-        finishFade();
-        restoreAlphas(rowHost, previousAlphas);
-        outgoing = rowHost;
-        outgoingSections = previousSections;
-        outgoingAlphas = previousAlphas;
-        outgoingHidden = new ArrayList<>(Collections.nCopies(
-                outgoing == null ? 0 : outgoing.getChildCount(), false));
-
-        rowHost = new LinearLayout(getContext());
-        rowHost.setOrientation(LinearLayout.VERTICAL);
-        List<View> rows = new ArrayList<>();
-        List<SectionKey> sections = new ArrayList<>();
-        document.appliedLines.clear();
-        primaryIndex = 0;
-        if (companionFirst) {
-            addSection(rowHost, companionRow, rows, sections, companionId, mountedCompanion, companionSize, false);
-            addSection(rowHost, primaryRow, rows, sections, primaryId, mounted, fontSp, true);
-            primaryIndex = 1;
-            document.appliedLines.add(mountedCompanion);
-            document.appliedLines.add(mounted);
         } else {
-            addSection(rowHost, primaryRow, rows, sections, primaryId, mounted, fontSp, false);
-            document.appliedLines.add(mounted);
-            if (companionRow != null) {
-                addSection(rowHost, companionRow, rows, sections, companionId, mountedCompanion, companionSize, true);
-                document.appliedLines.add(mountedCompanion);
-            }
+            duetSlots = primaryId == null ? new ArrayList<>() : new ArrayList<>(Collections.singletonList(primaryId));
         }
-        mountedCompanionRow = companionRow;
-        companionEntranceStarted = 0;
-        fittedWidth = width; fittedHeight = height; fittedSettings = AutoDisplaySettings.signature(sample);
-        stage.addView(rowHost, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+
+        SectionSpec primarySpec = new SectionSpec(primaryId, primarySlice, source, fontSp,
+                showSecondary, secondaryCap, range[0], range[1], false, nonLyric);
+        SectionSpec companionSpec = partner == null ? null : new SectionSpec(companionId, partner, companion,
+                companionSize, showSecondary, secondaryCap, 0, partner.text.length(), true, false);
+        SectionSpec[] targets = new SectionSpec[2];
+        if (companionSpec != null && companionFirst) {
+            targets[0] = companionSpec;
+            targets[1] = primarySpec;
+            primaryIndex = 1;
+        } else {
+            targets[0] = primarySpec;
+            targets[1] = companionSpec;
+            primaryIndex = 0;
+        }
+
+        boolean hadAnyMounted = hasMountedAny();
+        boolean sameSurface = width == fittedWidth && height == fittedHeight
+                && fittedSettings == AutoDisplaySettings.signature(sample)
+                && mountedGeneration == generation;
+        boolean secondaryAllowed = AutoSurfaceFit.secondaryAllowed(String.valueOf(getTag()));
+        boolean checkReading = secondaryAllowed && AutoDisplaySettings.showReading(sample);
+        boolean checkTranslation = secondaryAllowed && AutoDisplaySettings.showTranslation(sample);
+        boolean animate = hadAnyMounted && Motion.animationsEnabled() && !immediateEntrance();
+
+        ensureRowHost();
+        boolean anyTransitioned = false;
+        boolean anyReusedRepeat = false;
+
+        // Detach vacated slot 1 first (preserving its current visual Y as an independent fade-out).
+        if (targets[1] == null && slots[1].hasMounted()) {
+            anyTransitioned |= vacateSlot(slots[1], animate);
+            if (slots[1].host.getParent() == rowHost) rowHost.removeView(slots[1].host);
+        }
+
+        // Attach slot 1 host when entering a duet scene.
+        if (targets[1] != null && slots[1].host.getParent() != rowHost) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+            lp.topMargin = Math.round(4 * getResources().getDisplayMetrics().density);
+            rowHost.addView(slots[1].host, lp);
+        }
+
+        for (int i = 0; i < 2; i++) {
+            SectionSpec target = targets[i];
+            if (target == null) continue;
+            SectionSlot slot = slots[i];
+            if (sameSurface && slot.matchesExact(target)) {
+                slot.isCompanion = target.isCompanion;
+                if (target.isCompanion) companionEntranceStarted = slot.deferredEntranceStarted;
+                continue;
+            }
+            if (sameSurface && slot.canReuseRepeat(target, checkReading, checkTranslation)
+                    && AutoRepeatedLine.rebindTiming(slot.mounted, target.fullSource, target.pageStart, target.pageEnd)) {
+                slot.source = target.fullSource;
+                slot.id = target.id;
+                slot.signature = contentSignature(slot.mounted);
+                slot.isCompanion = target.isCompanion;
+                if (target.isCompanion) companionEntranceStarted = slot.deferredEntranceStarted;
+                LyricsLineViewState.requestFrame(slot.mounted);
+                anyReusedRepeat = true;
+                continue;
+            }
+            anyTransitioned |= replaceSlot(slot, target, animate, targets[1] != null);
+        }
+
+        if (anyReusedRepeat) repeatReuses++;
+        if (anyTransitioned) transitions++;
+
+        fittedWidth = width;
+        fittedHeight = height;
+        fittedSettings = AutoDisplaySettings.signature(sample);
+        mountedGeneration = generation;
         styles.clearPendingWrites();
-        currentSections = sections;
-        currentSurvivors = survivors(previousSections, sections);
-        for (int i = 0; i < sections.size(); i++)
-            if (previouslyHidden.contains(sections.get(i))) currentSurvivors.set(i, false);
-        if (outgoing != null && Motion.animationsEnabled() && !immediateEntrance()) {
-            fadeStarted = SystemClock.elapsedRealtime(); transitions++;
-            for (int i = 0; i < rows.size(); i++)
-                if (!currentSurvivors.get(i)) setMainAlpha(rows.get(i), 0f);
-            hideSecondary(outgoing);
-            hideContinuingOutgoing(sections, currentSurvivors);
-        } else finishFade();
+
         // Compose can mount during layout after the first child measurement. Lay out the
         // owned stage now so a paused first row does not wait for another content change.
         stage.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
         stage.layout(getPaddingLeft(), getPaddingTop(), getPaddingLeft() + width, getPaddingTop() + height);
-        setContentDescription(mountedCompanion == null ? mounted.text
-                : mounted.text + "\n" + mountedCompanion.text);
+        setContentDescription(partner == null ? primarySlice.text
+                : primarySlice.text + "\n" + partner.text);
     }
 
-    private static void addSection(LinearLayout host, View row, List<View> rows, List<SectionKey> sections,
-                                   AutoDuetLayout.DuetSectionId id, AppliedLine line, int size, boolean gap) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        if (gap) params.topMargin = Math.round(4 * host.getResources().getDisplayMetrics().density);
-        host.addView(row, params);
-        rows.add(row);
-        sections.add(new SectionKey(id, line == null ? null : contentSignature(line), size));
+    private void ensureRowHost() {
+        if (rowHost != null && rowHost.getParent() == stage) return;
+        rowHost = new LinearLayout(getContext());
+        rowHost.setOrientation(LinearLayout.VERTICAL);
+        rowHost.addView(slots[0].host, new LinearLayout.LayoutParams(-1, -2));
+        stage.addView(rowHost, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+    }
+
+    private boolean replaceSlot(SectionSlot slot, SectionSpec target, boolean animate, boolean duetScene) {
+        boolean startedFade = false;
+        boolean wasVisible = slot.hasMounted() && slot.host.getVisibility() == View.VISIBLE;
+        if (slot.hasMounted()) {
+            startedFade |= detachToDeparting(slot, animate);
+        }
+        View row = build(target.slice, target.fontSp, target.showSecondary, target.secondaryCap);
+        if (!creditOutro && !target.isCompanion && row instanceof LinearLayout) {
+            LinearLayout lyrics = (LinearLayout) row;
+            for (int i = 1; i < lyrics.getChildCount(); i++) if (lyrics.getChildAt(i) instanceof TextView)
+                secondaryTextSp = ((TextView) lyrics.getChildAt(i)).getTextSize()
+                        / getResources().getDisplayMetrics().scaledDensity;
+        }
+        slot.mount(target, row);
+        boolean deferred = duetScene && !target.nonLyric && target.slice.startMs > position();
+        if (animate && !deferred) {
+            slot.fadeInStarted = SystemClock.elapsedRealtime();
+            setMainAlpha(row, 0f);
+            startedFade = true;
+        } else {
+            slot.fadeInStarted = 0;
+            setMainAlpha(row, 1f);
+        }
+        if (deferred) {
+            slot.host.setVisibility(View.INVISIBLE);
+            slot.host.setAlpha(1f);
+            slot.deferredEntranceStarted = 0;
+            if (target.isCompanion) companionEntranceStarted = 0;
+        } else {
+            slot.host.setVisibility(View.VISIBLE);
+            slot.host.setAlpha(1f);
+            slot.deferredEntranceStarted = 0;
+            if (target.isCompanion) companionEntranceStarted = 0;
+        }
+        return startedFade || (animate && wasVisible);
+    }
+
+    private boolean vacateSlot(SectionSlot slot, boolean animate) {
+        boolean faded = detachToDeparting(slot, animate);
+        slot.resetMetadata();
+        slot.host.setVisibility(View.VISIBLE);
+        slot.host.setAlpha(1f);
+        companionEntranceStarted = 0;
+        return faded;
+    }
+
+    private boolean detachToDeparting(SectionSlot slot, boolean animate) {
+        View oldRow = slot.currentRow;
+        AppliedLine oldMounted = slot.mounted;
+        float currentAlpha = oldRow == null ? 0f : slot.host.getAlpha() * mainAlphaOf(oldRow);
+        boolean visible = oldRow != null && slot.host.getVisibility() == View.VISIBLE
+                && oldRow.getWidth() > 0 && oldRow.getHeight() > 0 && currentAlpha > .01f;
+        int top = oldRow == null ? 0 : (rowHost == null ? 0 : rowHost.getTop()) + slot.host.getTop() + oldRow.getTop();
+        int left = oldRow == null ? 0 : (rowHost == null ? 0 : rowHost.getLeft()) + slot.host.getLeft() + oldRow.getLeft();
+        int width = oldRow == null ? 0 : oldRow.getWidth();
+        int height = oldRow == null ? 0 : oldRow.getHeight();
+        if (oldMounted != null) {
+            LyricsLineViewState.clear(oldMounted, null, old -> LyricsLineViewState.invalidate(old, styles));
+        }
+        slot.host.removeAllViews();
+        slot.currentRow = null;
+        slot.mounted = null;
+        slot.document.appliedLines.clear();
+        slot.fadeInStarted = 0;
+        if (animate && visible) {
+            hideSecondaryRow(oldRow);
+            setMainAlpha(oldRow, currentAlpha);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, height, Gravity.TOP | Gravity.START);
+            lp.leftMargin = left;
+            lp.topMargin = top;
+            // Keep rowHost as the last child of stage so departing overlays sit behind active rows.
+            stage.addView(oldRow, 0, lp);
+            departing.add(new DepartingRow(oldRow, currentAlpha, SystemClock.elapsedRealtime()));
+            return true;
+        }
+        return false;
     }
 
     private static AutoDuetLayout.DuetSectionId sectionId(int generation, Bundle row, int ordinal) {
@@ -372,47 +594,78 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
                 row.getLong("lineEndMs"), ordinal);
     }
 
-    private static List<Boolean> survivors(List<SectionKey> previous, List<SectionKey> current) {
-        List<Boolean> result = new ArrayList<>(current.size());
-        boolean eligible = previous.size() > 1 || current.size() > 1;
-        for (SectionKey key : current) result.add(eligible && key != null && previous.contains(key));
-        return result;
-    }
-
-    private void hideContinuingOutgoing(List<SectionKey> sections, List<Boolean> survivors) {
-        if (outgoing == null) return;
-        Set<SectionKey> surviving = new HashSet<>();
-        for (int i = 0; i < sections.size(); i++)
-            if (i < survivors.size() && survivors.get(i)) surviving.add(sections.get(i));
-        for (int i = 0; i < outgoing.getChildCount(); i++) {
-            SectionKey key = i < outgoingSections.size() ? outgoingSections.get(i) : null;
-            if (key == null || !surviving.contains(key)) continue;
-            outgoing.getChildAt(i).setVisibility(View.INVISIBLE);
-            if (i < outgoingHidden.size()) outgoingHidden.set(i, true);
+    private void updateDeferredSlots() {
+        boolean duetScene = activeSlotCount() == 2;
+        long pos = position();
+        for (SectionSlot slot : slots) {
+            if (!slot.hasMounted()) continue;
+            if (!duetScene || slot.nonLyric) {
+                slot.host.setVisibility(View.VISIBLE);
+                slot.host.setAlpha(1f);
+                slot.deferredEntranceStarted = 0;
+                if (slot.isCompanion) companionEntranceStarted = 0;
+                continue;
+            }
+            boolean deferred = slot.mounted.startMs > pos;
+            if (deferred) {
+                slot.host.setVisibility(View.INVISIBLE);
+                slot.host.setAlpha(1f);
+                slot.deferredEntranceStarted = 0;
+                if (slot.isCompanion) companionEntranceStarted = 0;
+                continue;
+            }
+            long started = slot.isCompanion ? companionEntranceStarted : slot.deferredEntranceStarted;
+            if (slot.host.getVisibility() != View.VISIBLE && Motion.animationsEnabled()) {
+                started = SystemClock.elapsedRealtime();
+            }
+            slot.host.setVisibility(View.VISIBLE);
+            float alpha = started == 0 || !Motion.animationsEnabled() ? 1f
+                    : Math.min(1f, (SystemClock.elapsedRealtime() - started)
+                            / (float) Math.max(210, Motion.dur(210)));
+            slot.host.setAlpha(alpha);
+            if (alpha >= 1f) started = 0;
+            slot.deferredEntranceStarted = started;
+            if (slot.isCompanion) companionEntranceStarted = started;
         }
     }
 
-    private void updateDeferredCompanion() {
-        if (mountedCompanionRow == null || mountedCompanion == null) return;
-        boolean deferred = mountedCompanion.startMs > position();
-        if (deferred) {
-            mountedCompanionRow.setVisibility(View.INVISIBLE);
-            mountedCompanionRow.setAlpha(1f);
-            companionEntranceStarted = 0;
-            return;
-        }
-        if (mountedCompanionRow.getVisibility() != View.VISIBLE && Motion.animationsEnabled())
-            companionEntranceStarted = SystemClock.elapsedRealtime();
-        mountedCompanionRow.setVisibility(View.VISIBLE);
-        float alpha = companionEntranceStarted == 0 || !Motion.animationsEnabled() ? 1f
-                : Math.min(1f, (SystemClock.elapsedRealtime() - companionEntranceStarted)
-                        / (float) Math.max(210, Motion.dur(210)));
-        mountedCompanionRow.setAlpha(alpha);
-        if (alpha >= 1f) companionEntranceStarted = 0;
+    private boolean hasMountedPrimary() {
+        return slots[primaryIndex].hasMounted();
     }
 
-    private Set<Integer> mountedIndices() {
-        return document.appliedLines.size() > 1 ? DUET_INDICES : Collections.singleton(0);
+    private boolean hasMountedAny() {
+        return slots[0].hasMounted() || slots[1].hasMounted();
+    }
+
+    private int activeSlotCount() {
+        return (slots[0].hasMounted() ? 1 : 0) + (slots[1].hasMounted() ? 1 : 0);
+    }
+
+    private SectionSlot companionSlot() {
+        if (activeSlotCount() != 2) return null;
+        return slots[primaryIndex == 0 ? 1 : 0];
+    }
+
+    private boolean hasActiveFade() {
+        return slots[0].fadeInStarted != 0 || slots[1].fadeInStarted != 0 || !departing.isEmpty();
+    }
+
+    private boolean hasActiveDeferredEntrance() {
+        return companionEntranceStarted != 0
+                || slots[0].deferredEntranceStarted != 0 || slots[1].deferredEntranceStarted != 0;
+    }
+
+    private boolean hasPendingAnimation() {
+        for (SectionSlot slot : slots) {
+            if (slot.hasMounted() && !slot.nonLyric
+                    && renderer.hasPendingAnimation(slot.document, SINGLE_INDEX, slot.host, 0, 0, 1))
+                return true;
+        }
+        return false;
+    }
+
+    private void clearAllSlots() {
+        for (SectionSlot slot : slots) slot.clear(styles);
     }
 
     private static View mainOf(View row) {
@@ -421,8 +674,14 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
                 ? ((ViewGroup) row).getChildAt(0) : row;
     }
 
-    private static View mainContent(LinearLayout host) {
-        return host == null || host.getChildCount() == 0 ? null : mainOf(host.getChildAt(0));
+    private View primaryMainView() {
+        SectionSlot slot = slots[primaryIndex].hasMounted() ? slots[primaryIndex] : slots[0];
+        return slot.currentRow == null ? null : mainOf(slot.currentRow);
+    }
+
+    private static float mainAlphaOf(View row) {
+        View main = mainOf(row);
+        return main == null ? 1f : main.getAlpha();
     }
 
     private static void setMainAlpha(View row, float alpha) {
@@ -430,54 +689,46 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         if (main != null) main.setAlpha(alpha);
     }
 
-    private static List<Float> captureAlphas(LinearLayout host) {
-        List<Float> alphas = new ArrayList<>();
-        if (host != null) for (int i = 0; i < host.getChildCount(); i++) {
-            View main = mainOf(host.getChildAt(i));
-            alphas.add(main == null ? 1f : main.getAlpha());
-        }
-        return alphas;
+    private static void hideSecondaryRow(View row) {
+        if (row instanceof LinearLayout && ((LinearLayout) row).getOrientation() == LinearLayout.VERTICAL)
+            for (int i = 1; i < ((ViewGroup) row).getChildCount(); i++)
+                ((ViewGroup) row).getChildAt(i).setVisibility(View.INVISIBLE);
     }
 
-    private static void restoreAlphas(LinearLayout host, List<Float> alphas) {
-        if (host == null) return;
-        for (int i = 0; i < host.getChildCount() && i < alphas.size(); i++)
-            setMainAlpha(host.getChildAt(i), alphas.get(i));
-    }
-
-    private static void hideSecondary(LinearLayout host) {
-        if (host == null) return;
-        for (int c = 0; c < host.getChildCount(); c++) {
-            View row = host.getChildAt(c);
-            if (row instanceof LinearLayout && ((LinearLayout) row).getOrientation() == LinearLayout.VERTICAL)
-                for (int i = 1; i < ((ViewGroup) row).getChildCount(); i++)
-                    ((ViewGroup) row).getChildAt(i).setVisibility(View.INVISIBLE);
+    private void finishFades() {
+        for (DepartingRow row : departing) stage.removeView(row.view);
+        departing.clear();
+        for (SectionSlot slot : slots) {
+            slot.fadeInStarted = 0;
+            if (slot.currentRow != null) setMainAlpha(slot.currentRow, 1f);
         }
     }
 
-    private void finishFade() {
-        if (outgoing != null) { stage.removeView(outgoing); outgoing = null; }
-        if (rowHost != null) for (int i = 0; i < rowHost.getChildCount(); i++) setMainAlpha(rowHost.getChildAt(i), 1f);
-        fadeStarted = 0;
-        outgoingSections = new ArrayList<>();
-        outgoingAlphas = new ArrayList<>();
-        outgoingHidden = new ArrayList<>();
-        currentSurvivors = new ArrayList<>();
-    }
-
-    private void stepFade() {
-        long elapsed = SystemClock.elapsedRealtime() - fadeStarted;
-        int inDuration = Math.max(210, Motion.dur(210)), outDuration = Math.max(130, Motion.dur(130));
-        float in = Math.min(1f, elapsed / (float) inDuration);
-        float out = Math.max(0f, 1f - elapsed / (float) outDuration);
-        if (rowHost != null) for (int i = 0; i < rowHost.getChildCount(); i++)
-            if (i >= currentSurvivors.size() || !currentSurvivors.get(i))
-                setMainAlpha(rowHost.getChildAt(i), in);
-        if (outgoing != null) for (int i = 0; i < outgoing.getChildCount(); i++)
-            if (i >= outgoingHidden.size() || !outgoingHidden.get(i))
-                setMainAlpha(outgoing.getChildAt(i),
-                        (i < outgoingAlphas.size() ? outgoingAlphas.get(i) : 1f) * out);
-        if (elapsed >= inDuration) finishFade();
+    private void stepFades() {
+        long now = SystemClock.elapsedRealtime();
+        int inDuration = Math.max(210, Motion.dur(210));
+        int outDuration = Math.max(130, Motion.dur(130));
+        for (SectionSlot slot : slots) {
+            if (slot.fadeInStarted == 0 || slot.currentRow == null) continue;
+            long elapsed = now - slot.fadeInStarted;
+            float in = Math.min(1f, elapsed / (float) inDuration);
+            setMainAlpha(slot.currentRow, in);
+            if (elapsed >= inDuration) {
+                slot.fadeInStarted = 0;
+                setMainAlpha(slot.currentRow, 1f);
+            }
+        }
+        Iterator<DepartingRow> it = departing.iterator();
+        while (it.hasNext()) {
+            DepartingRow row = it.next();
+            long elapsed = now - row.started;
+            float out = Math.max(0f, 1f - elapsed / (float) outDuration);
+            setMainAlpha(row.view, row.initialAlpha * out);
+            if (elapsed >= outDuration) {
+                stage.removeView(row.view);
+                it.remove();
+            }
+        }
     }
 
     private static final class FitAttempt {
@@ -485,25 +736,122 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         FitAttempt(boolean duet, boolean secondary) { this.duet = duet; this.secondary = secondary; }
     }
 
-    private static final class SectionKey {
+    private static final class DepartingRow {
+        final View view;
+        final float initialAlpha;
+        final long started;
+        DepartingRow(View view, float initialAlpha, long started) {
+            this.view = view; this.initialAlpha = initialAlpha; this.started = started;
+        }
+    }
+
+    private static final class SectionSpec {
         final AutoDuetLayout.DuetSectionId id;
+        final AppliedLine slice, fullSource;
         final String signature;
-        final int size;
+        final int fontSp, secondaryCap, pageStart, pageEnd;
+        final boolean showSecondary, isCompanion, nonLyric;
 
-        SectionKey(AutoDuetLayout.DuetSectionId id, String signature, int size) {
-            this.id = id; this.signature = signature; this.size = size;
+        SectionSpec(AutoDuetLayout.DuetSectionId id, AppliedLine slice, AppliedLine fullSource, int fontSp,
+                    boolean showSecondary, int secondaryCap, int pageStart, int pageEnd,
+                    boolean isCompanion, boolean nonLyric) {
+            this.id = id;
+            this.slice = slice;
+            this.fullSource = fullSource;
+            this.signature = slice == null ? null : contentSignature(slice);
+            this.fontSp = fontSp;
+            this.showSecondary = showSecondary;
+            this.secondaryCap = secondaryCap;
+            this.pageStart = pageStart;
+            this.pageEnd = pageEnd;
+            this.isCompanion = isCompanion;
+            this.nonLyric = nonLyric;
+        }
+    }
+
+    /** Independent rendering host and lifecycle state for one lyric section (main or duet). */
+    private static final class SectionSlot {
+        final FrameLayout host;
+        final LyricsDocument document = new LyricsDocument();
+        AutoDuetLayout.DuetSectionId id;
+        AppliedLine source, mounted;
+        String signature;
+        View currentRow;
+        int fontSp, secondaryCap, pageStart, pageEnd;
+        boolean showSecondary, isCompanion, nonLyric;
+        long fadeInStarted, deferredEntranceStarted;
+
+        SectionSlot(Context context) {
+            host = new FrameLayout(context);
+            host.setClipChildren(false);
+            host.setClipToPadding(false);
+            document.type = "Syllable";
         }
 
-        @Override public boolean equals(Object other) {
-            if (this == other) return true;
-            if (!(other instanceof SectionKey)) return false;
-            SectionKey key = (SectionKey) other;
-            return size == key.size && java.util.Objects.equals(id, key.id)
-                    && java.util.Objects.equals(signature, key.signature);
+        boolean hasMounted() { return mounted != null && currentRow != null; }
+
+        boolean matchesExact(SectionSpec target) {
+            return hasMounted() && !nonLyric && !target.nonLyric
+                    && fontSp == target.fontSp
+                    && showSecondary == target.showSecondary
+                    && secondaryCap == target.secondaryCap
+                    && pageStart == target.pageStart && pageEnd == target.pageEnd
+                    && Objects.equals(id, target.id)
+                    && Objects.equals(signature, target.signature);
         }
 
-        @Override public int hashCode() {
-            return 31 * (31 * java.util.Objects.hashCode(id) + java.util.Objects.hashCode(signature)) + size;
+        boolean canReuseRepeat(SectionSpec target, boolean checkReading, boolean checkTranslation) {
+            return hasMounted() && !nonLyric && !target.nonLyric
+                    && fontSp == target.fontSp
+                    && showSecondary == target.showSecondary
+                    && secondaryCap == target.secondaryCap
+                    && pageStart == target.pageStart && pageEnd == target.pageEnd
+                    && AutoRepeatedLine.sameRenderedLine(source, target.fullSource, checkReading, checkTranslation);
+        }
+
+        void mount(SectionSpec target, View row) {
+            host.removeAllViews();
+            host.addView(row, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+            id = target.id;
+            source = target.fullSource;
+            mounted = target.slice;
+            signature = target.signature;
+            currentRow = row;
+            fontSp = target.fontSp;
+            showSecondary = target.showSecondary;
+            secondaryCap = target.secondaryCap;
+            pageStart = target.pageStart;
+            pageEnd = target.pageEnd;
+            isCompanion = target.isCompanion;
+            nonLyric = target.nonLyric;
+            document.appliedLines.clear();
+            document.appliedLines.add(mounted);
+        }
+
+        void resetMetadata() {
+            id = null;
+            source = null;
+            mounted = null;
+            signature = null;
+            currentRow = null;
+            fontSp = 0;
+            pageStart = 0;
+            pageEnd = 0;
+            isCompanion = false;
+            nonLyric = false;
+            fadeInStarted = 0;
+            deferredEntranceStarted = 0;
+            document.appliedLines.clear();
+        }
+
+        void clear(FrameStyleBatcher styles) {
+            if (mounted != null) {
+                LyricsLineViewState.clear(mounted, host, old -> LyricsLineViewState.invalidate(old, styles));
+            }
+            host.removeAllViews();
+            host.setVisibility(View.VISIBLE);
+            host.setAlpha(1f);
+            resetMetadata();
         }
     }
 
@@ -591,16 +939,29 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         return fits;
     }
 
-    /** A continuing duet section retains its size while a newcomer fits the remaining space. */
+    /** A continuing or repeated duet section retains its size while a newcomer fits remaining space. */
     private int retainedDuetSize(AppliedLine line, boolean partner, int fallback, int width, int height) {
-        if (currentSections.size() != 2 || width != fittedWidth || height != fittedHeight
-                || fittedSettings != AutoDisplaySettings.signature(sample)) return fallback;
+        int generation = sample.getInt("generation", Integer.MIN_VALUE);
+        if (activeSlotCount() != 2 || width != fittedWidth || height != fittedHeight
+                || fittedSettings != AutoDisplaySettings.signature(sample)
+                || mountedGeneration != generation) return fallback;
         Bundle row = partner ? sample.getBundle("duet") : sample;
-        AutoDuetLayout.DuetSectionId id = sectionId(sample.getInt("generation"), row,
+        AutoDuetLayout.DuetSectionId id = sectionId(generation, row,
                 row == null ? -1 : row.getInt("lineIndex", -1));
         String signature = contentSignature(line);
-        for (SectionKey previous : currentSections)
-            if (id != null && id.equals(previous.id) && signature.equals(previous.signature)) return previous.size;
+        for (SectionSlot slot : slots) {
+            if (!slot.hasMounted() || slot.nonLyric) continue;
+            if (id != null && id.equals(slot.id) && signature.equals(slot.signature)) return slot.fontSp;
+        }
+        boolean secondaryAllowed = AutoSurfaceFit.secondaryAllowed(String.valueOf(getTag()));
+        boolean checkReading = secondaryAllowed && AutoDisplaySettings.showReading(sample);
+        boolean checkTranslation = secondaryAllowed && AutoDisplaySettings.showTranslation(sample);
+        AppliedLine full = partner ? companion : source;
+        for (SectionSlot slot : slots) {
+            if (!slot.hasMounted() || slot.nonLyric) continue;
+            if (AutoRepeatedLine.sameRenderedLine(slot.source, full, checkReading, checkTranslation))
+                return slot.fontSp;
+        }
         return fallback;
     }
 
@@ -616,9 +977,9 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         if (!fits) return false;
         if (partner == null) return true;
         AppliedLine other = slice(partner, 0, partner.text.length());
-        View companion = build(other, retainedDuetSize(partner, true, size, width, height), secondary, cap);
-        used += Math.round(4 * getResources().getDisplayMetrics().density) + measure(companion, width);
-        fits = mainFits(mainOf(companion), width);
+        View companionRow = build(other, retainedDuetSize(partner, true, size, width, height), secondary, cap);
+        used += Math.round(4 * getResources().getDisplayMetrics().density) + measure(companionRow, width);
+        fits = mainFits(mainOf(companionRow), width);
         LyricsLineViewState.clear(other, stage, null);
         return fits && used <= height;
     }
@@ -800,7 +1161,7 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
     }
 
     boolean creditVisibleFor(int generation, String trackUri) {
-        View content = mainContent(rowHost);
+        View content = primaryMainView();
         return active && creditOutro && getAlpha() > 0f && content != null && content.getAlpha() > 0f
                 && content.getWidth() > 0 && content.getHeight() > 0
                 && sample != null && AutoPrototypePolicy.sameSession(generation, trackUri,
@@ -810,7 +1171,7 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
     public Bundle metrics() {
         Bundle result = new Bundle(); result.putString("renderer", "Spicy mounted row");
         result.putLong("transitionCount", transitions); result.putInt("mountedHosts", stage.getChildCount());
-        result.putString("transition", "Fade 130ms out / 210ms in"); result.putBoolean("transitionActive", fadeStarted != 0);
+        result.putString("transition", "Fade 130ms out / 210ms in"); result.putBoolean("transitionActive", hasActiveFade());
         result.putInt("targetFps", 30); result.putBoolean("bounce", config.wordBounceEnabled || config.appleLift);
         result.putInt("fontSp", fontSp); result.putInt("page", page + 1); result.putInt("pages", pages.size());
         result.putLong("artworkFades", artworkFades); result.putBoolean("artworkFadeActive", artwork != null);
@@ -823,9 +1184,10 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         result.putString("fontFamily", fontFamily); result.putInt("fontWeight", 400);
         result.putLong("localBoundarySwitches", localBoundarySwitches);
         result.putLong("lastBoundaryLateMs", lastBoundaryLateMs);
+        result.putLong("repeatReuses", repeatReuses);
         result.putBoolean("lineSynced", source != null && source.syntheticWords);
         result.putBoolean("noFit", planned && pages.isEmpty());
-        View main = mainContent(rowHost);
+        View main = primaryMainView();
         result.putBoolean("mainMounted", main != null);
         result.putFloat("mainAlpha", main == null ? 0f : main.getAlpha());
         result.putInt("mainWidth", main == null ? 0 : main.getWidth());
@@ -834,10 +1196,13 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
         result.putInt("sourceWords", source == null ? 0 : source.words.size());
         result.putBoolean("secondaryRows", showSecondary);
         result.putInt("secondaryLineCap", secondaryCap);
-        result.putBoolean("duet", duet && mountedCompanion != null);
-        result.putInt("duetSections", document.appliedLines.size());
+        int sections = activeSlotCount();
+        SectionSlot companionSlot = companionSlot();
+        result.putBoolean("duet", duet && sections == 2);
+        result.putInt("duetSections", sections);
         result.putInt("duetPrimaryIndex", primaryIndex);
-        result.putBoolean("duetDeferred", mountedCompanion != null && mountedCompanion.startMs > position());
+        result.putBoolean("duetDeferred", companionSlot != null && companionSlot.mounted != null
+                && companionSlot.mounted.startMs > position());
         result.putString("duetPolicy", duet ? secondaryCap == 1 ? "Two sections, one secondary line each" : "Two sections"
                 : companion == null ? "Solo" : "Solo fallback, duet did not fit");
         result.putString("displayPolicy", AutoSurfaceFit.secondaryAllowed(String.valueOf(getTag())) ? "Full with fitting secondary rows" : "Main only");
@@ -849,7 +1214,7 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
         // A replacement view also starts at 0x0. Only the owner's measured box can rearm a fit.
-        pages = new ArrayList<>(); page = -1; planned = false;
+        pages = new ArrayList<>(); page = -1; planned = false; needsSync = true;
         render(1f / 30f); schedule();
     }
     @Override protected void onMeasure(int width, int height) {
@@ -876,11 +1241,9 @@ public final class AutoLyricsView extends FrameLayout implements Choreographer.F
     }
     @Override protected void onDetachedFromWindow() {
         stop();
-        if (mounted != null) LyricsLineViewState.clear(mounted, rowHost, old -> LyricsLineViewState.invalidate(old, styles));
-        if (mountedCompanion != null) LyricsLineViewState.clear(mountedCompanion, rowHost, old -> LyricsLineViewState.invalidate(old, styles));
-        mounted = null; mountedCompanion = null; mountedCompanionRow = null;
-        companion = null; duet = false; currentSections = new ArrayList<>();
-        stage.removeAllViews(); rowHost = null; page = -1; document.appliedLines.clear();
+        clearAllSlots();
+        companion = null; duet = false; duetSlots = new ArrayList<>();
+        stage.removeAllViews(); rowHost = null; page = -1; needsSync = false;
         artwork = null;
         super.onDetachedFromWindow();
     }

@@ -74,7 +74,8 @@ public final class EzaChineseRomanizer {
         String[] from = {"aa", "aai", "aau", "aam", "aan", "aang", "aap", "aat", "aak", "a", "ai", "au", "am", "an", "ang", "ap", "at", "ak", "eoi", "eon", "eot", "oe", "oeng", "oet", "oek", "e", "ei", "eu", "em", "eng", "ep", "ek", "i", "iu", "im", "in", "ing", "ip", "it", "ik", "o", "oi", "ou", "on", "ong", "ot", "ok", "u", "ui", "un", "ung", "ut", "uk", "yu", "yun", "yut"};
         String[] to = {"a", "ai", "ao", "am", "an", "ang", "ap", "at", "ac", "ă", "ay", "au", "ăm", "ăn", "ăng", "ăp", "ăt", "ăc", "ơi", "ơn", "ơt", "ơo", "ơong", "ơot", "ơoc", "e", "ei", "eu", "em", "eng", "ep", "ec", "i", "iu", "im", "in", "ing", "ip", "it", "ic", "o", "oi", "ou", "on", "ong", "ot", "oc", "u", "ui", "un", "ung", "ut", "uc", "yu", "yun", "yut"};
         for (int i = 0; i < from.length; i++) if (fin.equals(from[i])) return to[i];
-        return fin.equals("m") || fin.equals("ng") ? fin : null;
+        // Cantonese revision 2, R3: syllabic nasals spell ưm/ưng (hm/hng → hưm/hưng); R4 marks the ư.
+        return fin.equals("m") ? "ưm" : fin.equals("ng") ? "ưng" : null;
     }
 
     /** Eza tone nuclei are defined by the source final, not by the last-i/u heuristic. */

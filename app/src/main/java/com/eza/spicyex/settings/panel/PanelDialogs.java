@@ -4,6 +4,8 @@ import android.widget.EditText;
 import android.widget.TextView;
 
 import com.eza.spicyex.Settings;
+import com.eza.spicyex.lyrics.language.MandarinReadings;
+import com.eza.spicyex.settings.values.ChineseMode;
 import com.eza.spicyex.SettingsStore;
 import com.eza.spicyex.settings.SettingsWriter;
 import com.eza.spicyex.settings.registry.UiContext;
@@ -59,6 +61,7 @@ public final class PanelDialogs {
     }
 
     private final Host host;
+    private PanelDialog readingPicker;
 
     public PanelDialogs(Host host) {
         this.host = host;
@@ -125,18 +128,63 @@ public final class PanelDialogs {
         final String initial = host.store().get(setting);
         List<PanelDialog.Option> options = new ArrayList<>();
         for (String val : values) {
-            options.add(PanelDialog.Option.of(val, host.labelFor(setting, val)));
+            PanelDialog.Option option = PanelDialog.Option.of(val, host.labelFor(setting, val));
+            option.separatorBefore = "cycle".equals(val);
+            options.add(option);
         }
         new PanelDialog(style.context(), strings.setting(setting))
-                .confirmingOptions(options, initial, selected -> {
-                    if (selected != null && !selected.equals(initial)) {
-                        host.onOptionChosen(setting, selected);
-                        valueView.setText(host.rowSummaryFor(setting, selected));
-                        host.afterSettingChosen(setting);
-                    }
-                }, strings.get("settings_ai_save", "Save"),
-                        strings.get("settings_ai_cancel", "Cancel"))
+                .confirmingOptions(options, initial,
+                        selected -> commitSelection(setting, selected, valueView),
+                        strings.get("settings_ai_save", "Save"), strings.get("settings_ai_cancel", "Cancel"))
                 .show();
+    }
+
+    String readingPageTitle(Settings.StringSetting setting) {
+        return setting == Settings.CHINESE_MODE
+                ? host.strings().get("settings_reading_chinese", "Chinese")
+                : host.strings().get("settings_reading_cyrillic", "Cyrillic");
+    }
+
+    String readingPageSummary(Settings.StringSetting setting) {
+        String mode = host.store().get(setting);
+        if (setting == Settings.CHINESE_MODE) {
+            if (!host.store().get(Settings.TRANSLITERATION_ENABLED)) {
+                return host.strings().setting(Settings.CHINESE_CHARACTER_FORM);
+            }
+            if (ChineseMode.PINYIN_EZA.storedLabel().equals(mode) && !MandarinReadings.available()) {
+                mode = ChineseMode.PINYIN.storedLabel();
+            }
+        }
+        return host.labelFor(setting, mode);
+    }
+
+    void openReadingPage(Settings.StringSetting setting, TextView summary) {
+        if (readingPicker != null && readingPicker.isShowing()) return;
+        PanelDialog dialog = new PanelDialog(host.style().context(), readingPageTitle(setting));
+        readingPicker = dialog;
+        dialog.onDismiss(() -> {
+            if (readingPicker == dialog) readingPicker = null;
+        });
+        ReadingSettingsPage page = new ReadingSettingsPage(dialog, host.store(), host.strings(), changes -> {
+            host.store().putAll(changes);
+            summary.setText(readingPageSummary(setting));
+        });
+        if (setting == Settings.CHINESE_MODE) page.chinese(setting);
+        else page.cyrillic(setting);
+        dialog.show();
+    }
+
+    boolean closeReadingPicker() {
+        if (readingPicker == null || !readingPicker.isShowing()) return false;
+        readingPicker.dismiss();
+        return true;
+    }
+
+    private void commitSelection(Settings.StringSetting setting, String selected, TextView valueView) {
+        if (selected == null || selected.equals(host.store().get(setting))) return;
+        host.onOptionChosen(setting, selected);
+        valueView.setText(host.rowSummaryFor(setting, selected));
+        host.afterSettingChosen(setting);
     }
 
     public void showCacheInfo() {

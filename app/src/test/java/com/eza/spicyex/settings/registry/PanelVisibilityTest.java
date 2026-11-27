@@ -75,6 +75,9 @@ public class PanelVisibilityTest {
         assertFalse(visible(Settings.AI_DEEPSEEK_REASONING, wrong));
         UiContext right = context(true, Settings.AI_ENABLED, true, Settings.AI_PROVIDER, "deepseek");
         assertTrue(visible(Settings.AI_DEEPSEEK_REASONING, right));
+        UiContext custom = context(true, Settings.AI_ENABLED, true, Settings.AI_PROVIDER, "custom");
+        assertTrue("custom gateways send the reasoning effort too",
+                visible(Settings.AI_DEEPSEEK_REASONING, custom));
     }
 
     /**
@@ -98,7 +101,7 @@ public class PanelVisibilityTest {
         assertTrue(visibleAction("download_language_models", missing));
         assertTrue(visible(Settings.TRANSLITERATION_ENABLED, missing));
         assertTrue(visible(Settings.TRANSLATION_ENABLED, missing));
-        assertTrue(visible(Settings.CHINESE_CHARACTER_FORM, missing));
+        assertTrue(visible(Settings.CHINESE_MODE, missing));
 
         UiContext translationOn = context(false, Settings.TRANSLATION_ENABLED, true);
         assertTrue(visible(Settings.TRANSLATION_TARGET, translationOn));
@@ -111,11 +114,11 @@ public class PanelVisibilityTest {
     }
 
     @Test
-    public void bundledChineseCharacterFormDoesNotNeedTransliterationMasterSwitch() {
+    public void chinesePageIsReachableForCharacterConversionWhenTransliterationIsOff() {
         UiContext packReady = context(true, Settings.TRANSLITERATION_ENABLED, false);
-        assertTrue(visible(Settings.CHINESE_CHARACTER_FORM, packReady));
+        assertTrue(visible(Settings.CHINESE_MODE, packReady));
         UiContext noPack = context(false, Settings.TRANSLITERATION_ENABLED, false);
-        assertTrue(visible(Settings.CHINESE_CHARACTER_FORM, noPack));
+        assertTrue(visible(Settings.CHINESE_MODE, noPack));
     }
 
     @Test
@@ -130,22 +133,17 @@ public class PanelVisibilityTest {
     }
 
     @Test
-    public void readingFamilyNeedsMasterSwitch() {
+    public void standaloneReadingRowsFollowMasterSwitch() {
         UiContext on = context(true, Settings.TRANSLITERATION_ENABLED, true);
         assertTrue(visible(Settings.CHINESE_MODE, on));
         assertTrue(visible(Settings.KOREAN_ROMANIZATION, on));
-        assertTrue(visible(Settings.CHINESE_TONES, on));
         assertTrue(visible(Settings.CYRILLIC_MODE, on));
-        assertTrue(visible(Settings.CYRILLIC_KEEP_SIGNS, on));
         assertTrue(visible(Settings.ALIGNED_PER_WORD_ROMAJI, on));
 
         UiContext disabled = context(true, Settings.TRANSLITERATION_ENABLED, false);
         assertFalse(visible(Settings.JAPANESE_READING_MODE, disabled));
-        assertFalse(visible(Settings.CHINESE_MODE, disabled));
         assertFalse(visible(Settings.KOREAN_ROMANIZATION, disabled));
         assertFalse(visible(Settings.CYRILLIC_MODE, disabled));
-        assertFalse(visible(Settings.CYRILLIC_KEEP_SIGNS, disabled));
-        assertFalse(visible(Settings.CHINESE_TONES, disabled));
         assertFalse(visible(Settings.ALIGNED_PER_WORD_ROMAJI, disabled));
     }
 

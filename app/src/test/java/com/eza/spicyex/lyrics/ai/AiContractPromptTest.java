@@ -1,5 +1,6 @@
 package com.eza.spicyex.lyrics.ai;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.eza.spicyex.lyrics.session.LayerKind;
@@ -14,12 +15,12 @@ import org.junit.Test;
  */
 public class AiContractPromptTest {
 
+    /** Meaning asks for numbered text only: no ids, hints, schema, or JSON for the model. */
     @Test
-    public void meaningPromptLeadsWithNumberedHardRules() {
-        assertTrue(AiContract.SYSTEM_PROMPT.startsWith("Hard rules:\n1."));
-        assertRulesLead(AiContract.SYSTEM_PROMPT);
-        assertMeaningConstraintsPresent(AiContract.SYSTEM_PROMPT);
-        assertSemanticsFollowTheRules(AiContract.SYSTEM_PROMPT, "Translate the full lyric");
+    public void meaningPromptAsksForNumberedTextAndNoJson() {
+        assertTrue(AiContract.SYSTEM_PROMPT.contains("one line per number"));
+        assertFalse(AiContract.SYSTEM_PROMPT.contains("JSON"));
+        assertFalse(AiContract.SYSTEM_PROMPT.contains("\"id\""));
     }
 
     @Test
@@ -29,16 +30,6 @@ public class AiContractPromptTest {
         assertSoundConstraintsPresent(AiContract.SOUND_SYSTEM_PROMPT);
         assertSemanticsFollowTheRules(AiContract.SOUND_SYSTEM_PROMPT,
                 "deterministic or Google baseline");
-    }
-
-    /** Every rule sentence from the previous prompt must survive somewhere in the new one. */
-    private static void assertMeaningConstraintsPresent(String prompt) {
-        assertTrue(prompt.contains("Translate rather than romanize"));
-        assertTrue(prompt.contains("Respect the ordinary/adlib class"));
-        assertTrue(prompt.contains("Return every requested id exactly once"));
-        assertTrue(prompt.contains("Do not add ids, omit ids, merge rows, split rows"));
-        assertTrue(prompt.contains("A row may remain unchanged when that is source-faithful"));
-        assertTrue(prompt.contains("{\"items\":[{\"id\":string,\"t\":string}]}"));
     }
 
     private static void assertSoundConstraintsPresent(String prompt) {
@@ -75,8 +66,11 @@ public class AiContractPromptTest {
      */
     @Test
     public void theRepairInstructionComposesAheadOfTheRules() {
-        String prompt = AiContract.buildSystemPrompt(LayerKind.MEANING, "en", true, false);
+        String prompt = AiContract.buildSystemPrompt(LayerKind.SOUND, "Latin", true, false);
         assertTrue(prompt.startsWith(AiContract.REPAIR_PROMPT));
         assertTrue(prompt.contains("Hard rules:"));
+        String meaning = AiContract.buildSystemPrompt(LayerKind.MEANING, "en", true, false);
+        assertTrue(meaning.startsWith(AiContract.SYSTEM_PROMPT));
+        assertTrue(meaning.endsWith(AiContract.TEXT_REPAIR_PROMPT));
     }
 }

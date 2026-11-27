@@ -157,6 +157,40 @@ public class LyricsTransliterationSessionTest {
         assertEquals(KoreanDisplayMode.WORD_TRANSLIT.value, config.koreanMode);
     }
 
+    @Test
+    public void autoChineseChipShowsSwitchesForThisSongThenHides() throws Exception {
+        LyricsRenderConfig config = cycleConfig();
+        set(config, "chineseModeConfig", "auto");
+        set(config, "defaultChineseMode", "auto");
+        LyricsTransliterationSession session = new LyricsTransliterationSession(false, config);
+        try {
+            assertTrue(session.cycle(false, true, false, false, "songA", "jyutping").showRomanization);
+            assertTrue(session.cycle(false, true, false, false, "songA", "jyutping").showRomanization);
+            assertEquals("pinyin", com.eza.spicyex.lyrics.language.ChineseAutoMode.resolve("auto",
+                    autoDocument("songA")));
+            assertEquals("jyutping", com.eza.spicyex.lyrics.language.ChineseAutoMode.resolve("auto",
+                    autoDocument("songB")));
+            assertFalse(session.cycle(false, true, false, false, "songA", "pinyin").showRomanization);
+            // Showing again keeps the song's choice until the next switch.
+            assertTrue(session.cycle(false, true, false, false, "songA", "pinyin").showRomanization);
+            assertEquals("pinyin", com.eza.spicyex.lyrics.language.ChineseAutoMode.resolve("auto",
+                    autoDocument("songA")));
+        } finally {
+            com.eza.spicyex.lyrics.language.ChineseAutoMode.setOverride("songA", null);
+        }
+    }
+
+    private static com.eza.spicyex.lyrics.LyricsDocument autoDocument(String trackId) {
+        com.eza.spicyex.lyrics.LyricsDocument doc = new com.eza.spicyex.lyrics.LyricsDocument();
+        doc.trackId = trackId;
+        for (String text : new String[]{"你唔好走", "佢話你知"}) {
+            com.eza.spicyex.lyrics.LyricsLine line = new com.eza.spicyex.lyrics.LyricsLine();
+            line.text = text;
+            doc.lines.add(line);
+        }
+        return doc;
+    }
+
     private static LyricsRenderConfig cycleConfig() throws Exception {
         return configWithKorean("cycle", KoreanDisplayMode.WORD_TRANSLIT.value, KoreanDisplayMode.WORD_TRANSLIT.value);
     }

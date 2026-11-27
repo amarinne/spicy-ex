@@ -45,10 +45,15 @@ public final class AndroidAutoRenderingInstrumentation {
         check(failures, "duet.off_and_weather", this::checkDuetSurfaces);
         check(failures, "duet.survivor_size", () -> AutoDuetTransitionChecks.replacement(host.getTargetContext()));
         check(failures, "duet.reserved_fade", () -> AutoDuetTransitionChecks.deferred(host.getTargetContext()));
+        check(failures, "repeat.line_sync", () -> AutoRepeatTransitionChecks.lineSyncedRepeat(activity));
+        check(failures, "repeat.word_sync", () -> AutoRepeatTransitionChecks.wordSyncedRepeat(activity));
+        check(failures, "repeat.duet", () -> AutoRepeatTransitionChecks.duetRepeat(host.getTargetContext()));
+        check(failures, "duet.finish_before_main", () -> AutoRepeatTransitionChecks.duetFinishBeforeMain(activity));
+        check(failures, "duet.independent_slots", () -> AutoRepeatTransitionChecks.duetIndependentSlots(activity));
         host.runOnMainSync(() -> activity.finish());
         Bundle result = new Bundle();
-        result.putInt("expectedCases", 28); result.putInt("completedCases", completed);
-        result.putString("stream", failures.isEmpty() ? "PASS: 28 Android Auto rendering cases\n"
+        result.putInt("expectedCases", 33); result.putInt("completedCases", completed);
+        result.putString("stream", failures.isEmpty() ? "PASS: 33 Android Auto rendering cases\n"
                 : "FAIL: " + String.join("\n", failures) + "\n");
         host.finish(failures.isEmpty() ? -1 : 0, result);
     }

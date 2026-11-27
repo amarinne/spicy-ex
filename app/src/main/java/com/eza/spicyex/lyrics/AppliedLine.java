@@ -18,6 +18,7 @@ public class AppliedLine {
     public String text = "";
     public String romanizedText = "";
     public String translatedText = "";
+    public boolean translationAiPending;
     public SpicyJapaneseChineseProcessor.JapaneseReading japaneseReading;
     public RenderPlan readingRenderPlan;
     /** Finalized display groups supplied by a cross-process render adapter, or null for local analysis. */

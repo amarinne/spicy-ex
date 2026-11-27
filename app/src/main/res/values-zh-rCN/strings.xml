@@ -62,6 +62,7 @@
     <string name="settings_label_lyrics_cyrillic_mode">西里尔文字读音</string>
     <string name="settings_label_lyrics_cyrillic_keep_signs">保留西里尔软硬音符号</string>
     <string name="settings_label_lyrics_translation_enabled">翻译歌词</string>
+    <string name="settings_label_prefetch_next_song">预载下一首歌的歌词</string>
     <string name="settings_label_lyrics_translation_target">目标语言</string>
     <string name="settings_label_lyrics_translation_brightness">翻译亮度</string>
 
@@ -119,6 +120,17 @@
     <string name="settings_option_wordtranslit">逐词转写</string>
     <string name="settings_option_rrpronunciation">按发音（RR）</string>
     <string name="settings_option_vnpronunciation">按发音（越南式）</string>
+    <string name="settings_option_lyrics_cyrillic_mode_auto">自动检测</string>
+    <string name="settings_reading_mandarin">普通话</string>
+    <string name="settings_reading_cantonese">粤语</string>
+    <string name="settings_reading_chinese">中文</string>
+    <string name="settings_reading_cyrillic">西里尔字母</string>
+    <string name="settings_reading_style">读音样式</string>
+    <string name="settings_reading_standard">标准</string>
+    <string name="settings_reading_pack_required">需要语言包</string>
+    <string name="settings_reading_hidden">隐藏</string>
+    <string name="settings_option_lyrics_chinese_mode_auto">自动检测</string>
+    <string name="settings_option_lyrics_chinese_mode_auto_eza">自动检测 eza式</string>
     <string name="settings_option_russian">俄语</string>
     <string name="settings_option_ukrainian">乌克兰语</string>
     <string name="settings_option_disabled">禁用</string>
@@ -205,6 +217,8 @@
     <string name="settings_ai_model">模型</string>
     <string name="settings_action_download_language_models">下载语言模型</string>
     <string name="settings_ai_model_absent">未选择</string>
+    <string name="settings_ai_model_search">搜索或输入模型 ID</string>
+    <string name="settings_ai_model_use_typed">使用“%1$s”</string>
     <string name="settings_ai_action_set_key">设置 API 密钥</string>
     <string name="settings_ai_action_edit_key">修改 API 密钥</string>
     <string name="settings_ai_action_delete_key">删除 API 密钥</string>
@@ -257,6 +271,7 @@
     <string name="lyrics_ai_failed_attempt_payload">失败尝试的负载</string>
     <string name="lyrics_ai_previous_failed_attempt">上一次失败的尝试</string>
     <string name="lyrics_ai_reasoning_trace">推理过程</string>
+    <string name="lyrics_ai_no_reasoning_trace">无推理过程</string>
     <string name="lyrics_ai_translation_prompt_help">选择预设，或编辑自定义提示词，说明模型应保留、修正或强调的内容。</string>
     <string name="lyrics_ai_pronunciation_prompt_help">选择预设，或编辑读音、方言、拼写或混合语言的自定义提示词。</string>
     <string name="lyrics_ai_prompt_preset">提示词预设</string>
@@ -299,7 +314,7 @@
     <string name="settings_option_ai_provider_openai">OpenAI</string>
     <string name="settings_option_ai_provider_openrouter">OpenRouter</string>
     <string name="settings_option_ai_provider_deepseek">DeepSeek</string>
-    <string name="settings_label_ai_deepseek_reasoning">DeepSeek 推理</string>
+    <string name="settings_label_ai_deepseek_reasoning">推理</string>
     <string name="settings_option_ai_deepseek_reasoning_off">Off</string>
     <string name="settings_option_ai_deepseek_reasoning_low">Low</string>
     <string name="settings_option_ai_deepseek_reasoning_high">High</string>

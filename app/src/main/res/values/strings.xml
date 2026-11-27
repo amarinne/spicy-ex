@@ -154,6 +154,7 @@
     <string name="settings_label_lyrics_cyrillic_mode">Cyrillic reading</string>
     <string name="settings_label_lyrics_cyrillic_keep_signs">Keep Cyrillic soft/hard signs</string>
     <string name="settings_label_lyrics_translation_enabled">Translate lyrics</string>
+    <string name="settings_label_prefetch_next_song">Prefetch next song</string>
     <string name="settings_label_lyrics_translation_target">Target language</string>
     <string name="settings_label_lyrics_translation_brightness">Translation brightness</string>
 
@@ -222,10 +223,22 @@
     <string name="settings_option_jyutping">Jyutping</string>
     <string name="settings_option_pinyin_eza">Mandarin eza式</string>
     <string name="settings_option_jyutping_eza">Cantonese eza式</string>
+    <string name="settings_option_lyrics_chinese_mode_auto">Auto-detect</string>
+    <string name="settings_option_lyrics_chinese_mode_auto_eza">Auto-detect eza式</string>
     <string name="settings_option_rrstandard">Standard Korean RR</string>
     <string name="settings_option_wordtranslit">Word-by-word transliteration</string>
     <string name="settings_option_rrpronunciation">Follow pronunciation (RR)</string>
     <string name="settings_option_vnpronunciation">Follow pronunciation (eza式)</string>
+    <string name="settings_option_lyrics_cyrillic_mode_auto">Auto-detect</string>
+    <string name="settings_reading_mandarin">Mandarin</string>
+    <string name="settings_reading_cantonese">Cantonese</string>
+    <string name="settings_reading_chinese">Chinese</string>
+    <string name="settings_reading_cyrillic">Cyrillic</string>
+    <string name="settings_reading_style">Reading style</string>
+    <string name="settings_reading_standard">Standard</string>
+    <string name="settings_reading_pack_required">Language pack required</string>
+    <string name="settings_reading_hidden">Hidden</string>
+    <string name="settings_chinese_cycle_sequence">%1$s → %2$s → %3$s</string>
     <string name="settings_option_russian">Russian</string>
     <string name="settings_option_ukrainian">Ukrainian</string>
     <string name="settings_option_disabled">Disabled</string>
@@ -301,6 +314,8 @@
     <string name="settings_ai_key_absent">Not set</string>
     <string name="settings_ai_model">Model</string>
     <string name="settings_ai_model_absent">Not chosen</string>
+    <string name="settings_ai_model_search">Search or type a model ID</string>
+    <string name="settings_ai_model_use_typed">Use “%1$s”</string>
     <string name="settings_ai_action_set_key">Set API key</string>
     <string name="settings_ai_action_edit_key">Edit API key</string>
     <string name="settings_ai_action_delete_key">Delete API key</string>
@@ -324,7 +339,7 @@
     <string name="settings_option_ai_provider_openai">OpenAI</string>
     <string name="settings_option_ai_provider_openrouter">OpenRouter</string>
     <string name="settings_option_ai_provider_deepseek">DeepSeek</string>
-    <string name="settings_label_ai_deepseek_reasoning">DeepSeek reasoning</string>
+    <string name="settings_label_ai_deepseek_reasoning">Reasoning</string>
     <string name="settings_option_ai_deepseek_reasoning_off">Off</string>
     <string name="settings_option_ai_deepseek_reasoning_low">Low</string>
     <string name="settings_option_ai_deepseek_reasoning_high">High</string>
@@ -385,6 +400,7 @@
     <string name="lyrics_ai_failed_attempt_payload">Failed attempt payload</string>
     <string name="lyrics_ai_previous_failed_attempt">Previous failed attempt</string>
     <string name="lyrics_ai_reasoning_trace">Reasoning trace</string>
+    <string name="lyrics_ai_no_reasoning_trace">No reasoning trace</string>
     <string name="lyrics_ai_translation_prompt_help">Choose a preset or edit a custom prompt describing what the model should preserve, fix, or emphasize.</string>
     <string name="lyrics_ai_pronunciation_prompt_help">Choose a preset or edit a custom prompt for pronunciation, dialect, spelling, or mixed-language guidance.</string>
     <string name="lyrics_ai_prompt_preset">Prompt preset</string>

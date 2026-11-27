@@ -124,14 +124,14 @@ public class ChineseRomanizerTest {
     public void ezaRevisionIsSharedAcrossMandarinAndCantoneseButNotKorean() {
         // Revision 3 changes Mandarin only; Cantonese output is unchanged but shares the revision
         // string, so both Chinese eza sound keys rebuild. Korean keeps its own revision.
-        assertEquals("cn=jyutping|kr=Off|cnStyle=eza@eza-2026-11-15.3|tn=1|cy=Off|cs=0",
+        assertEquals("cn=jyutping@adapter-2026-11-18.5|kr=Off|cnStyle=eza@eza-2026-11-15.3|zhuyin=zhuyin-2026-11-18.2|tn=1|cy=Off|cs=0",
                 new RomanizationOptions("jyutping-eza", "Off", true, "Off", false).cacheKey());
-        assertEquals("cn=pinyin|kr=Off|cnStyle=eza@eza-2026-11-15.3|tn=1|cy=Off|cs=0",
+        assertEquals("cn=pinyin|kr=Off|cnStyle=eza@eza-2026-11-15.3|zhuyin=zhuyin-2026-11-18.2|tn=1|cy=Off|cs=0",
                 new RomanizationOptions("pinyin-eza", "Off", true, "Off", false).cacheKey());
         assertEquals("cn=pinyin|kr=vnPronunciation|cnStyle=canonical"
-                        + "|krStyle=eza@eza-2026-10-08.1|tn=1|cy=Off|cs=0",
+                        + "|krStyle=eza@eza-2026-10-08.1|zhuyin=zhuyin-2026-11-18.2|tn=1|cy=Off|cs=0",
                 new RomanizationOptions("pinyin", "vnPronunciation", true, "Off", false).cacheKey());
-        assertEquals("cn=jyutping|kr=Off|cnStyle=canonical|tn=1|cy=Off|cs=0",
+        assertEquals("cn=jyutping@adapter-2026-11-18.5|kr=Off|cnStyle=canonical|zhuyin=zhuyin-2026-11-18.2|tn=1|cy=Off|cs=0",
                 new RomanizationOptions("jyutping", "Off", true, "Off", false).cacheKey());
     }
 

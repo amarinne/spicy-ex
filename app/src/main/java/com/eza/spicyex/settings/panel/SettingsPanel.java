@@ -257,6 +257,21 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
         return false;
     }
 
+    /** Opens a reading picker through its rendered settings row. */
+    public boolean openReadingPicker(String language) {
+        Settings.Setting<String> setting;
+        if ("chinese".equals(language)) setting = Settings.CHINESE_MODE;
+        else if ("cyrillic".equals(language)) setting = Settings.CYRILLIC_MODE;
+        else return false;
+        if (!openSection(Settings.TRANSLITERATION.id)) return false;
+        View row = sectionsContainer.findViewWithTag(PanelTags.row(setting));
+        return row != null && row.isEnabled() && row.performClick();
+    }
+
+    public boolean closeReadingPicker() {
+        return dialogs.closeReadingPicker();
+    }
+
     // --- Section rendering ---
 
     private void renderSections(LinearLayout content) {
@@ -472,7 +487,23 @@ public final class SettingsPanel implements SettingRowFactory.Host, PanelDialogs
             downloadLanguageModelsRow(content);
             return;
         }
+        if ("chinese_reading_page".equals(id) || "cyrillic_reading_page".equals(id)) {
+            readingPageRow(content, (Settings.StringSetting) entry.setting);
+            return;
+        }
         throw new IllegalStateException("No panel renderer for composite " + id);
+    }
+
+    private void readingPageRow(LinearLayout content, Settings.StringSetting setting) {
+        LinearLayout row = style.newRow(content);
+        row.setTag(PanelTags.row(setting));
+        TextView summary = style.titleColumn(row, dialogs.readingPageTitle(setting),
+                dialogs.readingPageSummary(setting));
+        style.applyRowLead(row, setting.key);
+        summary.setTextColor(PanelStyle.COL_ACCENT);
+        row.addView(style.kindView(Kind.CHEVRON_RIGHT, PanelStyle.COL_SECTION, 18),
+                new LinearLayout.LayoutParams(style.dp(24), style.dp(30)));
+        row.setOnClickListener(v -> dialogs.openReadingPage(setting, summary));
     }
 
     /**

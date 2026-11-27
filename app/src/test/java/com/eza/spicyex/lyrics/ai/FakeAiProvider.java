@@ -67,7 +67,9 @@ public final class FakeAiProvider implements AiProvider {
         if (signal != null) signal.throwIfAborted();
         calls.add(new Call(request, config));
         if (!steps.isEmpty()) return steps.remove(0).answer(request, config, signal);
-        return AiProviderResult.ok(echo(request), AiUsage.of(10, 10), AiFinishReason.STOP, 64L);
+        String answer = config != null && AiTextWire.usesText(config.layer)
+                ? echoText(request) : echo(request);
+        return AiProviderResult.ok(answer, AiUsage.of(10, 10), AiFinishReason.STOP, 64L);
     }
 
     /** A well-formed answer for every requested id: ad-libs unchanged, everything else marked. */
@@ -77,6 +79,18 @@ public final class FakeAiProvider implements AiProvider {
             texts.add(item.lineClass == AiLineClass.ADLIB ? item.source : "AI " + item.source);
         }
         return itemsJson(request, texts);
+    }
+
+    /** The same well-formed answer as {@link #echo}, on the numbered-line text wire. */
+    public static String echoText(AiProviderRequest request) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < request.items.size(); i++) {
+            AiRequestItem item = request.items.get(i);
+            out.append(i + 1).append(". ")
+                    .append(item.lineClass == AiLineClass.ADLIB ? item.source : "AI " + item.source)
+                    .append('\n');
+        }
+        return out.toString();
     }
 
     /** A response body carrying {@code texts} against the request's ids, in request order. */

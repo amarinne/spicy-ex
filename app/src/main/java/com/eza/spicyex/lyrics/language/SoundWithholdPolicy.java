@@ -45,7 +45,7 @@ public final class SoundWithholdPolicy {
      * would have read.
      */
     public static boolean isChineseLine(String text, DetectionResult detection, String docLanguage) {
-        return text != null && SpicyTextDetection.hasCjkIdeograph(text)
+        return text != null && SpicyTextDetection.itemChineseTest(text)
                 && "zh".equals(ReadingLanguagePolicy.language(text, detection,
                         docLanguage == null ? "" : docLanguage));
     }

@@ -19,7 +19,7 @@ public final class DetectionArtifact {
     public static final int SCHEMA_VERSION = 1;
 
     /** Identity of the detector policy stack that produced a record. */
-    public static final String DETECTOR_POLICY_ID = "context-router-v4+charsoup-core-4.0.0-p80-h95-m20-dochan-yue2zh";
+    public static final String DETECTOR_POLICY_ID = "context-router-v4+charsoup-core-4.0.0-p80-h95-m20-dochan-yue2zh+zhuyin1";
 
     public final String canonicalDigest;
     public final String detectorPolicyId;

@@ -4,9 +4,11 @@ import com.eza.spicyex.lyrics.language.SpicyJapaneseChineseProcessor;
 
 import android.view.ViewGroup;
 import com.eza.spicyex.lyrics.AppliedLine;
+import com.eza.spicyex.lyrics.LyricUtils;
 import com.eza.spicyex.lyrics.LyricsDisplayMode;
 import com.eza.spicyex.lyrics.LyricsDocument;
 import com.eza.spicyex.lyrics.LyricsLineViewState;
+import com.eza.spicyex.lyrics.SecondaryDisplayText;
 
 /**
  * Applies line-level secondary romanization/translation results to already parsed rows.
@@ -27,6 +29,11 @@ public final class LyricsSecondaryRowUpdater {
     }
 
     public boolean refresh(LyricsDocument document, boolean showRomanization, boolean showTranslation, String japaneseReadingMode) {
+        return refresh(document, showRomanization, showTranslation, japaneseReadingMode, true);
+    }
+
+    public boolean refresh(LyricsDocument document, boolean showRomanization, boolean showTranslation,
+                           String japaneseReadingMode, boolean translationBright) {
         if (document == null || document.appliedLines == null || document.appliedLines.isEmpty()) {
             return false;
         }
@@ -40,6 +47,8 @@ public final class LyricsSecondaryRowUpdater {
             if (row == null || row.dotLine || row.bgLine || row.sourceLine == null) continue;
             String roman = safe(row.sourceLine.romanizedText);
             String translated = safe(row.sourceLine.translatedText);
+            boolean aiPending = row.sourceLine.translationAiPending;
+            boolean pendingChanged = row.translationAiPending != aiPending;
             boolean mounted = LyricsLineViewState.isMounted(row, mountedRowsHost);
             RefreshDecision decision = decideRefresh(row, roman, translated, showRomanization, showTranslation,
                     japaneseReadingMode, mounted);
@@ -48,17 +57,23 @@ public final class LyricsSecondaryRowUpdater {
             // toggle was turned on again. A mounted row whose translation presence no longer
             // matches the toggle is remounted; the caller's reflow springs the rows to close or
             // open the space.
+            String existingReading = SecondaryDisplayText.visibleReading(row, showRomanization, japaneseReadingMode);
             boolean wantsTranslation = showTranslation && !row.bgLine
-                    && !safe(row.translatedText).trim().isEmpty();
+                    && !LyricUtils.isBlank(SecondaryDisplayText.translation(row, existingReading));
             boolean hasTranslation = LyricsLineViewState.translationView(row) != null;
             if (translationToggled && mounted && !decision.hasChanges() && wantsTranslation != hasTranslation) {
+                row.translationAiPending = aiPending;
                 LyricsLineViewState.clear(row, mountedRowsHost, invalidation);
                 structureChanged = true;
                 continue;
             }
-            if (!decision.hasChanges()) continue;
+            if (!decision.hasChanges() && !pendingChanged) continue;
+            boolean wasPending = row.translationAiPending;
+            boolean aiArrived = document.translationFromAi && !aiPending
+                    && (wasPending || (decision.translatedChanged && !LyricUtils.isBlank(translated)));
             row.romanizedText = roman;
             row.translatedText = translated;
+            row.translationAiPending = aiPending;
             row.japaneseReading = row.sourceLine.japaneseReading;
             row.readingRenderPlan = row.sourceLine.readingRenderPlan;
             if (decision.remountForFurigana || decision.remountForReadingPlan) {
@@ -66,16 +81,32 @@ public final class LyricsSecondaryRowUpdater {
                 structureChanged = true;
                 continue;
             }
-            structureChanged |= LyricsLineViewState.applySecondaryTextUpdate(
+            String displayReading = SecondaryDisplayText.visibleReading(row, showRomanization, japaneseReadingMode);
+            String displayTranslation = SecondaryDisplayText.translation(row, displayReading);
+            boolean rowStructureChanged = decision.hasChanges() && LyricsLineViewState.applySecondaryTextUpdate(
                     row,
                     mountedRowsHost,
                     invalidation,
                     decision.romanChanged,
-                    roman,
+                    displayReading,
                     showRomanization,
                     decision.translatedChanged,
-                    translated,
+                    displayTranslation,
                     showTranslation);
+            structureChanged |= rowStructureChanged;
+            if (!rowStructureChanged && mounted) {
+                android.view.View tv = LyricsLineViewState.translationView(row);
+                if (tv instanceof com.eza.spicyex.lyrics.SpicyAnimatedTextView) {
+                    com.eza.spicyex.lyrics.SpicyAnimatedTextView animated =
+                            (com.eza.spicyex.lyrics.SpicyAnimatedTextView) tv;
+                    if (pendingChanged || decision.translatedChanged) {
+                        animated.setBrightnessMultiplier(
+                                com.eza.spicyex.lyrics.LyricsRowViewFactory.translationBrightness(
+                                        translationBright, aiPending));
+                    }
+                    if (aiArrived) animated.animateTranslationArrival();
+                }
+            }
         }
         return structureChanged;
     }

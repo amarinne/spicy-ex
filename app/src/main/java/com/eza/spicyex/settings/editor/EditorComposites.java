@@ -18,6 +18,7 @@ import com.eza.spicyex.settings.BlurStrength;
 import com.eza.spicyex.settings.registry.ControlSpec;
 import com.eza.spicyex.settings.registry.UiContext;
 import com.eza.spicyex.ui.PanelDialog;
+import com.eza.spicyex.ui.PickerSearch;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -200,7 +201,7 @@ final class EditorComposites {
             int shown = 0;
             for (BackgroundEffect effect : BackgroundEffect.fixedValues()) {
                 String label = effectLabel(rows, effect);
-                if (!EffectPickerSearch.matches(query[0], label, effect.stableId())) continue;
+                if (!PickerSearch.matches(query[0], label, effect.stableId())) continue;
                 PanelDialog.SwitchChoice choice = dialog.switchChoice(label,
                         working.contains(effect),
                         EditorRows.choiceTag(Settings.BACKGROUND_RANDOM_EFFECTS.key,

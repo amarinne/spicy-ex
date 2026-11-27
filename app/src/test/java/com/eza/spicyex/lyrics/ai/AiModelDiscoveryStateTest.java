@@ -30,9 +30,7 @@ public class AiModelDiscoveryStateTest {
         assertEquals("", settings.modelName());
         AiModelDiscoveryState.Attempt attempt = discovery.begin(settings);
         assertNotNull(attempt);
-        assertFalse(discovery.canSelect(settings, attempt));
         assertTrue(discovery.finish(settings, attempt));
-        assertTrue(discovery.canSelect(settings, attempt));
         assertFalse(discovery.finish(settings, attempt));
         assertEquals("", settings.modelName());
     }
@@ -54,7 +52,7 @@ public class AiModelDiscoveryStateTest {
         assertTrue(discovery.finish(settings, attempt));
         store.put(Settings.AI_PROVIDER, AiSettings.PROVIDER_DEEPSEEK);
         keys.save(settings.credentialScope(), "fixture-key-a");
-        assertFalse(discovery.canSelect(settings, attempt));
+        assertFalse(attempt.snapshot.matches(settings));
         assertEquals("", settings.modelName());
         AiModelDiscoveryState.Attempt current = discovery.begin(settings);
         store.put(Settings.AI_PROVIDER, AiSettings.PROVIDER_OPENAI);
@@ -65,7 +63,7 @@ public class AiModelDiscoveryStateTest {
         AiModelDiscoveryState.Attempt rotated = discovery.begin(settings);
         keys.save(settings.credentialScope(), "fixture-key-b");
         assertFalse(discovery.finish(settings, rotated));
-        assertFalse(discovery.canSelect(settings, rotated));
+        assertFalse(rotated.snapshot.matches(settings));
         AiModelDiscoveryState.Attempt deleted = discovery.begin(settings);
         keys.delete(settings.credentialScope());
         assertFalse(discovery.finish(settings, deleted));
@@ -78,7 +76,7 @@ public class AiModelDiscoveryStateTest {
         AiModelDiscoveryState.Attempt attempt = discovery.begin(settings);
         assertTrue(discovery.finish(settings, attempt));
         store.put(Settings.AI_ENDPOINT, "https://b.example/v1");
-        assertFalse(discovery.canSelect(settings, attempt));
+        assertFalse(attempt.snapshot.matches(settings));
         AiModelDiscoveryState.Attempt other = discovery.begin(settings);
         store.put(Settings.AI_ENDPOINT, "https://a.example/v1");
         assertFalse(discovery.finish(settings, other));
@@ -90,15 +88,13 @@ public class AiModelDiscoveryStateTest {
         assertTrue(old.signal.isAborted());
         assertEquals("model_discovery_superseded", old.signal.reason());
         assertFalse(discovery.finish(settings, old));
-        assertFalse(discovery.canSelect(settings, old));
         assertTrue(discovery.finish(settings, current));
     }
 
-    @Test public void newLookupRetiresAnAlreadyDisplayedPicker() {
+    @Test public void newLookupDoesNotAbortAnAlreadyFinishedOne() {
         AiModelDiscoveryState.Attempt old = discovery.begin(settings);
         assertTrue(discovery.finish(settings, old));
         AiModelDiscoveryState.Attempt current = discovery.begin(settings);
-        assertFalse(discovery.canSelect(settings, old));
         assertFalse(old.signal.isAborted());
         assertTrue(discovery.finish(settings, current));
     }
@@ -114,26 +110,24 @@ public class AiModelDiscoveryStateTest {
         assertTrue(discovery.finish(settings, current));
     }
 
-    @Test public void timeoutCanReportOnceButCannotOfferModelsOrAcceptALateResult() {
+    @Test public void timeoutCanReportOnceButCannotAcceptALateResult() {
         AiModelDiscoveryState.Attempt attempt = discovery.begin(settings);
         attempt.signal.abort("model_discovery_timeout");
         assertTrue(discovery.finish(settings, attempt));
-        assertFalse(discovery.canSelect(settings, attempt));
         assertFalse(discovery.finish(settings, attempt));
     }
 
-    @Test public void disablingFeatureRejectsPendingResultsAndPickerSelections() {
+    @Test public void disablingFeatureRejectsPendingResults() {
         AiModelDiscoveryState.Attempt attempt = discovery.begin(settings);
         store.put(Settings.AI_ENABLED, false);
         assertFalse(discovery.finish(settings, attempt));
-        assertFalse(discovery.canSelect(settings, attempt));
     }
 
     @Test public void unrelatedModelChoiceDoesNotRetireAValidProviderList() {
         AiModelDiscoveryState.Attempt attempt = discovery.begin(settings);
         settings.setModelName("another-current-model");
         assertTrue(discovery.finish(settings, attempt));
-        assertTrue(discovery.canSelect(settings, attempt));
+        assertTrue(attempt.snapshot.matches(settings));
     }
 
     @Test public void realListRequestUsesCapturedEndpointAndKeyAfterSettingsChange() {

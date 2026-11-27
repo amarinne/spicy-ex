@@ -199,9 +199,9 @@ public class StoredValueRoundTripTest {
         assertRoundTrip(Settings.JAPANESE_READING_MODE, JapaneseReadingMode.class, "romaji_only",
                 "off", "furigana_only", "furigana_romaji", "romaji_only", "cycle");
         assertRoundTrip(Settings.CHINESE_MODE, ChineseMode.class, "pinyin",
-                "off", "pinyin", "jyutping", "pinyin-eza", "jyutping-eza", "cycle");
+                "off", "pinyin", "jyutping", "pinyin-eza", "jyutping-eza", "auto", "auto-eza", "cycle");
         assertRoundTrip(Settings.CYRILLIC_MODE, CyrillicMode.class, "Russian",
-                "Off", "Russian", "Ukrainian", "cycle");
+                "Off", "Russian", "Ukrainian", "auto", "cycle");
         assertRoundTrip(Settings.LAST_JAPANESE_CYCLE_MODE, LastJapaneseCycleMode.class,
                 "romaji_only", "romaji_only", "furigana_only", "furigana_romaji");
         assertRoundTrip(Settings.LAST_CHINESE_CYCLE_MODE, LastChineseCycleMode.class,

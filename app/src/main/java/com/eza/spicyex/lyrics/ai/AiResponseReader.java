@@ -43,4 +43,110 @@ public final class AiResponseReader {
         List<Object> list = (List<Object>) items;
         return list;
     }
+
+    /**
+     * Extracts every already-closed item object from a streamed {@code {"items":[...}} prefix.
+     *
+     * <p>Only complete {@code {...}} elements inside the {@code items} array are parsed; any
+     * trailing half-written object is left alone until more bytes arrive.
+     */
+    public static List<Object> readPartialItems(String raw) {
+        String text = stripLeadingFence(raw);
+        List<Object> items = new java.util.ArrayList<>();
+        int arrayStart = findItemsArrayStart(text);
+        if (arrayStart < 0) return items;
+
+        int i = arrayStart + 1;
+        int len = text.length();
+        while (i < len) {
+            while (i < len && (Character.isWhitespace(text.charAt(i)) || text.charAt(i) == ',')) i++;
+            if (i >= len || text.charAt(i) == ']') break;
+            if (text.charAt(i) != '{') break;
+            int end = findObjectEnd(text, i);
+            if (end < 0) break;
+            try {
+                Object parsed = AiJson.parseStrict(text.substring(i, end + 1));
+                if (parsed instanceof Map) items.add(parsed);
+            } catch (RuntimeException ignored) {
+                break;
+            }
+            i = end + 1;
+        }
+        return items;
+    }
+
+    private static String stripLeadingFence(String raw) {
+        String trimmed = AiText.trim(raw);
+        if (!trimmed.startsWith("```")) return trimmed;
+        int newline = trimmed.indexOf('\n');
+        return newline < 0 ? "" : trimmed.substring(newline + 1).trim();
+    }
+
+    private static int findItemsArrayStart(String text) {
+        boolean inString = false;
+        boolean escaped = false;
+        int depth = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '{') {
+                depth++;
+                continue;
+            }
+            if (c == '}') {
+                depth--;
+                continue;
+            }
+            if (c == '"') {
+                if (depth == 1 && text.startsWith("\"items\"", i)) {
+                    int j = i + 7;
+                    while (j < text.length() && Character.isWhitespace(text.charAt(j))) j++;
+                    if (j < text.length() && text.charAt(j) == ':') {
+                        j++;
+                        while (j < text.length() && Character.isWhitespace(text.charAt(j))) j++;
+                        if (j < text.length() && text.charAt(j) == '[') return j;
+                    }
+                }
+                inString = true;
+            }
+        }
+        return -1;
+    }
+
+    private static int findObjectEnd(String text, int start) {
+        boolean inString = false;
+        boolean escaped = false;
+        int depth = 0;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
+    }
 }

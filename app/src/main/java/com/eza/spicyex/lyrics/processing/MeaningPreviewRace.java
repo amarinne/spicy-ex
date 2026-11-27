@@ -41,6 +41,8 @@ final class MeaningPreviewRace {
     private boolean googleSucceeded;
     /** True once one child produced the final outcome; no later settlement may replace it. */
     private boolean completionSettled;
+    /** True once the AI child has published at least one streamed partial row. */
+    private boolean aiStreaming;
     /** Guards the at-most-once preliminary publication. */
     private boolean preliminaryOffered;
     private MeaningArtifact googleArtifact;
@@ -75,17 +77,25 @@ final class MeaningPreviewRace {
             completionSettled = true;
             return Outcome.complete(googleArtifact, aiFailure);
         }
-        if (!usable || preliminaryOffered) return Outcome.none();
+        if (!usable || preliminaryOffered || aiStreaming) return Outcome.none();
         preliminaryOffered = true;
         return Outcome.preliminary(googleArtifact);
     }
 
     /**
      * Rechecks the preliminary at publication time. The main-thread callback may be queued while
-     * AI settles on another executor; in that ordering, Google must not render after completed AI.
+     * AI settles or starts streaming on another executor; in either ordering, Google must not
+     * overwrite AI output already on screen.
      */
     synchronized boolean mayPublishPreliminary(MeaningArtifact offered) {
-        return !completionSettled && preliminaryOffered && googleArtifact == offered;
+        return !completionSettled && !aiStreaming && preliminaryOffered && googleArtifact == offered;
+    }
+
+    /** Streamed AI rows may render only until the run's single final outcome is decided. */
+    synchronized boolean mayPublishAiPartial() {
+        if (completionSettled) return false;
+        aiStreaming = true;
+        return true;
     }
 
     /**

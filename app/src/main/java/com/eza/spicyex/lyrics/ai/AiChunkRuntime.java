@@ -133,20 +133,20 @@ public final class AiChunkRuntime {
                 }
                 if (failure.kind == AiProviderFailure.Kind.RATE_LIMITED
                         && record.attempts < AiContract.MAX_ATTEMPTS) {
-                    accountedTokens += reservation;
-                    estimateUsage(record, estimatedCallInput, maxOutputTokens);
+                    // Declined before generation: nothing to charge.
                     try {
                         wait.await(retryAfterMs(failure), args.signal);
                     } catch (RuntimeException cancelled) {
                         // The attempt was still charged; report it rather than losing it.
-                        return fail(record, AiChunkFailure.of(AiFailureReason.RATE_LIMITED),
-                                accountedTokens);
+                        return fail(record, mapFailure(failure), accountedTokens);
                     }
                     repairFailure = mapFailure(failure);
                     continue;
                 }
-                accountedTokens += reservation;
-                estimateUsage(record, estimatedCallInput, maxOutputTokens);
+                if (!declinedBeforeGeneration(failure)) {
+                    accountedTokens += reservation;
+                    estimateUsage(record, estimatedCallInput, maxOutputTokens);
+                }
                 return fail(record, mapFailure(failure), accountedTokens);
             }
 
@@ -173,7 +173,8 @@ public final class AiChunkRuntime {
             }
 
             try {
-                List<Object> raw = AiResponseReader.readItems(result.rawText);
+                List<Object> raw = AiTextWire.readItems(result.rawText, args.chunk.items,
+                        args.config.layer);
                 AiResponseValidator.Partition partition = AiResponseValidator.partition(raw,
                         args.chunk.items, args.config.layer, args.config.targetLang);
                 if (!partition.structural.isEmpty()) {
@@ -251,7 +252,8 @@ public final class AiChunkRuntime {
         TimerTask deadline = scheduleDeadline(callSignal, args.deadlineMs > 0L
                 ? args.deadlineMs : AiContract.callDeadlineMs(callConfig.maxOutputTokens));
         try {
-            AiProviderResult result = args.provider.generateChunk(request, callConfig, callSignal);
+            AiProviderResult result = args.provider.generateChunk(request, callConfig, callSignal,
+                    streamListener(args, request, attemptNumber));
             // Reported for every returned attempt, including the ones the runtime then rejects as
             // truncated or malformed. Those are the attempts whose reasoning is worth reading: the
             // owner was billed for the thinking either way, and it is what says whether the model
@@ -264,6 +266,59 @@ public final class AiChunkRuntime {
             if (deadline != null) deadline.cancel();
             linked.remove();
         }
+    }
+
+    /**
+     * Forwards a streamed attempt to the monitor: the reasoning so far, and every finished line
+     * (Meaning text wire) or closed JSON item (Sound) that already passes the row checks. Only
+     * finished items are parsed, so a half-written row never reaches the screen; an unreadable
+     * prefix simply waits for more text.
+     */
+    private static AiProvider.StreamListener streamListener(final Args args,
+                                                            final AiProviderRequest request,
+                                                            final int attemptNumber) {
+        if (args.monitor == null) return null;
+        final com.eza.spicyex.lyrics.session.LayerKind layer = args.config.layer;
+        final int totalRows = uniqueRowCount(request.items);
+        return new AiProvider.StreamListener() {
+            private int shown;
+
+            @Override public void onText(String textSoFar) {
+                try {
+                    List<Object> parsed;
+                    if (AiTextWire.usesText(layer)) {
+                        int end = textSoFar.lastIndexOf('\n');
+                        if (end < 0) return;
+                        parsed = AiTextWire.readItems(textSoFar.substring(0, end),
+                                request.items, layer);
+                    } else {
+                        parsed = AiResponseReader.readPartialItems(textSoFar);
+                        if (parsed.isEmpty()) return;
+                    }
+                    AiResponseValidator.Partition partial = AiResponseValidator.partition(
+                            parsed, request.items, layer, args.config.targetLang);
+                    if (!partial.structural.isEmpty() || partial.accepted.size() <= shown) return;
+                    shown = partial.accepted.size();
+                    args.monitor.onStreamProgress(args.chunk.id, shown, totalRows);
+                    args.monitor.onPartialRows(args.chunk.id, partial.accepted);
+                } catch (AiProtocolException notYet) {
+                    // Preamble only so far.
+                }
+            }
+
+            @Override public void onReasoning(String reasoningSoFar) {
+                args.monitor.onReasoning(args.chunk.id, attemptNumber, reasoningSoFar);
+            }
+        };
+    }
+
+    private static int uniqueRowCount(List<AiRequestItem> items) {
+        if (items == null || items.isEmpty()) return 0;
+        Set<String> rowIds = new HashSet<>();
+        for (AiRequestItem item : items) {
+            if (item != null) rowIds.add(AiContract.rowIdOf(item.id));
+        }
+        return rowIds.size();
     }
 
     /** One targeted re-ask's outcome: what the second answer added and what still failed. */
@@ -347,7 +402,8 @@ public final class AiChunkRuntime {
         }
 
         try {
-            List<Object> raw = AiResponseReader.readItems(retry.rawText);
+            List<Object> raw = AiTextWire.readItems(retry.rawText, reAskItems,
+                    args.config.layer);
             AiResponseValidator.Partition second = AiResponseValidator.partition(raw,
                     reAskItems, args.config.layer, args.config.targetLang);
             if (!second.structural.isEmpty()) {
@@ -399,20 +455,57 @@ public final class AiChunkRuntime {
         return AiChunkExecution.rejected(failure, record, accountedTokens);
     }
 
+    /**
+     * True when the provider answered with a refusal that precedes generation: a key, quota,
+     * model, request, or busy rejection. Such a call bills nothing, so charging the full output
+     * cap for it (1.71M phantom tokens on X14 by 2026-11-18) only distorts the record.
+     */
+    static boolean declinedBeforeGeneration(AiProviderFailure failure) {
+        if (failure == null) return false;
+        switch (failure.kind) {
+            case AUTH:
+            case QUOTA:
+            case MODEL_UNAVAILABLE:
+            case REQUEST_REJECTED:
+            case RATE_LIMITED:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private static AiChunkFailure mapFailure(AiProviderFailure failure) {
         switch (failure.kind) {
-            case AUTH: return AiChunkFailure.of(AiFailureReason.AUTH_REJECTED);
-            case QUOTA: return AiChunkFailure.of(AiFailureReason.QUOTA_EXHAUSTED);
-            case RATE_LIMITED: return AiChunkFailure.of(AiFailureReason.RATE_LIMITED);
+            case AUTH:
+                return new AiChunkFailure(AiFailureReason.AUTH_REJECTED, failure.status,
+                        failure.detail);
+            case QUOTA:
+                return new AiChunkFailure(AiFailureReason.QUOTA_EXHAUSTED, failure.status,
+                        failure.detail);
+            case RATE_LIMITED:
+                return new AiChunkFailure(AiFailureReason.RATE_LIMITED, failure.status,
+                        failure.detail);
             case DELIVERY_UNKNOWN:
-                return new AiChunkFailure(AiFailureReason.DELIVERY_UNKNOWN, failure.status, "");
+                return new AiChunkFailure(AiFailureReason.DELIVERY_UNKNOWN, failure.status,
+                        failure.detail.isEmpty() && failure.status == 0
+                                ? causeToken(failure.cause) : failure.detail);
             case REQUEST_REJECTED:
-                return new AiChunkFailure(AiFailureReason.REQUEST_REJECTED, failure.status, "");
+                return new AiChunkFailure(AiFailureReason.REQUEST_REJECTED, failure.status,
+                        failure.detail);
             case OVERSIZED: return AiChunkFailure.of(AiFailureReason.OVERSIZED);
-            case MODEL_UNAVAILABLE: return AiChunkFailure.of(AiFailureReason.MODEL_UNAVAILABLE);
+            case MODEL_UNAVAILABLE:
+                return new AiChunkFailure(AiFailureReason.MODEL_UNAVAILABLE, failure.status,
+                        failure.detail);
             default:
                 return new AiChunkFailure(AiFailureReason.PROTOCOL_INVALID, 0, failure.detail);
         }
+    }
+
+    /** Status-0 delivery failures keep why the transfer ended: a deadline or a network error. */
+    private static String causeToken(AiProviderFailure.Cause cause) {
+        if (cause == AiProviderFailure.Cause.TIMEOUT) return "timeout";
+        if (cause == AiProviderFailure.Cause.NETWORK) return "network";
+        return "";
     }
 
     private static synchronized TimerTask scheduleDeadline(final AiSignal callSignal, long deadlineMs) {

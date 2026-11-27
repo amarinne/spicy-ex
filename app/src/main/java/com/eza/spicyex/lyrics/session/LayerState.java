@@ -17,10 +17,24 @@ public final class LayerState {
     public final DerivedLayerArtifact artifact;
     public final LayerProvenance provenance;
     public final LayerFailure failure;
+    /**
+     * Rows the running AI request has already delivered, while it streams. Empty when no AI run
+     * is streaming; the other displayed rows are still placeholders (Google preview or older
+     * output) that the run will replace.
+     */
+    public final java.util.Set<String> aiDeliveredRows;
 
     private LayerState(LayerKind kind, LayerStatus status, LayerAuthority authority, String configId,
                        String credentialRevision, String runId, DerivedLayerArtifact artifact,
                        LayerProvenance provenance, LayerFailure failure) {
+        this(kind, status, authority, configId, credentialRevision, runId, artifact, provenance,
+                failure, java.util.Collections.<String>emptySet());
+    }
+
+    private LayerState(LayerKind kind, LayerStatus status, LayerAuthority authority, String configId,
+                       String credentialRevision, String runId, DerivedLayerArtifact artifact,
+                       LayerProvenance provenance, LayerFailure failure,
+                       java.util.Set<String> aiDeliveredRows) {
         this.kind = kind;
         this.status = status;
         this.authority = authority;
@@ -31,6 +45,10 @@ public final class LayerState {
         this.artifactDigest = artifact == null ? "" : artifact.artifactDigest;
         this.provenance = provenance;
         this.failure = failure == null ? LayerFailure.NONE : failure;
+        this.aiDeliveredRows = aiDeliveredRows == null || aiDeliveredRows.isEmpty()
+                ? java.util.Collections.<String>emptySet()
+                : java.util.Collections.unmodifiableSet(
+                        new java.util.LinkedHashSet<>(aiDeliveredRows));
     }
 
     public static LayerState absent(LayerKind kind) {
@@ -59,10 +77,26 @@ public final class LayerState {
     /** Folds a bounded delta into the current artifact, keeping status and identity. */
     public LayerState withDelta(DerivedLayerArtifact delta, LayerStatus nextStatus) {
         if (delta == null) return this;
-        DerivedLayerArtifact next = artifact == null ? delta : artifact.mergedWith(delta);
-        if (next == artifact) return this;
+        DerivedLayerArtifact next;
+        if (artifact == null) {
+            next = delta;
+        } else if (delta.partial
+                && delta.provenance != null && delta.provenance.authority == LayerAuthority.AI
+                && !delta.configId.equals(artifact.configId)) {
+            // Streamed AI rows over a Google preview or older output: show each row as it lands.
+            next = artifact.overlaidBy(delta);
+        } else {
+            next = artifact.mergedWith(delta);
+        }
+        java.util.Set<String> delivered = aiDeliveredRows;
+        if (delta.partial && delta.provenance != null
+                && delta.provenance.authority == LayerAuthority.AI) {
+            delivered = new java.util.LinkedHashSet<>(aiDeliveredRows);
+            for (LayerEntry entry : delta.allEntries()) delivered.add(entry.rowId());
+        }
+        if (next == artifact && delivered == aiDeliveredRows) return this;
         return new LayerState(kind, nextStatus, authority, next.configId, credentialRevision, runId,
-                next, next.provenance, LayerFailure.NONE);
+                next, next.provenance, LayerFailure.NONE, delivered);
     }
 
     /**

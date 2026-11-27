@@ -273,7 +273,7 @@ public class AiRetainedPlanSafetyTest {
         for (String malformed : Arrays.asList("null", "[]", "{}",
                 "{\"inputTokenLimit\":0,\"outputTokenLimit\":8192,\"reasoningAllowanceTokens\":1}",
                 "{\"inputTokenLimit\":32768,\"outputTokenLimit\":-1,\"reasoningAllowanceTokens\":1}",
-                "{\"inputTokenLimit\":32768,\"outputTokenLimit\":8192,\"reasoningAllowanceTokens\":8193}",
+                "{\"inputTokenLimit\":32768,\"outputTokenLimit\":8192,\"reasoningAllowanceTokens\":131073}",
                 "{\"inputTokenLimit\":2147483648,\"outputTokenLimit\":8192,\"reasoningAllowanceTokens\":1}",
                 "{\"inputTokenLimit\":1.5,\"outputTokenLimit\":8192,\"reasoningAllowanceTokens\":1}",
                 "{\"inputTokenLimit\":\"32768\",\"outputTokenLimit\":8192,\"reasoningAllowanceTokens\":1}",

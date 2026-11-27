@@ -206,6 +206,13 @@ final class LyricsSettingsDialogController {
         return show() && currentPanel != null && currentPanel.openSection(id);
     }
 
+    boolean reading(String action) {
+        if ("close".equals(action)) {
+            return currentPanel != null && currentPanel.closeReadingPicker();
+        }
+        return show() && currentPanel != null && currentPanel.openReadingPicker(action);
+    }
+
     boolean isShowing() {
         return currentDialog != null && currentDialog.isShowing();
     }

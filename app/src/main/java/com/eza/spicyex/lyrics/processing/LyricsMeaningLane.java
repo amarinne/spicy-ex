@@ -57,6 +57,9 @@ import com.eza.spicyex.lyrics.LyricsLine;
  * the Sound layer never wait for it, and a failure here leaves both untouched and usable.
  */
 public final class LyricsMeaningLane {
+    /** Progress line while streamed AI rows replace the preview or older output. */
+    private static final String AI_ARRIVING = "AI translation arriving";
+
     private static final String TAG = "[SpotifyPlusMeaningLane]";
     /** Diagnostic-capture component for the AI side of this lane. */
     private static final String AI_COMPONENT = "ai_meaning";
@@ -229,7 +232,10 @@ public final class LyricsMeaningLane {
         final AiSettings.MeaningFlow meaningFlow = aiSettings.meaningFlow();
         boolean aiConfigured = aiSettings.meaningLayerEnabled() && aiSettings.isEnabled()
                 && !aiSettings.modelName().isEmpty();
-        boolean aiAutomaticRequest = aiAutomatic && snapshot.translationPending;
+        // Automatic dispatch needs confident evidence of foreign text; the Google row gate's
+        // "uncertain means translate" rule would otherwise bill whole English songs.
+        boolean aiAutomaticRequest = aiAutomatic && snapshot.translationPending
+                && SpicyProcessing.hasConfidentTranslationWork(snapshot.lines, targetLang);
         // Pending Google work must stay on the Google lane unless the user explicitly requested
         // AI or selected the automatic AI trigger. The old `wanted` term made every configured AI
         // install bypass Google, even in On-demand mode; disabling AI then exposed the broken
@@ -402,7 +408,14 @@ public final class LyricsMeaningLane {
                             result != null && result.legacy)) {
                         AiMeaningRun.Result requested = AiMeaningRun.run(context, settings,
                                 run.base, workerSnapshot, googleBaseline, refineGoogle, targetLang,
-                                allowProviderRequest, signal, monitor, explicitAiRequest);
+                                allowProviderRequest, signal, monitor, explicitAiRequest,
+                                partial -> post(run, id, generation, snapshot, currentGuard,
+                                        () -> {
+                                            XpLog.log(TAG + " ai partial rows="
+                                                    + partial.allEntries().size());
+                                            callback.rerender(LayerKind.MEANING, partial,
+                                                    AI_ARRIVING);
+                                        }));
                         // A failed explicit request keeps the older answer on screen, but its
                         // outcome still reports the failure; AiMeaningRun returns both together.
                         boolean keepFirst = result != null && result.hasArtifact()
@@ -541,8 +554,6 @@ public final class LyricsMeaningLane {
                 ? new AiLiveMonitor(LayerKind.MEANING, run.canonicalDigest(), run.tag)
                 : null;
         final long startedAtMs = clock.getAsLong();
-        // Preview means Google reaches the display before a new or cached AI answer can replace it.
-        final CountDownLatch previewReadyForAi = new CountDownLatch(1);
 
         // Google display child. Lane executor, immediately; it shares the parent's run guard and
         // cancellation tag but never the AI executor's queue.
@@ -554,7 +565,6 @@ public final class LyricsMeaningLane {
                     try {
                         if (!run.accepts(currentGuard, id, generation, snapshot)) {
                             race.abandonAi();
-                            previewReadyForAi.countDown();
                             AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(),
                                     run.tag);
                             COALESCER.finish(runIdentity);
@@ -577,26 +587,20 @@ public final class LyricsMeaningLane {
                         final MeaningArtifact preliminary = googleOutcome.artifact;
                         poster.post(new Runnable() {
                             @Override public void run() {
-                                try {
-                                    if (run.accepts(currentGuard, id, generation, snapshot)
-                                            && race.mayPublishPreliminary(preliminary)) {
-                                        callback.rerender(LayerKind.MEANING, preliminary,
-                                                "Showing Google translation while AI works");
-                                    }
-                                } finally {
-                                    previewReadyForAi.countDown();
+                                if (run.accepts(currentGuard, id, generation, snapshot)
+                                        && race.mayPublishPreliminary(preliminary)) {
+                                    callback.rerender(LayerKind.MEANING, preliminary,
+                                            "Showing Google translation while AI works");
                                 }
                             }
                         });
                     } else {
-                        previewReadyForAi.countDown();
                         completePreviewRun(run, id, generation, snapshot, currentGuard, callback,
                                 runIdentity, googleOutcome);
                     }
                 }
             });
         } catch (RuntimeException notDispatched) {
-            previewReadyForAi.countDown();
             // No Google child will settle: the race falls through to whatever the raw-AI child
             // decides, exactly as if Google had failed.
             MeaningPreviewRace.Outcome googleOutcome = race.onGoogleSettled(null);
@@ -608,22 +612,14 @@ public final class LyricsMeaningLane {
 
         // The coalescer key is claimed above, on this thread. The child that produces the race's
         // terminal outcome releases it; cancellation and dispatch rejection release explicitly.
+        // AI starts in parallel with Google instead of stalling behind Google's network latency;
+        // MeaningPreviewRace prevents late Google from ever regressing streamed or settled AI.
         try {
             aiExecutor.execute(new Runnable() {
                 @Override public void run() {
                     AiMeaningRun.Result result = null;
                     LayerFailure aiFailure = LayerFailure.NONE;
                     try {
-                        try {
-                            previewReadyForAi.await();
-                        } catch (InterruptedException interrupted) {
-                            Thread.currentThread().interrupt();
-                            race.abandonAi();
-                            AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(),
-                                    run.tag);
-                            COALESCER.finish(runIdentity);
-                            return;
-                        }
                         if (!run.accepts(currentGuard, id, generation, snapshot)) {
                             race.abandonAi();
                             AiRequestLiveState.cancel(LayerKind.MEANING, run.canonicalDigest(),
@@ -635,7 +631,18 @@ public final class LyricsMeaningLane {
                         // baseline_unavailable: Google here is display, not request input.
                         result = AiMeaningRun.run(context, settingsSource.create(context), run.base,
                                 workerSnapshot, null, false, targetLang,
-                                allowProviderRequest, signal, monitor, explicitAiRequest);
+                                allowProviderRequest, signal, monitor, explicitAiRequest,
+                                partial -> post(run, id, generation, snapshot, currentGuard,
+                                        () -> {
+                                            boolean publish = race.mayPublishAiPartial();
+                                            XpLog.log(TAG + " ai partial rows="
+                                                    + partial.allEntries().size()
+                                                    + " published=" + publish);
+                                            if (publish) {
+                                                callback.rerender(LayerKind.MEANING, partial,
+                                                        AI_ARRIVING);
+                                            }
+                                        }));
                         if (result != null && result.outcome != null
                                 && result.outcome.kind == AiRunOutcome.Kind.FAILED) {
                             aiFailure = result.outcome.failure;

@@ -137,10 +137,11 @@ public final class LyricsAnimationApplier {
                         motionActive = positionMs >= groupStartMs && positionMs < groupEndMs;
                         motionProgress = progress01(positionMs, groupStartMs, groupEndMs);
                     }
-                    boolean letterUnitMotion = individualWordMotion && !grouped
-                            && LyricsSyllableViewState.letterCount(motionOwner) > 1;
-                    boolean appleLetterDriven = appleLift && liftMotion
-                            && LyricsSyllableViewState.letterCount(motionOwner) > 1;
+                    int ownerLetters = LyricsSyllableViewState.letterCount(motionOwner);
+                    boolean letterUnitMotion = usesLetterUnitMotion(
+                            individualWordMotion, grouped, ownerLetters);
+                    boolean appleLetterDriven = usesAppleLetterDrive(
+                            appleLift, liftMotion, grouped, ownerLetters);
                     // A segment that qualifies for the strong per-letter pop but isn't getting
                     // letter treatment here - most commonly a furigana-annotated Japanese word,
                     // whose ruby span needs one contiguous text layout rather than a view per code
@@ -150,65 +151,70 @@ public final class LyricsAnimationApplier {
                     // segments only: a multi-syllable phrase blob is a different visual unit than a
                     // single letter/word and shouldn't pop at letter amplitude.
                     boolean strongWordPop = appleStyle && !grouped && !letterUnitMotion
-                            && LyricVisuals.shouldUseLetterAnimator(motionOwner, !directMotion);
+                            && LyricVisuals.shouldUseLetterAnimator(motionOwner, appleStyle);
                     float emphasis = (appleStyle && !grouped)
                             ? emphasisStrength(line, groupStart) : 0f;
-                    // Phrase modes own the group wrapper. Word modes keep it neutral and animate
-                    // each timed segment below.
-                    float targetScale = (grouped && individualWordMotion) || letterUnitMotion
-                            ? 1f : wordMotionScale(
+                    // Phrase modes animate the whole group wrapper. Word/Apple modes keep the
+                    // wrapper neutral and animate each syllable below with damped springs; uniform
+                    // zoom stays seam-locked via TimedWordMotionLayout.alignScaledSeams().
+                    boolean splitWordLocalMotion = grouped && individualWordMotion;
+                    float targetScale = wrapperTargetScale(
+                            letterUnitMotion, splitWordLocalMotion,
                             liftMotion, motionActive, positionMs >= groupEndMs, motionProgress,
                             strongWordPop, emphasis);
-                    float targetY = (grouped && individualWordMotion) || letterUnitMotion || appleLetterDriven
-                            ? 0f : wordMotionY(
+                    float targetY = wrapperTargetY(
+                            letterUnitMotion, appleLetterDriven, splitWordLocalMotion,
                             liftMotion, motionActive, positionMs >= groupEndMs, motionProgress,
                             appleLift, emphasis);
                     float scale = LyricsSyllableViewState.stepWordScale(
                             motionOwner, targetScale, deltaSeconds, directMotion);
                     float y = LyricsSyllableViewState.stepWordY(
                             motionOwner, targetY, deltaSeconds, directMotion);
+                    // Karaoke-edge pivot tracking belongs to ungrouped Apple words; non-Apple and
+                    // grouped words keep the rest center/edge-clamped pivot so scale never snaps
+                    // horizontally on activation.
                     LyricsSyllableViewState.updateTextPivot(
-                            motionOwner, grouped ? null : focus,
-                            grouped ? motionProgress : focusProgress);
+                            motionOwner, (appleStyle && !grouped && focusActive) ? focus : null,
+                            focusProgress);
                     LyricsSyllableViewState.applyWordFrame(motionOwner, sink, scale, y, basePx);
                     if (grouped) {
                         for (int wordIndex = groupStart; wordIndex <= groupEnd; wordIndex++) {
                             SyllableSegment segment = line.words.get(wordIndex);
+                            if (!individualWordMotion) {
+                                LyricsSyllableViewState.resetLocalWordMotion(segment, sink);
+                                continue;
+                            }
                             boolean localActive = segment != null
                                     && positionMs >= segment.startMs && positionMs < segment.endMs;
                             float localProgress = segment == null ? 0f : progress01(
                                     positionMs, segment.startMs, segment.endMs);
                             boolean localSung = segment != null && positionMs >= segment.endMs;
-                            boolean localLetterUnits = individualWordMotion
-                                    && LyricsSyllableViewState.letterCount(segment) > 1;
                             float localScaleTarget = groupedLocalScale(
-                                    individualWordMotion && !localLetterUnits,
-                                    liftMotion, localActive,
-                                    localSung, localProgress);
-                            float localScale = LyricsSyllableViewState.stepLocalWordScale(
-                                    segment, localScaleTarget, deltaSeconds, directMotion);
-                            float localY = LyricsSyllableViewState.stepLocalWordY(
-                                    segment, groupedLocalY(
-                                            individualWordMotion && !localLetterUnits,
-                                            liftMotion, appleLift, localActive,
-                                            localSung, localProgress),
-                                    deltaSeconds, directMotion);
-                            View localView = LyricsSyllableViewState.wordView(segment);
-                            if (localView != null && localView.getWidth() > 0) {
-                                localView.setPivotX(localView.getWidth()
-                                        * (localActive ? clamp01(localProgress) : 0.5f));
-                                localView.setPivotY(localView.getHeight());
+                                    true, liftMotion, localActive, localSung, localProgress);
+                            float localYTarget = groupedLocalY(
+                                    true, liftMotion, appleLift, localActive, localSung, localProgress);
+                            float localScale;
+                            if (liftMotion) {
+                                LyricsSyllableViewState.snapLocalWordScale(segment, 1f);
+                                localScale = 1f;
+                            } else {
+                                localScale = LyricsSyllableViewState.stepLocalWordScale(
+                                        segment, localScaleTarget, deltaSeconds, directMotion);
                             }
+                            float localY = LyricsSyllableViewState.stepLocalWordY(
+                                    segment, localYTarget, deltaSeconds, directMotion);
                             LyricsSyllableViewState.applyLocalWordFrame(segment, sink,
                                     localScale, localScale, localY, basePx);
                         }
+                        LyricsSyllableViewState.alignGroupedSeams(motionOwner);
                     }
                 }
             }
             for (int wordIndex = groupStart; wordIndex <= groupEnd; wordIndex++) {
                 animateSegmentVisuals(line.words.get(wordIndex), positionMs, deltaSeconds,
                         basePx, sink, spotlight, glowEnabled,
-                        wordBounceEnabled, directMotion, liftMotion, individualWordMotion,
+                        wordBounceEnabled, directMotion, liftMotion,
+                        individualWordMotion && groupEnd == groupStart,
                         appleLift, appleGlow,
                         appleStyle ? letterEmphasis(line, wordIndex) : null, line.bgLine);
             }
@@ -302,9 +308,7 @@ public final class LyricsAnimationApplier {
                     : 0f;
             float targetLetterY = ownLetterY;
             if (letterUnitMotion && liftMotion && appleLift) {
-                float wavePos = timeAlpha * letterCount - letterIndex;
-                float localLift = clamp01(wavePos);
-                targetLetterY = -0.04f * localLift * localLift * (3f - 2f * localLift);
+                targetLetterY = appleLetterLiftY(timeAlpha, letterIndex, letterCount);
             }
             float targetLetterGlow = spotlight
                     ? ((active || (sung && !appleGlow)) ? 0.6f : 0f)
@@ -315,8 +319,12 @@ public final class LyricsAnimationApplier {
                     ? (active || sung ? LyricAnimations.GRADIENT_SUNG : LyricAnimations.GRADIENT_UNSUNG)
                     : LyricAnimations.letterGradientPosition(progress, letter.start, letter.duration);
             float targetLetterBrightness = spotlight && active ? spotlightBrightness(letterTimeScale) : 1f;
-            float letterScale = LyricsSyllableViewState.stepLetterScale(letter, targetLetterScale, deltaSeconds, directMotion);
-            float letterY = LyricsSyllableViewState.stepLetterY(letter, targetLetterY, deltaSeconds, directMotion);
+            float letterScale = letterUnitMotion || letter.scaleSpring != null
+                    ? LyricsSyllableViewState.stepLetterScale(letter, targetLetterScale, deltaSeconds, directMotion)
+                    : 1f;
+            float letterY = letterUnitMotion || letter.ySpring != null
+                    ? LyricsSyllableViewState.stepLetterY(letter, targetLetterY, deltaSeconds, directMotion)
+                    : 0f;
             float letterGlow = LyricsSyllableViewState.stepLetterGlow(letter, targetLetterGlow, deltaSeconds);
             // Held-note emphasis is time-driven on top of the springs: it is a precise function of
             // the playback position, and it composes with whatever the letter is already doing.
@@ -324,7 +332,7 @@ public final class LyricsAnimationApplier {
                     positionMs - seg.startMs, backgroundLine, EMPHASIS_FRAME);
             LyricsSyllableViewState.applyLetterFrame(letter, sink,
                     letterScale * EMPHASIS_FRAME.scale,
-                    letterY + EMPHASIS_FRAME.yEm / 2f, basePx, letterGradient,
+                    letterY + EMPHASIS_FRAME.yEm, basePx, letterGradient,
                     glowEnabled ? Math.max(letterGlow, EMPHASIS_FRAME.glow) : letterGlow,
                     targetLetterBrightness);
             float pushPx = EMPHASIS_FRAME.xEm * basePx;
@@ -430,6 +438,41 @@ public final class LyricsAnimationApplier {
                 + LyricAnimations.emphasisLiftEm(progress, emphasis);
     }
 
+    static boolean usesLetterUnitMotion(boolean individualWordMotion, boolean grouped, int letterCount) {
+        return individualWordMotion && !grouped && letterCount > 1;
+    }
+
+    static boolean usesAppleLetterDrive(boolean appleLift, boolean liftMotion, boolean grouped, int letterCount) {
+        return appleLift && liftMotion && !grouped && letterCount > 1;
+    }
+
+    static float wrapperTargetScale(boolean letterUnitMotion, boolean splitWordLocalMotion,
+                                    boolean liftMotion, boolean active,
+                                    boolean sung, float progress, boolean strongWordPop, float emphasis) {
+        if (letterUnitMotion || splitWordLocalMotion) return 1f;
+        return wordMotionScale(liftMotion, active, sung, progress, strongWordPop, emphasis);
+    }
+
+    static float wrapperTargetY(boolean letterUnitMotion, boolean appleLetterDriven,
+                                boolean splitWordLocalMotion,
+                                boolean liftMotion, boolean active, boolean sung, float progress,
+                                boolean appleLift, float emphasis) {
+        if (letterUnitMotion || appleLetterDriven || splitWordLocalMotion) return 0f;
+        return wordMotionY(liftMotion, active, sung, progress, appleLift, emphasis);
+    }
+
+    /** Per-letter Apple lift wave in em, matching {@link LyricAnimations#APPLE_LIFT_EM}. */
+    static float appleLetterLiftY(float timeAlpha, int letterIndex, int letterCount) {
+        float wavePos = timeAlpha * letterCount - letterIndex;
+        float localLift = clamp01(wavePos);
+        return -LyricAnimations.APPLE_LIFT_EM * localLift * localLift * (3f - 2f * localLift);
+    }
+
+    /**
+     * Uniform zoom target for a syllable inside a split-word group. Uses the exact same zoom curve
+     * as whole words while {@link TimedWordMotionLayout#alignScaledSeams()} keeps adjacent
+     * syllable edges flush.
+     */
     static float groupedLocalScale(boolean individualWordMotion, boolean liftMotion,
                                    boolean active, boolean sung, float progress) {
         return individualWordMotion
@@ -441,6 +484,7 @@ public final class LyricsAnimationApplier {
         return groupedLocalY(individualWordMotion, liftMotion, false, active, sung, progress);
     }
 
+    /** Vertical offset target in em for a syllable inside a split-word group (same curve as words). */
     static float groupedLocalY(boolean individualWordMotion, boolean liftMotion, boolean appleLift,
                                boolean active, boolean sung, float progress) {
         return individualWordMotion
@@ -466,6 +510,9 @@ public final class LyricsAnimationApplier {
         for (SyllableSegment seg : line.words) {
             LyricsSyllableViewState.resetAnimatedWord(
                     seg, sink, motionEnabled, liftMotion, individualWordMotion);
+        }
+        for (SyllableSegment seg : line.words) {
+            LyricsSyllableViewState.alignGroupedSeams(seg);
         }
     }
 

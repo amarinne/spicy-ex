@@ -76,6 +76,26 @@ public class AiGeminiProviderTest {
         }, transport);
     }
 
+    /** The structured JSON contract is the Sound layer's; Meaning uses the text wire. */
+    private static AiProviderConfig soundConfig() {
+        return new AiProviderConfig(LayerKind.SOUND, null, "1",
+                new AiModelDescriptor("gemini-3.1-flash-lite", "1", 32_768, 8_192,
+                        Collections.singletonList("generateContent")),
+                "Latin", AiContract.SOUND_PROMPT_VERSION, false).forCall(false, 4_096);
+    }
+
+    @Test
+    public void meaningAsksForPlainNumberedTextWithoutASchema() {
+        StubTransport transport = new StubTransport(ok(candidate("1. hello", "STOP")));
+
+        provider(transport).generateChunk(request(), config(), null);
+
+        String body = transport.bodies.get(0);
+        assertFalse(body.contains("responseMimeType"));
+        assertFalse(body.contains("responseSchema"));
+        assertTrue(body.contains("Lines:\\n1. "));
+    }
+
     private static AiProviderConfig config() {
         return new AiProviderConfig(LayerKind.MEANING, null, "1",
                 new AiModelDescriptor("gemini-3.1-flash-lite", "1", 32_768, 8_192,
@@ -149,7 +169,7 @@ public class AiGeminiProviderTest {
         StubTransport transport = new StubTransport(
                 ok(candidate("{\"items\":[{\"id\":\"r0\",\"t\":\"hello\"}]}", "STOP")));
 
-        provider(transport).generateChunk(request(), config(), null);
+        provider(transport).generateChunk(request(), soundConfig(), null);
 
         String body = transport.bodies.get(0);
         assertTrue(body.contains("\"responseMimeType\":\"application/json\""));
@@ -267,8 +287,18 @@ public class AiGeminiProviderTest {
     }
 
     @Test
-    public void aServerErrorIsDeliveryUnknownBecauseItMayAlreadyHaveBilled() {
+    public void aBusyServerIsARateLimitBecauseNothingWasGenerated() {
         StubTransport transport = new StubTransport(status(503, "unavailable"));
+
+        AiProviderResult result = provider(transport).generateChunk(request(), config(), null);
+
+        assertEquals(AiProviderFailure.Kind.RATE_LIMITED, result.failure.kind);
+        assertEquals(503, result.failure.status);
+    }
+
+    @Test
+    public void aServerErrorIsDeliveryUnknownBecauseItMayAlreadyHaveBilled() {
+        StubTransport transport = new StubTransport(status(500, "internal"));
 
         AiProviderResult result = provider(transport).generateChunk(request(), config(), null);
 
@@ -372,6 +402,105 @@ public class AiGeminiProviderTest {
         assertFalse(result.ok);
         assertNotNull(result.failure);
         assertEquals(AiProviderFailure.Kind.AUTH, result.failure.kind);
+    }
+
+    // --- SSE streaming ------------------------------------------------------
+
+    private static AiGeminiProvider.Transport streamingTransport(final List<String> urls,
+                                                                 final String... events) {
+        return new AiGeminiProvider.Transport() {
+            @Override public AiHttp.Result get(String url, Map<String, String> requestHeaders,
+                                               AiSignal signal, int maxBytes) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override public AiHttp.Result postJson(String url, Map<String, String> requestHeaders,
+                                                    String json, AiSignal signal, int maxBytes) {
+                throw new AssertionError("Gemini streaming must call postJsonStream");
+            }
+
+            @Override public AiHttp.Result postJsonStream(String url,
+                                                          Map<String, String> requestHeaders,
+                                                          String json, AiSignal signal,
+                                                          int maxBytes, AiHttp.StreamSink sink) {
+                urls.add(url);
+                for (String event : events) sink.onData(event);
+                return AiHttp.Result.streamed(200, 128L);
+            }
+        };
+    }
+
+    @Test
+    public void aStreamedResponseFoldsChunksNotifiesFinishedLinesAndSeparatesThoughts() {
+        List<String> urls = new ArrayList<>();
+        final List<String> texts = new ArrayList<>();
+        AiGeminiProvider.Transport transport = streamingTransport(urls,
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"plan\"}]}}]}",
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"1. hel\"}]}}]}",
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"lo\\n2. wor\"}]}}]}",
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ld\"}]},\"finishReason\":\"STOP\"}],"
+                        + "\"usageMetadata\":{\"promptTokenCount\":12,\"candidatesTokenCount\":8}}");
+
+        AiProviderResult result = new AiGeminiProvider(() -> "test-key", transport)
+                .generateChunk(request(), config(), null, new AiProvider.StreamListener() {
+                    @Override public void onText(String textSoFar) {
+                        texts.add(textSoFar);
+                    }
+                });
+
+        assertTrue(result.ok);
+        assertTrue(urls.get(0).endsWith(":streamGenerateContent?alt=sse"));
+        assertEquals("1. hello\n2. world", result.rawText);
+        assertEquals("plan", result.reasoning);
+        assertEquals(AiFinishReason.STOP, result.finish);
+        assertEquals(Integer.valueOf(12), result.usage.input);
+        assertEquals(Integer.valueOf(8), result.usage.output);
+        assertEquals(1, texts.size());
+        assertEquals("1. hello\n2. wor", texts.get(0));
+    }
+
+    @Test
+    public void aStreamedJsonSoundResponseNotifiesWhenEachItemCloses() {
+        final List<String> texts = new ArrayList<>();
+        AiGeminiProvider.Transport transport = streamingTransport(new ArrayList<>(),
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"{\\\"items\\\":[{\\\"id\\\":\\\"r0\\\",\\\"t\\\":\\\"ha\\\"}\"}]}}]}",
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\",{\\\"id\\\":\\\"r1\\\",\\\"t\\\":\\\"lo\\\"}]}\"}]},\"finishReason\":\"STOP\"}]}");
+
+        AiProviderResult result = new AiGeminiProvider(() -> "test-key", transport)
+                .generateChunk(request(), soundConfig(), null, new AiProvider.StreamListener() {
+                    @Override public void onText(String textSoFar) {
+                        texts.add(textSoFar);
+                    }
+                });
+
+        assertTrue(result.ok);
+        assertEquals(2, texts.size());
+        assertTrue(texts.get(0).contains("\"id\":\"r0\""));
+    }
+
+    @Test
+    public void aStreamEndingWithoutFinishReasonIsAnUnknownDelivery() {
+        AiGeminiProvider.Transport transport = streamingTransport(new ArrayList<>(),
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"1. hel\"}]}}]}");
+
+        AiProviderResult result = new AiGeminiProvider(() -> "test-key", transport)
+                .generateChunk(request(), config(), null, null);
+
+        assertFalse(result.ok);
+        assertEquals(AiProviderFailure.Kind.DELIVERY_UNKNOWN, result.failure.kind);
+        assertEquals("stream_ended", result.failure.detail);
+    }
+
+    @Test
+    public void aStreamWithNoCandidateIsAProtocolFailure() {
+        AiGeminiProvider.Transport transport = streamingTransport(new ArrayList<>(),
+                "{\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}");
+
+        AiProviderResult result = new AiGeminiProvider(() -> "test-key", transport)
+                .generateChunk(request(), config(), null, null);
+
+        assertFalse(result.ok);
+        assertEquals(AiProviderFailure.Kind.PROTOCOL, result.failure.kind);
     }
 
     private static String model(String name, int inputLimit, int outputLimit, String method) {

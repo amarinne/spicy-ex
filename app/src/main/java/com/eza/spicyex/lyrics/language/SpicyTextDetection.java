@@ -50,6 +50,7 @@ public final class SpicyTextDetection {
         for (int i = 0; i < text.length(); ) {
             int cp = text.codePointAt(i);
             if (isKana(cp)
+                    || ZhuyinResolver.isSymbol(cp)
                     || isCjkIdeograph(cp)
                     || isKorean(cp)
                     || isCyrillic(cp)
@@ -134,7 +135,7 @@ public final class SpicyTextDetection {
     }
 
     public static boolean itemChineseTest(String text) {
-        return containsCodePoint(text, SpicyTextDetection::isCjkIdeograph);
+        return containsCodePoint(text, cp -> isCjkIdeograph(cp) || ZhuyinResolver.isSymbol(cp));
     }
 
     public static boolean itemKoreanTest(String text) {
@@ -261,7 +262,7 @@ public final class SpicyTextDetection {
     }
 
     private static boolean hasChineseText(String text) {
-        return containsCodePoint(text, SpicyTextDetection::isCjkIdeograph);
+        return itemChineseTest(text);
     }
 
     private static boolean hasKoreanText(String text) {
@@ -290,6 +291,7 @@ public final class SpicyTextDetection {
 
     private static boolean isRomanizableCodePoint(int cp) {
         return isKana(cp)
+                || ZhuyinResolver.isSymbol(cp)
                 || isCjkIdeograph(cp)
                 || isKorean(cp)
                 || isCyrillic(cp)

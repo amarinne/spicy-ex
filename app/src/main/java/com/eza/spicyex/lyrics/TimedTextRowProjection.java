@@ -28,6 +28,23 @@ final class TimedTextRowProjection {
                 && compact(rawChunks).equals(compact(authoritativeText));
     }
 
+    /** Visual break units only. Every piece retains the original timed owner. */
+    static List<Chunk> words(Chunk chunk) {
+        ArrayList<Chunk> words = new ArrayList<>();
+        String text = chunk.text;
+        int start = 0;
+        for (int cursor = 0; cursor < text.length();) {
+            int cp = text.codePointAt(cursor);
+            if (Character.isWhitespace(cp)) {
+                if (cursor > start) words.add(new Chunk(text.substring(start, cursor), true));
+                start = cursor + Character.charCount(cp);
+            }
+            cursor += Character.charCount(cp);
+        }
+        if (start < text.length()) words.add(new Chunk(text.substring(start), chunk.spaceAfter));
+        return words;
+    }
+
     private static List<String> alignedPieces(List<String> rawChunks, String authoritativeText) {
         String authoritative = safe(authoritativeText);
         if (!exactlyReconstructs(rawChunks, authoritative)) {

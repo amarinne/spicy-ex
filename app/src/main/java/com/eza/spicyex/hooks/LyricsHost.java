@@ -20,6 +20,8 @@ import com.eza.spicyex.lyrics.cache.CacheClearKind;
 public interface LyricsHost extends PlaybackTransportHost {
     SpotifyTrack getCurrentTrackSafely();
 
+    default String prefetchStatus() { return "prefetch_enabled=false"; }
+
     boolean isPlayerActuallyPlaying();
 
     long readBestMeasuredProgressMs(SpotifyTrack track, boolean playing);

@@ -278,7 +278,7 @@ final class AutoPrototypePublisher implements LyricsSessionManager.Listener {
     private static void encodeRow(Bundle b, AppliedLine line, int index) {
         b.putInt("lineIndex", index);
         b.putString("line", line == null || line.dotLine ? "" : line.text);
-        b.putString("secondary", line == null ? "" : line.translatedText);
+        b.putString("secondary", com.eza.spicyex.lyrics.LyricsRowViewFactory.displayTranslation(line));
         b.putString("romanized", com.eza.spicyex.lyrics.LyricsRowViewFactory.displayReading(line));
         b.putLong("lineStartMs", line == null ? 0 : line.startMs);
         b.putLong("lineEndMs", line == null ? 0 : LyricTimeline.fillEndMs(line));

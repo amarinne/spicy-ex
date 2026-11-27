@@ -1,6 +1,7 @@
 package com.eza.spicyex.hooks;
 
 import com.eza.spicyex.Settings;
+import com.eza.spicyex.settings.values.CyrillicMode;
 import com.eza.spicyex.lyrics.LyricsDisplayMode;
 import com.eza.spicyex.lyrics.language.ChineseCharacterForm;
 import com.eza.spicyex.lyrics.language.KoreanDisplayMode;
@@ -112,7 +113,9 @@ public final class TransliterationShellState {
         writer.put(Settings.LAST_JAPANESE_CYCLE_MODE, japaneseMode);
         writer.put(Settings.LAST_CHINESE_CYCLE_MODE, chineseMode);
         writer.put(Settings.LAST_KOREAN_CYCLE_MODE, koreanMode);
-        writer.put(Settings.LAST_CYRILLIC_CYCLE_MODE, cyrillicMode);
+        if (!CyrillicMode.AUTO.storedLabel().equals(cyrillicMode)) {
+            writer.put(Settings.LAST_CYRILLIC_CYCLE_MODE, cyrillicMode);
+        }
     }
 
     private static String safe(String value) {

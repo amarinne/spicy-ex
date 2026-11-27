@@ -39,13 +39,15 @@ public class AiHarnessEpochTest {
     }
 
     @Test
-    public void theMeaningLayerRunsAtEpochOneAndSoundStaysLegacy() {
+    public void theMeaningLayerRunsAtEpochThreeAndSoundStaysLegacy() {
         assertEquals(0, AiHarnessEpoch.LEGACY);
-        assertEquals(1, AiHarnessEpoch.MEANING);
+        assertEquals(3, AiHarnessEpoch.MEANING);
         assertEquals(AiHarnessEpoch.MEANING, AiHarnessEpoch.forLayer(LayerKind.MEANING));
         assertEquals(AiHarnessEpoch.LEGACY, AiHarnessEpoch.forLayer(LayerKind.SOUND));
         assertTrue(AiHarnessEpoch.isLegacy(0, LayerKind.MEANING));
-        assertFalse(AiHarnessEpoch.isLegacy(1, LayerKind.MEANING));
+        assertTrue("epoch-1 output is older output", AiHarnessEpoch.isLegacy(1, LayerKind.MEANING));
+        assertTrue(AiHarnessEpoch.isLegacy(2, LayerKind.MEANING));
+        assertFalse(AiHarnessEpoch.isLegacy(3, LayerKind.MEANING));
         assertFalse("an unknown epoch is not legacy output", AiHarnessEpoch.isLegacy(-1, LayerKind.MEANING));
         assertFalse(AiHarnessEpoch.isLegacy(0, LayerKind.SOUND));
     }
@@ -126,11 +128,11 @@ public class AiHarnessEpochTest {
     public void artifactProvenanceCarriesTheEpochOnlyWhenItIsPositive() {
         assertEquals(AiIdentity.promptContractId(LayerKind.MEANING, "cfg-a"),
                 AiIdentity.artifactContractId(LayerKind.MEANING, "cfg-a", AiHarnessEpoch.LEGACY));
-        assertEquals(AiIdentity.promptContractId(LayerKind.MEANING, "cfg-a") + "|epoch=1",
+        assertEquals(AiIdentity.promptContractId(LayerKind.MEANING, "cfg-a") + "|epoch=3",
                 AiIdentity.artifactContractId(LayerKind.MEANING, "cfg-a", AiHarnessEpoch.MEANING));
         assertEquals(AiHarnessEpoch.LEGACY, AiHarnessEpoch.ofContractId("ai|schema=1|cfg=x"));
         assertEquals(AiHarnessEpoch.MEANING,
-                AiHarnessEpoch.ofContractId("ai|schema=1|cfg=x|epoch=1"));
+                AiHarnessEpoch.ofContractId("ai|schema=1|cfg=x|epoch=3"));
         assertEquals(AiHarnessEpoch.LEGACY, AiHarnessEpoch.ofContractId(null));
     }
 
@@ -176,7 +178,7 @@ public class AiHarnessEpochTest {
     @Test
     public void aPositiveEpochSurvivesTheRoundTrip() {
         String payload = AiPaidRecordCodec.encode(record(AiHarnessEpoch.MEANING));
-        assertTrue(payload.contains("\"harnessEpoch\":1"));
+        assertTrue(payload.contains("\"harnessEpoch\":3"));
         AiPaidRecord decoded = AiPaidRecordCodec.decode(payload);
         assertEquals(AiHarnessEpoch.MEANING, decoded.harnessEpoch);
     }
@@ -223,5 +225,15 @@ public class AiHarnessEpochTest {
 
     private static String quote(String value) {
         return new com.google.gson.JsonPrimitive(value).toString();
+    }
+
+    @Test
+    public void aCustomGatewayFindsOlderOutputUnderItsPreEffortVersion() {
+        String current = AiSettings.customProviderVersion(
+                com.eza.spicyex.settings.values.AiDeepSeekReasoning.LOW);
+        assertEquals("openai-v1+reasoning=low", current);
+        assertEquals("openai-v1", AiSettings.legacyProviderVersion(current));
+        assertEquals("deepseek-v1+thinking=enabled+reasoning=low",
+                AiSettings.legacyProviderVersion("deepseek-v1+thinking=enabled+reasoning=low"));
     }
 }

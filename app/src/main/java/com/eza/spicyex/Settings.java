@@ -747,6 +747,10 @@ public final class Settings {
             TranslationBrightness.class
     );
 
+    public static final Setting<Boolean> PREFETCH_NEXT_SONG = boolSetting(false,
+            "prefetch_next_song", TRANSLATION, "Prefetch next song", false
+    );
+
     // --- AI ---
     // One gate owns the whole family: off means no requests and no cached AI overlay, while every
     // paid result stays exactly where it is, waiting to be switched back on.
@@ -759,7 +763,7 @@ public final class Settings {
     );
 
     public static final Setting<String> AI_DEEPSEEK_REASONING = enumSetting(false,
-            "ai_deepseek_reasoning", AI, "DeepSeek reasoning",
+            "ai_deepseek_reasoning", AI, "Reasoning",
             AiDeepSeekReasoning.class
     );
 

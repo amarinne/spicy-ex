@@ -163,21 +163,24 @@ public final class TranslationConfigIdentityTest {
     }
 
     @Test public void romanizationCacheKeysPreserveUnchangedReadingSystems() {
-        assertEquals("cn=pinyin|kr=rrStandard|cnStyle=canonical|tn=0|cy=Russian|cs=0",
+        assertEquals("cn=pinyin|kr=rrStandard|cnStyle=canonical|zhuyin=zhuyin-2026-11-18.2"
+                        + "|tn=0|cy=Russian|cs=0",
                 RomanizationOptions.DEFAULTS.cacheKey());
-        assertEquals("cn=jyutping|kr=Off|cnStyle=canonical|tn=1|cy=Ukrainian|cs=1",
+        assertEquals("cn=jyutping@adapter-2026-11-18.5|kr=Off|cnStyle=canonical"
+                        + "|zhuyin=zhuyin-2026-11-18.2|tn=1|cy=Ukrainian|cs=1",
                 new RomanizationOptions("jyutping", "Off", true, "Ukrainian", true)
                         .cacheKey());
         assertEquals("cn=pinyin|kr=vnPronunciation|cnStyle=canonical"
-                        + "|krStyle=eza@eza-2026-10-08.1|tn=0|cy=Russian|cs=0",
+                        + "|krStyle=eza@eza-2026-10-08.1|zhuyin=zhuyin-2026-11-18.2"
+                        + "|tn=0|cy=Russian|cs=0",
                 new RomanizationOptions("pinyin", "vnPronunciation", false, "Russian", false)
                         .cacheKey());
         assertEquals("cn=pinyin|kr=rrStandard|cnStyle=eza@eza-2026-11-15.3"
-                        + "|tn=0|cy=Russian|cs=0",
+                        + "|zhuyin=zhuyin-2026-11-18.2|tn=0|cy=Russian|cs=0",
                 new RomanizationOptions("pinyin", "rrStandard", false, "Russian", false,
                         ChineseOutputStyle.EZA).cacheKey());
-        assertEquals("cn=jyutping|kr=rrStandard|cnStyle=eza@eza-2026-11-15.3"
-                        + "|tn=1|cy=Ukrainian|cs=0",
+        assertEquals("cn=jyutping@adapter-2026-11-18.5|kr=rrStandard|cnStyle=eza@eza-2026-11-15.3"
+                        + "|zhuyin=zhuyin-2026-11-18.2|tn=1|cy=Ukrainian|cs=0",
                 new RomanizationOptions("jyutping-eza", "rrStandard", true, "Ukrainian", false)
                         .cacheKey());
     }

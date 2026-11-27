@@ -196,4 +196,22 @@ public final class MeaningPreviewRaceTest {
         assertFalse("no completion will ever follow, so Google must not publish", outcome.terminal);
         assertFalse(outcome.preliminary);
     }
+
+    @Test
+    public void streamedAiPartialSuppressesLateGooglePreliminaryButKeepsGoogleFallback() {
+        MeaningPreviewRace race = new MeaningPreviewRace();
+        MeaningArtifact google = artifact("google");
+
+        assertTrue(race.mayPublishAiPartial());
+        MeaningPreviewRace.Outcome lateGoogle = race.onGoogleSettled(google);
+        assertFalse("late Google must not overwrite already-streamed AI rows",
+                lateGoogle.preliminary);
+        assertFalse(lateGoogle.terminal);
+
+        MeaningPreviewRace.Outcome fallback = race.onAiSettled(null, FAILURE);
+        assertTrue(fallback.terminal);
+        assertSame("Google is still retained as fallback if AI later fails",
+                google, fallback.artifact);
+        assertEquals(FAILURE, fallback.failure);
+    }
 }

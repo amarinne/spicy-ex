@@ -1,5 +1,9 @@
 package com.eza.spicyex.lyrics;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ArgbEvaluator;
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -12,12 +16,15 @@ import android.text.Layout;
 import android.text.TextPaint;
 import android.widget.TextView;
 
+import com.eza.spicyex.ui.Motion;
+
 /**
  * TextView with the Spicy sung/unsung karaoke gradient. The gradient position is in Spicy's
  * -40..100 coordinate space (-40 fully unsung, 100 fully sung); glow nudges the sung edge
  * toward full white.
  */
 public class SpicyAnimatedTextView extends TextView {
+    private static final ArgbEvaluator TEXT_TINT_EVALUATOR = new ArgbEvaluator();
     private float gradientPosition = LyricAnimations.GRADIENT_UNSUNG;
     private float glow = 0f;
     // Cached shader: rebuilding a LinearGradient on every frame for every word (with a software
@@ -68,6 +75,8 @@ public class SpicyAnimatedTextView extends TextView {
     // so they draw their own soft halo here instead — gated by setSelfGlow(true).
     private boolean selfGlow;
     private float brightnessMultiplier = 1f;
+    private ValueAnimator textTintAnimation;
+    private float textTintAmount;
 
     public SpicyAnimatedTextView(Context context) {
         super(context);
@@ -164,6 +173,40 @@ public class SpicyAnimatedTextView extends TextView {
         else invalidate();
     }
 
+    /** Briefly accents arrived AI glyphs without changing opacity or layout. */
+    public void animateTranslationArrival() {
+        if (textTintAnimation != null) textTintAnimation.cancel();
+        if (!Motion.animationsEnabled()) return;
+        ValueAnimator animation = ValueAnimator.ofFloat(0.65f, 0f);
+        animation.setDuration(700L);
+        animation.addUpdateListener(value -> setTextTintAmount((float) value.getAnimatedValue()));
+        animation.addListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(Animator ended) {
+                textTintAnimation = null;
+                setTextTintAmount(0f);
+            }
+        });
+        textTintAnimation = animation;
+        setTextTintAmount(0.65f);
+        animation.start();
+    }
+
+    private void setTextTintAmount(float amount) {
+        textTintAmount = amount;
+        cachedShader = null;
+        if (Build.VERSION.SDK_INT >= 16) postInvalidateOnAnimation();
+        else invalidate();
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        if (textTintAnimation != null) {
+            textTintAnimation.cancel();
+            textTintAnimation = null;
+        }
+        textTintAmount = 0f;
+        super.onDetachedFromWindow();
+    }
+
     public void setGradientPosition(float gradientPosition, float glow) {
         boolean hadContainerGradient = containerGradientWidth > 0 || containerGradientHeight > 0;
         containerGradientWidth = -1;
@@ -253,6 +296,10 @@ public class SpicyAnimatedTextView extends TextView {
         // Apple Music fills the gradient from the text colour so it adapts to the theme; every other
         // animation style keeps the legacy white base.
         int base = appleGradientBase ? getCurrentTextColor() : Color.WHITE;
+        if (textTintAmount > 0f) {
+            base = (int) TEXT_TINT_EVALUATOR.evaluate(
+                    textTintAmount, base, ChipSpinnerDrawable.AI_GREEN);
+        }
         int baseR = Color.red(base);
         int baseG = Color.green(base);
         int baseB = Color.blue(base);

@@ -935,6 +935,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
 
     boolean agentSettings(String action) {
         if (action.startsWith("section ")) return settingsDialogController.showSection(action.substring(8));
+        if (action.startsWith("reading ")) return settingsDialogController.reading(action.substring(8));
         if ("open".equals(action)) return settingsDialogController.show();
         if ("close".equals(action)) return settingsDialogController.close();
         return settingsDialogController.isShowing();
@@ -2436,7 +2437,13 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         }
     }
 
+    /** Options for the mounted document, with automatic reading presets resolved. */
     private RomanizationOptions romanizationOptions() {
+        return unresolvedRomanizationOptions().forDocument(document);
+    }
+
+    /** Session modes as configured; resolve with {@link RomanizationOptions#forDocument} off the main thread. */
+    private RomanizationOptions unresolvedRomanizationOptions() {
         LyricsRenderConfig cfg = renderConfig == null ? LyricsRenderConfig.read(activity, config) : renderConfig;
         return new RomanizationOptions(chineseMode(), koreanMode(), cfg.chineseTones, cyrillicMode(), cfg.cyrillicKeepSigns);
     }
@@ -2602,10 +2609,26 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         long startedNanos = BuildConfig.DEBUG ? System.nanoTime() : 0L;
         try {
             String id = trackIdFromUri(trackUri);
+            // Fast-path same-base derived updates (streamed AI lines, Google preview, Sound gap
+            // fill) directly on the main thread. Sending every 50 ms streamed partial through the
+            // 2-thread LYRICS_IO pool caused documentGate.offer() to supersede and drop almost
+            // every intermediate row until the final document arrived.
+            if (running && document != null && doc != null
+                    && LyricsDocumentProcessor.sameCanonicalBase(document, doc)) {
+                SpotifyTrack current = host.getCurrentTrackSafely();
+                String currentId = current == null ? "" : trackIdFromUri(current.uri);
+                if (id.equals(currentId)) {
+                    documentGate.invalidate();
+                    doc.chineseCharacterForm = readingState.characterForm();
+                    adoptTrack(current);
+                    commitAndRenderDocument(null, trackUri, doc, currentId);
+                    return;
+                }
+            }
             LyricsSurfaceDocumentGate.Candidate candidate = documentGate.offer(id);
             // Captured with the candidate so a failure names the run it belonged to, not a newer one.
             int generation = ++NativeSpicyLyricsHook.fetchGeneration;
-            RomanizationOptions loadOptions = romanizationOptions();
+            RomanizationOptions unresolvedLoadOptions = unresolvedRomanizationOptions();
             boolean loadRomanization = showRomanization();
             Context applicationContext = activity.getApplicationContext();
             com.eza.spicyex.lyrics.language.ChineseCharacterForm characterForm =
@@ -2617,6 +2640,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             LYRICS_IO.execute(() -> {
                 long workerStartedNanos = BuildConfig.DEBUG ? System.nanoTime() : 0L;
                 try {
+                    // The auto Chinese guess reads the whole document, so it runs here, not on main.
+                    RomanizationOptions loadOptions = unresolvedLoadOptions.forDocument(doc);
                     LyricsDocumentProcessor.applyProcessedCachePreservingAi(applicationContext, doc,
                             loadOptions, GOOGLE_PROCESSING_VERSION);
                     doc.chineseCharacterForm = characterForm;
@@ -2735,18 +2760,9 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             pendingSourceSwap = null;
             pendingSourceSwapUri = "";
         }
-        if (document != null && followState.isHoldingNow() && id.equals(currentId)
-                && id.equals(trackIdFromUri(document.trackId))) {
-            pendingSourceSwap = doc;
-            pendingSourceSwapUri = trackUri;
-            confirm(uiText("lyrics_source_ready",
-                    "New source ready. Resume follow to apply."));
-            return;
-        }
-        // A derived-layer completion republishes the whole document. When the canonical base
-        // is unchanged, absorb only the new reading/translation text into the document already
-        // on screen: swapping the object would rebuild the timeline and reset the active row
-        // and scroll position mid-song.
+        // A derived-layer publication (streamed AI rows, Google preview, reading gap fill) shares
+        // the canonical base already mounted. Merge it in place BEFORE the hold-follow source-swap
+        // stash so scrolling never freezes incoming streamed translations or swaps the document.
         LyricsDocument mounted = document;
         LyricsDocumentProcessor.DerivedMergeResult merge =
                 LyricsDocumentProcessor.mergeDerivedPublication(mounted, doc);
@@ -2763,13 +2779,21 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
                 });
             } else if (merge == LyricsDocumentProcessor.DerivedMergeResult.CHANGED) {
                 LyricPipelineMetrics.increment(LyricPipelineMetrics.Counter.LAYER_LOCAL_UPDATE);
-                refreshSecondaryRows();
+                scheduleSecondaryRowRefresh();
             }
             observeAiRequestFeedback(mounted);
             // Provenance and failure state can change without changing displayed lyric text.
             // Refresh controls after every same-base publication so a failed paid request is
             // never hidden merely because Google/deterministic fallback stayed on screen.
             updateToggleVisuals();
+            return;
+        }
+        if (document != null && followState.isHoldingNow() && id.equals(currentId)
+                && id.equals(trackIdFromUri(document.trackId))) {
+            pendingSourceSwap = doc;
+            pendingSourceSwapUri = trackUri;
+            confirm(uiText("lyrics_source_ready",
+                    "New source ready. Resume follow to apply."));
             return;
         }
         cancelLoadEntranceAnimation();
@@ -4054,7 +4078,31 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         return views;
     }
 
+    private boolean secondaryRefreshScheduled;
+    private final Runnable secondaryRefreshRunnable = () -> {
+        secondaryRefreshScheduled = false;
+        if (!running) return;
+        refreshSecondaryRows();
+    };
+
+    /** Coalesces bursts of streamed rows to at most one layout/reflow pass per animation frame. */
+    private void scheduleSecondaryRowRefresh() {
+        if (lyricsScroll == null || !lyricsScroll.isAttachedToWindow()) {
+            refreshSecondaryRows();
+            return;
+        }
+        if (secondaryRefreshScheduled) return;
+        secondaryRefreshScheduled = true;
+        lyricsScroll.postOnAnimation(secondaryRefreshRunnable);
+    }
+
+    private void cancelScheduledSecondaryRowRefresh() {
+        secondaryRefreshScheduled = false;
+        if (lyricsScroll != null) lyricsScroll.removeCallbacks(secondaryRefreshRunnable);
+    }
+
     private void refreshSecondaryRows() {
+        cancelScheduledSecondaryRowRefresh();
         LyricsDocument snapshot = document;
         if (snapshot == null || snapshot.appliedLines == null || snapshot.appliedLines.isEmpty()) {
             return;
@@ -4067,7 +4115,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         LyricsDocument snapshot = document;
         if (snapshot == null || snapshot.appliedLines == null || snapshot.appliedLines.isEmpty()) return;
         boolean structureChanged = secondaryRowUpdater.refresh(snapshot, showRomanization(),
-                showTranslation(), japaneseReadingMode());
+                showTranslation(), japaneseReadingMode(),
+                renderConfig == null || renderConfig.translationBright);
         if (structureChanged) {
             invalidateRowHeightPrefix();
             rowMountController.markDirty();
@@ -4101,6 +4150,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
      * stops holding before the fields change; clearRenderedLineViews() reads only the new one.
      */
     private void replaceMountedDocument(LyricsDocument nextDocument, LyricsDocument nextEditorSnapshot) {
+        cancelScheduledSecondaryRowRefresh();
         LyricsDocument outgoing = document;
         LyricsDocument outgoingSnapshot = editorLiveSnapshot;
         if (outgoing != nextDocument && outgoing != nextEditorSnapshot) releaseMountedLineViews(outgoing);
@@ -4385,10 +4435,11 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (document == null || index < 0 || index >= document.appliedLines.size()) return;
 
         AppliedLine line = document.appliedLines.get(index);
-        String currentReading = line.readingRenderPlan == null ? "" : line.readingRenderPlan.joinedDisplayText;
+        String currentReading = com.eza.spicyex.lyrics.LyricsRowViewFactory.displayReading(line);
+        String currentTranslation = com.eza.spicyex.lyrics.LyricsRowViewFactory.displayTranslation(line);
         boolean redact = line.dotLine || com.eza.spicyex.lyrics.providers.SpicyOrgPolicy.isRestricted(document);
         CurrentLyricState.updateLine(track, document.provider, document.language, redact ? "" : line.text,
-                redact ? "" : currentReading, redact ? "" : line.translatedText, positionMs, index,
+                redact ? "" : currentReading, redact ? "" : currentTranslation, positionMs, index,
                 host.isPlayerActuallyPlaying(), "active");
 
         if (followState.isHoldingNow()) return;
@@ -5308,7 +5359,25 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (attempt == null || !attempt.hasPayload()) {
             return uiText("lyrics_ai_preparing_payload", "Preparing request payload…");
         }
-        return attempt.payload;
+        StringBuilder out = new StringBuilder();
+        if (attempt.streamedRows > 0) {
+            out.append("Streaming: ").append(attempt.streamedRows);
+            if (attempt.totalRows > 0) out.append(" / ").append(attempt.totalRows);
+            out.append(" lines received");
+        }
+        if (attempt.hasReasoning()) {
+            if (out.length() > 0) out.append("\n\n");
+            String trace = attempt.reasoning;
+            out.append("Reasoning (").append(trace.length()).append(" chars):\n");
+            if (trace.length() > 2_000) {
+                out.append("…\n").append(trace.substring(trace.length() - 2_000));
+            } else {
+                out.append(trace);
+            }
+        }
+        if (out.length() > 0) out.append("\n\n");
+        out.append(attempt.payload);
+        return out.toString();
     }
 
     private void appendAttemptMonitor(com.eza.spicyex.ui.PanelDialog dialog,
@@ -5362,7 +5431,10 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (attempt != null && attempt.hasReasoning()) {
             dialog.collapsible(label, attempt.reasoning);
         } else {
-            dialog.paragraph(label);
+            // Say so: a model or proxy alias that stops returning a trace otherwise looks like a
+            // review panel that lost a feature.
+            dialog.paragraph(label + " · "
+                    + uiText("lyrics_ai_no_reasoning_trace", "No reasoning trace"));
         }
     }
 
@@ -5934,7 +6006,8 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         String language = SoundModeCyclePolicy.readingLanguage(activeLine(), document);
         LyricsTransliterationSession.CycleResult result =
                 transliterationSession.cycle("ja".equals(language), "zh".equals(language),
-                        "ko".equals(language), "cy".equals(language));
+                        "ko".equals(language), "cy".equals(language),
+                        document == null ? "" : document.trackId, romanizationOptions().chineseMode);
         XpLog.log(TAG + " sound cycle language=" + language
                 + " chineseConfig=" + renderConfig.chineseModeConfig
                 + " chineseMode=" + transliterationSession.chineseMode()
@@ -6086,7 +6159,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
         if (document == null || document.lines == null) return false;
         for (LyricsLine line : document.lines) {
             if (line == null || isBlank(line.text) || line.interlude) continue;
-            if (!isBlank(line.translatedText)) return true;
+            if (!isBlank(com.eza.spicyex.lyrics.SecondaryDisplayText.translation(line.text, line.translatedText))) return true;
             if (SpicyProcessing.shouldTranslateLine(line.text, document.language, "en",
                     line.detection)) return true;
         }
@@ -6106,7 +6179,7 @@ final class NativeSpicyShellViewImpl extends FrameLayout {
             case "ja": romanGlyph.setGlyph("あ"); break;
             case "zh":
                 romanGlyph.setGlyph(SpotifyPlusConfig.CHINESE_MODE_JYUTPING.equals(
-                        LyricsDisplayMode.normalizeChineseMode(chineseMode())) ? "粤" : "拼");
+                        LyricsDisplayMode.normalizeChineseMode(romanizationOptions().chineseMode)) ? "粤" : "拼");
                 break;
             case "ko": romanGlyph.setGlyph("한"); break;
             case "cy": romanGlyph.setGlyph("Я"); break;

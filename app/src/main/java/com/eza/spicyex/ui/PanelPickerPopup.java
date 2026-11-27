@@ -17,7 +17,7 @@ import android.widget.TextView;
 import java.util.List;
 import java.util.function.Consumer;
 
-/** Dark anchored picker used by AI preset and model rows instead of platform popup styling. */
+/** Dark anchored picker for short lists (AI preset and pipeline rows) instead of platform popup styling. */
 public final class PanelPickerPopup {
     private PanelPickerPopup() {}
     public static void show(Context context, View anchor, List<String> choices, String selected,

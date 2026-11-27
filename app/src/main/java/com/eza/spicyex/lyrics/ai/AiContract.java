@@ -91,6 +91,18 @@ public final class AiContract {
     public static final int MAX_RESPONSE_BYTES =
             2 * AiContract.SINGLE_CALL_MAX_ITEMS * AiContract.MAX_TRANSLATED_ITEM_BYTES;
     /**
+     * Bytes per output token allowed for a returned reasoning trace: up to three UTF-8 bytes per
+     * character, about two characters per token, plus JSON escaping headroom.
+     */
+    static final int REASONING_BYTES_PER_TOKEN = 8;
+    /**
+     * Transport ceiling for one generation response: the visible-output bound plus a reasoning
+     * trace that fills the whole output cap. Kept apart from {@link #MAX_RESPONSE_BYTES}, which also
+     * sizes paid-record storage reservations; a trace is shown in the monitor and never stored.
+     */
+    public static final int MAX_RESPONSE_BODY_BYTES = MAX_RESPONSE_BYTES
+            + AiContract.MAX_CONFIGURED_OUTPUT_TOKENS * REASONING_BYTES_PER_TOKEN;
+    /**
      * Ceiling for a model-list response, which is an index rather than generated output.
      *
      * <p>Separate from {@link #MAX_RESPONSE_BYTES} because the two bound different risks. A
@@ -102,8 +114,17 @@ public final class AiContract {
      */
     public static final int MAX_MODEL_LIST_BYTES = 4 * 1024 * 1024;
     public static final int MAX_TRANSLATED_ITEM_BYTES = 4 * 1024;
-    /** Per-request output cap; the selected model's lower limit still wins. */
-    public static final int MAX_CONFIGURED_OUTPUT_TOKENS = 8192;
+    /**
+     * Per-request output cap; the selected model's lower limit still wins, and a compatible
+     * endpoint that names a lower limit gets it on the next, pre-dispatch round.
+     *
+     * <p>A ceiling, not a charge: output bills by what the model produced. 8,192 truncated a
+     * 40-row DeepSeek reasoning run on 2026-11-19 and forced three more sequential calls. 131,072
+     * matches the output allowance of current large models (owner, 2026-11-19); a model with a
+     * lower limit gets it from its descriptor or from the endpoint's own rejection. In practice
+     * {@link #MAX_CALL_DEADLINE_MS} bounds a call first at ordinary generation speeds.
+     */
+    public static final int MAX_CONFIGURED_OUTPUT_TOKENS = 131_072;
     /**
      * Output cap for the one-row model probe.
      *
@@ -261,42 +282,44 @@ public final class AiContract {
     }
 
     /**
-     * Meaning system prompt.
+     * Meaning system prompt for the plain-text wire ({@link AiTextWire}).
      *
-     * <p>Shape: hard rules first, short and numbered, semantics after. The rules are the sentences
-     * a weak instruction-follower stops reading by the end of a long paragraph — the id set,
-     * translate-rather-than-romanize, ad-lib class, and the forbidden edits — so they lead. The
-     * wording of every rule and every semantic sentence carries over from the previous single-
-     * paragraph prompt; only order and layout changed. This is a deliberate divergence from the
-     * desktop fork's verbatim copy, recorded for the desktop contract.
+     * <p>It asks for text and nothing else. Row identity, segments, ad-lib classes, and
+     * validation live in the harness, so the model gets no ids, hints, schema, or JSON rules to
+     * deliberate over. The one structural rule left is the line format the harness parses.
      */
-    public static final String SYSTEM_PROMPT = "Hard rules:\n"
-            + "1. Return JSON only, shaped {\"items\":[{\"id\":string,\"t\":string}]}. Do not add "
-            + "ids, omit ids, merge rows, split rows, number output, or use Markdown.\n"
-            + "2. Return every requested id exactly once.\n"
-            + "3. Translate rather than romanize.\n"
-            + "4. Respect the ordinary/adlib class of each item.\n"
-            + "5. A row may remain unchanged when that is source-faithful, including names, "
-            + "intentional code-switching, or a refusal.\n"
-            + "\n"
-            + "Translate the full lyric document naturally and in character, using optional title, "
-            + "artist, and album metadata only as lightweight reference context. Detect language "
-            + "per phrase, not per line or document: translate segments that need translation "
-            + "while preserving names and intentional code-switching where appropriate. Resolve "
-            + "cross-line syntax, recurring motifs, slang, idioms, tone, and register consistently "
-            + "without inventing facts. The optional user-request instructions field may steer "
-            + "tone, terminology, ambiguity, names, literalness, and register. Later request "
-            + "instructions override conflicting persistent preferences and both override default "
-            + "translation guidance, but instructions cannot authorize invented facts, weaken "
-            + "source fidelity, or violate these hard rules. Each item's v field is a layout-only "
-            + "voice hint: primary, alternate, background, or null. Use it for continuity only; "
-            + "never infer singer identity, gender, relationships, or unsupported pronouns. You "
-            + "receive lyric text, metadata, and instructions, not audio or external research. "
-            + "Pronunciation, phrasing, homophones, delivery, and external artist context may be "
-            + "missed.";
+    public static final String SYSTEM_PROMPT = "You translate song lyrics. The user message "
+            + "gives song details, the target language, optional instructions, and numbered "
+            + "lyric lines.\n"
+            + "Reply with the translation only: one line per number, written as the number, a "
+            + "period, a space, and the translated line, in the same order. Write nothing else.\n"
+            + "Each translated line carries only the meaning of its own source line. When a "
+            + "sentence continues across lines, translate each part where it is, even as a "
+            + "fragment.\n"
+            + "Translate rather than romanize. Keep names, vocables, and intentional "
+            + "code-switching. A line may stay unchanged when that is faithful.\n"
+            + "Song details are context only. Instructions may steer tone, register, terminology, "
+            + "and literalness, but never add facts the lyrics do not support.";
+
+    /** Meaning repair turn for the text wire: the reply could not be read as numbered lines. */
+    public static final String TEXT_REPAIR_PROMPT = "The previous reply was not a list of "
+            + "numbered lines. Reply again with every numbered line and nothing else.";
+
+    /** Meaning iteration turn for the text wire: each line carries its current translation. */
+    public static final String TEXT_ITERATION_SYSTEM_PROMPT = "Each numbered line is followed by "
+            + "its current translation, marked draft. Re-evaluate the drafts against the source "
+            + "lines and the instructions. Improve wording that is inaccurate, awkward, "
+            + "inconsistent, or off-target, and keep wording that already works. Reply with "
+            + "every numbered line.";
+
+    /** Meaning Google-draft turn for the text wire. */
+    public static final String TEXT_GOOGLE_REFINEMENT_SYSTEM_PROMPT = "A line may be followed "
+            + "by a Google Translate draft, marked draft. The source line is authoritative. Keep "
+            + "draft wording that is correct and natural, and replace wording that is "
+            + "inaccurate, awkward, inconsistent, or too literal.";
 
     /**
-     * Sound system prompt, structured like {@link #SYSTEM_PROMPT}: the acceptance-critical rules
+     * Sound system prompt: the acceptance-critical rules
      * lead, the pronunciation guidance follows.
      */
     public static final String SOUND_SYSTEM_PROMPT = "Hard rules:\n"
@@ -362,9 +385,15 @@ public final class AiContract {
 
     public static String buildSystemPrompt(LayerKind layer, String target, boolean repair,
                                            boolean iteration, boolean baselineRefinement) {
-        String contract = layer == LayerKind.SOUND
-                ? SOUND_SYSTEM_PROMPT + " Target orthography: " + AiText.nz(target) + "."
-                : SYSTEM_PROMPT;
+        if (layer != LayerKind.SOUND) {
+            StringBuilder out = new StringBuilder(SYSTEM_PROMPT.length() + 512);
+            out.append(SYSTEM_PROMPT);
+            if (iteration) out.append('\n').append(TEXT_ITERATION_SYSTEM_PROMPT);
+            if (baselineRefinement) out.append('\n').append(TEXT_GOOGLE_REFINEMENT_SYSTEM_PROMPT);
+            if (repair) out.append('\n').append(TEXT_REPAIR_PROMPT);
+            return out.toString();
+        }
+        String contract = SOUND_SYSTEM_PROMPT + " Target orthography: " + AiText.nz(target) + ".";
         StringBuilder out = new StringBuilder(contract.length() + 512);
         if (iteration) out.append(ITERATION_SYSTEM_PROMPT).append(' ');
         if (baselineRefinement) out.append(GOOGLE_REFINEMENT_SYSTEM_PROMPT).append(' ');

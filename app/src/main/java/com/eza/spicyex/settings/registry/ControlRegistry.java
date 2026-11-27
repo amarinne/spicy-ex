@@ -79,10 +79,12 @@ public final class ControlRegistry {
     // it reads. They are declared before the panel inventory, which fills its rows with them.
     private static final Visibility AI_ON = context ->
             Boolean.TRUE.equals(context.settings.get(Settings.AI_ENABLED));
-    /** The DeepSeek reasoning row exists only for the DeepSeek provider, under the AI switch. */
+    /** The Reasoning row: DeepSeek and custom gateways send the effort, under the AI switch. */
     private static final Visibility AI_DEEPSEEK = context -> AI_ON.test(context)
-            && context.settings.get(Settings.AI_PROVIDER, AiProviderChoice.class)
-                    == AiProviderChoice.DEEPSEEK;
+            && (context.settings.get(Settings.AI_PROVIDER, AiProviderChoice.class)
+                    == AiProviderChoice.DEEPSEEK
+                || context.settings.get(Settings.AI_PROVIDER, AiProviderChoice.class)
+                    == AiProviderChoice.CUSTOM);
     /** The translation rows follow the translation switch. */
     private static final Visibility TRANSLATION_ON = context ->
             Boolean.TRUE.equals(context.settings.get(Settings.TRANSLATION_ENABLED));
@@ -411,17 +413,18 @@ public final class ControlRegistry {
         // shows these rows never matched, and the layout editor does not show them either.
         panelStepper(rows, Settings.FURIGANA_BRIGHTNESS, Visibility.NEVER);
         panelStepper(rows, Settings.FURIGANA_POSITION_PERCENT, Visibility.NEVER);
-        panelChoice(rows, Settings.CHINESE_MODE, TRANSLITERATION_ON);
-        // The Chinese character form ships in the APK, so it stays visible on its own.
-        panelChoice(rows, Settings.CHINESE_CHARACTER_FORM, Visibility.ALWAYS);
+        // Character conversion is available even with transliteration disabled.
+        panelComposite(rows, Settings.CHINESE_MODE, "chinese_reading_page", Visibility.ALWAYS);
+        panelComposite(rows, Settings.CHINESE_TONES, "chinese_reading_page", Visibility.NEVER);
+        panelComposite(rows, Settings.CHINESE_CHARACTER_FORM, "chinese_reading_page", Visibility.NEVER);
         panelChoice(rows, Settings.KOREAN_ROMANIZATION, TRANSLITERATION_ON);
-        panelToggle(rows, Settings.CHINESE_TONES, TRANSLITERATION_ON);
-        panelChoice(rows, Settings.CYRILLIC_MODE, TRANSLITERATION_ON);
-        panelToggle(rows, Settings.CYRILLIC_KEEP_SIGNS, TRANSLITERATION_ON);
+        panelComposite(rows, Settings.CYRILLIC_MODE, "cyrillic_reading_page", TRANSLITERATION_ON);
+        panelComposite(rows, Settings.CYRILLIC_KEEP_SIGNS, "cyrillic_reading_page", Visibility.NEVER);
         // Translation
         panelToggle(rows, Settings.TRANSLATION_ENABLED, Visibility.ALWAYS);
         panelChoice(rows, Settings.TRANSLATION_TARGET, TRANSLATION_ON);
         panelChoice(rows, Settings.TRANSLATION_BRIGHTNESS, TRANSLATION_ON);
+        panelToggle(rows, Settings.PREFETCH_NEXT_SONG, Visibility.ALWAYS);
         // AI
         panelToggle(rows, Settings.AI_ENABLED, Visibility.ALWAYS);
         panelChoice(rows, Settings.AI_PROVIDER, AI_ON);

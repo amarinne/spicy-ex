@@ -43,7 +43,7 @@ public class AiOpenAiProviderTest {
 
         @Override public AiHttp.Result get(String url, Map<String, String> headers,
                                            AiSignal signal, int maxBytes) {
-            return AiHttp.Result.of(200, "{\"data\":[{\"id\":\"m1\"},{\"id\":\"m2\"}]}", 40L);
+            return AiHttp.Result.of(200, "{\"data\":[{\"id\":\"m1\",\"owned_by\":\" opencode go \"},{\"id\":\"m2\"}]}", 40L);
         }
 
         @Override public AiHttp.Result postJson(String url, Map<String, String> headers,
@@ -53,6 +53,59 @@ public class AiOpenAiProviderTest {
             postedBodies.add(json);
             return postResults.remove(0);
         }
+    }
+
+    /** The Sound layer keeps the structured JSON contract that schema negotiation serves. */
+    private static AiProviderConfig soundConfig() {
+        return new AiProviderConfig(LayerKind.SOUND, BASE, "openai-v1",
+                MODEL, "Latin", AiContract.SOUND_PROMPT_VERSION, false).forCall(false,
+                AiContract.MAX_CONFIGURED_OUTPUT_TOKENS);
+    }
+
+    @Test
+    public void meaningSendsNumberedTextWithoutAResponseFormat() {
+        FakeTransport transport = new FakeTransport().add(ok(completion("1. hello")));
+        assertTrue(provider(transport).generateChunk(request(), config(), new AiSignal()).ok);
+        JsonObject body = parse(transport.postedBodies.get(0));
+        assertFalse(body.has("response_format"));
+        String user = body.getAsJsonArray("messages").get(1).getAsJsonObject()
+                .get("content").getAsString();
+        assertTrue(user.contains("Lines:\n1. hola"));
+    }
+
+    @Test
+    public void anEndpointThatNamesALowerOutputCapGetsItOnTheNextRound() {
+        List<String> bodies = new ArrayList<>();
+        AiOpenAiProvider capped = new AiOpenAiProvider("https://capped.example.org/v1", () -> KEY,
+                scripted(bodies,
+                        status(400, "{\"error\":{\"message\":\"max_tokens is too large: 131072. "
+                                + "This model supports at most 16384 completion tokens.\"}}"),
+                        ok(completion("1. hello")), ok(completion("1. again"))));
+        assertTrue(capped.generateChunk(request(), config(), new AiSignal()).ok);
+        assertEquals(16384, parse(bodies.get(1)).get("max_tokens").getAsInt());
+        assertTrue(capped.generateChunk(request(), config(), new AiSignal()).ok);
+        assertEquals("the lower cap is remembered", 3, bodies.size());
+        assertEquals(16384, parse(bodies.get(2)).get("max_tokens").getAsInt());
+    }
+
+    @Test
+    public void lowerCapsAreReadFromEachProvidersWording() {
+        assertEquals(65536, AiOpenAiProvider.lowerOutputCap("{\"error\":{\"message\":\"The "
+                + "requested maxOutputTokens (131072) exceeds the limit of 65536.\"}}", 131072));
+        assertEquals(8192, AiOpenAiProvider.lowerOutputCap("Invalid max_tokens value, the valid "
+                + "range of max_tokens is [1, 8192]", 131072));
+        assertEquals(0, AiOpenAiProvider.lowerOutputCap("model not found 404", 131072));
+    }
+
+    @Test
+    public void aCustomGatewaySendsItsReasoningEffort() {
+        List<String> bodies = new ArrayList<>();
+        AiProviderConfig low = new AiProviderConfig(LayerKind.MEANING, BASE,
+                "openai-v1+reasoning=low", MODEL, "en", AiContract.PROMPT_VERSION, false);
+        new AiOpenAiProvider("https://effort.example.org/v1", () -> KEY,
+                scripted(bodies, ok(completion("1. hello")))).generateChunk(request(), low,
+                new AiSignal());
+        assertEquals("low", parse(bodies.get(0)).get("reasoning_effort").getAsString());
     }
 
     /** The per-attempt configuration exactly as the runtime builds it, cap included. */
@@ -141,7 +194,7 @@ public class AiOpenAiProviderTest {
     @Test
     public void theFirstBodyOffersStrictSchemaEnforcement() {
         FakeTransport transport = new FakeTransport().add(ok(completion("hello")));
-        assertTrue(provider(transport).generateChunk(request(), config(), new AiSignal()).ok);
+        assertTrue(provider(transport).generateChunk(request(), soundConfig(), new AiSignal()).ok);
 
         JsonObject body = parse(transport.postedBodies.get(0));
         assertEquals("test-model", body.get("model").getAsString());
@@ -163,7 +216,7 @@ public class AiOpenAiProviderTest {
         JsonObject user = body.getAsJsonArray("messages").get(1).getAsJsonObject();
         assertEquals("system", system.get("role").getAsString());
         assertTrue(system.get("content").getAsString()
-                .contains(AiContract.SYSTEM_PROMPT.substring(0, 64)));
+                .contains(AiContract.SOUND_SYSTEM_PROMPT.substring(0, 64)));
         assertEquals("user", user.get("role").getAsString());
         assertTrue(user.get("content").getAsString().contains("\"id\":\"S0\""));
     }
@@ -229,6 +282,227 @@ public class AiOpenAiProviderTest {
         assertEquals(AiProviderFailure.Kind.PROTOCOL, result.failure.kind);
     }
 
+    // --- reasoning trace -----------------------------------------------------
+
+    /** Scripted transport for an arbitrary endpoint; records the POST bodies. */
+    private static AiGeminiProvider.Transport scripted(List<String> bodies,
+                                                       AiHttp.Result... results) {
+        final List<AiHttp.Result> queue = new ArrayList<>(java.util.Arrays.asList(results));
+        return new AiGeminiProvider.Transport() {
+            @Override public AiHttp.Result get(String url, Map<String, String> headers,
+                                               AiSignal signal, int maxBytes) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override public AiHttp.Result postJson(String url, Map<String, String> headers,
+                                                    String json, AiSignal signal, int maxBytes) {
+                bodies.add(json);
+                return queue.remove(0);
+            }
+        };
+    }
+
+    @Test
+    public void aCustomGatewayIsAskedForTheReasoningTrace() {
+        List<String> bodies = new ArrayList<>();
+        new AiOpenAiProvider("https://gateway.example.net/v1", () -> KEY,
+                scripted(bodies, ok(completion("hello")))).generateChunk(request(), config(),
+                new AiSignal());
+        assertTrue(parse(bodies.get(0)).get("include_reasoning").getAsBoolean());
+    }
+
+    @Test
+    public void officialOpenAiIsNeverSentIncludeReasoning() {
+        List<String> bodies = new ArrayList<>();
+        new AiOpenAiProvider("https://api.openai.com/v1", () -> KEY,
+                scripted(bodies, ok(completion("hello")))).generateChunk(request(), config(),
+                new AiSignal());
+        assertFalse(parse(bodies.get(0)).has("include_reasoning"));
+    }
+
+    @Test
+    public void aGatewayThatRejectsIncludeReasoningIsAskedWithoutItAndRemembered() {
+        List<String> bodies = new ArrayList<>();
+        AiOpenAiProvider strict = new AiOpenAiProvider("https://strict.example.org/v1", () -> KEY,
+                scripted(bodies,
+                        status(400, "{\"error\":{\"message\":\"Unrecognized request argument "
+                                + "supplied: include_reasoning\"}}"),
+                        ok(completion("hello")), ok(completion("again"))));
+        assertTrue(strict.generateChunk(request(), config(), new AiSignal()).ok);
+        assertFalse(parse(bodies.get(1)).has("include_reasoning"));
+        assertTrue(strict.generateChunk(request(), config(), new AiSignal()).ok);
+        assertEquals("the refusal is remembered per endpoint", 3, bodies.size());
+        assertFalse(parse(bodies.get(2)).has("include_reasoning"));
+    }
+
+    // --- streaming -----------------------------------------------------------
+
+    /** A transport that answers a streamed post with these server-sent event payloads. */
+    private static AiGeminiProvider.Transport streaming(final List<String> bodies,
+                                                        final String... events) {
+        return new AiGeminiProvider.Transport() {
+            @Override public AiHttp.Result get(String url, Map<String, String> headers,
+                                               AiSignal signal, int maxBytes) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override public AiHttp.Result postJson(String url, Map<String, String> headers,
+                                                    String json, AiSignal signal, int maxBytes) {
+                throw new AssertionError("a streaming endpoint must be asked to stream");
+            }
+
+            @Override public AiHttp.Result postJsonStream(String url, Map<String, String> headers,
+                                                          String json, AiSignal signal,
+                                                          int maxBytes, AiHttp.StreamSink sink) {
+                bodies.add(json);
+                for (String event : events) sink.onData(event);
+                return AiHttp.Result.streamed(200, 100L);
+            }
+        };
+    }
+
+    private static String delta(String field, String text) {
+        return "{\"choices\":[{\"delta\":{\"" + field + "\":\"" + text + "\"}}]}";
+    }
+
+    @Test
+    public void aStreamIsFoldedIntoTheSameResultAndFinishedLinesReachTheListener() {
+        List<String> bodies = new ArrayList<>();
+        final List<String> texts = new ArrayList<>();
+        AiProviderResult result = new AiOpenAiProvider("https://stream.example.net/v1", () -> KEY,
+                streaming(bodies, delta("reasoning_content", "thinking"),
+                        delta("content", "1. hel"), delta("content", "lo\\n2. wor"),
+                        delta("content", "ld"),
+                        "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}",
+                        "{\"choices\":[],\"usage\":{\"prompt_tokens\":5,"
+                                + "\"completion_tokens\":9}}"))
+                .generateChunk(request(), config(), new AiSignal(), new AiProvider.StreamListener() {
+                    @Override public void onText(String textSoFar) {
+                        texts.add(textSoFar);
+                    }
+                });
+        assertTrue(result.ok);
+        assertEquals("1. hello\n2. world", result.rawText);
+        assertEquals("thinking", result.reasoning);
+        assertEquals(AiFinishReason.STOP, result.finish);
+        assertEquals(Integer.valueOf(9), result.usage.output);
+        assertEquals("only a finished line is reported", 1, texts.size());
+        assertEquals("1. hello\n2. wor", texts.get(0));
+        JsonObject body = parse(bodies.get(0));
+        assertTrue(body.get("stream").getAsBoolean());
+        assertTrue(body.getAsJsonObject("stream_options").get("include_usage").getAsBoolean());
+    }
+
+    @Test
+    public void aStreamedJsonSoundResponseNotifiesWhenEachItemCloses() {
+        final List<String> texts = new ArrayList<>();
+        AiProviderResult result = new AiOpenAiProvider("https://sound-stream.example.net/v1",
+                () -> KEY,
+                streaming(new ArrayList<>(),
+                        delta("content", "{\\\"items\\\":[{\\\"id\\\":\\\"r0\\\",\\\"t\\\":\\\"ha\\\"}"),
+                        delta("content", ",{\\\"id\\\":\\\"r1\\\",\\\"t\\\":\\\"lo\\\"}]}"),
+                        "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}"))
+                .generateChunk(request(), soundConfig(), new AiSignal(),
+                        new AiProvider.StreamListener() {
+                            @Override public void onText(String textSoFar) {
+                                texts.add(textSoFar);
+                            }
+                        });
+        assertTrue(result.ok);
+        assertEquals(2, texts.size());
+    }
+
+    @Test
+    public void customGatewayReasoningOffSendsThinkingDisabledWithoutIncludeReasoning() {
+        List<String> bodies = new ArrayList<>();
+        AiProviderConfig customOff = new AiProviderConfig(LayerKind.MEANING,
+                "https://custom-off.example.net/v1",
+                AiSettings.customProviderVersion(
+                        com.eza.spicyex.settings.values.AiDeepSeekReasoning.OFF),
+                MODEL, "en", AiContract.PROMPT_VERSION, false)
+                .forCall(false, AiContract.MAX_CONFIGURED_OUTPUT_TOKENS);
+
+        AiOpenAiProvider gateway = new AiOpenAiProvider("https://custom-off.example.net/v1",
+                () -> KEY, scripted(bodies, ok(completion("1. hello"))));
+        String monitored = gateway.monitorPayload(request(), customOff);
+        assertTrue(gateway.generateChunk(request(), customOff, new AiSignal()).ok);
+        assertEquals(monitored, bodies.get(0));
+
+        JsonObject body = parse(bodies.get(0));
+        assertEquals("none", body.get("reasoning_effort").getAsString());
+        assertEquals("disabled", body.getAsJsonObject("thinking").get("type").getAsString());
+        assertFalse(body.has("include_reasoning"));
+    }
+
+    @Test
+    public void customGatewayThatRejectsThinkingDropsItAndRemembers() {
+        List<String> bodies = new ArrayList<>();
+        AiProviderConfig customOff = new AiProviderConfig(LayerKind.MEANING,
+                "https://strict-thinking.example.net/v1",
+                AiSettings.customProviderVersion(
+                        com.eza.spicyex.settings.values.AiDeepSeekReasoning.OFF),
+                MODEL, "en", AiContract.PROMPT_VERSION, false)
+                .forCall(false, AiContract.MAX_CONFIGURED_OUTPUT_TOKENS);
+
+        AiOpenAiProvider gateway = new AiOpenAiProvider("https://strict-thinking.example.net/v1",
+                () -> KEY, scripted(bodies,
+                        status(400, "{\"error\":{\"message\":\"Unknown parameter: thinking\"}}"),
+                        ok(completion("1. hello")),
+                        ok(completion("1. again"))));
+        assertTrue(gateway.generateChunk(request(), customOff, new AiSignal()).ok);
+        assertTrue(parse(bodies.get(0)).has("thinking"));
+        assertFalse(parse(bodies.get(1)).has("thinking"));
+        assertEquals("none", parse(bodies.get(1)).get("reasoning_effort").getAsString());
+
+        assertTrue(gateway.generateChunk(request(), customOff, new AiSignal()).ok);
+        assertEquals(3, bodies.size());
+        assertFalse(parse(bodies.get(2)).has("thinking"));
+    }
+
+    @Test
+    public void aStreamThatEndsWithoutAFinishReasonIsAnUnknownDelivery() {
+        AiProviderResult result = new AiOpenAiProvider("https://cut.example.net/v1", () -> KEY,
+                streaming(new ArrayList<>(), delta("content", "1. hel")))
+                .generateChunk(request(), config(), new AiSignal(), null);
+        assertFalse(result.ok);
+        assertEquals(AiProviderFailure.Kind.DELIVERY_UNKNOWN, result.failure.kind);
+        assertEquals("stream_ended", result.failure.detail);
+    }
+
+    @Test
+    public void aStreamOptionsRejectionKeepsStreamingWithoutUsage() {
+        {
+            String body = "{\"error\":{\"message\":\"Unknown parameter: stream_options\"}}";
+            String upstream = "{\"error\":{\"message\":\"upstream timed out\"}}";
+            List<String> bodies = new ArrayList<>();
+            AiOpenAiProvider provider = new AiOpenAiProvider("https://opts.example.net/v1",
+                    () -> KEY, new AiGeminiProvider.Transport() {
+                        int calls;
+                        @Override public AiHttp.Result get(String url, Map<String, String> headers,
+                                                           AiSignal signal, int maxBytes) {
+                            throw new UnsupportedOperationException();
+                        }
+                        @Override public AiHttp.Result postJson(String url,
+                                Map<String, String> headers, String json, AiSignal signal,
+                                int maxBytes) {
+                            throw new AssertionError("streaming stays on");
+                        }
+                        @Override public AiHttp.Result postJsonStream(String url,
+                                Map<String, String> headers, String json, AiSignal signal,
+                                int maxBytes, AiHttp.StreamSink sink) {
+                            bodies.add(json);
+                            if (calls++ == 0) return status(400, body);
+                            if (calls == 2) return status(400, upstream);
+                            return AiHttp.Result.streamed(200, 1L);
+                        }
+                    });
+            provider.generateChunk(request(), config(), new AiSignal(), null);
+            assertFalse(parse(bodies.get(1)).has("stream_options"));
+            assertTrue(parse(bodies.get(1)).get("stream").getAsBoolean());
+            assertEquals("an unrelated 'upstream' error ends negotiation", 2, bodies.size());
+        }
+    }
+
     // --- parameter negotiation ----------------------------------------------
 
     private static final String OPENAI_MAX_TOKENS_REJECTION = "{\"error\":{\"message\":"
@@ -241,7 +515,7 @@ public class AiOpenAiProviderTest {
         FakeTransport transport = new FakeTransport()
                 .add(status(400, OPENAI_MAX_TOKENS_REJECTION))
                 .add(ok(completion("hello")));
-        AiProviderResult result = provider(transport).generateChunk(request(), config(),
+        AiProviderResult result = provider(transport).generateChunk(request(), soundConfig(),
                 new AiSignal());
 
         assertTrue(result.ok);
@@ -298,13 +572,13 @@ public class AiOpenAiProviderTest {
                 .add(ok(completion("again")));
         AiOpenAiProvider openAiProvider = provider(transport);
 
-        assertTrue(openAiProvider.generateChunk(request(), config(), new AiSignal()).ok);
+        assertTrue(openAiProvider.generateChunk(request(), soundConfig(), new AiSignal()).ok);
         JsonObject fallback = parse(transport.postedBodies.get(1));
         assertEquals("json_object",
                 fallback.getAsJsonObject("response_format").get("type").getAsString());
 
         // The downgrade is remembered per endpoint: the next call goes straight to json_object.
-        assertTrue(openAiProvider.generateChunk(request(), config(), new AiSignal()).ok);
+        assertTrue(openAiProvider.generateChunk(request(), soundConfig(), new AiSignal()).ok);
         assertEquals(3, transport.postedBodies.size());
         assertEquals("json_object", parse(transport.postedBodies.get(2))
                 .getAsJsonObject("response_format").get("type").getAsString());
@@ -317,8 +591,8 @@ public class AiOpenAiProviderTest {
                 .add(ok(completion("again")));
         AiOpenAiProvider openAiProvider = provider(transport);
 
-        assertTrue(openAiProvider.generateChunk(request(), config(), new AiSignal()).ok);
-        assertTrue(openAiProvider.generateChunk(request(), config(), new AiSignal()).ok);
+        assertTrue(openAiProvider.generateChunk(request(), soundConfig(), new AiSignal()).ok);
+        assertTrue(openAiProvider.generateChunk(request(), soundConfig(), new AiSignal()).ok);
         for (String posted : transport.postedBodies) {
             assertEquals("json_schema",
                     parse(posted).getAsJsonObject("response_format").get("type").getAsString());
@@ -378,6 +652,22 @@ public class AiOpenAiProviderTest {
         assertTrue(result.ok);
         assertEquals(2, result.models.size());
         assertEquals("m1", result.models.get(0).name);
+        assertEquals("opencode go", result.models.get(0).owner);
+        assertEquals("", result.models.get(1).owner);
+    }
+
+    @Test
+    public void providerErrorCodesAreKeptAsTokensNotMessages() {
+        assertEquals("TOS_VIOLATION", AiProviderFailure.errorToken("{\"error\":{\"code\":403,"
+                + "\"message\":\"disabled\",\"status\":\"PERMISSION_DENIED\",\"details\":"
+                + "[{\"reason\":\"TOS_VIOLATION\"}]}}"));
+        assertEquals("api_key_expired", AiProviderFailure.errorToken("{\"error\":{\"type\":"
+                + "\"authentication_error\",\"code\":\"api_key_expired\"}}"));
+        assertEquals("invalid_request_error", AiProviderFailure.errorToken(
+                "{\"error\":{\"message\":\"You have insufficient credits\","
+                        + "\"type\":\"invalid_request_error\"}}"));
+        assertEquals("", AiProviderFailure.errorToken("{\"error\":{\"code\":\"two words\"}}"));
+        assertEquals("", AiProviderFailure.errorToken("upstream timeout"));
     }
 
     @Test
@@ -455,9 +745,7 @@ public class AiOpenAiProviderTest {
         assertTrue(deepSeek.generateChunk(request(), deepSeekConfig("Low"), new AiSignal()).ok);
         assertEquals(monitored, bodies.get(0));
         JsonObject body = parse(bodies.get(0));
-        assertEquals("json_object",
-                body.getAsJsonObject("response_format").get("type").getAsString());
-        assertFalse(body.getAsJsonObject("response_format").has("json_schema"));
+        assertFalse("Meaning uses the text wire", body.has("response_format"));
         assertEquals("enabled", body.getAsJsonObject("thinking").get("type").getAsString());
         assertEquals("low", body.get("reasoning_effort").getAsString());
         assertFalse(body.has("reasoning"));
